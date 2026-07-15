@@ -1,0 +1,20 @@
+{
+  "home" : {
+    "name" : "홈",
+    "hidden" : false,
+    "path" : "/",
+    "children" : []
+  },
+  "history" : {
+    "name" : "지난 회의 이력",
+    "hidden" : false,
+    "path" : "/history",
+    "children" : []
+  },
+  "logout" : {
+    "name" : "로그아웃",
+    "hidden" : false,
+    "path" : "",
+    "children" : []
+  }
+}
