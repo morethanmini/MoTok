@@ -9,6 +9,18 @@ export const RouteName = {
   DeviceSetup: 'device-setup',
   GameRoom: 'game-room',
   GameResult: 'game-result',
+  FindId: 'find-id',
+  ResetPassword: 'reset-password',
+  MyPage: 'my-page',
+  AccountSettings: 'account-settings',
+  Shop: 'shop',
+  AiItemCreate: 'ai-item-create',
+  Inventory: 'inventory',
+  Friends: 'friends',
+  Ranking: 'ranking',
+  GamesCatalog: 'games-catalog',
+  Admin: 'admin',
+  Unsupported: 'unsupported',
 } as const
 
 export type RouteName = (typeof RouteName)[keyof typeof RouteName]
