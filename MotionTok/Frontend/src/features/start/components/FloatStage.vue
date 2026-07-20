@@ -21,12 +21,23 @@ const items: FloatItem[] = [
   { img: 'sketchbook', label: '드로잉 릴레이', size: 168, x: '24%', duration: '23s', delay: '-16s' },
   { img: 'person', label: '포즈 매치', size: 126, x: '57%', duration: '18s', delay: '-1s' },
   { img: 'console', label: '버블 팝', size: 82, x: '82%', duration: '15s', delay: '-14s', plain: true },
+  { img: 'trophy', label: '랭킹 챌린지', size: 96, x: '38%', duration: '17s', delay: '-9s' },
+  { img: 'headset', label: '보이스 파티', size: 108, x: '13%', duration: '20s', delay: '-5s' },
+  { img: 'constellation', label: '별자리 매칭', size: 118, x: '90%', duration: '22s', delay: '-18s' },
+  { img: 'sketchbook', label: '낙서 배틀', size: 130, x: '2%', duration: '19s', delay: '-10s' },
+  { img: 'fishing-rod', label: '전기 낚시', size: 104, x: '77%', duration: '16s', delay: '-3s' },
+  { img: 'person', label: '따라하기', size: 92, x: '33%', duration: '15s', delay: '-15s' },
 ]
 
 const sparks = [
   { img: 'headset', size: 96, x: '36%', duration: '16s', delay: '-4s' },
   { img: 'moon', size: 62, x: '87%', duration: '12s', delay: '-9s' },
   { img: 'trophy', size: 74, x: '4%', duration: '18s', delay: '-7s' },
+  { img: 'console', size: 58, x: '55%', duration: '14s', delay: '-6s' },
+  { img: 'person', size: 66, x: '20%', duration: '17s', delay: '-11s' },
+  { img: 'moon', size: 48, x: '63%', duration: '13s', delay: '-2s' },
+  { img: 'tambourine', size: 52, x: '95%', duration: '15s', delay: '-8s' },
+  { img: 'trophy', size: 60, x: '44%', duration: '19s', delay: '-13s' },
 ]
 
 const url = (name: string) => `url('/assets/intro/${name}.png')`
