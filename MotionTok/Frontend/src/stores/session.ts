@@ -4,13 +4,11 @@
  */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { TokenResponse, UserProfile } from '@/api/auth'
+import type { TokenResponse, UserProfile } from '@/api/types'
 import * as authApi from '@/api/auth'
+import { setTokens, clearTokens } from '@/api/token'
 
 export type Role = 'guest' | 'member'
-
-const ACCESS_KEY = 'motok.accessToken'
-const REFRESH_KEY = 'motok.refreshToken'
 
 export const useSessionStore = defineStore('session', () => {
   const role = ref<Role | null>(null)
@@ -33,13 +31,12 @@ export const useSessionStore = defineStore('session', () => {
    */
   function applyToken(res: TokenResponse, rememberMe = false) {
     role.value = 'member'
-    profile.value = res.user
+    profile.value = res.user ?? null
     accessToken.value = res.accessToken
     refreshToken.value = res.refreshToken
 
-    const store = rememberMe ? localStorage : sessionStorage
-    store.setItem(ACCESS_KEY, res.accessToken)
-    store.setItem(REFRESH_KEY, res.refreshToken)
+    // 토큰 저장/복원은 token.ts가 단일 관리(http.ts의 자동 인증 헤더도 여기서 갱신됨).
+    setTokens(res.accessToken, res.refreshToken, rememberMe)
   }
 
   function loginAsGuest() {
@@ -64,10 +61,7 @@ export const useSessionStore = defineStore('session', () => {
     profile.value = null
     accessToken.value = null
     refreshToken.value = null
-    for (const store of [localStorage, sessionStorage]) {
-      store.removeItem(ACCESS_KEY)
-      store.removeItem(REFRESH_KEY)
-    }
+    clearTokens()
   }
 
   return {

@@ -2,8 +2,8 @@
 import { http } from '../http'
 import type {
   AuditLog,
-  CreateSongRequest,
   Game,
+  RegisterSongRequest,
   ReportedUser,
   Sanction,
   SanctionRequest,
@@ -16,6 +16,6 @@ export const adminApi = {
   applySanction: (body: SanctionRequest) => http.post<Sanction>('/admin/sanctions', body),
   toggleGame: (gameId: number, isActive: boolean) =>
     http.patch<Game>(`/admin/games/${gameId}`, { isActive }),
-  registerSong: (body: CreateSongRequest) => http.post<Song>('/admin/songs', body),
+  registerSong: (body: RegisterSongRequest) => http.post<Song>('/admin/songs', body),
   auditLogs: (page = 0) => http.get<AuditLog[]>('/admin/audit-logs', { page }),
 }
