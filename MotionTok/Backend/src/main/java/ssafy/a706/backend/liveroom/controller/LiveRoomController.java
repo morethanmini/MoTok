@@ -1,4 +1,4 @@
-package ssafy.a706.backend.liveroom;
+package ssafy.a706.backend.liveroom.controller;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -8,10 +8,11 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.global.response.ApiResponse;
-import ssafy.a706.backend.liveroom.dto.CreateLiveRoomRequest;
-import ssafy.a706.backend.liveroom.dto.CreateLiveRoomResponse;
-import ssafy.a706.backend.liveroom.dto.LiveRoomDetailResponse;
-import ssafy.a706.backend.liveroom.dto.LiveRoomSummaryResponse;
+import ssafy.a706.backend.liveroom.service.LiveRoomService;
+import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomRequest;
+import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomResponse;
+import ssafy.a706.backend.liveroom.controller.dto.LiveRoomDetailResponse;
+import ssafy.a706.backend.liveroom.controller.dto.LiveRoomSummaryResponse;
 
 import java.util.List;
 

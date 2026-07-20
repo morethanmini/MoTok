@@ -1,4 +1,4 @@
-package ssafy.a706.backend.liveroom;
+package ssafy.a706.backend.liveroom.repository;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
