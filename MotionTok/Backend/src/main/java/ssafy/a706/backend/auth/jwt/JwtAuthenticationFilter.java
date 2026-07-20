@@ -20,6 +20,7 @@ import java.util.List;
 /**
  * Authorization: Bearer 헤더의 JWT를 검증해 SecurityContext에 인증을 설정한다.
  * 게스트 토큰(type=guest)은 DB 조회 없이 GuestPrincipal로 인증한다.
+ * Refresh 토큰(type=refresh)은 API 인증 수단이 아니므로 여기서 거부한다.
  * (SecurityConfig에서 직접 생성해 등록하므로 @Component로 두지 않는다 — 서블릿 이중 등록 방지)
  */
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -39,7 +40,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (header != null && header.startsWith(BEARER)) {
             try {
                 Claims claims = tokenProvider.parse(header.substring(BEARER.length()));
-                SecurityContextHolder.getContext().setAuthentication(toAuthentication(claims));
+                if (!tokenProvider.isRefresh(claims)) {
+                    SecurityContextHolder.getContext().setAuthentication(toAuthentication(claims));
+                }
             } catch (JwtException | IllegalArgumentException e) {
                 SecurityContextHolder.clearContext();
             }
@@ -56,7 +59,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     List.of(new SimpleGrantedAuthority("ROLE_GUEST")));
         }
         return new UsernamePasswordAuthenticationToken(
-                new MemberPrincipal(subject, name), null,
+                new MemberPrincipal(Long.valueOf(subject), name), null,
                 List.of(new SimpleGrantedAuthority("ROLE_USER")));
     }
 }

@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -18,6 +19,9 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import ssafy.a706.backend.auth.jwt.JwtAuthenticationFilter;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
+import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.global.response.ErrorResponse;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.Arrays;
 import java.util.List;
@@ -28,6 +32,7 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final ObjectMapper objectMapper;
 
     @Value("${app.cors.allowed-origins}")
     private String allowedOrigins;
@@ -47,21 +52,38 @@ public class SecurityConfig {
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/ws/**").permitAll()
-                        .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/users").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/users/check-id").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/rooms").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/games/*/leaderboard").permitAll()
+                        // 명세서 🔓 공개 — 가입·로그인·게스트·중복확인·이메일 인증·토큰 갱신
+                        .requestMatchers(HttpMethod.GET, "/api/auth/availability/**").permitAll()
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/auth/email/verify-request",
+                                "/api/auth/email/verify",
+                                "/api/auth/signup",
+                                "/api/auth/login",
+                                "/api/auth/guest",
+                                "/api/auth/token/refresh").permitAll()
+                        // 공개 조회. /api/v1/*는 명세 이전 경로로, 방 도메인 마이그레이션 전까지 함께 허용한다.
+                        .requestMatchers(HttpMethod.GET, "/api/rooms", "/api/v1/rooms").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/games/*/leaderboard", "/api/v1/games/*/leaderboard").permitAll()
+                        // 로그아웃은 인증 필요(명세 401)
                         .anyRequest().authenticated())
-                .exceptionHandling(eh -> eh.authenticationEntryPoint((req, res, ex) -> {
-                    res.setStatus(401);
-                    res.setContentType("application/json;charset=UTF-8");
-                    res.getWriter().write("{\"success\":false,\"message\":\"인증이 필요합니다.\",\"data\":null}");
-                }))
+                .exceptionHandling(eh -> eh
+                        .authenticationEntryPoint((req, res, ex) ->
+                                writeError(res, ErrorCode.UNAUTHORIZED, req.getRequestURI()))
+                        .accessDeniedHandler((req, res, ex) ->
+                                writeError(res, ErrorCode.FORBIDDEN, req.getRequestURI())))
                 .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider),
                         UsernamePasswordAuthenticationFilter.class);
         return http.build();
+    }
+
+    /** 인증·인가 실패 응답도 명세서 Error 스키마로 통일한다. */
+    private void writeError(jakarta.servlet.http.HttpServletResponse res, ErrorCode ec, String path)
+            throws java.io.IOException {
+        res.setStatus(ec.getStatus().value());
+        res.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        res.setCharacterEncoding("UTF-8");
+        objectMapper.writeValue(res.getWriter(),
+                ErrorResponse.of(ec.getCode(), ec.getMessage(), path));
     }
 
     @Bean
