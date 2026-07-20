@@ -12,8 +12,12 @@ import org.springframework.messaging.simp.stomp.StompFrameHandler;
 import org.springframework.messaging.simp.stomp.StompHeaders;
 import org.springframework.messaging.simp.stomp.StompSession;
 import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
+import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketHttpHeaders;
+import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
+import org.springframework.web.socket.handler.TextWebSocketHandler;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
 import ssafy.a706.backend.global.response.ErrorResponse;
@@ -26,6 +30,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
@@ -119,6 +124,34 @@ class SignalRelayIntegrationTest {
         ErrorResponse error = errors.poll(5, TimeUnit.SECONDS);
         assertThat(error).isNotNull();
         assertThat(error.code()).isEqualTo("SIGNAL_TARGET_NOT_FOUND");
+    }
+
+    @Test
+    @DisplayName("CONNECT를 생략하고 곧장 SEND하면 ERROR 프레임과 함께 거부된다")
+    void rejectSendWithoutConnect() throws Exception {
+        BlockingQueue<String> frames = new ArrayBlockingQueue<>(4);
+        CountDownLatch closed = new CountDownLatch(1);
+        // STOMP 클라이언트가 아닌 raw WebSocket으로 프로토콜 순서를 무시하는 클라이언트를 흉내낸다
+        WebSocketSession raw = new StandardWebSocketClient().execute(new TextWebSocketHandler() {
+            @Override
+            protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+                frames.add(message.getPayload());
+            }
+
+            @Override
+            public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+                closed.countDown();
+            }
+        }, wsUrl()).get(5, TimeUnit.SECONDS);
+
+        raw.sendMessage(new TextMessage(
+                "SEND\ndestination:/app/rooms/" + roomId + "/signal\ncontent-type:application/json\n\n{}\0"));
+
+        String response = frames.poll(5, TimeUnit.SECONDS);
+        boolean rejected = (response != null && response.startsWith("ERROR"))
+                || closed.await(5, TimeUnit.SECONDS);
+        assertThat(rejected).as("ERROR 프레임 수신 또는 연결 종료").isTrue();
+        if (raw.isOpen()) raw.close();
     }
 
     @Test

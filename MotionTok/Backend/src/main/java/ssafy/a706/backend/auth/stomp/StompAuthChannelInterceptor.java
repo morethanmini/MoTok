@@ -61,10 +61,21 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
         StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
-        if (accessor != null && StompCommand.CONNECT.equals(accessor.getCommand())) {
+        if (accessor == null) {
+            return message;
+        }
+        StompCommand command = accessor.getCommand();
+        if (StompCommand.CONNECT.equals(command)) {
             // getFirstNativeHeader: HTTP 헤더가 아니라 STOMP 프레임의 헤더에서 읽는다.
             // (프론트: stompClient.connectHeaders = { Authorization: `Bearer ${token}` })
             accessor.setUser(authenticate(accessor.getFirstNativeHeader(HttpHeaders.AUTHORIZATION)));
+        } else if ((StompCommand.SUBSCRIBE.equals(command) || StompCommand.SEND.equals(command))
+                && accessor.getUser() == null) {
+            // 스프링은 "CONNECT 먼저"라는 프레임 순서를 강제하지 않는다. 악의적 클라이언트가
+            // CONNECT를 생략하고 곧장 구독/발행하면 인증 없이 브로커까지 닿을 수 있으므로
+            // (특히 /topic 채널 도청·스팸) 세션에 인증이 없는 SUBSCRIBE/SEND는 여기서 차단한다.
+            // 하트비트(command == null)·DISCONNECT는 해당 없음.
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }
         return message;
     }
