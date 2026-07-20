@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>모톡 — ERD v0.2</title>
+<style>
+  :root{
+    --ink:#1d1b2e; --sub:#5c5876; --line:#e4e1f0; --bg:#fbfaff;
+    --brand:#5b4be6; --brand-deep:#4436c9; --brand-soft:#f2f0ff;
+    --amber:#9a5b12; --amber-bg:#fff7ed; --amber-line:#f5b768;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Pretendard","Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;
+    line-height:1.65;font-size:15px}
+  .wrap{max-width:1080px;margin:0 auto;padding:48px 28px 80px}
+
+  .doc-badge{display:inline-block;background:var(--brand);color:#fff;font-size:12px;
+    font-weight:700;letter-spacing:.06em;padding:4px 12px;border-radius:99px}
+  h1{font-size:34px;margin:14px 0 6px;letter-spacing:-.02em}
+  .lede{color:var(--sub);max-width:70ch;margin:0 0 10px}
+  .meta{display:flex;gap:22px;flex-wrap:wrap;font-size:13px;color:var(--sub);
+    border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:10px 2px;margin:20px 0 0}
+  .meta b{color:var(--ink);font-weight:600;margin-right:6px}
+
+  .secnum{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:var(--brand);
+    font-weight:700;letter-spacing:.12em;margin:56px 0 2px}
+  h2{font-size:23px;margin:0 0 6px;letter-spacing:-.01em}
+  h2+p{color:var(--sub);margin-top:2px}
+
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:13.5px;background:#fff}
+  th{background:var(--brand-soft);color:var(--brand-deep);text-align:left;font-weight:700;
+    padding:9px 12px;border:1px solid var(--line);white-space:nowrap}
+  td{padding:8px 12px;border:1px solid var(--line);vertical-align:top}
+  td code, li code, p code{background:var(--brand-soft);color:var(--brand-deep);
+    padding:1px 6px;border-radius:5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
+
+  .diagram-box{background:#fff;border:1px solid var(--line);border-radius:14px;
+    padding:18px;overflow-x:auto;margin:18px 0}
+  .diagram-box .mermaid{min-width:900px}
+  .hint{font-size:12.5px;color:var(--sub);margin-top:6px}
+
+  details{background:#fff;border:1px solid var(--line);border-radius:12px;margin:14px 0;overflow:hidden}
+  summary{cursor:pointer;padding:12px 16px;font-weight:600;color:var(--brand-deep);
+    background:var(--brand-soft);list-style:none}
+  summary::before{content:"▸ ";}
+  details[open] summary::before{content:"▾ ";}
+  details pre{margin:0;padding:16px 18px;overflow-x:auto;font-size:12.5px;line-height:1.5;
+    font-family:ui-monospace,Menlo,Consolas,monospace;background:#fff}
+
+  ol.points{padding-left:22px}
+  ol.points li{margin:12px 0}
+  ol.points b{color:var(--brand-deep)}
+  .warn{background:var(--amber-bg);border:1px solid var(--amber-line);color:var(--amber);
+    border-radius:10px;padding:12px 16px;font-size:13.5px;margin:14px 0}
+  .callout{background:var(--brand-soft);border:1px solid #d8d2fa;border-radius:12px;
+    padding:14px 18px;margin:18px 0;font-size:14px}
+  .callout b{color:var(--brand-deep)}
+  footer{margin-top:64px;padding-top:16px;border-top:1px solid var(--line);
+    color:var(--sub);font-size:12.5px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <span class="doc-badge">ERD · v0.2</span>
+  <h1>모톡 — 개체-관계도 (RDB 스키마)</h1>
+  <p class="lede">확정된 요구사항 명세서(260716)·지라(S15P11A706-1~122)·아키텍처 결정기록 v0.3을 반영한 MySQL 스키마입니다.
+  결정 D5에 따라 <b>방·진행 중 게임 상태·실시간 랭킹은 Redis</b>(별도 문서)로 가고, 이 문서에는 <b>서버 재시작 후에도 남아야 할 데이터</b>만 있습니다.</p>
+  <div class="meta">
+    <span><b>엔티티</b>20개 · 관계 22개</span>
+    <span><b>기준</b>요구사항 명세서 260716 ID반영 · 지라 최종</span>
+    <span><b>상위 문서</b>아키텍처 결정기록 v0.3 (D4·D5) · Redis 키 설계 v0.1</span>
+  </div>
+
+  <div class="secnum">00</div>
+  <h2>v0.1 초안 대비 변경 요약</h2>
+  <p>설계초안의 ERD에서 무엇이 왜 바뀌었는지부터.</p>
+  <table>
+    <tr><th style="width:90px">변경</th><th style="width:300px">내용</th><th>근거</th></tr>
+    <tr><td>삭제</td><td><code>ROOM</code> · <code>ROOM_MEMBER</code></td><td>Redis 이관 완료(room:*, members) — 결정 D5, Redis 키 설계 §2</td></tr>
+    <tr><td>삭제</td><td><code>AI_BOT</code></td><td>봇은 난이도별 점수 곡선(서버 로직)이라 저장 데이터 없음 → <code>GAME.supports_bot</code> 플래그로 대체</td></tr>
+    <tr><td>삭제</td><td><code>AVATAR</code> · <code>AVATAR_ITEM</code></td><td>아바타 폐기 → 화면(카메라) 꾸미기 체계로 재편(<code>ITEM</code>/<code>USER_ITEM</code>/<code>DECOR_SETTING</code>)</td></tr>
+    <tr><td>미포함</td><td>마이룸 관련 전부</td><td>기능 제거 확정</td></tr>
+    <tr><td>미포함</td><td>게스트 저장 테이블</td><td>게스트 기록은 클라이언트 로컬 저장(가입 시 이관) — RDB에 게스트 흔적 없음</td></tr>
+    <tr><td>재편</td><td><code>GAME_SESSION_PLAYER</code> → <code>GAME_SESSION_RESULT</code></td><td>write-behind로 <b>회원 결과만</b> 적재 → <code>user_id</code> NOT NULL로 단순화</td></tr>
+    <tr><td>추가</td><td><code>REPORT</code> · <code>SANCTION</code> · <code>ADMIN_AUDIT_LOG</code> · <code>LOGIN_HISTORY</code></td><td>관리자 도메인(-104~-107) · 신고(-112) · 로깅(-121·-122)</td></tr>
+    <tr><td>추가</td><td><code>SONG</code> · <code>CHART</code></td><td>리듬게임 곡/채보 관리(-42), 커스텀 채보·에디터(-87·-88)</td></tr>
+    <tr><td>추가</td><td>콘텐츠 시드 3종 <code>CONSTELLATION</code>/<code>WORD</code>/<code>COOP_PUZZLE</code></td><td>별자리 도안(-37) · 제시어 풀(-45) · 협동 퍼즐(-53)</td></tr>
+    <tr><td>확장</td><td><code>USER.role</code>/<code>status</code>, <code>OAUTH_ACCOUNT.provider</code>에 NAVER</td><td>관리자 권한(-104) · 제재/soft delete · 네이버 OAuth(-22)</td></tr>
+    <tr><td>확정</td><td><code>GAME.min_players</code>/<code>max_players</code>/<code>supports_bot</code>/<code>is_active</code></td><td>인원수 큐레이션(-28) · 1인 플레이 = min_players 1 · 봇 충족(-58) · 관리자 노출 제어(-106)</td></tr>
+  </table>
+
+  <div class="secnum">01</div>
+  <h2>ERD</h2>
+  <p>아래 다이어그램은 브라우저에서 렌더링됩니다(인터넷 연결 필요). GitLab 위키에는 하단의 Mermaid 소스를 붙여넣으세요.</p>
+
+  <div class="diagram-box">
+    <pre class="mermaid">
+erDiagram
+  USER ||--o{ OAUTH_ACCOUNT : "소셜 계정"
+  USER ||--o{ POINT_HISTORY : "포인트 내역"
+  USER ||--o{ USER_ITEM : "인벤토리"
+  ITEM ||--o{ USER_ITEM : "보유됨"
+  USER ||--o| DECOR_SETTING : "화면 꾸미기 저장"
+  USER ||--o{ ITEM : "AI 커스텀 제작"
+  USER ||--o{ FRIENDSHIP : "요청"
+  USER ||--o{ FRIENDSHIP : "수신"
+  USER ||--o{ REPORT : "신고자"
+  USER ||--o{ REPORT : "피신고자"
+  USER ||--o{ SANCTION : "제재 대상"
+  USER ||--o{ SANCTION : "처리 관리자"
+  GAME ||--o{ GAME_SESSION : "플레이 기록"
+  GAME_SESSION ||--o{ GAME_SESSION_RESULT : "회원별 결과"
+  USER ||--o{ GAME_SESSION_RESULT : "전적"
+  GAME ||--o{ LEADERBOARD : "게임별 랭킹"
+  USER ||--o{ LEADERBOARD : "기록 보유"
+  SONG ||--o{ CHART : "채보"
+  USER ||--o{ SONG : "커스텀 곡 업로드"
+  USER ||--o{ CHART : "커스텀 채보 제작"
+  USER ||--o{ LOGIN_HISTORY : "로그인 이력"
+  USER ||--o{ ADMIN_AUDIT_LOG : "관리 행위"
+
+  USER {
+    bigint id PK
+    varchar email UK "소셜 전용 계정은 null 가능"
+    varchar password_hash "소셜 전용 시 null"
+    varchar nickname UK
+    varchar role "USER | ADMIN"
+    varchar status "ACTIVE | SUSPENDED | BANNED | DELETED"
+    int point_balance "기본 0"
+    datetime created_at
+    datetime deleted_at "soft delete 시각, 기본 null"
+  }
+  OAUTH_ACCOUNT {
+    bigint id PK
+    bigint user_id FK
+    varchar provider "GOOGLE | KAKAO | NAVER"
+    varchar provider_uid "provider와 복합 UK"
+    datetime linked_at
+  }
+  ITEM {
+    bigint id PK
+    varchar name
+    varchar category "MASK | EFFECT | STICKER | BACKGROUND"
+    varchar item_type "SHOP | AI_CUSTOM"
+    int price_point "AI_CUSTOM은 null"
+    varchar image_url
+    bigint creator_id FK "AI 생성자, SHOP 아이템은 null"
+    boolean is_active
+    datetime created_at
+  }
+  USER_ITEM {
+    bigint id PK
+    bigint user_id FK "item_id와 복합 UK"
+    bigint item_id FK
+    datetime acquired_at
+  }
+  DECOR_SETTING {
+    bigint user_id PK "USER 1:1, FK"
+    json config "장착 아이템·배치·가상 배경 선택"
+    datetime updated_at
+  }
+  POINT_HISTORY {
+    bigint id PK
+    bigint user_id FK
+    int amount "+적립 / -사용"
+    varchar type "GAME_REWARD | SHOP_PURCHASE | AI_GENERATE | GUEST_MIGRATE"
+    bigint ref_id "세션·아이템 등 참조 id, null 가능"
+    int balance_after
+    datetime created_at
+  }
+  FRIENDSHIP {
+    bigint id PK
+    bigint requester_id FK "addressee와 복합 UK"
+    bigint addressee_id FK
+    varchar status "PENDING | ACCEPTED"
+    datetime created_at
+    datetime responded_at
+  }
+  REPORT {
+    bigint id PK
+    bigint reporter_id FK
+    bigint reported_id FK
+    varchar reason_type "선택형 사유 코드"
+    varchar reason_text "직접 입력, null 가능"
+    varchar status "RECEIVED | RESOLVED"
+    datetime created_at
+  }
+  SANCTION {
+    bigint id PK
+    bigint user_id FK "제재 대상"
+    bigint admin_id FK "처리 관리자"
+    varchar type "WARNING | SUSPENSION | PERMANENT_BAN"
+    varchar reason
+    datetime starts_at
+    datetime ends_at "영구 정지는 null"
+    datetime created_at
+  }
+  GAME {
+    bigint id PK
+    varchar name
+    varchar description
+    varchar mode "SOLO | VERSUS | COOP"
+    int min_players "1이면 1인 플레이 가능"
+    int max_players
+    boolean supports_bot "봇으로 인원 충족 가능 여부"
+    boolean is_active "관리자 노출 제어"
+    varchar category
+    varchar thumbnail_url
+  }
+  GAME_SESSION {
+    bigint id PK
+    bigint game_id FK
+    varchar room_key "Redis 방 식별자(추적용 문자열)"
+    varchar status "ENDED | ABORTED"
+    datetime started_at
+    datetime ended_at
+  }
+  GAME_SESSION_RESULT {
+    bigint id PK
+    bigint session_id FK
+    bigint user_id FK "회원만 적재 - NOT NULL"
+    int score
+    int rank_no
+    int points_earned
+  }
+  LEADERBOARD {
+    bigint id PK
+    bigint game_id FK "user_id와 복합 UK"
+    bigint user_id FK
+    int best_score
+    int play_count
+    datetime updated_at
+  }
+  SONG {
+    bigint id PK
+    varchar title
+    varchar artist
+    varchar audio_url "S3"
+    int duration_sec
+    varchar source "OFFICIAL | USER"
+    bigint uploader_id FK "USER 업로드 시, 공식 곡은 null"
+    boolean is_active
+    datetime created_at
+  }
+  CHART {
+    bigint id PK
+    bigint song_id FK
+    varchar mode "MAIMAI | BEATSABER"
+    varchar difficulty "EASY | NORMAL | HARD"
+    json pattern_data "노트 패턴"
+    varchar chart_type "OFFICIAL | CUSTOM"
+    bigint creator_id FK "커스텀 제작자, 공식은 null"
+    datetime created_at
+  }
+  CONSTELLATION {
+    bigint id PK
+    varchar name "오리온 등"
+    json points "목표 별 좌표·연결 정보"
+  }
+  WORD {
+    bigint id PK
+    varchar text "그림 릴레이 제시어"
+    varchar category
+  }
+  COOP_PUZZLE {
+    bigint id PK
+    varchar title
+    json config "역할별 제공 정보·정답 정의"
+  }
+  LOGIN_HISTORY {
+    bigint id PK
+    bigint user_id FK "실패 기록은 null 가능"
+    varchar method "LOCAL | GOOGLE | KAKAO | NAVER"
+    boolean success
+    datetime created_at
+  }
+  ADMIN_AUDIT_LOG {
+    bigint id PK
+    bigint admin_id FK
+    varchar action "SANCTION_APPLY | GAME_TOGGLE 등"
+    varchar target_type "USER | GAME"
+    bigint target_id
+    varchar detail
+    datetime created_at
+  }
+    </pre>
+    <p class="hint">다이어그램이 안 보이면 인터넷 연결을 확인하세요(mermaid CDN 로드 필요). 가로로 스크롤됩니다.</p>
+  </div>
+
+  <details>
+    <summary>Mermaid 소스 보기 (GitLab 위키·문서 붙여넣기용)</summary>
+    <pre id="mmd-src"></pre>
+  </details>
+
+  <div class="secnum">02</div>
+  <h2>도메인별 엔티티 요약 · 요구사항 추적</h2>
+  <table>
+    <tr><th style="width:160px">도메인</th><th>엔티티</th><th>담당 요구사항(지라)</th></tr>
+    <tr><td>회원·인증</td><td><code>USER</code> <code>OAUTH_ACCOUNT</code> <code>LOGIN_HISTORY</code></td><td>-21 -22 -23 -108 -111 -122 / role은 -104</td></tr>
+    <tr><td>관리자</td><td><code>REPORT</code> <code>SANCTION</code> <code>ADMIN_AUDIT_LOG</code> + <code>GAME.is_active</code></td><td>-104 -105 -106 -107 -112</td></tr>
+    <tr><td>포인트·상점·꾸미기</td><td><code>POINT_HISTORY</code> <code>ITEM</code> <code>USER_ITEM</code> <code>DECOR_SETTING</code></td><td>-56 -93 -94 -55 -102 / 가상 배경(-92)은 <code>DECOR_SETTING.config</code>에 선택값 저장</td></tr>
+    <tr><td>소셜</td><td><code>FRIENDSHIP</code></td><td>-57 -98 -100</td></tr>
+    <tr><td>게임 메타·전적·랭킹</td><td><code>GAME</code> <code>GAME_SESSION</code> <code>GAME_SESSION_RESULT</code> <code>LEADERBOARD</code></td><td>-28 -58 -82~84 -89 -96 -97 -114 -116 -117</td></tr>
+    <tr><td>리듬게임 콘텐츠</td><td><code>SONG</code> <code>CHART</code></td><td>-40 -42 -85 -87 -88</td></tr>
+    <tr><td>게임 콘텐츠 시드</td><td><code>CONSTELLATION</code> <code>WORD</code> <code>COOP_PUZZLE</code></td><td>-37 -45 -53 (AI 제시어 -99는 런타임 생성이라 미저장)</td></tr>
+  </table>
+
+  <div class="callout"><b>RDB에 없는 것(의도된 부재)</b> — 방/참가자/초대코드/진행 중 세션·점수판/실시간 랭킹 캐시 → <b>Redis</b>(키 설계 v0.1).
+  게스트 프로필·기록 → <b>클라이언트 로컬</b>. Refresh Token·비밀번호 재설정 토큰 → <b>Redis</b>(TTL이 만료 정책 그 자체 —
+  키 설계 문서에 <code>auth:refresh:{userId}</code>, <code>auth:pwreset:{token}</code> 추가 권장).</div>
+
+  <div class="secnum">03</div>
+  <h2>설계 포인트 — 구현 시 헷갈릴 지점</h2>
+  <ol class="points">
+    <li><b>전적 조회(-97)는 <code>LEADERBOARD</code>만으로 충분.</b> 게임별 플레이 횟수·최고 점수·순위가 전부 이 테이블(+Redis ZREVRANK)에서 나온다. <code>GAME_SESSION_RESULT</code>는 개별 판 기록(로그·분쟁 추적·-122)용이며 화면 필수 아님.</li>
+    <li><b>정산 트랜잭션(-117)의 쓰기 순서.</b> <code>GAME_SESSION</code> + <code>GAME_SESSION_RESULT</code>(회원만) + <code>POINT_HISTORY</code>/<code>USER.point_balance</code> + <code>LEADERBOARD</code> upsert를 한 트랜잭션으로. 이후 Redis <code>rank:{gameId}</code> ZADD GT. Redis 유실 시 <code>LEADERBOARD</code>에서 warm-up(비기능 -96).</li>
+    <li><b>게스트 이관의 범위.</b> 클라 로컬 기록을 가입 시 <code>LEADERBOARD</code>(best_score GT·play_count 가산)와 <code>POINT_HISTORY(GUEST_MIGRATE)</code>로만 반영. 세션이 이미 소멸했으므로 <code>GAME_SESSION_RESULT</code>는 만들지 않는다.</li>
+    <li><b>제재↔계정 상태 동기화.</b> <code>SANCTION</code> 생성 시 <code>USER.status</code>를 SUSPENDED/BANNED로 갱신, 일시정지 해제는 로그인 시점 lazy 체크(ends_at &lt; now → ACTIVE 복구)로 처리하면 배치 불필요.</li>
+    <li><b>탈퇴(-111).</b> <code>status=DELETED</code> + <code>deleted_at</code> 기록, 닉네임·이메일은 <code>deleted_1042</code> 식 치환으로 UK 충돌 방지. <code>LEADERBOARD</code>는 조회 시 status 필터로 랭킹 노출 제외.</li>
+    <li><b>AI 커스텀 아이템(-102).</b> <code>ITEM(item_type=AI_CUSTOM, creator_id=본인)</code> 생성과 동시에 <code>USER_ITEM</code> 지급 + <code>POINT_HISTORY(AI_GENERATE, 음수)</code>. 상점 목록 쿼리는 <code>item_type=SHOP AND is_active</code>만.</li>
+    <li><b>1인 플레이·봇 판단은 전부 <code>GAME</code> 컬럼으로.</b> 대기실 큐레이션: 현재 인원(봇 포함) ≥ min_players AND ≤ max_players AND is_active. 게스트 1인방은 <code>min_players=1</code>인 게임만 노출. 별도 플래그 불필요.</li>
+    <li><b><code>rank_no</code> 네이밍.</b> <code>rank</code>는 MySQL 8 예약어라 컬럼명으로 피했다. DDL 작성 시 유지할 것.</li>
+  </ol>
+  <div class="warn">⚠ 게스트 로컬 기록은 조작 가능하므로, 이관 시 게임별 최대 점수 상한 등 <b>상식 검증</b>을 반드시 거칠 것(결정 D4의 연장).</div>
+
+  <div class="secnum">04</div>
+  <h2>부록 — 명세서 복구용 가상 배경 행</h2>
+  <p>현재 명세서(0716_수정)에 가상 배경 행이 빠져 있습니다. <b>소셜 &gt; 소품</b> 아래에 아래 행을 복구하세요.</p>
+  <table>
+    <tr><th>대분류</th><th>중분류</th><th>소분류</th><th>세분류</th><th>Jira ID</th><th>요구사항</th><th>중요도</th><th>연결</th><th>Description</th><th>기타</th></tr>
+    <tr><td>(소셜)</td><td>소품</td><td>가상 배경</td><td>카메라 가상 배경 적용</td><td>S15P11A706-92</td>
+      <td>카메라가 ON 상태인 참가자는 실제 배경 대신 이미지 또는 지정된 가상 배경을 적용하여 화면에 표시할 수 있다.</td>
+      <td>하</td><td>S15P11A706-55</td><td>화면 꾸미기 설정(DECOR_SETTING)에 선택값 저장</td>
+      <td>게임 중 모션인식과 동시 구동 시 성능 부담 — 대기실 한정 적용 검토</td></tr>
+  </table>
+
+  <footer>모톡 ERD v0.2 · 상위 문서: 아키텍처 결정기록 v0.3 (D4·D5) · Redis 키 설계 v0.1 · 다음 조각: DDL 스크립트 / 게임 이벤트 프로토콜(-115)</footer>
+</div>
+
+<script>
+  // 접이식 소스 보기: 렌더링 전에 원본 텍스트를 복사해 둠 (mermaid 로드와 무관하게 동작)
+  document.getElementById('mmd-src').textContent =
+    document.querySelector('.mermaid').textContent.trim();
+</script>
+<script type="module">
+  const CDNS = [
+    'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs',
+    'https://unpkg.com/mermaid@11/dist/mermaid.esm.min.mjs',
+    'https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.12.0/mermaid.esm.min.mjs'
+  ];
+  let mermaid = null;
+  for (const url of CDNS) {
+    try { mermaid = (await import(url)).default; break; } catch (e) { /* 다음 CDN 시도 */ }
+  }
+  if (mermaid) {
+    mermaid.initialize({ startOnLoad: false, theme: 'base', er: { useMaxWidth: false },
+      themeVariables: { primaryColor: '#f2f0ff', primaryBorderColor: '#5b4be6',
+        primaryTextColor: '#1d1b2e', lineColor: '#4436c9', fontSize: '13px' } });
+    await mermaid.run({ querySelector: '.mermaid' });
+  } else {
+    document.querySelector('.hint').textContent =
+      '다이어그램을 그리지 못했습니다(CDN 접속 실패). 아래 "Mermaid 소스 보기"의 코드를 GitLab 위키나 mermaid.live에 붙여넣으면 확인할 수 있습니다.';
+  }
+</script>
+</body>
+</html>
