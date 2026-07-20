@@ -1,0 +1,61 @@
+/**
+ * 공통 픽셀아트 유틸리티 + 여러 화면이 공유하는 keyframes.
+ * 한 화면에서만 쓰는 애니메이션은 해당 View의 scoped 스타일에 두세요.
+ */
+
+/* ── 공유 애니메이션 ─────────────────────────── */
+@keyframes px-float {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50%      { transform: translateY(-7px) rotate(2deg); }
+}
+@keyframes px-blink {
+  50% { opacity: 0.45; }
+}
+@keyframes px-pop {
+  from { transform: scale(0.92); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+@keyframes px-twinkle {
+  0%, 100% { transform: scale(1) rotate(-6deg); }
+  50%      { transform: scale(0.82) rotate(5deg); }
+}
+
+/* ── 페이지 배경 유틸 ────────────────────────── */
+/* 도트 격자 배경 (Auth/Device/Result 등 단순 화면 공통) */
+.px-dot-bg {
+  background-color: var(--c-cream);
+  background-image: radial-gradient(rgba(56, 38, 61, 0.1) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+/* 종이 + 도트 (Lobby/Room 셸 배경) */
+.px-paper-bg {
+  background-color: var(--c-paper);
+  background-image: radial-gradient(rgba(56, 38, 61, 0.1) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+/* ── 재사용 픽셀 카드/마크 ───────────────────── */
+.px-card {
+  border: var(--border-thick);
+  border-radius: var(--radius-xl);
+  background: var(--c-paper);
+  box-shadow: var(--shadow-xl);
+}
+
+.px-mark {
+  display: grid;
+  place-items: center;
+  border: var(--border);
+  border-radius: var(--radius-md);
+  background: var(--c-yellow);
+  box-shadow: var(--shadow-md);
+  font-weight: 700;
+}
+
+/* 접근성: 모션 최소화 선호 시 장식 애니메이션 정지 */
+@media (prefers-reduced-motion: reduce) {
+  .px-dot-bg *,
+  .px-paper-bg * {
+    animation: none !important;
+  }
+}
