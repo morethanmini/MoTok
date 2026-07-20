@@ -1,0 +1,200 @@
+<script setup lang="ts">
+/** 장치 설정 — 카메라/마이크 권한 요청 + 프리뷰 + 꾸미기. 입장 시 게임룸으로. */
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { RouteName } from '@/router/routeNames'
+import { useCamera } from '@/composables/useCamera'
+import PixelButton from '@/components/common/PixelButton.vue'
+
+const route = useRoute()
+const router = useRouter()
+const { stream, isOn, start } = useCamera()
+
+const game = computed(() => (route.query.game as string) || '게임 선택 중')
+const room = computed(() => (route.query.room as string) || 'MP4X9K')
+
+const decor = ref<'🎩' | '⭐'>('🎩')
+const videoEl = ref<HTMLVideoElement>()
+
+// 스트림이 준비되면 프리뷰 <video>에 연결
+watch(stream, (s) => {
+  if (videoEl.value) videoEl.value.srcObject = s
+})
+
+async function allow() {
+  await start({ video: { width: 640, height: 400 }, audio: true })
+}
+
+function enter() {
+  if (!isOn.value) return
+  router.push({
+    name: RouteName.GameRoom,
+    query: { game: game.value, room: room.value, host: '1' },
+  })
+}
+
+const cancel = () => router.push({ name: RouteName.Lobby })
+</script>
+
+<template>
+  <main class="page px-dot-bg">
+    <header class="top">
+      <h1>장치 설정 · 카메라 프리뷰</h1>
+      <span class="step">방 입장 전 준비</span>
+    </header>
+
+    <div class="grid">
+      <!-- 프리뷰 -->
+      <section class="preview">
+        <span class="badge">{{ isOn ? 'CAMERA READY' : '권한 필요' }}</span>
+        <div class="cam">
+          <video
+            v-show="isOn"
+            ref="videoEl"
+            autoplay
+            playsinline
+            muted
+            class="cam-video"
+          />
+          <div v-if="!isOn" class="cam-empty">
+            <b>▣</b>
+            <p>카메라·마이크 권한을 허용해 주세요</p>
+          </div>
+        </div>
+        <div class="decor">{{ decor }}</div>
+      </section>
+
+      <!-- 설정 -->
+      <section class="settings">
+        <h2>카메라와 마이크를 확인해 주세요</h2>
+
+        <div class="permission" :class="{ ok: isOn }">
+          {{ isOn
+            ? '권한이 허용되었습니다. 장치와 꾸미기를 확인한 뒤 입장하세요.'
+            : '권한을 허용하지 않으면 모션 게임을 플레이할 수 없습니다.' }}
+          <button class="allow" @click="allow">
+            {{ isOn ? '✓ 권한 허용됨' : '카메라·마이크 권한 허용' }}
+          </button>
+        </div>
+
+        <label class="field">
+          카메라
+          <select>
+            <option>기본 HD 웹캠</option>
+            <option>외장 USB 카메라</option>
+          </select>
+        </label>
+        <label class="field">
+          마이크
+          <select>
+            <option>기본 마이크</option>
+            <option>헤드셋 마이크</option>
+          </select>
+        </label>
+
+        <label class="field">
+          카메라 꾸미기
+          <div class="items">
+            <button class="item" :class="{ on: decor === '🎩' }" @click="decor = '🎩'">🎩</button>
+            <button class="item" :class="{ on: decor === '⭐' }" @click="decor = '⭐'">⭐</button>
+            <button class="item">🎭</button>
+            <button class="item">🌈</button>
+          </div>
+        </label>
+
+        <div class="actions">
+          <PixelButton @click="cancel">취소</PixelButton>
+          <PixelButton variant="mint" :disabled="!isOn" @click="enter">대기실 입장</PixelButton>
+        </div>
+      </section>
+    </div>
+  </main>
+</template>
+
+<style scoped>
+.page { height: 100%; padding: 24px 6%; }
+.top { display: flex; align-items: center; justify-content: space-between; }
+.top h1 { font-size: 22px; }
+.step { font-size: 10px; padding: 7px 10px; border: 2px solid var(--c-ink); border-radius: 999px; background: #fff; }
+
+.grid {
+  height: calc(100% - 76px);
+  display: grid;
+  grid-template-columns: 1.25fr 0.75fr;
+  gap: 20px;
+}
+.preview, .settings {
+  border: var(--border-thick);
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: var(--shadow-lg);
+}
+
+.preview {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, #dff3ee, #fff0c4);
+  display: grid;
+  place-items: center;
+}
+.cam {
+  width: 68%;
+  height: 68%;
+  border: var(--border-thick);
+  border-radius: 21px;
+  background: #322c37;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  text-align: center;
+  overflow: hidden;
+}
+.cam-video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.cam-empty b { font-size: 46px; }
+.badge {
+  position: absolute;
+  top: 17px;
+  left: 17px;
+  padding: 7px 10px;
+  border: 2px solid var(--c-ink);
+  border-radius: 10px;
+  background: var(--c-mint-soft);
+  font-size: 9px;
+}
+.decor { position: absolute; right: 18%; top: 25%; font-size: 42px; }
+
+.settings { padding: 24px; overflow: auto; }
+.settings h2 { font-size: 16px; margin: 0 0 16px; }
+.permission {
+  padding: 13px;
+  border: 2px solid var(--c-ink);
+  border-radius: var(--radius-md);
+  background: #fff3c9;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.permission.ok { background: var(--c-mint-soft); }
+.allow {
+  width: 100%;
+  height: 43px;
+  margin-top: 10px;
+  border: 2px solid var(--c-ink);
+  border-radius: var(--radius-sm);
+  background: var(--c-yellow);
+  font-weight: 700;
+}
+.field { display: block; margin-top: 15px; font-size: 9px; font-weight: 700; }
+.field select {
+  width: 100%;
+  height: 42px;
+  margin-top: 6px;
+  border: 2px solid var(--c-ink);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  padding: 0 10px;
+}
+.items { display: flex; gap: 8px; margin-top: 8px; }
+.item { width: 52px; height: 48px; border: 2px solid var(--c-ink); border-radius: 12px; background: #fff; font-size: 23px; }
+.item.on { background: #d9ccfa; box-shadow: var(--shadow-sm); }
+.actions { display: grid; grid-template-columns: 1fr 1.6fr; gap: 9px; margin-top: 19px; }
+</style>
