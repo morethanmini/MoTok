@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 게임룸 — 화상 파티룸(자기/친구 타일), 무대 데모, 채팅, 게임 선택, 컨트롤 바. */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { useCamera } from '@/composables/useCamera'
 import { useBgm } from '@/composables/useBgm'
@@ -9,9 +9,9 @@ import { useToast } from '@/composables/useToast'
 import { LEFT_FRIENDS, MOVE_PATHS, RIGHT_FRIENDS, type GameEntry } from './data'
 import FriendTile from './components/FriendTile.vue'
 import GamePicker from './components/GamePicker.vue'
-import BrandLogo from '@/components/common/BrandLogo.vue'
-import BgmToggle from '@/components/common/BgmToggle.vue'
-import CoinIcon from '@/components/common/CoinIcon.vue'
+import AppHeader from '@/components/common/AppHeader.vue'
+import PixelModal from '@/components/common/PixelModal.vue'
+import PixelButton from '@/components/common/PixelButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -98,23 +98,33 @@ function copyCode() {
   navigator.clipboard?.writeText(roomCode.value)
   flash('룸 코드를 복사했어요')
 }
+// 헤더 링크·뒤로가기 등으로 방을 벗어나려 하면 확인 모달. "나가기/결과" 같은 의도된 이동은 통과.
+let leavingIntentionally = false
+const showLeaveConfirm = ref(false)
+let resolveLeave: ((ok: boolean) => void) | null = null
+onBeforeRouteLeave(() => {
+  if (leavingIntentionally) return true
+  showLeaveConfirm.value = true
+  return new Promise<boolean>((resolve) => (resolveLeave = resolve))
+})
+function answerLeave(ok: boolean) {
+  showLeaveConfirm.value = false
+  resolveLeave?.(ok)
+  resolveLeave = null
+}
+
 function showResult() {
+  leavingIntentionally = true
   router.push({
     name: RouteName.GameResult,
     query: { game: roomGame.value, room: roomCode.value },
   })
 }
 function leave() {
+  leavingIntentionally = true
   camera.stop()
   router.push({ name: RouteName.Lobby })
 }
-function goLobby() {
-  camera.stop()
-  router.push({ name: RouteName.Lobby })
-}
-const goGames = () => router.push({ name: RouteName.GamesCatalog })
-const goRanking = () => router.push({ name: RouteName.Ranking })
-const goInventory = () => router.push({ name: RouteName.Inventory })
 
 const moves = computed(() => MOVE_PATHS.map((path, i) => ({ path, sel: selectedMove.value === i })))
 const startLabel = computed(() => (isHost.value ? 'START' : 'WAIT'))
@@ -129,25 +139,7 @@ onMounted(() => bgm.setVolume(0.2))
 <template>
   <div class="room-shell">
     <!-- 상단 바 -->
-    <header class="room-header">
-      <button class="brand-btn" title="로비로 이동" @click="goLobby">
-        <BrandLogo subtitle="친구와 함께 즐기는 모션 파티" />
-      </button>
-
-      <nav class="nav">
-        <button class="active" @click="goLobby">로비</button>
-        <button @click="goGames">게임</button>
-        <button @click="goRanking">랭킹</button>
-        <button @click="goInventory">인벤토리</button>
-      </nav>
-
-      <BgmToggle />
-      <div class="px coin"><CoinIcon :size="15" /><span class="c-y">1,250</span><span class="c-g plus">＋</span></div>
-      <div class="me">
-        <div class="me-avatar">😎</div>
-        <div class="me-text"><div class="px">P1</div><div class="lv">LV.12</div></div>
-      </div>
-    </header>
+    <AppHeader />
 
     <div class="room-ribbon">
       <span class="px-kicker"><i /> LIVE PARTY ROOM</span>
@@ -316,6 +308,15 @@ onMounted(() => bgm.setVolume(0.2))
     <Transition name="toast">
       <div v-if="toast" class="px room-toast">{{ toast }}</div>
     </Transition>
+
+    <PixelModal v-if="showLeaveConfirm" @close="answerLeave(false)">
+      <h3 class="leave-title">🚪 게임을 떠나시겠어요?</h3>
+      <p class="leave-desc">지금 나가면 진행 중인 방에서 나가게 돼요.</p>
+      <div class="leave-actions">
+        <PixelButton block @click="answerLeave(false)">취소</PixelButton>
+        <PixelButton variant="primary" block @click="answerLeave(true)">나가기</PixelButton>
+      </div>
+    </PixelModal>
   </div>
 </template>
 
@@ -341,36 +342,11 @@ onMounted(() => bgm.setVolume(0.2))
 .c-y { color: #f0a815; }
 .c-g { color: #5cbf4a; }
 
-/* 상단 바 */
-.room-header {
-  height: 78px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 0 28px;
-  background: rgba(255, 253, 247, 0.96);
-  border-bottom: var(--border);
-  z-index: 10;
-}
-.brand-btn { min-width: 228px; display: flex; border: 0; background: transparent; padding: 0; text-align: left; }
-.nav { display: flex; gap: 8px; margin-right: auto; }
-.nav button {
-  padding: 11px 15px; font-size: 11px; font-weight: 700;
-  border: 0; background: transparent; color: var(--c-ink); border-radius: 12px;
-}
-.nav button.active { border: 2px solid var(--c-ink); background: var(--c-yellow); box-shadow: var(--shadow-sm); }
-.coin {
-  display: flex; align-items: center; gap: 9px;
-  padding: 9px 11px; background: #fff;
-  border: 2px solid var(--c-ink); border-radius: var(--radius-sm);
-}
-.coin .plus { font-size: 13px; cursor: pointer; }
-.me { display: flex; align-items: center; gap: 10px; padding: 5px 10px 5px 5px; background: #fff; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); }
-.me-avatar { width: 36px; height: 36px; display: grid; place-items: center; background: var(--c-mint-soft); border: 2px solid var(--c-ink); border-radius: 9px; font-size: 19px; }
-.me-text { line-height: 1.5; }
-.me-text .px { font-size: 9px; }
-.lv { font-size: 10px; color: #a99f86; margin-top: 3px; }
+/* 이탈 확인 모달 */
+.leave-title { margin: 0 0 8px; font-size: 15px; }
+.leave-desc { margin: 0 0 18px; font-size: 11px; color: var(--c-muted); line-height: 1.6; }
+.leave-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
 .room-ribbon { flex: none; height: 54px; padding: 0 28px; display: flex; align-items: center; gap: 14px; border-bottom: 2px solid rgba(56, 38, 61, .18); background: linear-gradient(110deg, rgba(207, 244, 231, .95), rgba(255, 240, 185, .95)); z-index: 5; }
 .room-ribbon .px-kicker { padding: 5px 9px; font-size: 8px; }
 .room-ribbon .px-kicker i { width: 7px; height: 7px; border-radius: 50%; background: var(--c-coral); animation: px-blink 1s steps(2) infinite; }
