@@ -6,8 +6,8 @@ import jakarta.validation.Payload;
 import java.lang.annotation.*;
 
 /**
- * 비밀번호 규칙: 8~64자, 영문 소문자·대문자·숫자·특수문자 중 3종 이상 조합.
- * (요구사항 S15P11A706-21 "비밀번호 규칙(길이·조합)"의 구체값 — 명세서에 수치가 없어 팀 합의값으로 고정)
+ * 비밀번호 규칙: 12~64자, 영문 소문자·대문자·숫자·특수문자 중 3종 이상 조합.
+ * (요구사항 S15P11A706-21 "비밀번호 규칙(길이·조합)"의 구체값 — 프론트 화면 규칙에 맞춰 최소 12자로 통일)
  */
 @Documented
 @Constraint(validatedBy = PasswordValidator.class)
@@ -15,7 +15,7 @@ import java.lang.annotation.*;
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Password {
 
-    String message() default "비밀번호는 8~64자이며, 영문 소문자·대문자·숫자·특수문자 중 3종 이상을 조합해야 합니다.";
+    String message() default "비밀번호는 12~64자이며, 영문 소문자·대문자·숫자·특수문자 중 3종 이상을 조합해야 합니다.";
 
     Class<?>[] groups() default {};
 
