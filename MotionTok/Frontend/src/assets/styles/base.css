@@ -1,0 +1,54 @@
+/**
+ * 전역 리셋 + 기본 타이포. 화면별 배경/레이아웃은 각 View의 scoped 스타일에서 담당합니다.
+ * 여기에는 "모든 화면 공통"인 것만 두세요. (충돌 방지: 화면 전용 규칙 금지)
+ */
+* {
+  box-sizing: border-box;
+  image-rendering: pixelated;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-pixel);
+  color: var(--c-ink);
+  background: var(--c-cream);
+}
+
+#app {
+  height: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: var(--c-blue);
+  text-decoration: none;
+}
+
+/* 포커스 접근성 — 픽셀 아웃라인 */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 4px solid rgba(101, 121, 221, 0.32);
+  outline-offset: 3px;
+}
+
+::placeholder {
+  color: #ad9daf;
+}
