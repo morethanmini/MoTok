@@ -1,6 +1,7 @@
 <script setup lang="ts">
-/** 친구 — 목록/요청/추가 (API §6 /friends). */
+/** 친구 — 목록/요청/추가/방 합류 (API §6 /friends). */
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   friendsApi,
   ApiError,
@@ -9,12 +10,14 @@ import {
   type Presence,
 } from '@/api'
 import { useAsyncData } from '@/composables/useAsyncData'
+import { RouteName } from '@/router/routeNames'
 import AppPage from '@/components/common/AppPage.vue'
 import PixelCard from '@/components/common/PixelCard.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import { useToast } from '@/composables/useToast'
 
+const router = useRouter()
 const { message: toast, flash } = useToast()
 
 const MOCK_FRIENDS: Friend[] = [
@@ -54,6 +57,18 @@ async function respond(req: FriendRequestItem, action: 'ACCEPT' | 'REJECT') {
   requests.value = requests.value.filter((r) => r.requestId !== req.requestId)
   flash(action === 'ACCEPT' ? '친구를 수락했어요' : '요청을 거절했어요')
 }
+// 친구가 참여 중인 방으로 합류 (GET /friends/{friendId}/room → roomId 조회 후 기기 점검 화면으로)
+async function joinFriendRoom(f: Friend) {
+  try {
+    const { roomId } = await friendsApi.room(f.userId)
+    if (!roomId) return flash(`${f.nickname}님은 지금 합류할 수 있는 방이 없어요`)
+    router.push({ name: RouteName.DeviceSetup, query: { room: roomId } })
+  } catch (e) {
+    // 백엔드 미연동 시 친구 목록의 currentRoomId로 폴백
+    if (f.currentRoomId) return router.push({ name: RouteName.DeviceSetup, query: { room: f.currentRoomId } })
+    flash(e instanceof ApiError ? e.message : '방 정보를 불러오지 못했어요 (백엔드 미연동)')
+  }
+}
 async function removeFriend(f: Friend) {
   if (!confirm(`${f.nickname}님을 친구에서 삭제할까요?`)) return
   try {
@@ -86,7 +101,7 @@ async function removeFriend(f: Friend) {
             <b>{{ f.nickname }}</b>
             <small>{{ presenceLabel[f.presence] }}<template v-if="f.currentRoomId"> · {{ f.currentRoomId }}</template></small>
           </div>
-          <PixelButton v-if="f.presence === 'IN_ROOM'" variant="yellow" @click="flash('입장 기능은 연동 예정')">함께하기</PixelButton>
+          <PixelButton v-if="f.presence === 'IN_ROOM'" variant="yellow" @click="joinFriendRoom(f)">함께하기</PixelButton>
           <button class="del" @click="removeFriend(f)">삭제</button>
         </li>
         <li v-if="friends.length === 0" class="empty">친구가 없어요</li>

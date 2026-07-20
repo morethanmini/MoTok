@@ -3,8 +3,8 @@
  * 인벤토리 + 화면 꾸미기 (API §2 /users/me/inventory, /users/me/decoration).
  * 보유 아이템을 장착/해제하고, 장착 구성을 화면 꾸미기 설정으로 저장.
  */
-import { computed } from 'vue'
-import { usersApi, ApiError, type InventoryItem, type ItemCategory } from '@/api'
+import { computed, watch } from 'vue'
+import { usersApi, ApiError, type InventoryItem, type ItemCategory, type DecorationConfig } from '@/api'
 import { useAsyncData } from '@/composables/useAsyncData'
 import AppPage from '@/components/common/AppPage.vue'
 import PixelCard from '@/components/common/PixelCard.vue'
@@ -27,8 +27,33 @@ const emojiOf: Record<ItemCategory, string> = { MASK: '🎭', EFFECT: '✨', STI
 const CATEGORY_ORDER: ItemCategory[] = ['MASK', 'EFFECT', 'STICKER', 'BACKGROUND']
 const CATEGORY_LABEL: Record<ItemCategory, string> = { MASK: '가면', EFFECT: '효과', STICKER: '스티커', BACKGROUND: '배경' }
 
+const MOCK_DECORATION: DecorationConfig = { config: { equippedItemIds: [2, 8] } }
+
 const { data: inventory } = useAsyncData(() => usersApi.getInventory(), MOCK_INV)
+const { data: decoration } = useAsyncData(() => usersApi.getDecoration(), MOCK_DECORATION)
 const equipped = computed(() => inventory.value.filter((i) => i.equipped))
+
+// 저장된 꾸미기(장착 구성)를 인벤토리 장착 상태에 반영. (idempotent → 재적용해도 루프 없음)
+function savedEquippedIds(deco: DecorationConfig): number[] | null {
+  const ids = deco.config?.equippedItemIds
+  return Array.isArray(ids) ? (ids as number[]) : null
+}
+watch(
+  [inventory, decoration],
+  ([inv, deco]) => {
+    const ids = savedEquippedIds(deco)
+    if (!ids) return
+    let changed = false
+    const next = inv.map((i) => {
+      const eq = ids.includes(i.itemId)
+      if (eq === i.equipped) return i
+      changed = true
+      return { ...i, equipped: eq }
+    })
+    if (changed) inventory.value = next
+  },
+  { immediate: true },
+)
 
 // 카테고리별 그룹 (아이템 없는 카테고리는 제외)
 const grouped = computed(() =>
