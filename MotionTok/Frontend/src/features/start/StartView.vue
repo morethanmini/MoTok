@@ -1,21 +1,31 @@
 <script setup lang="ts">
 /** 시작(랜딩) 화면 — 좌: 떠오르는 게임 비주얼, 우: 진입 액션. */
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { useSessionStore } from '@/stores/session'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
+import PixelModal from '@/components/common/PixelModal.vue'
 import FloatStage from './components/FloatStage.vue'
 
 const router = useRouter()
 const session = useSessionStore()
 
+const showGuestWarning = ref(false)
+
 const goAuth = (mode: 'login' | 'signup') =>
   router.push({ name: RouteName.Auth, query: { mode } })
 
 const playAsGuest = () => {
+  showGuestWarning.value = true
+}
+
+const confirmGuest = () => {
+  showGuestWarning.value = false
   session.loginAsGuest()
-  router.push({ name: RouteName.Lobby })
+  // 게스트는 멀티플레이 로비 대신 게임(1인) 화면에서 시작
+  router.push({ name: RouteName.GamesCatalog })
 }
 </script>
 
@@ -27,7 +37,7 @@ const playAsGuest = () => {
 
     <section class="panel">
       <div class="stars">★ ✦</div>
-      <BrandLogo subtitle="" title="미니게임 놀이터" />
+      <BrandLogo subtitle="" title="MoToK" />
       <h1>몸을 움직이면<br />게임이 시작돼요!</h1>
       <p>
         친구와 화상으로 만나 별자리, 리듬, 낚시와<br />
@@ -44,10 +54,18 @@ const playAsGuest = () => {
           게스트로 1인 게임 체험
         </PixelButton>
       </div>
-      <p class="note">
+    </section>
+
+    <PixelModal v-if="showGuestWarning" @close="showGuestWarning = false">
+      <h3>⚠ 게스트 체험 안내</h3>
+      <p>
         게스트는 1인 플레이만 가능하며 멀티플레이·랭킹 등록은 로그인 후 이용할 수 있어요.
       </p>
-    </section>
+      <div class="modal-actions">
+        <PixelButton block @click="showGuestWarning = false">취소</PixelButton>
+        <PixelButton variant="guest" block @click="confirmGuest">계속하기</PixelButton>
+      </div>
+    </PixelModal>
   </main>
 </template>
 
@@ -121,13 +139,24 @@ const playAsGuest = () => {
   gap: 12px;
   margin-top: 28px;
 }
-.note {
-  margin-top: 22px;
-  padding: 11px;
-  border: 2px dashed #bcaebe;
-  border-radius: 12px;
-  font-size: 9px !important;
+.modal-actions {
+  display: flex;
+  gap: 9px;
+  margin-top: 18px;
+}
+.modal-actions > * {
+  flex: 1;
+}
+
+/* ── 게스트 경고 모달 ───────────────────────── */
+h3 {
+  margin: 0 0 9px;
+}
+h3 + p {
+  margin: 0;
   color: var(--c-muted);
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 @media (max-width: 860px) {
