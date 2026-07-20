@@ -10,6 +10,7 @@ import { MOCK_FRIENDS, MOCK_ROOMS, type Room } from './data'
 
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import BgmToggle from '@/components/common/BgmToggle.vue'
+import CoinIcon from '@/components/common/CoinIcon.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import RoomCard from './components/RoomCard.vue'
@@ -23,7 +24,9 @@ const session = useSessionStore()
 const bgm = useBgm()
 const { message: toast, flash } = useToast()
 
-const showSplash = ref(true)
+// 스플래시(로딩)는 세션 첫 진입에만 표시. 이후 로비 재방문 시엔 건너뜀.
+const SPLASH_SEEN_KEY = 'motok.splashSeen'
+const showSplash = ref(sessionStorage.getItem(SPLASH_SEEN_KEY) !== '1')
 const query = ref('')
 const showJoin = ref(false)
 const showCreate = ref(false)
@@ -41,6 +44,7 @@ onMounted(() => {
 
 function enterLobby() {
   showSplash.value = false
+  sessionStorage.setItem(SPLASH_SEEN_KEY, '1')
   void bgm.play()
 }
 
@@ -107,18 +111,15 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
       <BrandLogo class="brand" subtitle="친구와 함께 즐기는 모션 파티" />
       <nav class="nav">
         <button class="active">로비</button>
-        <button>게임</button>
-        <button>랭킹</button>
-        <button>내 아바타</button>
+        <button @click="router.push({ name: RouteName.GamesCatalog })">게임</button>
+        <button @click="router.push({ name: RouteName.Ranking })">랭킹</button>
+        <button @click="router.push({ name: RouteName.Shop })">상점</button>
       </nav>
-      <label class="search">
-        ⌕ <input v-model="query" placeholder="방 제목을 검색해보세요" />
-      </label>
       <div class="account">
         <BgmToggle />
         <span class="user-pill">{{ session.userLabel }}</span>
-        <div class="coin">◆ 1,250 <b>＋</b></div>
-        <div class="avatar">😎</div>
+        <div class="coin"><CoinIcon :size="15" /> 1,250 <b>＋</b></div>
+        <button class="avatar" title="마이페이지" @click="router.push({ name: RouteName.MyPage })">😎</button>
       </div>
     </header>
 
@@ -144,6 +145,9 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
         <div class="section-head">
           <h2>공개방</h2>
           <p>{{ roomResult }}</p>
+          <label class="room-search">
+            ⌕ <input v-model="query" placeholder="방 제목 검색" />
+          </label>
           <button>새로고침 ↻</button>
         </div>
 
@@ -170,7 +174,10 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
         </section>
 
         <section class="side-card friends-card">
-          <div class="side-title">접속 중인 친구 <span>{{ friends.length }}명</span></div>
+          <div class="side-title">
+            접속 중인 친구
+            <button class="side-link" @click="router.push({ name: RouteName.Friends })">전체 →</button>
+          </div>
           <FriendItem
             v-for="(f, i) in friends"
             :key="i"
@@ -254,20 +261,6 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 .nav { display: flex; gap: 8px; }
 .nav button { border: 0; background: transparent; padding: 11px 15px; border-radius: 12px; font-weight: 700; }
 .nav button.active { background: var(--c-yellow); border: 2px solid var(--c-ink); box-shadow: var(--shadow-sm); }
-.search {
-  height: 42px;
-  max-width: 290px;
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 0 13px;
-  background: #fff;
-  border: 2px solid var(--c-ink);
-  border-radius: var(--radius-md);
-  box-shadow: 3px 3px 0 #d9cbd9;
-}
-.search input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; font-size: 12px; }
 .account { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .user-pill { padding: 6px 9px; border: 2px solid var(--c-ink); border-radius: 999px; background: #fff; font-size: 9px; font-weight: 700; }
 .coin { height: 39px; padding: 0 12px; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; display: flex; align-items: center; gap: 7px; font-weight: 700; }
@@ -324,10 +317,24 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   font-size: 10px;
 }
 
-.section-head { display: flex; align-items: end; margin: 27px 0 12px; }
+.section-head { display: flex; align-items: center; margin: 27px 0 12px; }
 .section-head h2 { margin: 0; font-size: 17px; }
-.section-head p { margin: 0 0 1px 9px; font-size: 10px; color: var(--c-muted); }
-.section-head button { margin-left: auto; border: 0; background: transparent; color: var(--c-blue); font-size: 11px; font-weight: 700; }
+.section-head p { margin: 0 0 0 9px; font-size: 10px; color: var(--c-muted); }
+.room-search {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 11px;
+  background: #fff;
+  border: 2px solid var(--c-ink);
+  border-radius: 11px;
+  box-shadow: 2px 2px 0 #d9cbd9;
+  font-size: 12px;
+}
+.room-search input { width: 150px; border: 0; outline: 0; background: transparent; font-size: 11px; }
+.section-head > button { margin-left: 12px; border: 0; background: transparent; color: var(--c-blue); font-size: 11px; font-weight: 700; }
 
 .room-list { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 14px; }
 .empty {
@@ -346,6 +353,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 .friends-card { flex: 1; min-height: 0; overflow: auto; }
 .side-title { display: flex; align-items: center; font-size: 13px; font-weight: 700; margin-bottom: 13px; }
 .side-title span { margin-left: auto; font-size: 9px; color: var(--c-mint); }
+.side-link { margin-left: auto; border: 0; background: transparent; color: var(--c-blue); font-size: 9px; font-weight: 700; }
 .quick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .quick button { height: 62px; border: 2px solid var(--c-ink); border-radius: var(--radius-md); background: var(--c-yellow); font-size: 11px; font-weight: 700; box-shadow: var(--shadow-sm); }
 .quick button:last-child { background: var(--c-mint-soft); }

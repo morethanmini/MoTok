@@ -50,7 +50,7 @@ defineEmits<{ close: []; launch: [game: GameEntry] }>()
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: px-pop 0.18s steps(3);
+  /* 배경은 즉시 표시 */
 }
 .dialog {
   width: 840px;
@@ -59,6 +59,8 @@ defineEmits<{ close: []; launch: [game: GameEntry] }>()
   border: var(--border-thick);
   padding: 28px 30px 32px;
   box-shadow: 8px 8px 0 rgba(43, 35, 51, 0.3);
+  /* 창만 팝업 애니메이션 */
+  animation: px-pop 0.18s steps(3);
 }
 .head { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
 .head h2 { margin: 0; font-size: 16px; color: #f0a815; }
