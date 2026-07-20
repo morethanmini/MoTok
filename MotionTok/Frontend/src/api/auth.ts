@@ -3,32 +3,10 @@
  * 경로·필드명·응답 스키마는 명세서를 그대로 따른다.
  */
 import { request } from './client'
+// 도메인 타입은 types.ts를 단일 원천으로 재사용한다(중복 정의 방지).
+import type { Availability, TokenResponse, UserProfile } from './types'
 
-/** 명세서 UserProfile */
-export interface UserProfile {
-  id: number
-  email: string
-  nickname: string
-  role: 'USER' | 'ADMIN'
-  pointBalance: number
-  createdAt: string
-}
-
-/** 명세서 TokenResponse */
-export interface TokenResponse {
-  tokenType: string
-  accessToken: string
-  refreshToken: string
-  expiresIn: number
-  user: UserProfile
-}
-
-/** 명세서 Availability */
-export interface Availability {
-  available: boolean
-}
-
-/** 명세서 EmailVerifyResult */
+/** POST /auth/email/verify 응답 — 인증 통과 증명 토큰(명세서 EmailVerifyResult) */
 export interface EmailVerifyResult {
   verificationToken: string
   expiresIn: number
