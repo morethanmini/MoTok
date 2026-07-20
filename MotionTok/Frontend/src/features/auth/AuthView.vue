@@ -4,6 +4,8 @@ import { computed, nextTick, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { useSessionStore } from '@/stores/session'
+import * as authApi from '@/api/auth'
+import { ApiError } from '@/api/client'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 
@@ -28,7 +30,13 @@ const emailFormatError = ref(false)
 const emailShake = ref(false)
 const codeError = ref(false)
 const codeShake = ref(false)
-let mockEmailCode = ''
+/** 이메일/인증번호 영역에 띄울 서버 오류 문구 */
+const emailErrorMsg = ref('')
+const codeErrorMsg = ref('')
+/** 인증 완료 증명 토큰 — 가입 요청에 실어 보내면 서버가 1회 소비한다 */
+const verificationToken = ref('')
+const sendingCode = ref(false)
+const verifyingCode = ref(false)
 let shakeTimer: ReturnType<typeof setTimeout> | undefined
 let codeShakeTimer: ReturnType<typeof setTimeout> | undefined
 let countdownTimer: ReturnType<typeof setInterval> | undefined
@@ -59,64 +67,139 @@ onUnmounted(() => {
   clearTimeout(codeShakeTimer)
 })
 
-function sendEmailCode() {
+/** 이메일 입력칸을 흔들며 오류 표시 */
+function shakeEmail() {
+  emailShake.value = false
+  nextTick(() => {
+    emailShake.value = true
+  })
+  clearTimeout(shakeTimer)
+  shakeTimer = setTimeout(() => {
+    emailShake.value = false
+  }, 500)
+}
+
+/** 인증번호 입력칸을 흔들며 오류 표시 */
+function shakeCode() {
+  codeShake.value = false
+  nextTick(() => {
+    codeShake.value = true
+  })
+  clearTimeout(codeShakeTimer)
+  codeShakeTimer = setTimeout(() => {
+    codeShake.value = false
+  }, 500)
+}
+
+/**
+ * 인증번호 발송. 서버가 이메일 중복을 먼저 검사하므로,
+ * 이미 가입된 이메일이면 메일이 나가지 않고 409로 거절된다.
+ */
+async function sendEmailCode() {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value)) {
     emailFormatError.value = true
-    emailShake.value = false
-    nextTick(() => {
-      emailShake.value = true
-    })
-    clearTimeout(shakeTimer)
-    shakeTimer = setTimeout(() => {
-      emailShake.value = false
-    }, 500)
+    emailErrorMsg.value = ''
+    shakeEmail()
     return
   }
   emailFormatError.value = false
+  emailErrorMsg.value = ''
   codeError.value = false
+  codeErrorMsg.value = ''
   emailCode.value = ''
-  // TODO: 실제 인증코드 발송 API 연동 (아래는 데모용 모의 코드)
-  mockEmailCode = String(Math.floor(100000 + Math.random() * 900000))
-  console.log('[demo] 이메일 인증코드:', mockEmailCode)
-  emailSent.value = true
-  startCountdown()
-}
-function verifyEmailCode() {
-  if (emailCode.value.trim() !== mockEmailCode) {
-    codeError.value = true
-    codeShake.value = false
-    nextTick(() => {
-      codeShake.value = true
+  sendingCode.value = true
+  try {
+    await authApi.sendEmailVerificationCode(email.value.trim())
+    emailSent.value = true
+    startCountdown()
+  } catch (e) {
+    emailErrorMsg.value = messageFor(e, {
+      AUTH_EMAIL_ALREADY_REGISTERED: '이미 가입된 이메일입니다.',
+      AUTH_RESEND_COOLDOWN: '잠시 후 다시 요청해 주세요.',
+      AUTH_SEND_LIMIT_EXCEEDED: '하루 인증번호 발송 한도를 초과했습니다.',
     })
-    clearTimeout(codeShakeTimer)
-    codeShakeTimer = setTimeout(() => {
-      codeShake.value = false
-    }, 500)
+    shakeEmail()
+  } finally {
+    sendingCode.value = false
+  }
+}
+
+/** 인증번호 검증 — 성공 시 가입에 쓸 verificationToken을 받아 보관한다. */
+async function verifyEmailCode() {
+  const code = emailCode.value.trim()
+  if (!/^\d{6}$/.test(code)) {
+    codeError.value = true
+    codeErrorMsg.value = '인증번호는 6자리 숫자입니다.'
+    shakeCode()
     return
   }
-  codeError.value = false
-  clearInterval(countdownTimer)
-  // TODO: 실제 인증코드 검증 API 연동
-  emailVerified.value = true
+  verifyingCode.value = true
+  try {
+    const res = await authApi.verifyEmailCode(email.value.trim(), code)
+    verificationToken.value = res.verificationToken
+    codeError.value = false
+    codeErrorMsg.value = ''
+    clearInterval(countdownTimer)
+    emailVerified.value = true
+  } catch (e) {
+    codeError.value = true
+    codeErrorMsg.value = messageFor(e, {
+      AUTH_VERIFICATION_CODE_INVALID: '인증번호가 올바르지 않아요.',
+      AUTH_VERIFY_ATTEMPT_EXCEEDED: '시도 횟수를 초과했어요. 인증번호를 다시 받아주세요.',
+    })
+    shakeCode()
+  } finally {
+    verifyingCode.value = false
+  }
 }
 
 // 닉네임 중복확인
 const nicknameChecked = ref(false)
 const nicknameAvailable = ref(false)
+const nicknameMsg = ref('')
+const checkingNickname = ref(false)
 
-function checkNickname() {
-  // TODO: 실제 닉네임 중복확인 API 연동
-  nicknameChecked.value = true
-  nicknameAvailable.value = true
+async function checkNickname() {
+  const value = nickname.value.trim()
+  // 서버 가입 규칙(2~16자)과 동일하게 미리 거른다 — 통과시켜 놓고 가입에서 실패하면 안 된다.
+  if (value.length < 2 || value.length > 16) {
+    nicknameChecked.value = true
+    nicknameAvailable.value = false
+    nicknameMsg.value = '닉네임은 2~16자여야 해요.'
+    return
+  }
+  checkingNickname.value = true
+  try {
+    const res = await authApi.checkNicknameAvailability(value)
+    nicknameChecked.value = true
+    nicknameAvailable.value = res.available
+    nicknameMsg.value = res.available
+      ? '✓ 사용할 수 있는 닉네임이에요'
+      : '✕ 이미 사용 중인 닉네임이에요'
+  } catch (e) {
+    nicknameChecked.value = true
+    nicknameAvailable.value = false
+    nicknameMsg.value = messageFor(e, {})
+  } finally {
+    checkingNickname.value = false
+  }
+}
+
+/** ApiError면 code에 매핑된 문구를, 없으면 서버 message를 그대로 쓴다. */
+function messageFor(e: unknown, map: Record<string, string>): string {
+  if (e instanceof ApiError) return map[e.code] ?? e.message
+  if (e instanceof Error) return e.message
+  return '알 수 없는 오류가 발생했습니다.'
 }
 
 // 비밀번호 서식 / 일치 확인
 const showPassword = ref(false)
 const showPasswordConfirm = ref(false)
 
+// 서버 규칙과 동일: 12~64자, 소문자·대문자·숫자·특수문자 중 3종 이상
 const passwordValid = computed(() => {
   const pw = password.value
-  if (pw.length < 12) return false
+  if (pw.length < 12 || pw.length > 64) return false
   const kinds = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/].filter((re) => re.test(pw)).length
   return kinds >= 3
 })
@@ -127,16 +210,74 @@ const passwordsMatch = computed(
 const canSubmitSignup = computed(
   () =>
     emailVerified.value &&
+    verificationToken.value !== '' &&
     nicknameChecked.value &&
     nicknameAvailable.value &&
     passwordValid.value &&
     passwordsMatch.value,
 )
 
+/** 폼 전체에 대한 서버 오류 문구 */
+const submitError = ref('')
+const submitting = ref(false)
+
+/**
+ * 가입 후 곧바로 로그인한다.
+ * 명세상 POST /auth/signup의 응답은 UserProfile이라 토큰이 없기 때문에,
+ * 화면 상태에 남아 있는 이메일·비밀번호로 한 번 더 로그인해 토큰을 받는다.
+ */
+async function submitSignup() {
+  submitError.value = ''
+  submitting.value = true
+  try {
+    await authApi.signup({
+      email: email.value.trim(),
+      password: password.value,
+      nickname: nickname.value.trim(),
+      verificationToken: verificationToken.value,
+    })
+    const token = await authApi.login(email.value.trim(), password.value)
+    session.applyToken(token)
+    router.push({ name: RouteName.Lobby })
+  } catch (e) {
+    submitError.value = messageFor(e, {
+      AUTH_VERIFICATION_TOKEN_INVALID: '이메일 인증이 만료됐어요. 인증을 다시 진행해 주세요.',
+      AUTH_EMAIL_ALREADY_REGISTERED: '이미 가입된 이메일입니다.',
+      AUTH_NICKNAME_ALREADY_USED: '이미 사용 중인 닉네임이에요.',
+    })
+    // 인증 토큰이 만료·소모된 경우 이메일 인증 단계로 되돌린다.
+    if (e instanceof ApiError && e.code === 'AUTH_VERIFICATION_TOKEN_INVALID') {
+      emailVerified.value = false
+      emailSent.value = false
+      verificationToken.value = ''
+    }
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function submitLogin() {
+  submitError.value = ''
+  submitting.value = true
+  try {
+    const token = await authApi.login(email.value.trim(), password.value, rememberMe.value)
+    session.applyToken(token, rememberMe.value)
+    router.push({ name: RouteName.Lobby })
+  } catch (e) {
+    submitError.value = messageFor(e, {
+      AUTH_INVALID_CREDENTIALS: '이메일 또는 비밀번호를 확인해 주세요.',
+      AUTH_ACCOUNT_NOT_ACTIVE: '이용이 제한된 계정입니다.',
+    })
+  } finally {
+    submitting.value = false
+  }
+}
+
+const rememberMe = ref(false)
+
 function submit() {
-  // TODO: 실제 인증 API 연동
-  session.login({ email: email.value, nickname: nickname.value || undefined })
-  router.push({ name: RouteName.Lobby })
+  if (submitting.value) return
+  return isSignup.value ? submitSignup() : submitLogin()
 }
 
 const back = () => router.push({ name: RouteName.Start })
@@ -163,15 +304,16 @@ const back = () => router.push({ name: RouteName.Start })
               type="button"
               class="inline-btn"
               :class="{ shake: emailShake }"
-              :disabled="emailVerified"
+              :disabled="emailVerified || sendingCode"
               @click="sendEmailCode"
             >
-              {{ emailSent ? '재전송' : '코드 보내기' }}
+              {{ sendingCode ? '전송 중…' : emailSent ? '재전송' : '코드 보내기' }}
             </button>
           </div>
           <div v-if="emailFormatError" class="check-msg bad">
             이메일 형식을 맞추어 작성해주세요.
           </div>
+          <div v-else-if="emailErrorMsg" class="check-msg bad">{{ emailErrorMsg }}</div>
         </label>
 
         <label v-if="emailSent && !emailVerified" class="field">
@@ -188,12 +330,15 @@ const back = () => router.push({ name: RouteName.Start })
               type="button"
               class="inline-btn"
               :class="{ shake: codeShake }"
+              :disabled="verifyingCode"
               @click="verifyEmailCode"
             >
-              인증 확인
+              {{ verifyingCode ? '확인 중…' : '인증 확인' }}
             </button>
           </div>
-          <div v-if="codeError" class="check-msg bad">인증번호가 올바르지 않아요.</div>
+          <div v-if="codeError" class="check-msg bad">
+            {{ codeErrorMsg || '인증번호가 올바르지 않아요.' }}
+          </div>
         </label>
         <div v-else-if="emailVerified" class="check-msg ok">✓ 이메일 인증이 완료됐어요</div>
 
@@ -205,14 +350,21 @@ const back = () => router.push({ name: RouteName.Start })
               placeholder="놀이터에서 사용할 이름"
               @input="nicknameChecked = false"
             />
-            <button type="button" class="inline-btn" @click="checkNickname">중복 확인</button>
+            <button
+              type="button"
+              class="inline-btn"
+              :disabled="checkingNickname"
+              @click="checkNickname"
+            >
+              {{ checkingNickname ? '확인 중…' : '중복 확인' }}
+            </button>
           </div>
           <div
             v-if="nicknameChecked"
             class="check-msg"
             :class="nicknameAvailable ? 'ok' : 'bad'"
           >
-            {{ nicknameAvailable ? '✓ 사용할 수 있는 닉네임이에요' : '✕ 이미 사용 중인 닉네임이에요' }}
+            {{ nicknameMsg }}
           </div>
         </label>
 
@@ -270,11 +422,12 @@ const back = () => router.push({ name: RouteName.Start })
           size="lg"
           block
           class="submit"
-          :disabled="!canSubmitSignup"
+          :disabled="!canSubmitSignup || submitting"
           @click="submit"
         >
-          가입하기
+          {{ submitting ? '가입 중…' : '가입하기' }}
         </PixelButton>
+        <div v-if="submitError" class="check-msg bad">{{ submitError }}</div>
 
         <p class="signup-cta">
           <button type="button" @click="mode = 'login'">이미 계정이 있어요</button>
@@ -288,12 +441,25 @@ const back = () => router.push({ name: RouteName.Start })
         </label>
         <label class="field">
           비밀번호
-          <input v-model="password" type="password" placeholder="8자 이상 입력" />
+          <input v-model="password" type="password" placeholder="비밀번호 입력" />
         </label>
 
-        <PixelButton variant="primary" size="lg" block class="submit" @click="submit">
-          로그인
+        <label class="remember">
+          <input v-model="rememberMe" type="checkbox" />
+          로그인 상태 유지
+        </label>
+
+        <PixelButton
+          variant="primary"
+          size="lg"
+          block
+          class="submit"
+          :disabled="submitting"
+          @click="submit"
+        >
+          {{ submitting ? '로그인 중…' : '로그인' }}
         </PixelButton>
+        <div v-if="submitError" class="check-msg bad">{{ submitError }}</div>
 
         <div class="divider"><span>또는</span></div>
 
@@ -480,6 +646,22 @@ const back = () => router.push({ name: RouteName.Start })
 }
 .check-msg.ok { color: var(--c-mint); }
 .check-msg.bad { color: var(--c-coral); }
+
+.remember {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--c-muted);
+}
+.remember input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--c-ink);
+}
 
 .divider {
   position: relative;
