@@ -36,7 +36,7 @@ const confirmGuest = () => {
 
     <section class="panel">
       <div class="stars">★ ✦</div>
-      <BrandLogo subtitle="" title="미니게임 놀이터" />
+      <BrandLogo subtitle="" title="MoToK" />
       <h1>몸을 움직이면<br />게임이 시작돼요!</h1>
       <p>
         친구와 화상으로 만나 별자리, 리듬, 낚시와<br />
