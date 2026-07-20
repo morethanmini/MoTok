@@ -9,6 +9,9 @@ import { useToast } from '@/composables/useToast'
 import { LEFT_FRIENDS, MOVE_PATHS, RIGHT_FRIENDS, type GameEntry } from './data'
 import FriendTile from './components/FriendTile.vue'
 import GamePicker from './components/GamePicker.vue'
+import BrandLogo from '@/components/common/BrandLogo.vue'
+import BgmToggle from '@/components/common/BgmToggle.vue'
+import CoinIcon from '@/components/common/CoinIcon.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -109,6 +112,9 @@ function goLobby() {
   camera.stop()
   router.push({ name: RouteName.Lobby })
 }
+const goGames = () => router.push({ name: RouteName.GamesCatalog })
+const goRanking = () => router.push({ name: RouteName.Ranking })
+const goInventory = () => router.push({ name: RouteName.Inventory })
 
 const moves = computed(() => MOVE_PATHS.map((path, i) => ({ path, sel: selectedMove.value === i })))
 const startLabel = computed(() => (isHost.value ? 'START' : 'WAIT'))
@@ -124,27 +130,31 @@ onMounted(() => bgm.setVolume(0.2))
   <div class="room-shell">
     <!-- 상단 바 -->
     <header class="room-header">
-      <div class="logo-group">
-        <div class="px logo">M</div>
-        <div>
-          <div class="px title"><span class="c-y">MOVE</span><span class="c-g">PARTY</span></div>
-          <div class="sub">함께 움직여요!</div>
-        </div>
-      </div>
+      <button class="brand-btn" title="로비로 이동" @click="goLobby">
+        <BrandLogo subtitle="친구와 함께 즐기는 모션 파티" />
+      </button>
 
       <nav class="nav">
-        <button class="px active" @click="goLobby">LOBBY</button>
-        <button class="px" @click="openPicker">GAMES</button>
-        <button class="px">AVATARS</button>
-        <button class="px">RANK</button>
+        <button class="active" @click="goLobby">로비</button>
+        <button @click="goGames">게임</button>
+        <button @click="goRanking">랭킹</button>
+        <button @click="goInventory">인벤토리</button>
       </nav>
 
-      <div class="px coin"><span class="coin-dot" /><span class="c-y">1250</span><span class="c-g plus">+</span></div>
+      <BgmToggle />
+      <div class="px coin"><CoinIcon :size="15" /><span class="c-y">1,250</span><span class="c-g plus">＋</span></div>
       <div class="me">
         <div class="me-avatar">😎</div>
         <div class="me-text"><div class="px">P1</div><div class="lv">LV.12</div></div>
       </div>
     </header>
+
+    <div class="room-ribbon">
+      <span class="px-kicker"><i /> LIVE PARTY ROOM</span>
+      <b>{{ roomGame }}</b>
+      <span>친구들과 함께 준비 중이에요</span>
+      <div class="ribbon-code">ROOM {{ roomCode }} · 6/8 ONLINE</div>
+    </div>
 
     <!-- 본문 -->
     <main class="room-main">
@@ -172,6 +182,8 @@ onMounted(() => bgm.setVolume(0.2))
       <section class="center">
         <div class="stage">
           <div class="stage-glow" />
+          <img class="stage-art stage-headset" src="/assets/intro/headset.png" alt="" />
+          <img class="stage-art stage-tambourine" src="/assets/intro/tambourine.png" alt="" />
           <div class="stage-toys">
             <i class="token tok-note">♫</i><i class="token tok-star">★</i>
             <i class="token tok-hand">✋</i><i class="token tok-drum">🥁</i>
@@ -316,9 +328,12 @@ onMounted(() => bgm.setVolume(0.2))
   flex-direction: column;
   position: relative;
   overflow: auto;
-  background-color: var(--c-paper);
-  background-image: radial-gradient(circle at 1px 1px, rgba(56, 38, 61, 0.095) 1.2px, transparent 1.5px);
-  background-size: 18px 18px;
+  background-color: #fff8e9;
+  background-image:
+    linear-gradient(25deg, transparent 0 47%, rgba(120, 206, 177, 0.1) 47% 53%, transparent 53%),
+    linear-gradient(155deg, transparent 0 47%, rgba(239, 104, 114, 0.08) 47% 53%, transparent 53%),
+    radial-gradient(rgba(56, 38, 61, 0.09) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 18px 18px;
   color: var(--c-ink-soft);
   font-family: var(--font-pixel);
 }
@@ -328,48 +343,40 @@ onMounted(() => bgm.setVolume(0.2))
 
 /* 상단 바 */
 .room-header {
+  height: 78px;
   flex: none;
   display: flex;
   align-items: center;
   gap: 18px;
-  padding: 14px 22px;
-  background: #fffdf3;
-  border-bottom: var(--border-thick);
+  padding: 0 28px;
+  background: rgba(255, 253, 247, 0.96);
+  border-bottom: var(--border);
+  z-index: 10;
 }
-.logo-group { display: flex; align-items: center; gap: 12px; }
-.logo {
-  width: 44px; height: 44px;
-  background: var(--c-yellow);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 20px; color: var(--c-ink-soft);
-  border: 3px solid var(--c-ink-soft);
-  border-radius: 13px;
-  box-shadow: 4px 4px 0 var(--c-ink-soft);
-}
-.title { font-size: 15px; }
-.sub { font-size: 11px; color: #a99f86; margin-top: 4px; }
-.nav { display: flex; gap: 8px; margin: 0 auto; }
+.brand-btn { min-width: 228px; display: flex; border: 0; background: transparent; padding: 0; text-align: left; }
+.nav { display: flex; gap: 8px; margin-right: auto; }
 .nav button {
-  padding: 11px 16px; font-size: 9px;
-  border: 3px solid var(--c-ink-soft);
-  background: #fff; color: var(--c-ink-soft);
-  border-radius: 11px;
-  box-shadow: 3px 3px 0 var(--c-ink-soft);
+  padding: 11px 15px; font-size: 11px; font-weight: 700;
+  border: 0; background: transparent; color: var(--c-ink); border-radius: 12px;
 }
-.nav button.active { background: var(--c-yellow); }
+.nav button.active { border: 2px solid var(--c-ink); background: var(--c-yellow); box-shadow: var(--shadow-sm); }
 .coin {
   display: flex; align-items: center; gap: 9px;
   padding: 9px 11px; background: #fff;
-  border: 3px solid var(--c-ink-soft);
-  box-shadow: 3px 3px 0 rgba(43, 35, 51, 0.2);
+  border: 2px solid var(--c-ink); border-radius: var(--radius-sm);
 }
-.coin-dot { width: 12px; height: 12px; background: #f5c518; box-shadow: 0 -4px 0 #f5c518, 0 4px 0 #f5c518, -4px 0 0 #f5c518, 4px 0 0 #f5c518; }
 .coin .plus { font-size: 13px; cursor: pointer; }
-.me { display: flex; align-items: center; gap: 10px; padding: 6px 12px 6px 6px; background: #fff; border: 3px solid var(--c-ink-soft); box-shadow: 3px 3px 0 rgba(43, 35, 51, 0.2); }
-.me-avatar { width: 38px; height: 38px; display: grid; place-items: center; background: #f3ead2; border: 2px solid var(--c-ink-soft); font-size: 20px; }
+.me { display: flex; align-items: center; gap: 10px; padding: 5px 10px 5px 5px; background: #fff; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); }
+.me-avatar { width: 36px; height: 36px; display: grid; place-items: center; background: var(--c-mint-soft); border: 2px solid var(--c-ink); border-radius: 9px; font-size: 19px; }
 .me-text { line-height: 1.5; }
 .me-text .px { font-size: 9px; }
 .lv { font-size: 10px; color: #a99f86; margin-top: 3px; }
+.room-ribbon { flex: none; height: 54px; padding: 0 28px; display: flex; align-items: center; gap: 14px; border-bottom: 2px solid rgba(56, 38, 61, .18); background: linear-gradient(110deg, rgba(207, 244, 231, .95), rgba(255, 240, 185, .95)); z-index: 5; }
+.room-ribbon .px-kicker { padding: 5px 9px; font-size: 8px; }
+.room-ribbon .px-kicker i { width: 7px; height: 7px; border-radius: 50%; background: var(--c-coral); animation: px-blink 1s steps(2) infinite; }
+.room-ribbon b { font-size: 12px; }
+.room-ribbon > span:not(.px-kicker) { color: var(--c-muted); font-size: 9px; }
+.ribbon-code { margin-left: auto; padding: 7px 10px; border: 2px solid var(--c-ink); border-radius: 9px; background: #fff; font-size: 8px; font-weight: 700; }
 
 /* 본문 그리드 */
 .room-main {
@@ -384,12 +391,13 @@ onMounted(() => bgm.setVolume(0.2))
 /* 자기 타일 */
 .self-tile {
   position: relative; flex: 1; min-height: 0; overflow: hidden;
-  background: #fff; border: 3px solid #5cbf4a;
+  background: #fff; border: 3px solid var(--c-mint); border-radius: 14px 14px 10px 14px;
   box-shadow: 4px 4px 0 rgba(43, 35, 51, 0.2);
 }
 .self-video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); background: #eee6cf; }
 .cam-off { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; background: #f3ead2; color: #a99f86; }
-.cam-on-btn { padding: 10px 16px; border: 3px solid var(--c-ink-soft); background: #5cbf4a; color: #fff; font-size: 9px; box-shadow: 3px 3px 0 rgba(43, 35, 51, 0.25); }
+.cam-off { background: linear-gradient(135deg, var(--c-mint-soft), #fff0c4); }
+.cam-on-btn { padding: 10px 16px; border: 3px solid var(--c-ink-soft); border-radius: 11px; background: var(--c-mint); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
 .self-label { position: absolute; top: 8px; left: 8px; display: flex; align-items: center; gap: 7px; padding: 6px 9px; background: #fffdf3; border: 2px solid var(--c-ink-soft); font-size: 9px; }
 
 /* 중앙 */
@@ -401,6 +409,9 @@ onMounted(() => bgm.setVolume(0.2))
   border-radius: 20px 20px 15px 20px;
   box-shadow: var(--shadow-xl);
 }
+.stage-art { position: absolute; z-index: 1; width: 105px; opacity: .3; pointer-events: none; filter: saturate(.8); }
+.stage-headset { left: -18px; bottom: 18px; transform: rotate(-15deg); }
+.stage-tambourine { right: -15px; bottom: 18px; transform: rotate(14deg); }
 .stage-glow {
   position: absolute; inset: 0;
   background: repeating-linear-gradient(48deg, rgba(255, 182, 193, 0.22) 0 70px, rgba(197, 180, 255, 0.22) 70px 140px, rgba(160, 225, 200, 0.22) 140px 210px, rgba(255, 222, 153, 0.22) 210px 280px);
@@ -460,15 +471,15 @@ onMounted(() => bgm.setVolume(0.2))
   flex: none; position: relative;
   display: flex; align-items: center; gap: 16px;
   padding: 14px 22px;
-  background: #fffdf3;
-  border-top: var(--border-thick);
+  background: rgba(255, 253, 247, .97);
+  border-top: var(--border);
 }
 .controls { position: absolute; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
-.ctrl { width: 50px; height: 50px; border: 3px solid var(--c-ink-soft); background: #fff; color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; box-shadow: 3px 3px 0 rgba(43, 35, 51, 0.2); }
+.ctrl { width: 50px; height: 50px; border: 3px solid var(--c-ink-soft); border-radius: 13px 13px 9px 13px; background: #fff; color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow-sm); }
 .ctrl.on { background: #d9f2cf; color: #5cbf4a; }
 .ctrl.off { background: #fbdbe0; color: #e85d6e; }
 
-.chat-dock { position: relative; flex: none; width: 300px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; height: 52px; background: #fff; border: 3px solid var(--c-ink-soft); box-shadow: 3px 3px 0 rgba(43, 35, 51, 0.2); }
+.chat-dock { position: relative; flex: none; width: 300px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; height: 52px; background: #fff; border: 3px solid var(--c-ink-soft); border-radius: 14px; box-shadow: var(--shadow-sm); }
 .chat-log { position: absolute; bottom: 62px; left: 0; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
 .bubble { max-width: 360px; padding: 9px 12px; font-size: 9px; line-height: 1.7; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); }
 .bubble.me { background: #fff4cc; }
@@ -476,11 +487,11 @@ onMounted(() => bgm.setVolume(0.2))
 .bubble-name.me { color: #f0a815; }
 .chat-face { color: #a99f86; font-size: 16px; }
 .chat-dock input { flex: 1; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 13px; }
-.chat-send { width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); background: #f5c518; color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
+.chat-send { width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
 
 .footer-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .result-demo { padding: 9px 12px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); font-size: 8px; }
-.leave { display: flex; align-items: center; gap: 9px; padding: 0 18px; height: 52px; border: 3px solid var(--c-ink-soft); background: #e85d6e; color: #fff; font-size: 9px; box-shadow: 3px 3px 0 rgba(43, 35, 51, 0.25); }
+.leave { display: flex; align-items: center; gap: 9px; padding: 0 18px; height: 52px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; background: var(--c-coral); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
 
 .room-toast { position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 60; padding: 13px 20px; background: #fffdf3; border: 3px solid #f0a815; color: #f0a815; font-size: 9px; line-height: 1.7; box-shadow: 5px 5px 0 rgba(43, 35, 51, 0.25); }
 .toast-enter-active { animation: px-pop 0.18s steps(3); }

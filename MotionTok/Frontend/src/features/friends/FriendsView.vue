@@ -82,6 +82,9 @@ async function removeFriend(f: Friend) {
 
 <template>
   <AppPage title="친구" subtitle="닉네임으로 친구를 찾고 초대해요" max-width="640px">
+    <template #hero>
+      <section class="friends-hero"><div><span class="px-kicker">PARTY TOGETHER</span><h2>친구와 만나면 더 재미있어요!</h2><p>온라인 친구를 찾아 바로 같은 방에서 플레이해요.</p></div><img src="/assets/intro/headset.png" alt="친구와 플레이" /></section>
+    </template>
     <PixelCard>
       <div class="add">
         <input v-model="target" placeholder="닉네임으로 친구 검색" @keydown.enter="sendRequest" />
@@ -122,6 +125,8 @@ async function removeFriend(f: Friend) {
 </template>
 
 <style scoped>
+.friends-hero { height: 130px; margin-bottom: 18px; padding: 18px 24px; display: flex; align-items: center; overflow: hidden; border: var(--border); border-radius: 20px; background: linear-gradient(115deg, #cff4e7, #ded2ff); box-shadow: var(--shadow-lg); }
+.friends-hero h2 { margin: 10px 0 5px; font-size: 16px; } .friends-hero p { margin: 0; color: var(--c-muted); font-size: 9px; } .friends-hero img { width: 145px; margin-left: auto; transform: rotate(8deg); }
 .add { display: flex; gap: 8px; margin-bottom: 16px; }
 .add input {
   flex: 1; height: 44px; padding: 0 12px;
@@ -132,7 +137,7 @@ async function removeFriend(f: Friend) {
 .tabs button.on { background: var(--c-yellow); box-shadow: var(--shadow-sm); font-weight: 700; }
 
 .list { list-style: none; margin: 0; padding: 0; }
-.list li { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-bottom: 2px dashed #eaddea; }
+.list li { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 11px 12px; border: 2px solid #eaddea; border-radius: 12px; background: #fffdf8; }
 .dot { width: 9px; height: 9px; border-radius: 50%; }
 .who { min-width: 0; }
 .who b { display: block; font-size: 12px; }

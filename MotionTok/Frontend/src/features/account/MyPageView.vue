@@ -45,6 +45,9 @@ const fmtDate = (iso: string) => iso.slice(0, 10)
       <PixelButton @click="router.push({ name: RouteName.AccountSettings })">계정 설정</PixelButton>
     </template>
 
+    <template #hero>
+      <section class="profile-hero"><img src="/assets/intro/person.png" alt="내 모션 캐릭터" /><div><span class="px-kicker">MY MOTOK</span><h2>{{ me.nickname }}님의 플레이 공간</h2><p>기록을 확인하고 나만의 화면을 완성해보세요.</p></div><b>★ {{ records.reduce((sum, r) => sum + r.playCount, 0) }} PLAY</b></section>
+    </template>
     <div class="grid">
       <!-- 프로필 -->
       <PixelCard title="프로필">
@@ -109,6 +112,8 @@ const fmtDate = (iso: string) => iso.slice(0, 10)
 </template>
 
 <style scoped>
+.profile-hero { height: 145px; margin-bottom: 18px; padding: 14px 24px; display: flex; align-items: center; gap: 20px; overflow: hidden; border: var(--border); border-radius: 21px; background: linear-gradient(115deg, #cff4e7, #fff0b9); box-shadow: var(--shadow-lg); }
+.profile-hero img { width: 145px; transform: translateY(17px); } .profile-hero h2 { margin: 10px 0 5px; font-size: 18px; } .profile-hero p { margin: 0; color: var(--c-muted); font-size: 9px; } .profile-hero > b { margin-left: auto; padding: 10px 12px; border: 2px solid var(--c-ink); border-radius: 11px; background: #fff; box-shadow: var(--shadow-sm); font-size: 10px; }
 .grid { display: grid; grid-template-columns: 340px 1fr; gap: 18px; }
 @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
 

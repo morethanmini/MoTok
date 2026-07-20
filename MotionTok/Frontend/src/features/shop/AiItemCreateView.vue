@@ -82,6 +82,12 @@ async function generate() {
 
 <template>
   <AppPage title="AI 아이템 만들기" subtitle="그림을 그리면 AI가 나만의 아이템으로 만들어줘요" max-width="720px">
+    <template #hero>
+      <section class="ai-hero">
+        <div><span class="px-kicker">DRAW · CREATE · PLAY</span><h2>낙서가 게임 아이템이 되는 마법!</h2><p>떠오르는 모양을 자유롭게 그려보세요.</p></div>
+        <img src="/assets/intro/sketchbook.png" alt="드로잉 스케치북" />
+      </section>
+    </template>
     <div class="grid">
       <PixelCard title="드로잉">
         <canvas
@@ -122,13 +128,18 @@ async function generate() {
 </template>
 
 <style scoped>
+.ai-hero { height: 130px; margin-bottom: 18px; padding: 18px 24px; display: flex; align-items: center; overflow: hidden; border: var(--border); border-radius: 20px; background: linear-gradient(115deg, #ded2ff, #ffe7cf); box-shadow: var(--shadow-lg); }
+.ai-hero h2 { margin: 10px 0 5px; font-size: 16px; } .ai-hero p { margin: 0; color: var(--c-muted); font-size: 9px; }
+.ai-hero img { width: 150px; margin-left: auto; transform: translateY(14px) rotate(4deg); }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
 .pad {
   width: 100%;
   border: var(--border);
   border-radius: 12px;
-  background: #fffdf3;
+  background-color: #fffdf3;
+  background-image: linear-gradient(rgba(101,121,221,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(101,121,221,.08) 1px, transparent 1px);
+  background-size: 18px 18px;
   touch-action: none;
   margin-bottom: 12px;
   cursor: crosshair;
