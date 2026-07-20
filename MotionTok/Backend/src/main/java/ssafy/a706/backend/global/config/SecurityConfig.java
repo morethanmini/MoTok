@@ -51,6 +51,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/v1/users").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/users/check-id").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/rooms").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/live-rooms").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/games/*/leaderboard").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(eh -> eh.authenticationEntryPoint((req, res, ex) -> {
