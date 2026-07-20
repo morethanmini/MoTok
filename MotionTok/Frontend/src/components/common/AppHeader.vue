@@ -54,11 +54,11 @@ function toLogin() {
 }
 
 // 포인트 잔액 + 충전 모달
-const balance = ref(session.profile?.coins ?? 1250)
+const balance = ref(session.profile?.pointBalance ?? 1250)
 const showCharge = ref(false)
 function onCharged(amount: number) {
   balance.value += amount
-  if (session.profile) session.profile.coins = balance.value
+  if (session.profile) session.profile.pointBalance = balance.value
 }
 </script>
 
