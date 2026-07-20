@@ -29,7 +29,22 @@ const sparks = [
   { img: 'trophy', size: 74, x: '4%', duration: '18s', delay: '-7s' },
 ]
 
+// 게임 카드와 별개로, 배경을 채우는 순수 장식용 픽셀 드로잉 (라벨 없음)
+const pixelDoodles = [
+  { img: 'heart', size: 42, x: '11%', duration: '15s', delay: '-3s' },
+  { img: 'lightning', size: 38, x: '92%', duration: '13s', delay: '-8s' },
+  { img: 'gem', size: 46, x: '59%', duration: '18s', delay: '-1s' },
+  { img: 'note', size: 40, x: '30%', duration: '16s', delay: '-11s' },
+  { img: 'coin', size: 34, x: '75%', duration: '14s', delay: '-6s' },
+  { img: 'camera', size: 52, x: '43%', duration: '20s', delay: '-14s' },
+  { img: 'ghost', size: 44, x: '5%', duration: '17s', delay: '-9s' },
+  { img: 'joystick', size: 56, x: '65%', duration: '19s', delay: '-4s' },
+  { img: 'heart', size: 30, x: '97%', duration: '12s', delay: '-16s' },
+  { img: 'gem', size: 32, x: '20%', duration: '15s', delay: '-7s' },
+]
+
 const url = (name: string) => `url('/assets/intro/${name}.png')`
+const pixelUrl = (name: string) => `url('/assets/intro/pixel/${name}.svg')`
 </script>
 
 <template>
@@ -63,6 +78,19 @@ const url = (name: string) => `url('/assets/intro/${name}.png')`
         animationDuration: s.duration,
         animationDelay: s.delay,
         backgroundImage: url(s.img),
+      }"
+    />
+
+    <i
+      v-for="(d, i) in pixelDoodles"
+      :key="`d${i}`"
+      class="float-spark pixel"
+      :style="{
+        '--size': `${d.size}px`,
+        left: d.x,
+        animationDuration: d.duration,
+        animationDelay: d.delay,
+        backgroundImage: pixelUrl(d.img),
       }"
     />
   </div>
@@ -150,6 +178,11 @@ const url = (name: string) => `url('/assets/intro/${name}.png')`
   background-position: center;
   background-size: contain;
   animation: spark-rise 11s linear infinite;
+}
+/* 손그림 느낌의 장식용 픽셀 드로잉 (하트·번개·보석 등) */
+.float-spark.pixel {
+  z-index: 2;
+  filter: drop-shadow(2px 2px 0 rgba(56, 38, 61, 0.25));
 }
 
 @keyframes game-rise {
