@@ -1,4 +1,4 @@
-package ssafy.a706.backend.liveroom.dto;
+package ssafy.a706.backend.liveroom.controller.dto;
 
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;

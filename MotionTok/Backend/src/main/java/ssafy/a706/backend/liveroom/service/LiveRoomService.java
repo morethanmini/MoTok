@@ -1,14 +1,15 @@
-package ssafy.a706.backend.liveroom;
+package ssafy.a706.backend.liveroom.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
-import ssafy.a706.backend.liveroom.dto.CreateLiveRoomRequest;
-import ssafy.a706.backend.liveroom.dto.CreateLiveRoomResponse;
-import ssafy.a706.backend.liveroom.dto.LiveRoomDetailResponse;
-import ssafy.a706.backend.liveroom.dto.LiveRoomSummaryResponse;
+import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
+import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomRequest;
+import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomResponse;
+import ssafy.a706.backend.liveroom.controller.dto.LiveRoomDetailResponse;
+import ssafy.a706.backend.liveroom.controller.dto.LiveRoomSummaryResponse;
 import ssafy.a706.backend.liveroom.model.LiveRoom;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.model.LiveRoomVisibility;
