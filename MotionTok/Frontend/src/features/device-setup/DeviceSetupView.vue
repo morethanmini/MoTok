@@ -34,6 +34,8 @@ function enter() {
 }
 
 const cancel = () => router.push({ name: RouteName.Lobby })
+// 내 아바타(인벤토리·화면 꾸미기) 전체 편집으로 이동
+const goInventory = () => router.push({ name: RouteName.Inventory })
 </script>
 
 <template>
@@ -92,15 +94,18 @@ const cancel = () => router.push({ name: RouteName.Lobby })
           </select>
         </label>
 
-        <label class="field">
-          카메라 꾸미기
+        <div class="field">
+          <div class="field-head">
+            <span>카메라 꾸미기</span>
+            <button type="button" class="inv-link" @click="goInventory">내 아바타 전체 →</button>
+          </div>
           <div class="items">
             <button class="item" :class="{ on: decor === '🎩' }" @click="decor = '🎩'">🎩</button>
             <button class="item" :class="{ on: decor === '⭐' }" @click="decor = '⭐'">⭐</button>
             <button class="item">🎭</button>
             <button class="item">🌈</button>
           </div>
-        </label>
+        </div>
 
         <div class="actions">
           <PixelButton @click="cancel">취소</PixelButton>
@@ -184,6 +189,8 @@ const cancel = () => router.push({ name: RouteName.Lobby })
   font-weight: 700;
 }
 .field { display: block; margin-top: 15px; font-size: 9px; font-weight: 700; }
+.field-head { display: flex; align-items: center; justify-content: space-between; }
+.inv-link { border: 0; background: transparent; color: var(--c-blue); font-size: 9px; font-weight: 700; }
 .field select {
   width: 100%;
   height: 42px;
