@@ -3,8 +3,8 @@
  * 인벤토리 + 화면 꾸미기 (API §2 /users/me/inventory, /users/me/decoration).
  * 보유 아이템을 장착/해제하고, 장착 구성을 화면 꾸미기 설정으로 저장.
  */
-import { computed } from 'vue'
-import { usersApi, ApiError, type InventoryItem, type ItemCategory } from '@/api'
+import { computed, watch } from 'vue'
+import { usersApi, ApiError, type InventoryItem, type ItemCategory, type DecorationConfig } from '@/api'
 import { useAsyncData } from '@/composables/useAsyncData'
 import AppPage from '@/components/common/AppPage.vue'
 import PixelCard from '@/components/common/PixelCard.vue'
@@ -27,8 +27,33 @@ const emojiOf: Record<ItemCategory, string> = { MASK: '🎭', EFFECT: '✨', STI
 const CATEGORY_ORDER: ItemCategory[] = ['MASK', 'EFFECT', 'STICKER', 'BACKGROUND']
 const CATEGORY_LABEL: Record<ItemCategory, string> = { MASK: '가면', EFFECT: '효과', STICKER: '스티커', BACKGROUND: '배경' }
 
+const MOCK_DECORATION: DecorationConfig = { config: { equippedItemIds: [2, 8] } }
+
 const { data: inventory } = useAsyncData(() => usersApi.getInventory(), MOCK_INV)
+const { data: decoration } = useAsyncData(() => usersApi.getDecoration(), MOCK_DECORATION)
 const equipped = computed(() => inventory.value.filter((i) => i.equipped))
+
+// 저장된 꾸미기(장착 구성)를 인벤토리 장착 상태에 반영. (idempotent → 재적용해도 루프 없음)
+function savedEquippedIds(deco: DecorationConfig): number[] | null {
+  const ids = deco.config?.equippedItemIds
+  return Array.isArray(ids) ? (ids as number[]) : null
+}
+watch(
+  [inventory, decoration],
+  ([inv, deco]) => {
+    const ids = savedEquippedIds(deco)
+    if (!ids) return
+    let changed = false
+    const next = inv.map((i) => {
+      const eq = ids.includes(i.itemId)
+      if (eq === i.equipped) return i
+      changed = true
+      return { ...i, equipped: eq }
+    })
+    if (changed) inventory.value = next
+  },
+  { immediate: true },
+)
 
 // 카테고리별 그룹 (아이템 없는 카테고리는 제외)
 const grouped = computed(() =>
@@ -71,7 +96,11 @@ async function saveDecoration() {
     <div class="grid">
       <PixelCard title="미리보기">
         <div class="preview">
-          <div class="cam">🙂</div>
+          <div class="cam">
+            <span class="preview-status">LIVE PREVIEW</span>
+            <img src="/assets/intro/person.png" alt="내 아바타 미리보기" />
+            <i>🙂</i>
+          </div>
           <div class="equipped">
             <span v-for="i in equipped" :key="i.itemId" class="badge">{{ emojiOf[i.category] }} {{ i.name }}</span>
             <span v-if="equipped.length === 0" class="empty">장착된 아이템이 없어요</span>
@@ -109,7 +138,10 @@ async function saveDecoration() {
 @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
 
 .preview { text-align: center; }
-.cam { height: 160px; display: grid; place-items: center; font-size: 64px; border: var(--border); border-radius: var(--radius-md); background: linear-gradient(135deg, #dff3ee, #fff0c4); }
+.cam { position: relative; height: 210px; display: grid; place-items: center; overflow: hidden; border: var(--border); border-radius: var(--radius-md); background: linear-gradient(135deg, #dff3ee, #fff0c4); }
+.cam img { width: 78%; height: 88%; object-fit: contain; transform: translateY(15px); }
+.cam i { position: absolute; font-size: 38px; font-style: normal; transform: translateY(-5px); }
+.preview-status { position: absolute; z-index: 2; left: 9px; top: 9px; padding: 5px 7px; border: 2px solid var(--c-ink); border-radius: 8px; background: #fff; font-size: 7px; font-weight: 700; }
 .equipped { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 12px; }
 .badge { font-size: 9px; padding: 5px 8px; border: 2px solid var(--c-ink); border-radius: 999px; background: var(--c-mint-soft); }
 .empty { font-size: 10px; color: var(--c-muted); }
@@ -142,7 +174,7 @@ async function saveDecoration() {
 .items { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
 .item { border: 2px solid var(--c-ink); border-radius: 14px; background: #fff; box-shadow: var(--shadow-sm); padding: 12px; text-align: center; }
 .item.on { background: #f5fbf8; border-color: var(--c-mint); }
-.thumb { height: 64px; display: grid; place-items: center; font-size: 34px; }
+.thumb { height: 70px; display: grid; place-items: center; margin-bottom: 8px; border-radius: 10px; background: linear-gradient(135deg, var(--tone-4), #fff5d6); font-size: 36px; }
 .name { font-size: 11px; font-weight: 700; margin-bottom: 10px; }
 .empty-inv { text-align: center; color: var(--c-muted); font-size: 11px; padding: 20px; }
 </style>

@@ -42,6 +42,13 @@ watch(selected, loadBoard)
 
 <template>
   <AppPage title="랭킹" subtitle="게임별 최고 점수 리더보드">
+    <template #hero>
+      <section class="rank-hero">
+        <img src="/assets/intro/trophy.png" alt="트로피" />
+        <div><span class="px-kicker">HALL OF MOTION</span><h2>이번 주 최고의 플레이어</h2><p>움직이고, 기록을 깨고, 명예의 전당에 올라보세요.</p></div>
+        <strong>#{{ board.myRank?.rank ?? '-' }}<small>MY RANK</small></strong>
+      </section>
+    </template>
     <div class="chips">
       <button
         v-for="g in games"
@@ -82,6 +89,9 @@ watch(selected, loadBoard)
 </template>
 
 <style scoped>
+.rank-hero { height: 142px; margin-bottom: 18px; padding: 15px 24px; display: flex; align-items: center; gap: 20px; overflow: hidden; border: var(--border); border-radius: 21px; background: linear-gradient(110deg, #fff0b9, #ffd9c9); box-shadow: var(--shadow-lg); }
+.rank-hero img { width: 116px; filter: drop-shadow(5px 5px 0 rgba(56,38,61,.16)); } .rank-hero h2 { margin: 10px 0 5px; font-size: 18px; } .rank-hero p { margin: 0; color: var(--c-muted); font-size: 9px; }
+.rank-hero > strong { margin-left: auto; text-align: center; color: var(--c-blue); font-size: 28px; text-shadow: 2px 2px 0 #fff; } .rank-hero > strong small { display: block; margin-top: 4px; color: var(--c-ink); font-size: 7px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
 .chip { border: 2px solid var(--c-ink); background: #fff; border-radius: 999px; padding: 8px 14px; font-size: 11px; box-shadow: 2px 2px 0 #d8c9d8; }
 .chip.on { background: var(--c-yellow); box-shadow: var(--shadow-sm); font-weight: 700; }
@@ -91,7 +101,7 @@ watch(selected, loadBoard)
 .board th { font-size: 9px; color: var(--c-muted); }
 .board .rank { font-size: 15px; }
 .board tr.top td { font-weight: 700; }
-.board tr.me { background: #fff7d9; }
+.board tr.me { background: #fff7d9; box-shadow: inset 4px 0 0 var(--c-yellow); }
 .myrank { margin-top: 14px; padding: 11px 14px; border: 2px solid var(--c-ink); border-radius: 12px; background: var(--c-mint-soft); font-size: 11px; }
 .myrank b { color: var(--c-blue); font-size: 14px; }
 .err { margin-top: 12px; font-size: 10px; color: var(--c-muted); }
