@@ -19,13 +19,13 @@ const session = useSessionStore()
 const { message: toast, flash } = useToast()
 
 // 현재 포인트 (세션 프로필 기준, 없으면 헤더와 동일한 기본값)
-const currentPoints = ref(session.profile?.coins ?? 1250)
+const currentPoints = ref(session.profile?.pointBalance ?? 1250)
 
 // 충전 모달
 const showCharge = ref(false)
 function onCharged(amount: number) {
   currentPoints.value += amount
-  if (session.profile) session.profile.coins = currentPoints.value
+  if (session.profile) session.profile.pointBalance = currentPoints.value
   showCharge.value = false // 닫히면 구매 확인 모달이 갱신된 잔액으로 다시 표시됨
 }
 

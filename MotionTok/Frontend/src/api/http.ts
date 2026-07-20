@@ -9,7 +9,7 @@
 import { getAccessToken } from './token'
 import type { ApiError as ApiErrorBody } from './types'
 
-export const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8080/api'
+export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080/api'
 
 /** 명세 공통 오류 응답(Error)을 감싼 예외 */
 export class ApiError extends Error {
