@@ -21,26 +21,30 @@ const items: FloatItem[] = [
   { img: 'sketchbook', label: '드로잉 릴레이', size: 168, x: '24%', duration: '23s', delay: '-16s' },
   { img: 'person', label: '포즈 매치', size: 126, x: '57%', duration: '18s', delay: '-1s' },
   { img: 'console', label: '버블 팝', size: 82, x: '82%', duration: '15s', delay: '-14s', plain: true },
-  { img: 'trophy', label: '랭킹 챌린지', size: 96, x: '38%', duration: '17s', delay: '-9s' },
-  { img: 'headset', label: '보이스 파티', size: 108, x: '13%', duration: '20s', delay: '-5s' },
-  { img: 'constellation', label: '별자리 매칭', size: 118, x: '90%', duration: '22s', delay: '-18s' },
-  { img: 'sketchbook', label: '낙서 배틀', size: 130, x: '2%', duration: '19s', delay: '-10s' },
-  { img: 'fishing-rod', label: '전기 낚시', size: 104, x: '77%', duration: '16s', delay: '-3s' },
-  { img: 'person', label: '따라하기', size: 92, x: '33%', duration: '15s', delay: '-15s' },
 ]
 
 const sparks = [
   { img: 'headset', size: 96, x: '36%', duration: '16s', delay: '-4s' },
   { img: 'moon', size: 62, x: '87%', duration: '12s', delay: '-9s' },
   { img: 'trophy', size: 74, x: '4%', duration: '18s', delay: '-7s' },
-  { img: 'console', size: 58, x: '55%', duration: '14s', delay: '-6s' },
-  { img: 'person', size: 66, x: '20%', duration: '17s', delay: '-11s' },
-  { img: 'moon', size: 48, x: '63%', duration: '13s', delay: '-2s' },
-  { img: 'tambourine', size: 52, x: '95%', duration: '15s', delay: '-8s' },
-  { img: 'trophy', size: 60, x: '44%', duration: '19s', delay: '-13s' },
+]
+
+// 게임 카드와 별개로, 배경을 채우는 순수 장식용 픽셀 드로잉 (라벨 없음)
+const pixelDoodles = [
+  { img: 'heart', size: 42, x: '11%', duration: '15s', delay: '-3s' },
+  { img: 'lightning', size: 38, x: '92%', duration: '13s', delay: '-8s' },
+  { img: 'gem', size: 46, x: '59%', duration: '18s', delay: '-1s' },
+  { img: 'note', size: 40, x: '30%', duration: '16s', delay: '-11s' },
+  { img: 'coin', size: 34, x: '75%', duration: '14s', delay: '-6s' },
+  { img: 'camera', size: 52, x: '43%', duration: '20s', delay: '-14s' },
+  { img: 'ghost', size: 44, x: '5%', duration: '17s', delay: '-9s' },
+  { img: 'joystick', size: 56, x: '65%', duration: '19s', delay: '-4s' },
+  { img: 'heart', size: 30, x: '97%', duration: '12s', delay: '-16s' },
+  { img: 'gem', size: 32, x: '20%', duration: '15s', delay: '-7s' },
 ]
 
 const url = (name: string) => `url('/assets/intro/${name}.png')`
+const pixelUrl = (name: string) => `url('/assets/intro/pixel/${name}.svg')`
 </script>
 
 <template>
@@ -74,6 +78,19 @@ const url = (name: string) => `url('/assets/intro/${name}.png')`
         animationDuration: s.duration,
         animationDelay: s.delay,
         backgroundImage: url(s.img),
+      }"
+    />
+
+    <i
+      v-for="(d, i) in pixelDoodles"
+      :key="`d${i}`"
+      class="float-spark pixel"
+      :style="{
+        '--size': `${d.size}px`,
+        left: d.x,
+        animationDuration: d.duration,
+        animationDelay: d.delay,
+        backgroundImage: pixelUrl(d.img),
       }"
     />
   </div>
@@ -161,6 +178,11 @@ const url = (name: string) => `url('/assets/intro/${name}.png')`
   background-position: center;
   background-size: contain;
   animation: spark-rise 11s linear infinite;
+}
+/* 손그림 느낌의 장식용 픽셀 드로잉 (하트·번개·보석 등) */
+.float-spark.pixel {
+  z-index: 2;
+  filter: drop-shadow(2px 2px 0 rgba(56, 38, 61, 0.25));
 }
 
 @keyframes game-rise {
