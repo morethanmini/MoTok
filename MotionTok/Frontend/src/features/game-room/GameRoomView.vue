@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 게임룸 — 화상 파티룸(자기/친구 타일), 무대 데모, 채팅, 게임 선택, 컨트롤 바. */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { useCamera } from '@/composables/useCamera'
 import { useBgm } from '@/composables/useBgm'
@@ -9,6 +9,9 @@ import { useToast } from '@/composables/useToast'
 import { LEFT_FRIENDS, MOVE_PATHS, RIGHT_FRIENDS, type GameEntry } from './data'
 import FriendTile from './components/FriendTile.vue'
 import GamePicker from './components/GamePicker.vue'
+import AppHeader from '@/components/common/AppHeader.vue'
+import PixelModal from '@/components/common/PixelModal.vue'
+import PixelButton from '@/components/common/PixelButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -95,17 +98,30 @@ function copyCode() {
   navigator.clipboard?.writeText(roomCode.value)
   flash('룸 코드를 복사했어요')
 }
+// 헤더 링크·뒤로가기 등으로 방을 벗어나려 하면 확인 모달. "나가기/결과" 같은 의도된 이동은 통과.
+let leavingIntentionally = false
+const showLeaveConfirm = ref(false)
+let resolveLeave: ((ok: boolean) => void) | null = null
+onBeforeRouteLeave(() => {
+  if (leavingIntentionally) return true
+  showLeaveConfirm.value = true
+  return new Promise<boolean>((resolve) => (resolveLeave = resolve))
+})
+function answerLeave(ok: boolean) {
+  showLeaveConfirm.value = false
+  resolveLeave?.(ok)
+  resolveLeave = null
+}
+
 function showResult() {
+  leavingIntentionally = true
   router.push({
     name: RouteName.GameResult,
     query: { game: roomGame.value, room: roomCode.value },
   })
 }
 function leave() {
-  camera.stop()
-  router.push({ name: RouteName.Lobby })
-}
-function goLobby() {
+  leavingIntentionally = true
   camera.stop()
   router.push({ name: RouteName.Lobby })
 }
@@ -123,28 +139,14 @@ onMounted(() => bgm.setVolume(0.2))
 <template>
   <div class="room-shell">
     <!-- 상단 바 -->
-    <header class="room-header">
-      <div class="logo-group">
-        <div class="px logo">M</div>
-        <div>
-          <div class="px title"><span class="c-y">MOVE</span><span class="c-g">PARTY</span></div>
-          <div class="sub">함께 움직여요!</div>
-        </div>
-      </div>
+    <AppHeader />
 
-      <nav class="nav">
-        <button class="px active" @click="goLobby">LOBBY</button>
-        <button class="px" @click="openPicker">GAMES</button>
-        <button class="px">AVATARS</button>
-        <button class="px">RANK</button>
-      </nav>
-
-      <div class="px coin"><span class="coin-dot" /><span class="c-y">1250</span><span class="c-g plus">+</span></div>
-      <div class="me">
-        <div class="me-avatar">😎</div>
-        <div class="me-text"><div class="px">P1</div><div class="lv">LV.12</div></div>
-      </div>
-    </header>
+    <div class="room-ribbon">
+      <span class="px-kicker"><i /> LIVE PARTY ROOM</span>
+      <b>{{ roomGame }}</b>
+      <span>친구들과 함께 준비 중이에요</span>
+      <div class="ribbon-code">ROOM {{ roomCode }} · 6/8 ONLINE</div>
+    </div>
 
     <!-- 본문 -->
     <main class="room-main">
@@ -172,6 +174,8 @@ onMounted(() => bgm.setVolume(0.2))
       <section class="center">
         <div class="stage">
           <div class="stage-glow" />
+          <img class="stage-art stage-headset" src="/assets/intro/headset.png" alt="" />
+          <img class="stage-art stage-tambourine" src="/assets/intro/tambourine.png" alt="" />
           <div class="stage-toys">
             <i class="token tok-note">♫</i><i class="token tok-star">★</i>
             <i class="token tok-hand">✋</i><i class="token tok-drum">🥁</i>
@@ -304,6 +308,15 @@ onMounted(() => bgm.setVolume(0.2))
     <Transition name="toast">
       <div v-if="toast" class="px room-toast">{{ toast }}</div>
     </Transition>
+
+    <PixelModal v-if="showLeaveConfirm" @close="answerLeave(false)">
+      <h3 class="leave-title">🚪 게임을 떠나시겠어요?</h3>
+      <p class="leave-desc">지금 나가면 진행 중인 방에서 나가게 돼요.</p>
+      <div class="leave-actions">
+        <PixelButton block @click="answerLeave(false)">취소</PixelButton>
+        <PixelButton variant="primary" block @click="answerLeave(true)">나가기</PixelButton>
+      </div>
+    </PixelModal>
   </div>
 </template>
 
@@ -316,9 +329,12 @@ onMounted(() => bgm.setVolume(0.2))
   flex-direction: column;
   position: relative;
   overflow: auto;
-  background-color: var(--c-paper);
-  background-image: radial-gradient(circle at 1px 1px, rgba(56, 38, 61, 0.095) 1.2px, transparent 1.5px);
-  background-size: 18px 18px;
+  background-color: #fff8e9;
+  background-image:
+    linear-gradient(25deg, transparent 0 47%, rgba(120, 206, 177, 0.1) 47% 53%, transparent 53%),
+    linear-gradient(155deg, transparent 0 47%, rgba(239, 104, 114, 0.08) 47% 53%, transparent 53%),
+    radial-gradient(rgba(56, 38, 61, 0.09) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 18px 18px;
   color: var(--c-ink-soft);
   font-family: var(--font-pixel);
 }
@@ -326,50 +342,17 @@ onMounted(() => bgm.setVolume(0.2))
 .c-y { color: #f0a815; }
 .c-g { color: #5cbf4a; }
 
-/* 상단 바 */
-.room-header {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 14px 22px;
-  background: #fffdf3;
-  border-bottom: var(--border-thick);
-}
-.logo-group { display: flex; align-items: center; gap: 12px; }
-.logo {
-  width: 44px; height: 44px;
-  background: var(--c-yellow);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 20px; color: var(--c-ink-soft);
-  border: 3px solid var(--c-ink-soft);
-  border-radius: 13px;
-  box-shadow: 4px 4px 0 var(--c-ink-soft);
-}
-.title { font-size: 15px; }
-.sub { font-size: 11px; color: #a99f86; margin-top: 4px; }
-.nav { display: flex; gap: 8px; margin: 0 auto; }
-.nav button {
-  padding: 11px 16px; font-size: 9px;
-  border: 3px solid var(--c-ink-soft);
-  background: #fff; color: var(--c-ink-soft);
-  border-radius: 11px;
-  box-shadow: 3px 3px 0 var(--c-ink-soft);
-}
-.nav button.active { background: var(--c-yellow); }
-.coin {
-  display: flex; align-items: center; gap: 9px;
-  padding: 9px 11px; background: #fff;
-  border: 3px solid var(--c-ink-soft);
-  box-shadow: 3px 3px 0 rgba(43, 35, 51, 0.2);
-}
-.coin-dot { width: 12px; height: 12px; background: #f5c518; box-shadow: 0 -4px 0 #f5c518, 0 4px 0 #f5c518, -4px 0 0 #f5c518, 4px 0 0 #f5c518; }
-.coin .plus { font-size: 13px; cursor: pointer; }
-.me { display: flex; align-items: center; gap: 10px; padding: 6px 12px 6px 6px; background: #fff; border: 3px solid var(--c-ink-soft); box-shadow: 3px 3px 0 rgba(43, 35, 51, 0.2); }
-.me-avatar { width: 38px; height: 38px; display: grid; place-items: center; background: #f3ead2; border: 2px solid var(--c-ink-soft); font-size: 20px; }
-.me-text { line-height: 1.5; }
-.me-text .px { font-size: 9px; }
-.lv { font-size: 10px; color: #a99f86; margin-top: 3px; }
+/* 이탈 확인 모달 */
+.leave-title { margin: 0 0 8px; font-size: 15px; }
+.leave-desc { margin: 0 0 18px; font-size: 11px; color: var(--c-muted); line-height: 1.6; }
+.leave-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.room-ribbon { flex: none; height: 54px; padding: 0 28px; display: flex; align-items: center; gap: 14px; border-bottom: 2px solid rgba(56, 38, 61, .18); background: linear-gradient(110deg, rgba(207, 244, 231, .95), rgba(255, 240, 185, .95)); z-index: 5; }
+.room-ribbon .px-kicker { padding: 5px 9px; font-size: 8px; }
+.room-ribbon .px-kicker i { width: 7px; height: 7px; border-radius: 50%; background: var(--c-coral); animation: px-blink 1s steps(2) infinite; }
+.room-ribbon b { font-size: 12px; }
+.room-ribbon > span:not(.px-kicker) { color: var(--c-muted); font-size: 9px; }
+.ribbon-code { margin-left: auto; padding: 7px 10px; border: 2px solid var(--c-ink); border-radius: 9px; background: #fff; font-size: 8px; font-weight: 700; }
 
 /* 본문 그리드 */
 .room-main {
@@ -384,12 +367,13 @@ onMounted(() => bgm.setVolume(0.2))
 /* 자기 타일 */
 .self-tile {
   position: relative; flex: 1; min-height: 0; overflow: hidden;
-  background: #fff; border: 3px solid #5cbf4a;
+  background: #fff; border: 3px solid var(--c-mint); border-radius: 14px 14px 10px 14px;
   box-shadow: 4px 4px 0 rgba(43, 35, 51, 0.2);
 }
 .self-video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); background: #eee6cf; }
 .cam-off { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; background: #f3ead2; color: #a99f86; }
-.cam-on-btn { padding: 10px 16px; border: 3px solid var(--c-ink-soft); background: #5cbf4a; color: #fff; font-size: 9px; box-shadow: 3px 3px 0 rgba(43, 35, 51, 0.25); }
+.cam-off { background: linear-gradient(135deg, var(--c-mint-soft), #fff0c4); }
+.cam-on-btn { padding: 10px 16px; border: 3px solid var(--c-ink-soft); border-radius: 11px; background: var(--c-mint); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
 .self-label { position: absolute; top: 8px; left: 8px; display: flex; align-items: center; gap: 7px; padding: 6px 9px; background: #fffdf3; border: 2px solid var(--c-ink-soft); font-size: 9px; }
 
 /* 중앙 */
@@ -401,6 +385,9 @@ onMounted(() => bgm.setVolume(0.2))
   border-radius: 20px 20px 15px 20px;
   box-shadow: var(--shadow-xl);
 }
+.stage-art { position: absolute; z-index: 1; width: 105px; opacity: .3; pointer-events: none; filter: saturate(.8); }
+.stage-headset { left: -18px; bottom: 18px; transform: rotate(-15deg); }
+.stage-tambourine { right: -15px; bottom: 18px; transform: rotate(14deg); }
 .stage-glow {
   position: absolute; inset: 0;
   background: repeating-linear-gradient(48deg, rgba(255, 182, 193, 0.22) 0 70px, rgba(197, 180, 255, 0.22) 70px 140px, rgba(160, 225, 200, 0.22) 140px 210px, rgba(255, 222, 153, 0.22) 210px 280px);
@@ -460,15 +447,15 @@ onMounted(() => bgm.setVolume(0.2))
   flex: none; position: relative;
   display: flex; align-items: center; gap: 16px;
   padding: 14px 22px;
-  background: #fffdf3;
-  border-top: var(--border-thick);
+  background: rgba(255, 253, 247, .97);
+  border-top: var(--border);
 }
 .controls { position: absolute; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
-.ctrl { width: 50px; height: 50px; border: 3px solid var(--c-ink-soft); background: #fff; color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; box-shadow: 3px 3px 0 rgba(43, 35, 51, 0.2); }
+.ctrl { width: 50px; height: 50px; border: 3px solid var(--c-ink-soft); border-radius: 13px 13px 9px 13px; background: #fff; color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow-sm); }
 .ctrl.on { background: #d9f2cf; color: #5cbf4a; }
 .ctrl.off { background: #fbdbe0; color: #e85d6e; }
 
-.chat-dock { position: relative; flex: none; width: 300px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; height: 52px; background: #fff; border: 3px solid var(--c-ink-soft); box-shadow: 3px 3px 0 rgba(43, 35, 51, 0.2); }
+.chat-dock { position: relative; flex: none; width: 300px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; height: 52px; background: #fff; border: 3px solid var(--c-ink-soft); border-radius: 14px; box-shadow: var(--shadow-sm); }
 .chat-log { position: absolute; bottom: 62px; left: 0; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
 .bubble { max-width: 360px; padding: 9px 12px; font-size: 9px; line-height: 1.7; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); }
 .bubble.me { background: #fff4cc; }
@@ -476,11 +463,11 @@ onMounted(() => bgm.setVolume(0.2))
 .bubble-name.me { color: #f0a815; }
 .chat-face { color: #a99f86; font-size: 16px; }
 .chat-dock input { flex: 1; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 13px; }
-.chat-send { width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); background: #f5c518; color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
+.chat-send { width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
 
 .footer-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .result-demo { padding: 9px 12px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); font-size: 8px; }
-.leave { display: flex; align-items: center; gap: 9px; padding: 0 18px; height: 52px; border: 3px solid var(--c-ink-soft); background: #e85d6e; color: #fff; font-size: 9px; box-shadow: 3px 3px 0 rgba(43, 35, 51, 0.25); }
+.leave { display: flex; align-items: center; gap: 9px; padding: 0 18px; height: 52px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; background: var(--c-coral); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
 
 .room-toast { position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 60; padding: 13px 20px; background: #fffdf3; border: 3px solid #f0a815; color: #f0a815; font-size: 9px; line-height: 1.7; box-shadow: 5px 5px 0 rgba(43, 35, 51, 0.25); }
 .toast-enter-active { animation: px-pop 0.18s steps(3); }

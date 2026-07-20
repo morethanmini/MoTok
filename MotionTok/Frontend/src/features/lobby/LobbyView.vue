@@ -3,7 +3,9 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
+import { roomsApi, ApiError, type RoomSummary } from '@/api'
 import { useSessionStore } from '@/stores/session'
+import { useAsyncData } from '@/composables/useAsyncData'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
 import { MOCK_FRIENDS, MOCK_ROOMS, type Room } from './data'
@@ -31,9 +33,29 @@ const showCreate = ref(false)
 
 const friends = MOCK_FRIENDS
 
+// API RoomSummary → 로비 카드용 Room 매핑
+function toRoom(s: RoomSummary): Room {
+  return {
+    roomId: s.roomId,
+    title: s.title,
+    game: s.selectedGameId ? `게임 #${s.selectedGameId}` : '게임 선택 중',
+    emoji: '🎮',
+    count: s.currentPlayers,
+    max: s.maxPlayers,
+    state: s.status === 'WAITING' ? '대기 중' : '게임 중',
+    visibility: s.visibility === 'PUBLIC' ? '공개' : '비공개',
+    disabled: s.status === 'IN_GAME' || s.currentPlayers >= s.maxPlayers,
+  }
+}
+// 공개방 목록 (GET /rooms) — 실패 시 목업 폴백
+const { data: rooms, reload: reloadRooms } = useAsyncData(
+  () => roomsApi.list().then((r) => r.content.map(toRoom)),
+  MOCK_ROOMS,
+)
+
 const filteredRooms = computed(() => {
   const q = query.value.trim().toLowerCase()
-  return MOCK_ROOMS.filter((r) => !q || r.title.toLowerCase().includes(q))
+  return rooms.value.filter((r) => !q || r.title.toLowerCase().includes(q))
 })
 
 onMounted(() => {
@@ -60,32 +82,66 @@ function guardMember(action: () => void) {
   else action()
 }
 
-const quickStart = () => guardMember(() => goDevice('리듬 펀치', 'MP7R2D'))
+// ⚡ 빠른 시작 — 퀵매치(POST /rooms/quick-match)
+const quickStart = () =>
+  guardMember(async () => {
+    try {
+      const res = await roomsApi.quickMatch()
+      if (res.matched && res.roomId) return goDevice('빠른 매칭', res.roomId)
+      if (res.suggestCreate) return (showCreate.value = true)
+      flash('지금은 매칭 가능한 방이 없어요')
+    } catch {
+      goDevice('리듬 펀치', 'MP7R2D') // 백엔드 미연동 폴백
+    }
+  })
 const openCreate = () => guardMember(() => (showCreate.value = true))
 const openJoin = () => guardMember(() => (showJoin.value = true))
 
+// 공개방 입장 (POST /rooms/{roomId}/participants)
 function enterPublic(room: Room) {
-  guardMember(() => {
-    if (!room.disabled) goDevice(room.game, 'MP4X9K')
+  guardMember(async () => {
+    if (room.disabled) return
+    if (!room.roomId) return goDevice(room.game, 'MP4X9K') // 목업 폴백
+    try {
+      const res = await roomsApi.joinPublic(room.roomId)
+      goDevice(room.game, res.roomId)
+    } catch (e) {
+      if (e instanceof ApiError) return flash(e.message)
+      goDevice(room.game, room.roomId)
+    }
   })
 }
 
-function joinRoom(code: string) {
+// 코드 참가 (POST /rooms/join-by-code)
+async function joinRoom(code: string) {
   if (code.length < 6) {
     flash('6자리 방 코드를 입력해 주세요')
     return
   }
   showJoin.value = false
-  goDevice('친구의 게임', code)
+  try {
+    const res = await roomsApi.joinByCode(code)
+    goDevice('친구의 게임', res.roomId)
+  } catch (e) {
+    if (e instanceof ApiError) return flash(e.message)
+    goDevice('친구의 게임', code) // 폴백
+  }
 }
 
-function createRoom(payload: { title: string }) {
+// 방 만들기 (POST /rooms)
+async function createRoom(payload: { title: string }) {
   if (!payload.title.trim()) {
     flash('방 제목을 입력해 주세요')
     return
   }
   showCreate.value = false
-  goDevice('게임 선택 중', 'MP' + Math.random().toString(36).slice(2, 6).toUpperCase())
+  try {
+    const res = await roomsApi.create({ title: payload.title.trim(), visibility: 'PUBLIC', maxPlayers: 8 })
+    goDevice('게임 선택 중', res.roomId)
+  } catch (e) {
+    if (e instanceof ApiError) return flash(e.message)
+    goDevice('게임 선택 중', 'MP' + Math.random().toString(36).slice(2, 6).toUpperCase())
+  }
 }
 
 const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
@@ -132,7 +188,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
           <label class="room-search">
             ⌕ <input v-model="query" placeholder="방 제목 검색" />
           </label>
-          <button>새로고침 ↻</button>
+          <button @click="reloadRooms">새로고침 ↻</button>
         </div>
 
         <section class="room-list">

@@ -6,8 +6,10 @@
 import { ref } from 'vue'
 import {
   adminApi,
+  gamesApi,
   ApiError,
   type AuditLog,
+  type Game,
   type ReportedUser,
   type Sanction,
   type SanctionType,
@@ -33,10 +35,16 @@ const MOCK_AUDIT: AuditLog[] = [
   { id: 2, adminId: 1, action: 'GAME_TOGGLE', targetType: 'GAME', targetId: 6, detail: '드로잉 릴레이 비활성화', createdAt: '2025-07-16T11:00:00Z' },
 ]
 
-const tab = ref<'reports' | 'sanctions' | 'audit'>('reports')
+const MOCK_GAMES: Game[] = [
+  { id: 1, name: '핑거 스타', description: '', mode: 'SOLO', minPlayers: 1, maxPlayers: 1, supportsBot: false, category: '리듬', thumbnailUrl: '', playable: true },
+  { id: 6, name: '드로잉 릴레이', description: '', mode: 'COOP', minPlayers: 2, maxPlayers: 4, supportsBot: false, category: '드로잉', thumbnailUrl: '', playable: false },
+]
+
+const tab = ref<'reports' | 'sanctions' | 'audit' | 'games' | 'songs'>('reports')
 const { data: reported } = useAsyncData(() => adminApi.reports(), MOCK_REPORTED)
 const { data: sanctions } = useAsyncData(() => adminApi.sanctions(), MOCK_SANCTIONS)
 const { data: audit } = useAsyncData(() => adminApi.auditLogs(), MOCK_AUDIT)
+const { data: games } = useAsyncData(() => gamesApi.list(), MOCK_GAMES)
 
 const SANCTION_LABEL: Record<SanctionType, string> = {
   WARNING: '경고', SUSPENSION: '일시정지', PERMANENT_BAN: '영구정지',
@@ -50,6 +58,38 @@ async function sanction(user: ReportedUser, type: SanctionType) {
     flash(e instanceof ApiError ? e.message : '제재 적용 실패 (백엔드 미연동)')
   }
 }
+
+// 게임 노출 토글 (PATCH /admin/games/{gameId})
+async function toggleGame(g: Game) {
+  const next = !g.playable
+  try {
+    await adminApi.toggleGame(g.id, next)
+  } catch (e) {
+    if (e instanceof ApiError) flash(e.message)
+  }
+  g.playable = next
+  flash(`${g.name} — ${next ? '노출' : '숨김'} 처리`)
+}
+
+// 곡 등록 (POST /admin/songs)
+const songForm = ref({ title: '', artist: '', audioUrl: '', durationSec: 0 })
+async function registerSong() {
+  const { title, artist, audioUrl, durationSec } = songForm.value
+  if (!title.trim() || !audioUrl.trim()) return flash('제목과 오디오 URL은 필수예요')
+  try {
+    await adminApi.registerSong({
+      title: title.trim(),
+      artist: artist.trim() || undefined,
+      audioUrl: audioUrl.trim(),
+      durationSec: durationSec || undefined,
+    })
+    flash(`"${title}" 곡을 등록했어요`)
+    songForm.value = { title: '', artist: '', audioUrl: '', durationSec: 0 }
+  } catch (e) {
+    flash(e instanceof ApiError ? e.message : '곡 등록 실패 (백엔드 미연동)')
+  }
+}
+
 const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
 </script>
 
@@ -59,6 +99,8 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
       <button :class="{ on: tab === 'reports' }" @click="tab = 'reports'">신고 유저</button>
       <button :class="{ on: tab === 'sanctions' }" @click="tab = 'sanctions'">제재 이력</button>
       <button :class="{ on: tab === 'audit' }" @click="tab = 'audit'">감사 로그</button>
+      <button :class="{ on: tab === 'games' }" @click="tab = 'games'">게임 노출</button>
+      <button :class="{ on: tab === 'songs' }" @click="tab = 'songs'">곡 등록</button>
     </div>
 
     <!-- 신고 유저 -->
@@ -96,7 +138,7 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
     </PixelCard>
 
     <!-- 감사 로그 -->
-    <PixelCard v-else title="감사 로그">
+    <PixelCard v-else-if="tab === 'audit'" title="감사 로그">
       <table class="tbl">
         <thead><tr><th>행위</th><th>대상</th><th>상세</th><th>시각</th></tr></thead>
         <tbody>
@@ -108,6 +150,37 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
           </tr>
         </tbody>
       </table>
+    </PixelCard>
+
+    <!-- 게임 노출 -->
+    <PixelCard v-else-if="tab === 'games'" title="게임 노출 관리">
+      <table class="tbl">
+        <thead><tr><th>게임</th><th>분류</th><th>인원</th><th>노출</th></tr></thead>
+        <tbody>
+          <tr v-for="g in games" :key="g.id">
+            <td>{{ g.name }}</td>
+            <td>{{ g.category }}</td>
+            <td>{{ g.minPlayers }}~{{ g.maxPlayers }}인</td>
+            <td class="acts">
+              <span class="state" :class="{ off: !g.playable }">{{ g.playable ? '노출 중' : '숨김' }}</span>
+              <PixelButton :variant="g.playable ? 'secondary' : 'mint'" @click="toggleGame(g)">
+                {{ g.playable ? '숨기기' : '노출' }}
+              </PixelButton>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </PixelCard>
+
+    <!-- 곡 등록 -->
+    <PixelCard v-else title="곡 등록">
+      <form class="song-form" @submit.prevent="registerSong">
+        <label>제목 *<input v-model="songForm.title" placeholder="곡 제목" /></label>
+        <label>아티스트<input v-model="songForm.artist" placeholder="아티스트 (선택)" /></label>
+        <label>오디오 URL *<input v-model="songForm.audioUrl" placeholder="https://..." /></label>
+        <label>길이(초)<input v-model.number="songForm.durationSec" type="number" min="0" placeholder="예: 210" /></label>
+        <PixelButton variant="primary" type="submit">등록</PixelButton>
+      </form>
     </PixelCard>
 
     <PixelToast :message="toast" />
@@ -123,6 +196,16 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
 .tbl th, .tbl td { padding: 10px 8px; text-align: left; border-bottom: 2px dashed #eaddea; vertical-align: middle; }
 .tbl th { font-size: 9px; color: var(--c-muted); }
 .warn { color: var(--c-coral); font-weight: 700; }
-.acts { display: flex; gap: 6px; }
+.acts { display: flex; gap: 6px; align-items: center; }
 .acts :deep(.px-btn) { height: 32px; padding: 0 10px; font-size: 10px; }
+.state { font-size: 10px; font-weight: 700; color: #36a17f; }
+.state.off { color: var(--c-muted); }
+
+.song-form { display: grid; gap: 12px; max-width: 420px; }
+.song-form label { display: grid; gap: 5px; font-size: 10px; font-weight: 700; color: var(--c-muted); }
+.song-form input {
+  height: 42px; padding: 0 12px;
+  border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; outline: 0;
+  font-size: 12px; font-weight: 400; color: var(--c-ink);
+}
 </style>

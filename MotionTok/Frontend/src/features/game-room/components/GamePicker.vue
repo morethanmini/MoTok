@@ -9,7 +9,10 @@ defineEmits<{ close: []; launch: [game: GameEntry] }>()
   <div class="overlay" @click="$emit('close')">
     <div class="dialog" @click.stop>
       <div class="head">
-        <h2>SELECT GAME</h2>
+        <div>
+          <span class="kicker">MOTOK GAME STATION</span>
+          <h2>플레이할 게임을 골라주세요</h2>
+        </div>
         <span class="sub">웹캠으로 몸을 움직여 플레이!</span>
         <button class="close" @click="$emit('close')">X</button>
       </div>
@@ -55,15 +58,19 @@ defineEmits<{ close: []; launch: [game: GameEntry] }>()
 .dialog {
   width: 840px;
   max-width: 92vw;
-  background: #fffdf3;
+  background-color: #fffdf3;
+  background-image: radial-gradient(rgba(56, 38, 61, .08) 1px, transparent 1px);
+  background-size: 18px 18px;
   border: var(--border-thick);
+  border-radius: 23px 23px 17px 23px;
   padding: 28px 30px 32px;
   box-shadow: 8px 8px 0 rgba(43, 35, 51, 0.3);
   /* 창만 팝업 애니메이션 */
   animation: px-pop 0.18s steps(3);
 }
 .head { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
-.head h2 { margin: 0; font-size: 16px; color: #f0a815; }
+.head h2 { margin: 8px 0 0; font-size: 16px; color: var(--c-ink); }
+.kicker { padding: 5px 7px; border: 2px solid var(--c-ink); border-radius: 999px; background: var(--c-yellow); font-size: 7px; font-weight: 700; }
 .sub { font-size: 11px; color: #a99f86; }
 .close {
   margin-left: auto;
@@ -74,6 +81,7 @@ defineEmits<{ close: []; launch: [game: GameEntry] }>()
   color: var(--c-ink-soft);
   font-size: 11px;
   box-shadow: var(--shadow-sm);
+  border-radius: 10px;
 }
 .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .game-card {
@@ -82,6 +90,7 @@ defineEmits<{ close: []; launch: [game: GameEntry] }>()
   background: #fff;
   padding: 0;
   overflow: hidden;
+  border-radius: 15px 15px 11px 15px;
   box-shadow: 4px 4px 0 rgba(43, 35, 51, 0.2);
   transition: var(--t-fast);
 }
