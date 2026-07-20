@@ -1,7 +1,7 @@
 <script setup lang="ts">
-/** 마이페이지 — 프로필·포인트·내 전적 (API §2 /users/me, /users/me/records). */
+/** 마이페이지 — 프로필·포인트·포인트내역·내 전적 (API §2 /users/me, /users/me/points/history, /users/me/records). */
 import { useRouter } from 'vue-router'
-import { usersApi, type GameRecord, type UserProfile } from '@/api'
+import { usersApi, type GameRecord, type PointHistory, type PointType, type UserProfile } from '@/api'
 import { useAsyncData } from '@/composables/useAsyncData'
 import { RouteName } from '@/router/routeNames'
 import AppPage from '@/components/common/AppPage.vue'
@@ -20,9 +20,21 @@ const MOCK_RECORDS: GameRecord[] = [
   { gameId: 3, gameName: '리듬 펀치', playCount: 8, bestScore: 8420, rankNo: 7 },
   { gameId: 5, gameName: '포즈 매치', playCount: 5, bestScore: 7960, rankNo: 12 },
 ]
+const MOCK_HISTORY: PointHistory[] = [
+  { id: 3, amount: 300, type: 'GAME_REWARD', balanceAfter: 1250, createdAt: '2025-07-19T10:00:00Z' },
+  { id: 2, amount: -500, type: 'SHOP_PURCHASE', balanceAfter: 950, createdAt: '2025-07-18T14:30:00Z' },
+  { id: 1, amount: -100, type: 'AI_GENERATE', balanceAfter: 1450, createdAt: '2025-07-17T09:15:00Z' },
+]
+const POINT_TYPE_LABEL: Record<PointType, string> = {
+  GAME_REWARD: '게임 보상',
+  SHOP_PURCHASE: '상점 구매',
+  AI_GENERATE: 'AI 생성',
+  GUEST_MIGRATE: '게스트 이전',
+}
 
 const { data: me } = useAsyncData(() => usersApi.getMe(), MOCK_ME)
 const { data: records } = useAsyncData(() => usersApi.getRecords(), MOCK_RECORDS)
+const { data: history } = useAsyncData(() => usersApi.getPointHistory(0, 20).then((p) => p.content), MOCK_HISTORY)
 
 const fmtDate = (iso: string) => iso.slice(0, 10)
 </script>
@@ -73,6 +85,26 @@ const fmtDate = (iso: string) => iso.slice(0, 10)
         </table>
       </PixelCard>
     </div>
+
+    <!-- 포인트 내역 -->
+    <PixelCard title="포인트 내역" class="history-card">
+      <table class="records">
+        <thead>
+          <tr><th>내역</th><th>변동</th><th>잔액</th><th>일시</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="h in history" :key="h.id">
+            <td>{{ POINT_TYPE_LABEL[h.type] }}</td>
+            <td :class="h.amount >= 0 ? 'plus' : 'minus'">
+              {{ h.amount >= 0 ? '+' : '' }}{{ h.amount.toLocaleString() }}
+            </td>
+            <td>{{ h.balanceAfter.toLocaleString() }}</td>
+            <td>{{ fmtDate(h.createdAt) }}</td>
+          </tr>
+          <tr v-if="history.length === 0"><td colspan="4" class="empty">포인트 내역이 없어요</td></tr>
+        </tbody>
+      </table>
+    </PixelCard>
   </AppPage>
 </template>
 
@@ -97,4 +129,10 @@ const fmtDate = (iso: string) => iso.slice(0, 10)
 .records th, .records td { padding: 9px 8px; text-align: left; border-bottom: 2px dashed #eaddea; }
 .records th { font-size: 9px; color: var(--c-muted); }
 .records td:last-child { color: var(--c-blue); font-weight: 700; }
+
+.history-card { margin-top: 18px; }
+.history-card .records td:last-child { color: var(--c-muted); font-weight: 400; }
+.history-card .plus { color: #36a17f; font-weight: 700; }
+.history-card .minus { color: var(--c-coral); font-weight: 700; }
+.history-card .empty { text-align: center; color: var(--c-muted); }
 </style>
