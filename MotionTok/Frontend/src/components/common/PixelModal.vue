@@ -23,7 +23,7 @@ defineEmits<{ close: [] }>()
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: px-pop 0.15s;
+  /* 배경은 즉시 표시 (애니메이션 없음) */
 }
 .modal {
   width: 390px;
@@ -33,5 +33,7 @@ defineEmits<{ close: [] }>()
   border-radius: var(--radius-xl);
   background: var(--c-paper);
   box-shadow: var(--shadow-xl);
+  /* 창만 팝업 애니메이션 */
+  animation: px-pop 0.16s ease;
 }
 </style>
