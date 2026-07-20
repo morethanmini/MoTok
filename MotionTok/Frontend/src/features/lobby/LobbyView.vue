@@ -8,9 +8,7 @@ import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
 import { MOCK_FRIENDS, MOCK_ROOMS, type Room } from './data'
 
-import BrandLogo from '@/components/common/BrandLogo.vue'
-import BgmToggle from '@/components/common/BgmToggle.vue'
-import CoinIcon from '@/components/common/CoinIcon.vue'
+import AppHeader from '@/components/common/AppHeader.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import RoomCard from './components/RoomCard.vue'
@@ -106,22 +104,8 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
       <i class="spark s3">✦</i>
     </div>
 
-    <!-- 상단 바 -->
-    <header class="top">
-      <BrandLogo class="brand" subtitle="친구와 함께 즐기는 모션 파티" />
-      <nav class="nav">
-        <button class="active">로비</button>
-        <button @click="router.push({ name: RouteName.GamesCatalog })">게임</button>
-        <button @click="router.push({ name: RouteName.Ranking })">랭킹</button>
-        <button @click="router.push({ name: RouteName.Shop })">상점</button>
-      </nav>
-      <div class="account">
-        <BgmToggle />
-        <span class="user-pill">{{ session.userLabel }}</span>
-        <div class="coin"><CoinIcon :size="15" /> 1,250 <b>＋</b></div>
-        <button class="avatar" title="마이페이지" @click="router.push({ name: RouteName.MyPage })">😎</button>
-      </div>
-    </header>
+    <!-- 상단 바 (공용 헤더) -->
+    <AppHeader />
 
     <!-- 본문 -->
     <div class="layout">
@@ -244,28 +228,6 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 .s1 { left: 17px; top: 10%; }
 .s2 { right: 24px; top: 36%; color: var(--c-coral); animation-delay: 0.4s; }
 .s3 { left: 18px; bottom: 29%; color: var(--c-blue); animation-delay: 0.8s; }
-
-/* 상단 바 */
-.top {
-  height: 78px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  padding: 0 28px;
-  gap: 28px;
-  background: rgba(255, 253, 247, 0.96);
-  border-bottom: var(--border);
-  z-index: 4;
-}
-.brand { min-width: 228px; }
-.nav { display: flex; gap: 8px; }
-.nav button { border: 0; background: transparent; padding: 11px 15px; border-radius: 12px; font-weight: 700; }
-.nav button.active { background: var(--c-yellow); border: 2px solid var(--c-ink); box-shadow: var(--shadow-sm); }
-.account { margin-left: auto; display: flex; align-items: center; gap: 10px; }
-.user-pill { padding: 6px 9px; border: 2px solid var(--c-ink); border-radius: 999px; background: #fff; font-size: 9px; font-weight: 700; }
-.coin { height: 39px; padding: 0 12px; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; display: flex; align-items: center; gap: 7px; font-weight: 700; }
-.coin b { color: #36a17f; }
-.avatar { width: 43px; height: 43px; border: var(--border); border-radius: var(--radius-md); background: var(--c-mint-soft); display: grid; place-items: center; box-shadow: var(--shadow-sm); font-size: 20px; }
 
 /* 레이아웃 */
 .layout {
