@@ -269,6 +269,15 @@ export interface CreateSongRequest {
   audioUrl: string
   durationSec?: number
 }
+/** POST /admin/songs 요청 (명세 RegisterSongRequest — CreateSongRequest와 필드 동일) */
+export type RegisterSongRequest = CreateSongRequest
+/** POST /charts 요청 (명세 CreateChartRequest) */
+export interface CreateChartRequest {
+  songId: number
+  mode: ChartMode
+  difficulty?: ChartDifficulty
+  patternData: object
+}
 
 // ── 실시간 인프라 ─────────────────────────
 export interface IceServersResponse {
