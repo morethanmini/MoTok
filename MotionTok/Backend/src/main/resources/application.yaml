@@ -1,3 +1,31 @@
 spring:
   application:
     name: backend
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/motiontok?serverTimezone=Asia/Seoul&characterEncoding=UTF-8&allowPublicKeyRetrieval=true&useSSL=false
+    username: ${DB_USERNAME:ssafy}
+    password: ${DB_PASSWORD:ssafy}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+server:
+  port: 8080
+
+# JWT: dev default is overridable via env (JWT_SECRET). Do NOT ship the default secret.
+jwt:
+  secret: ${JWT_SECRET:motiontok-local-dev-secret-change-me-to-a-long-random-value-at-least-64-bytes-long}
+  access-expiration-ms: ${JWT_EXPIRATION_MS:1296000000} # 15 days (dev)
+
+# Frontend dev origin(s) for CORS (Vite default 5173)
+app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
