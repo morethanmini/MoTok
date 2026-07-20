@@ -8,6 +8,7 @@ import * as authApi from '@/api/auth'
 import { ApiError } from '@/api/client'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
+import PixelCat from './components/PixelCat.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -286,6 +287,7 @@ const back = () => router.push({ name: RouteName.Start })
 <template>
   <main class="page">
     <section class="card">
+      <PixelCat v-if="!isSignup" />
       <div class="head">
         <BrandLogo size="sm" subtitle="친구들과 움직일 준비가 되었나요?" title="MoToK" />
       </div>
