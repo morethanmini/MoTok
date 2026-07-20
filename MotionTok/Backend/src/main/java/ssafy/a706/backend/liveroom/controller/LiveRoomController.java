@@ -11,6 +11,8 @@ import ssafy.a706.backend.global.response.ApiResponse;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
 import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomRequest;
 import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomResponse;
+import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomByInviteCodeRequest;
+import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomRequest;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomDetailResponse;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomSummaryResponse;
 
@@ -37,11 +39,26 @@ public class LiveRoomController {
 
     @GetMapping
     public ApiResponse<List<LiveRoomSummaryResponse>> list() {
-        return ApiResponse.ok(liveRoomService.listPublic());
+        return ApiResponse.ok(liveRoomService.list());
     }
 
     @GetMapping("/{roomId}")
     public ApiResponse<LiveRoomDetailResponse> get(@PathVariable String roomId) {
         return ApiResponse.ok(liveRoomService.get(roomId));
+    }
+
+    @PostMapping("/{roomId}/join")
+    public ApiResponse<LiveRoomDetailResponse> join(
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @PathVariable String roomId,
+            @Valid @RequestBody JoinLiveRoomRequest req) {
+        return ApiResponse.ok(liveRoomService.join(principal, roomId, req));
+    }
+
+    @PostMapping("/join-by-invite-code")
+    public ApiResponse<LiveRoomDetailResponse> joinByInviteCode(
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @Valid @RequestBody JoinLiveRoomByInviteCodeRequest req) {
+        return ApiResponse.ok(liveRoomService.joinByInviteCode(principal, req));
     }
 }

@@ -8,6 +8,8 @@ import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
 import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomRequest;
 import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomResponse;
+import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomByInviteCodeRequest;
+import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomRequest;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomDetailResponse;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomSummaryResponse;
 import ssafy.a706.backend.liveroom.model.LiveRoom;
@@ -28,6 +30,8 @@ public class LiveRoomService {
     private final LiveRoomRepository repository;
 
     public CreateLiveRoomResponse create(AuthPrincipal principal, CreateLiveRoomRequest req) {
+        validatePasswordRule(req.visibility(), req.password());
+
         String roomId = repository.generateUniqueRoomId();
         long now = System.currentTimeMillis();
 
@@ -46,39 +50,82 @@ public class LiveRoomService {
         if (inviteCode != null) {
             fields.put("inviteCode", inviteCode);
         }
+        if (req.visibility() == LiveRoomVisibility.PRIVATE) {
+            fields.put("password", req.password());
+        }
         repository.saveRoom(roomId, fields);
         repository.addMember(roomId, playerKey(principal), principal.userId(), principal.displayName(),
                 principal.isGuest(), now);
+        repository.indexRoom(roomId, now);
 
-        if (req.visibility() == LiveRoomVisibility.PUBLIC) {
-            repository.indexPublicRoom(roomId, now);
-        } else {
+        if (req.visibility() == LiveRoomVisibility.PRIVATE) {
             repository.saveInviteCode(inviteCode, roomId);
         }
 
         LiveRoom room = new LiveRoom(roomId, req.title(), req.visibility(), req.maxPlayers(), "WAITING",
-                principal.userId(), principal.displayName(), now, inviteCode, List.of());
+                principal.userId(), principal.displayName(), now, inviteCode, req.password(), List.of());
         return CreateLiveRoomResponse.from(room);
     }
 
-    public List<LiveRoomSummaryResponse> listPublic() {
+    public List<LiveRoomSummaryResponse> list() {
         List<LiveRoomSummaryResponse> result = new ArrayList<>();
-        for (String roomId : repository.listPublicRoomIdsNewestFirst(PUBLIC_LIST_LIMIT)) {
+        for (String roomId : repository.listRoomIdsNewestFirst(PUBLIC_LIST_LIMIT)) {
             repository.findRoomFields(roomId)
                     .map(fields -> toLiveRoom(roomId, fields, repository.findMembers(roomId)))
                     .ifPresentOrElse(
                             room -> result.add(LiveRoomSummaryResponse.from(room)),
-                            () -> repository.removeFromPublicIndex(roomId) // 죽은 방 lazy 청소
+                            () -> repository.removeFromIndex(roomId) // 죽은 방 lazy 청소
                     );
         }
         return result;
     }
 
     public LiveRoomDetailResponse get(String roomId) {
+        LiveRoom room = loadRoom(roomId);
+        return LiveRoomDetailResponse.from(room);
+    }
+
+    public LiveRoomDetailResponse join(AuthPrincipal principal, String roomId, JoinLiveRoomRequest req) {
+        LiveRoom room = loadRoom(roomId);
+        if (room.hasPassword() && !room.password().equals(req.password())) {
+            if (req.password() == null) {
+                throw new BusinessException(ErrorCode.ROOM_PASSWORD_REQUIRED);
+            }
+            throw new BusinessException(ErrorCode.ROOM_INVALID_PASSWORD);
+        }
+        return joinRoom(principal, room);
+    }
+
+    public LiveRoomDetailResponse joinByInviteCode(AuthPrincipal principal, JoinLiveRoomByInviteCodeRequest req) {
+        String roomId = repository.findRoomIdByInviteCode(req.inviteCode())
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVITE_CODE_NOT_FOUND));
+        LiveRoom room = loadRoom(roomId);
+        return joinRoom(principal, room);
+    }
+
+    private LiveRoomDetailResponse joinRoom(AuthPrincipal principal, LiveRoom room) {
+        String key = playerKey(principal);
+        if (!repository.hasMember(room.roomId(), key) && room.participantCount() >= room.maxPlayers()) {
+            throw new BusinessException(ErrorCode.ROOM_FULL);
+        }
+        repository.addMember(room.roomId(), key, principal.userId(), principal.displayName(),
+                principal.isGuest(), System.currentTimeMillis());
+        return LiveRoomDetailResponse.from(loadRoom(room.roomId()));
+    }
+
+    private LiveRoom loadRoom(String roomId) {
         Map<Object, Object> fields = repository.findRoomFields(roomId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ROOM_NOT_FOUND));
-        LiveRoom room = toLiveRoom(roomId, fields, repository.findMembers(roomId));
-        return LiveRoomDetailResponse.from(room);
+        return toLiveRoom(roomId, fields, repository.findMembers(roomId));
+    }
+
+    private void validatePasswordRule(LiveRoomVisibility visibility, String password) {
+        if (visibility == LiveRoomVisibility.PRIVATE && (password == null || password.isBlank())) {
+            throw new BusinessException(ErrorCode.ROOM_PASSWORD_REQUIRED, "비공개방은 6자리 비밀번호 설정이 필요합니다.");
+        }
+        if (visibility == LiveRoomVisibility.PUBLIC && password != null) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT, "공개방은 비밀번호를 설정할 수 없습니다.");
+        }
     }
 
     private LiveRoom toLiveRoom(String roomId, Map<Object, Object> fields, List<LiveRoomMemberValue> members) {
@@ -92,6 +139,7 @@ public class LiveRoomService {
                 (String) fields.get("hostDisplayName"),
                 Long.parseLong((String) fields.get("createdAt")),
                 (String) fields.get("inviteCode"),
+                (String) fields.get("password"),
                 members
         );
     }

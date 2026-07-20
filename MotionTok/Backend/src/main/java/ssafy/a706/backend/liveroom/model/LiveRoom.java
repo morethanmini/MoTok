@@ -13,9 +13,14 @@ public record LiveRoom(
         String hostDisplayName,
         long createdAt,
         String inviteCode,
+        String password,
         List<LiveRoomMemberValue> members
 ) {
     public int participantCount() {
         return members.size();
+    }
+
+    public boolean hasPassword() {
+        return password != null && !password.isBlank();
     }
 }

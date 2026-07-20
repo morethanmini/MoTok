@@ -19,7 +19,7 @@ import java.util.Set;
 /**
  * 방(-24) 전용 Redis 접근 계층. 모톡 Redis 키맵 v0.2를 그대로 따른다.
  * room:{roomId}(Hash, TTL 24h) · room:{roomId}:members(Hash, TTL 24h) ·
- * rooms:public(ZSET, TTL 없음) · room:invite:{code}(String, TTL 24h)
+ * rooms:index(ZSET, TTL 없음, 공개방·비공개방 모두 포함) · room:invite:{code}(String, TTL 24h)
  *
  * <p>members 필드 값은 원래 JSON 문자열로 설계됐지만, 이 프로젝트 build.gradle에
  * jackson-databind가 컴파일 클래스패스에 없어(webmvc/webflux 스타터만 있고
@@ -34,7 +34,7 @@ public class LiveRoomRepository {
     private static final int ROOM_ID_LENGTH = 6;
     private static final int INVITE_CODE_LENGTH = 8;
     private static final Duration ROOM_TTL = Duration.ofHours(24);
-    private static final String PUBLIC_INDEX_KEY = "rooms:public";
+    private static final String ROOM_INDEX_KEY = "rooms:index";
 
     private final StringRedisTemplate redisTemplate;
     private final SecureRandom random = new SecureRandom();
@@ -73,12 +73,16 @@ public class LiveRoomRepository {
         redisTemplate.opsForValue().set(inviteKey(code), roomId, ROOM_TTL);
     }
 
-    public void indexPublicRoom(String roomId, long createdAt) {
-        redisTemplate.opsForZSet().add(PUBLIC_INDEX_KEY, roomId, createdAt);
+    public Optional<String> findRoomIdByInviteCode(String code) {
+        return Optional.ofNullable(redisTemplate.opsForValue().get(inviteKey(code)));
     }
 
-    public void removeFromPublicIndex(String roomId) {
-        redisTemplate.opsForZSet().remove(PUBLIC_INDEX_KEY, roomId);
+    public void indexRoom(String roomId, long createdAt) {
+        redisTemplate.opsForZSet().add(ROOM_INDEX_KEY, roomId, createdAt);
+    }
+
+    public void removeFromIndex(String roomId) {
+        redisTemplate.opsForZSet().remove(ROOM_INDEX_KEY, roomId);
     }
 
     public Optional<Map<Object, Object>> findRoomFields(String roomId) {
@@ -92,10 +96,14 @@ public class LiveRoomRepository {
                 .toList();
     }
 
-    /** rooms:public ZSET에서 최신순(score 내림차순) roomId 목록. */
-    public Set<String> listPublicRoomIdsNewestFirst(int limit) {
-        Set<String> ids = redisTemplate.opsForZSet().reverseRange(PUBLIC_INDEX_KEY, 0, limit - 1);
+    /** rooms:index ZSET에서 최신순(score 내림차순) roomId 목록(공개방·비공개방 모두 포함). */
+    public Set<String> listRoomIdsNewestFirst(int limit) {
+        Set<String> ids = redisTemplate.opsForZSet().reverseRange(ROOM_INDEX_KEY, 0, limit - 1);
         return ids == null ? new LinkedHashSet<>() : ids;
+    }
+
+    public boolean hasMember(String roomId, String playerKey) {
+        return Boolean.TRUE.equals(redisTemplate.opsForHash().hasKey(membersKey(roomId), playerKey));
     }
 
     private String encodeMember(LiveRoomMemberValue v) {

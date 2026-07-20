@@ -37,6 +37,9 @@ public enum ErrorCode {
     ROOM_NOT_FOUND(HttpStatus.NOT_FOUND, "ROOM_NOT_FOUND", "존재하지 않는 방입니다."),
     ROOM_FULL(HttpStatus.CONFLICT, "ROOM_FULL", "방 정원이 가득 찼습니다."),
     NOT_ROOM_HOST(HttpStatus.FORBIDDEN, "ROOM_NOT_HOST", "방장만 가능한 동작입니다."),
+    ROOM_PASSWORD_REQUIRED(HttpStatus.BAD_REQUEST, "ROOM_PASSWORD_REQUIRED", "비밀번호가 필요합니다."),
+    ROOM_INVALID_PASSWORD(HttpStatus.FORBIDDEN, "ROOM_INVALID_PASSWORD", "비밀번호가 올바르지 않습니다."),
+    INVITE_CODE_NOT_FOUND(HttpStatus.NOT_FOUND, "INVITE_CODE_NOT_FOUND", "초대코드가 유효하지 않습니다."),
 
     // game / session
     GAME_NOT_FOUND(HttpStatus.NOT_FOUND, "GAME_NOT_FOUND", "존재하지 않는 게임입니다."),
