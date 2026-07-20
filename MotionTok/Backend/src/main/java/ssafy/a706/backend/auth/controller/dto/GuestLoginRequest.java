@@ -1,4 +1,4 @@
-package ssafy.a706.backend.auth.dto;
+package ssafy.a706.backend.auth.controller.dto;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
