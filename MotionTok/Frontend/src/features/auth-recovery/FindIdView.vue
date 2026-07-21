@@ -1,56 +1,133 @@
 <script setup lang="ts">
-/** 아이디(이메일) 찾기 — 닉네임으로 마스킹된 이메일 확인 (API §1 /auth/find-id). */
+/**
+ * 아이디(이메일) 찾기 — 닉네임으로 마스킹된 이메일 확인 (API §1 /auth/find-id).
+ * 로그인 창과 같은 테마(카드형)로 통일한다 — 로비 헤더가 붙는 AppPage는 쓰지 않는다.
+ */
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { authApi, ApiError } from '@/api'
-import AppPage from '@/components/common/AppPage.vue'
-import PixelCard from '@/components/common/PixelCard.vue'
+import { RouteName } from '@/router/routeNames'
+import BrandLogo from '@/components/common/BrandLogo.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 
+const router = useRouter()
+
 const nickname = ref('')
-const result = ref<string | null>(null)
-const error = ref<string | null>(null)
+const result = ref('')
+const error = ref('')
 const loading = ref(false)
 
 async function submit() {
-  if (!nickname.value.trim()) return
+  const value = nickname.value.trim()
+  if (!value) return
   loading.value = true
-  error.value = null
-  result.value = null
+  error.value = ''
+  result.value = ''
   try {
-    const res = await authApi.findId(nickname.value.trim())
+    const res = await authApi.findId(value)
     result.value = res.maskedEmail
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : '조회에 실패했어요 (백엔드 미연동)'
+    error.value = e instanceof ApiError ? e.message : '조회에 실패했어요.'
   } finally {
     loading.value = false
   }
 }
+
+const back = () => router.push({ name: RouteName.Auth, query: { mode: 'login' } })
 </script>
 
 <template>
-  <AppPage title="아이디 찾기" subtitle="가입 시 사용한 닉네임으로 이메일을 확인해요" max-width="480px">
-    <PixelCard pad="24px">
+  <main class="page">
+    <section class="card">
+      <div class="head">
+        <BrandLogo size="sm" subtitle="가입 시 닉네임으로 이메일을 확인해요" title="MoToK" />
+      </div>
+
       <label class="field">
         닉네임
         <input v-model="nickname" placeholder="가입 시 닉네임" @keydown.enter="submit" />
       </label>
 
-      <PixelButton variant="primary" size="lg" block :disabled="loading" @click="submit">
+      <PixelButton
+        variant="primary"
+        size="lg"
+        block
+        class="submit"
+        :disabled="loading"
+        @click="submit"
+      >
         {{ loading ? '조회 중…' : '아이디 찾기' }}
       </PixelButton>
 
-      <p v-if="result" class="ok">가입된 이메일: <b>{{ result }}</b></p>
-      <p v-if="error" class="err">{{ error }}</p>
-    </PixelCard>
-  </AppPage>
+      <div v-if="result" class="check-msg ok">가입된 이메일: {{ result }}</div>
+      <div v-if="error" class="check-msg bad">{{ error }}</div>
+
+      <button class="back" @click="back">← 로그인으로</button>
+    </section>
+  </main>
 </template>
 
 <style scoped>
-.field { display: block; margin-bottom: 16px; font-size: 9px; font-weight: 700; }
-.field input {
-  width: 100%; height: 45px; margin-top: 6px; padding: 0 12px;
-  border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; outline: 0;
+.page {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background: var(--c-cream);
+  background-image: radial-gradient(circle at 1px 1px, rgba(56, 38, 61, 0.1) 1px, transparent 1.5px);
+  background-size: 18px 18px;
 }
-.ok { margin-top: 16px; padding: 12px; border: 2px solid var(--c-ink); border-radius: 11px; background: var(--c-mint-soft); font-size: 11px; }
-.err { margin-top: 16px; font-size: 10px; color: var(--c-coral); }
+.card {
+  position: relative;
+  width: 440px;
+  max-width: 92vw;
+  padding: 28px;
+  border: var(--border-thick);
+  border-radius: var(--radius-xl);
+  background: var(--c-paper);
+  box-shadow: 9px 9px 0 var(--c-ink);
+}
+.head {
+  margin-bottom: 22px;
+}
+.field {
+  display: block;
+  margin-top: 12px;
+  font-size: 9px;
+  font-weight: 700;
+}
+.field input {
+  width: 100%;
+  height: 45px;
+  margin-top: 6px;
+  padding: 0 12px;
+  border: 2px solid var(--c-ink);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  outline: 0;
+}
+.submit {
+  margin-top: 20px;
+}
+.check-msg {
+  margin-top: 12px;
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--c-muted);
+}
+.check-msg.ok {
+  color: var(--c-mint);
+}
+.check-msg.bad {
+  color: var(--c-coral);
+}
+.back {
+  display: block;
+  margin: 16px auto 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--c-blue);
+  font-size: 9px;
+  font-weight: 700;
+}
 </style>
