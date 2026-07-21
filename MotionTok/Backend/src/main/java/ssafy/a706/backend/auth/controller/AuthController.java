@@ -74,6 +74,12 @@ public class AuthController {
         return authService.findId(req.nickname());
     }
 
+    /** POST /auth/social/{provider} — 소셜 로그인(google·kakao). 최초 로그인 시 계정 자동 생성·연동 */
+    @PostMapping("/social/{provider}")
+    public TokenResponse social(@PathVariable String provider, @Valid @RequestBody SocialLoginRequest req) {
+        return authService.socialLogin(provider, req);
+    }
+
     /** POST /auth/password/reset-request — 재설정 링크 메일 발송(존재 여부 무관 202) */
     @PostMapping("/password/reset-request")
     @ResponseStatus(HttpStatus.ACCEPTED)
