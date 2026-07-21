@@ -1,14 +1,21 @@
-# Handoff — 2026-07-21 12:00
+# Handoff — 2026-07-21 18:30
 
 **Branch:** lee
 
 ## Did this session
-- 모션톡 지라 스킬 동작 확인 — 내 할당 이슈는 S15P11A706-24(방 생성 기능) 1건, 진행 중
-- S15P11A706-24 개발로그 문서(옵시디언)는 지라 동기화 스킬이 아니라 직접 작성된 것으로 확인
-- 새 개인 스킬 `motiontalk-devlog` 작성 (`~/.claude/skills/motiontalk-devlog/SKILL.md`) — 기능 개발 완료 시 이번 세션에서 실제로 구현한 내용만 옵시디언 `08_개발 로그/{Jira키}.md`에 정리해서 저장하는 스킬. Jira 상태 동기화(`motiontalk-jira`)와는 역할 분리
-- 옵시디언 `09_Claude/Claude Code 개발 워크플로우.md`의 "7. 기능 완성되면" 섹션과 체크리스트에 devlog 저장 단계 추가
-- `motiontalk-devlog` 스킬 패키징(`.skill` 파일 생성)까지는 했으나, 계정 스킬 업로드(Settings → Capabilities → Skills)는 도구로 대신 할 수 없어 사용자가 직접 해야 함 — 아직 미완료
+- 맥에서 저장한 핸드오프 노트를 윈도우에서 못 찾는 문제 진단 — 원인은 로컬 `lee`가 `origin/lee`/`origin/main`보다 뒤처져 있었고, 저장소 루트와 `MotionTok/Backend` 두 곳에 서로 다른 `.claude/handoff.md`가 각각 생겨있었기 때문 (Claude Code를 연 디렉토리에 따라 상대경로가 달라짐)
+- `origin/main`을 로컬 `lee`에 merge해서 누락된 커밋/파일 회수, `lee`/`main` 둘 다 origin과 동기화 완료
+- 팀장님 지시로 `.claude/` 및 하위 전체를 git에서 제거하고 gitignore 처리하기로 결정 — 저장소 루트 `.gitignore` 신규 생성, 기존 tracked `.claude/handoff.md`(루트, Backend) `git rm --cached`로 추적 해제
+- 핸드오프 노트를 계속 git으로 동기화하기 위해 `MotionTok/Backend/docs/이상민/handoff.md`로 이전
+- 팀장님 지시대로 MR 없이 `lee → main` 직접 merge + push 완료 (main에서 `.claude` 폴더 사라짐 확인)
+- 옵시디언 `09_Claude/Claude Code 핸드오프 사용법.md`을 새 경로/gitignore 상황에 맞게 갱신
+- 로컬 `handoff` 스킬(`SKILL.md`)의 저장 경로를 `.claude/handoff.md` → `docs/이상민/handoff.md`로 수정, "git 저장소 루트" 대신 "세션 cwd 기준"으로 규칙을 명확히 해서 이전 버그(노트 두 곳에 분산) 재발 방지
+- 수정한 `SKILL.md`를 사용자가 Settings → Capabilities → Skills에 계정 스킬로 재업로드 완료 (제가 직접 검증은 불가)
+- 오늘 이 세션 자체가 새 경로로 `/handoff 저장`이 잘 동작하는지 윈도우에서 먼저 테스트하는 세션
+
+## In progress / not committed
+(없음 — Backend 코드 변경 없음, working tree엔 무관한 untracked 파일(`.idea/`, `run-dev.bat`)만 있음)
 
 ## Next
-- `motiontalk-devlog.skill` 파일을 Claude 앱/웹 Settings → Capabilities → Skills에 직접 업로드해서 계정 스킬로 등록 (handoff처럼 양쪽 기기에서 자동으로 뜨게)
-- 이번 세션은 이 Backend 저장소 코드 변경은 없었음 (커밋할 코드 없음)
+- 맥에서 새 세션 열어 `/handoff 불러오기`로 이 노트가 새 경로(`docs/이상민/handoff.md`)에서 정상적으로 읽히는지, 계정 스킬 재업로드가 실제로 반영됐는지 교차 테스트
+- 확인되면 `MotionTok/Backend` 쪽 실제 기능 개발(S15P11A706-24 방 생성 기능 등) 이어서 진행
