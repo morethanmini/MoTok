@@ -22,7 +22,7 @@ const { isPlaying, toggle } = useBgm()
   width: 39px;
   height: 39px;
   border: 2px solid var(--c-ink);
-  border-radius: var(--radius-sm);
+  border-radius: 50%;
   background: #fff;
   box-shadow: 3px 3px 0 #d9cbd9;
   font-size: 16px;
