@@ -35,9 +35,7 @@ public class LiveRoomService {
         String roomId = repository.generateUniqueRoomId();
         long now = System.currentTimeMillis();
 
-        String inviteCode = req.visibility() == LiveRoomVisibility.PRIVATE
-                ? repository.generateUniqueInviteCode()
-                : null;
+        String inviteCode = repository.generateUniqueInviteCode();
 
         Map<String, String> fields = new LinkedHashMap<>();
         fields.put("title", req.title());
@@ -47,9 +45,7 @@ public class LiveRoomService {
         fields.put("hostUserId", principal.userId());
         fields.put("hostDisplayName", principal.displayName());
         fields.put("createdAt", String.valueOf(now));
-        if (inviteCode != null) {
-            fields.put("inviteCode", inviteCode);
-        }
+        fields.put("inviteCode", inviteCode);
         if (req.visibility() == LiveRoomVisibility.PRIVATE) {
             fields.put("password", req.password());
         }
@@ -57,10 +53,7 @@ public class LiveRoomService {
         repository.addMember(roomId, playerKey(principal), principal.userId(), principal.displayName(),
                 principal.isGuest(), now);
         repository.indexRoom(roomId, now);
-
-        if (req.visibility() == LiveRoomVisibility.PRIVATE) {
-            repository.saveInviteCode(inviteCode, roomId);
-        }
+        repository.saveInviteCode(inviteCode, roomId);
 
         LiveRoom room = new LiveRoom(roomId, req.title(), req.visibility(), req.maxPlayers(), "WAITING",
                 principal.userId(), principal.displayName(), now, inviteCode, req.password(), List.of());
