@@ -11,6 +11,15 @@ import { lobbyRoutes } from '@/features/lobby/routes'
 import { deviceSetupRoutes } from '@/features/device-setup/routes'
 import { gameRoomRoutes } from '@/features/game-room/routes'
 import { gameResultRoutes } from '@/features/game-result/routes'
+import { authRecoveryRoutes } from '@/features/auth-recovery/routes'
+import { accountRoutes } from '@/features/account/routes'
+import { shopRoutes } from '@/features/shop/routes'
+import { inventoryRoutes } from '@/features/inventory/routes'
+import { friendsRoutes } from '@/features/friends/routes'
+import { rankingRoutes } from '@/features/ranking/routes'
+import { gamesCatalogRoutes } from '@/features/games-catalog/routes'
+import { adminRoutes } from '@/features/admin/routes'
+import { unsupportedRoutes } from '@/features/unsupported/routes'
 
 export const routes: RouteRecordRaw[] = [
   ...startRoutes,
@@ -19,4 +28,13 @@ export const routes: RouteRecordRaw[] = [
   ...deviceSetupRoutes,
   ...gameRoomRoutes,
   ...gameResultRoutes,
+  ...authRecoveryRoutes,
+  ...accountRoutes,
+  ...shopRoutes,
+  ...inventoryRoutes,
+  ...friendsRoutes,
+  ...rankingRoutes,
+  ...gamesCatalogRoutes,
+  ...adminRoutes,
+  ...unsupportedRoutes,
 ]

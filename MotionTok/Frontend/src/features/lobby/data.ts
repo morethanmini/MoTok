@@ -11,6 +11,8 @@ export interface Room {
   state: string
   visibility: string
   disabled: boolean
+  /** API 연동 시의 방 식별자 (목업에는 없음) */
+  roomId?: string
 }
 
 export interface Friend {

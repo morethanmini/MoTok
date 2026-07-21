@@ -24,7 +24,8 @@ const playAsGuest = () => {
 const confirmGuest = () => {
   showGuestWarning.value = false
   session.loginAsGuest()
-  router.push({ name: RouteName.Lobby })
+  // 게스트는 멀티플레이 로비 대신 게임(1인) 화면에서 시작
+  router.push({ name: RouteName.GamesCatalog })
 }
 </script>
 
