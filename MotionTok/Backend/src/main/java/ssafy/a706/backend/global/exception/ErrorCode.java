@@ -21,6 +21,10 @@ public enum ErrorCode {
     INVALID_TOKEN(HttpStatus.UNAUTHORIZED, "AUTH_INVALID_TOKEN", "유효하지 않은 토큰입니다."),
     ACCOUNT_NOT_ACTIVE(HttpStatus.FORBIDDEN, "AUTH_ACCOUNT_NOT_ACTIVE", "이용이 제한된 계정입니다."),
 
+    // 소셜 로그인 (명세서 POST /auth/social/{provider})
+    UNSUPPORTED_OAUTH_PROVIDER(HttpStatus.BAD_REQUEST, "AUTH_UNSUPPORTED_OAUTH_PROVIDER", "지원하지 않는 소셜 로그인 제공자입니다."),
+    SOCIAL_LOGIN_FAILED(HttpStatus.UNAUTHORIZED, "AUTH_SOCIAL_LOGIN_FAILED", "소셜 로그인에 실패했습니다."),
+
     // 이메일 인증 (명세서 v0.2.1)
     EMAIL_ALREADY_REGISTERED(HttpStatus.CONFLICT, "AUTH_EMAIL_ALREADY_REGISTERED", "이미 가입된 이메일입니다."),
     NICKNAME_ALREADY_USED(HttpStatus.CONFLICT, "AUTH_NICKNAME_ALREADY_USED", "이미 사용 중인 닉네임입니다."),

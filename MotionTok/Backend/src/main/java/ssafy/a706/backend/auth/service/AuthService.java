@@ -11,6 +11,10 @@ import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.auth.controller.dto.*;
 import ssafy.a706.backend.auth.email.EmailVerificationService;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
+import ssafy.a706.backend.auth.oauth.OauthLinkService;
+import ssafy.a706.backend.auth.oauth.OauthProvider;
+import ssafy.a706.backend.auth.oauth.OauthUserInfo;
+import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.user.entity.User;
@@ -30,6 +34,8 @@ public class AuthService {
     private final JwtTokenProvider tokenProvider;
     private final RefreshTokenStore refreshTokenStore;
     private final EmailVerificationService emailVerificationService;
+    private final OauthClientResolver oauthClientResolver;
+    private final OauthLinkService oauthLinkService;
 
     public AvailabilityResponse checkEmail(String email) {
         return new AvailabilityResponse(!userRepository.existsByEmail(email.trim().toLowerCase()));
@@ -86,6 +92,41 @@ public class AuthService {
             throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
         }
         return issueTokens(user);
+    }
+
+    /**
+     * 소셜 로그인 (명세서 POST /auth/social/{provider}).
+     * provider 인가 코드로 사용자 정보를 받고(외부 HTTP는 트랜잭션 밖), 이미 연동된 계정이면 그대로,
+     * 아니면 계정을 생성·연동한 뒤 토큰을 발급한다. 계정 생성·조회는 OauthLinkService가 각각 별도 트랜잭션으로 처리한다.
+     */
+    public TokenResponse socialLogin(String providerPath, SocialLoginRequest req) {
+        OauthProvider provider = OauthProvider.from(providerPath);
+        OauthUserInfo info = oauthClientResolver.resolve(provider)
+                .fetch(req.authorizationCode(), req.redirectUri());
+
+        Long userId = oauthLinkService.findLinkedUserId(provider, info.providerUid())
+                .orElseGet(() -> createLinkedUserId(provider, info));
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SOCIAL_LOGIN_FAILED));
+        if (!user.isActive()) {
+            throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
+        }
+        return issueTokens(user);
+    }
+
+    /**
+     * 최초 소셜 로그인 — 새 계정을 만들어 연동한다.
+     * 동시 최초 로그인으로 복합 UNIQUE(provider, provider_uid)에 걸리면 createAndLink 트랜잭션이 통째로 롤백되므로,
+     * 새 트랜잭션인 findLinkedUserId로 먼저 커밋된 연동을 조회해 복구한다(재시도 없이 정상 발급).
+     */
+    private Long createLinkedUserId(OauthProvider provider, OauthUserInfo info) {
+        try {
+            return oauthLinkService.createAndLink(provider, info);
+        } catch (DataIntegrityViolationException race) {
+            return oauthLinkService.findLinkedUserId(provider, info.providerUid())
+                    .orElseThrow(() -> new BusinessException(ErrorCode.SOCIAL_LOGIN_FAILED));
+        }
     }
 
     /** Refresh 토큰으로 Access 재발급. 저장된 토큰과 일치할 때만 허용하고, 발급 시 회전시킨다. */
