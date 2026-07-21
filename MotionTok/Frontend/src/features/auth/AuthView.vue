@@ -6,6 +6,7 @@ import { RouteName } from '@/router/routeNames'
 import { useSessionStore } from '@/stores/session'
 import * as authApi from '@/api/auth'
 import { ApiError } from '@/api/client'
+import { authApi as recoveryApi } from '@/api'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelCat from './components/PixelCat.vue'
@@ -285,6 +286,70 @@ function submit() {
 }
 
 const back = () => router.push({ name: RouteName.Start })
+
+// 아이디 찾기 모달 — 로그인 창 위에 오버레이로 띄운다
+const findIdOpen = ref(false)
+const findIdNickname = ref('')
+const findIdResult = ref('')
+const findIdError = ref('')
+const findIdLoading = ref(false)
+
+function openFindId() {
+  findIdNickname.value = ''
+  findIdResult.value = ''
+  findIdError.value = ''
+  findIdOpen.value = true
+}
+function closeFindId() {
+  findIdOpen.value = false
+}
+async function submitFindId() {
+  const value = findIdNickname.value.trim()
+  if (!value) return
+  findIdLoading.value = true
+  findIdError.value = ''
+  findIdResult.value = ''
+  try {
+    const res = await recoveryApi.findId(value)
+    findIdResult.value = res.maskedEmail
+  } catch (e) {
+    findIdError.value = e instanceof ApiError ? e.message : '조회에 실패했어요.'
+  } finally {
+    findIdLoading.value = false
+  }
+}
+
+// 비밀번호 찾기 모달 — 이메일로 재설정 링크 요청만 처리 (토큰 검증은 메일 링크 경로에서 진행)
+const resetOpen = ref(false)
+const resetEmail = ref('')
+const resetMessage = ref('')
+const resetError = ref('')
+const resetLoading = ref(false)
+
+function openResetPassword() {
+  resetEmail.value = ''
+  resetMessage.value = ''
+  resetError.value = ''
+  resetOpen.value = true
+}
+function closeResetPassword() {
+  resetOpen.value = false
+}
+async function submitResetRequest() {
+  const value = resetEmail.value.trim()
+  if (!value) return
+  resetLoading.value = true
+  resetError.value = ''
+  resetMessage.value = ''
+  try {
+    await recoveryApi.requestPasswordReset(value)
+    resetMessage.value = '재설정 링크를 이메일로 보냈어요. 메일함을 확인해 주세요.'
+  } catch (e) {
+    resetError.value = e instanceof ApiError ? e.message : '요청에 실패했어요.'
+  } finally {
+    resetLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -459,10 +524,17 @@ const back = () => router.push({ name: RouteName.Start })
           />
         </label>
 
-        <label class="remember">
-          <input v-model="rememberMe" type="checkbox" />
-          로그인 상태 유지
-        </label>
+        <div class="remember-row">
+          <label class="remember">
+            <input v-model="rememberMe" type="checkbox" />
+            로그인 상태 유지
+          </label>
+          <p class="recovery-links">
+            <button type="button" @click="openFindId">아이디 찾기</button>
+            <span class="sep">|</span>
+            <button type="button" @click="openResetPassword">비밀번호 찾기</button>
+          </p>
+        </div>
 
         <PixelButton
           variant="primary"
@@ -479,9 +551,14 @@ const back = () => router.push({ name: RouteName.Start })
         <div class="divider"><span>또는</span></div>
 
         <div class="social">
-          <button>Google로 로그인</button>
-          <button>Kakao로 로그인</button>
-          <button>Naver로 로그인</button>
+          <button>
+            <img src="/assets/icons/google.svg" alt="" class="social-icon" />
+            로그인
+          </button>
+          <button>
+            <img src="/assets/icons/kakao.svg" alt="" class="social-icon" />
+            로그인
+          </button>
         </div>
 
         <p class="signup-cta">
@@ -492,6 +569,72 @@ const back = () => router.push({ name: RouteName.Start })
 
       <button class="back" @click="back">← 시작 화면으로</button>
     </section>
+
+    <Transition name="modal">
+      <div v-if="findIdOpen" class="modal-backdrop" @click.self="closeFindId">
+        <section class="card modal-card">
+          <button class="modal-close" aria-label="닫기" @click="closeFindId">✕</button>
+          <h2 class="modal-title">아이디 찾기</h2>
+          <p class="modal-desc">가입 시 사용한 닉네임으로 이메일을 확인해요</p>
+
+          <label class="field">
+            닉네임
+            <input
+              v-model="findIdNickname"
+              placeholder="가입 시 닉네임"
+              @keydown.enter="submitFindId"
+            />
+          </label>
+
+          <PixelButton
+            variant="primary"
+            size="lg"
+            block
+            class="submit"
+            :disabled="findIdLoading"
+            @click="submitFindId"
+          >
+            {{ findIdLoading ? '조회 중…' : '아이디 찾기' }}
+          </PixelButton>
+
+          <div v-if="findIdResult" class="check-msg ok">가입된 이메일: {{ findIdResult }}</div>
+          <div v-if="findIdError" class="check-msg bad">{{ findIdError }}</div>
+        </section>
+      </div>
+    </Transition>
+
+    <Transition name="modal">
+      <div v-if="resetOpen" class="modal-backdrop" @click.self="closeResetPassword">
+        <section class="card modal-card">
+          <button class="modal-close" aria-label="닫기" @click="closeResetPassword">✕</button>
+          <h2 class="modal-title">비밀번호 찾기</h2>
+          <p class="modal-desc">가입한 이메일로 재설정 링크를 보내드려요</p>
+
+          <label class="field">
+            이메일
+            <input
+              v-model="resetEmail"
+              placeholder="play@motok.com"
+              @keydown.enter="submitResetRequest"
+            />
+          </label>
+
+          <PixelButton
+            variant="primary"
+            size="lg"
+            block
+            class="submit"
+            :disabled="resetLoading"
+            @click="submitResetRequest"
+          >
+            {{ resetLoading ? '전송 중…' : '재설정 링크 받기' }}
+          </PixelButton>
+
+          <div v-if="resetMessage" class="check-msg ok">{{ resetMessage }}</div>
+          <div v-if="resetError" class="check-msg bad">{{ resetError }}</div>
+        </section>
+      </div>
+    </Transition>
   </main>
 </template>
 
@@ -663,11 +806,16 @@ const back = () => router.push({ name: RouteName.Start })
 .check-msg.ok { color: var(--c-mint); }
 .check-msg.bad { color: var(--c-coral); }
 
+.remember-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
 .remember {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 10px;
   font-size: 9px;
   font-weight: 700;
   color: var(--c-muted);
@@ -677,6 +825,24 @@ const back = () => router.push({ name: RouteName.Start })
   height: 13px;
   margin: 0;
   accent-color: var(--c-ink);
+}
+.recovery-links {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 9px;
+  color: var(--c-muted);
+}
+.recovery-links button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--c-blue);
+  font-size: 9px;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .divider {
@@ -705,10 +871,16 @@ const back = () => router.push({ name: RouteName.Start })
 
 .social {
   display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 .social button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   height: 42px;
+  padding: 0 8px;
   border: 2px solid var(--c-ink);
   border-radius: var(--radius-sm);
   background: #fff;
@@ -716,6 +888,10 @@ const back = () => router.push({ name: RouteName.Start })
   font-size: 11px;
   font-weight: 700;
   transition: var(--t-fast);
+}
+.social-icon {
+  width: 18px;
+  height: 18px;
 }
 .social button:hover {
   transform: translate(-2px, -2px);
@@ -754,5 +930,63 @@ const back = () => router.push({ name: RouteName.Start })
   color: var(--c-blue);
   font-size: 9px;
   font-weight: 700;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  background: rgba(56, 38, 61, 0.45);
+  padding: 16px;
+}
+.modal-card {
+  position: relative;
+  width: 380px;
+  max-width: 100%;
+}
+.modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--c-muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+.modal-title {
+  margin: 0 0 6px;
+  padding-right: 28px;
+  font-size: 16px;
+  font-weight: 800;
+}
+.modal-desc {
+  margin: 0 0 16px;
+  font-size: 10px;
+  color: var(--c-muted);
+}
+
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.18s ease;
+}
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+.modal-enter-active .modal-card {
+  transition: transform 0.24s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.18s ease;
+}
+.modal-leave-active .modal-card {
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+.modal-enter-from .modal-card,
+.modal-leave-to .modal-card {
+  transform: scale(0.9) translateY(10px);
+  opacity: 0;
 }
 </style>
