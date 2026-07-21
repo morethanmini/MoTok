@@ -1,29 +1,24 @@
-# Handoff — 2026-07-21 (저녁)
+# Handoff — 2026-07-21 (밤, 퇴근)
 
-**Branch:** lee (origin/lee와 완전히 동일한 최신 상태, origin/main과도 동기화됨)
+**Branch:** lee (origin/lee보다 로컬 커밋 2개 앞섬 — 아직 push 안 함, MR 낼 때 한꺼번에)
 
 ## Did this session
-- S15P11A706-68(공개방 목록 선택 입장) 착수 — 코드 조사 + 구현 계획까지만, 코드 변경은 아직 없음
-- Jira 확인: -68 "사용자는 방 목록에서 공개방을 선택해 입장할 수 있다" (High, 해야 할 일), 선행 연계 -26(방
-  목록 조회 및 게임 카테고리 필터, 담당자 미배정, 별도 스토리)은 이번 스코프 아님
-- 코드 조사 결과: 필요한 두 축이 이미 다 있음
-  - `GET /api/v1/live-rooms` → `LiveRoomService.list()` — 공개방·비공개방 구분 없이 전부 반환 (갭)
-  - `POST /api/v1/live-rooms/{roomId}/join` → `LiveRoomService.join()` — 이미 완성, 비밀번호 없는 공개방은
-    그냥 입장됨
-- 결론: 갭은 `list()`가 `visibility == PUBLIC`만 필터링하도록 한 줄 추가하는 것뿐. `list()` 호출부는
-  컨트롤러 하나뿐이라 파급 없음 확인(grep)
-- 사용자에게 계획 제시, 별도 쿼리파라미터(`?visibility=PUBLIC`) 방식으로 할지 vs 그냥 공개방만 반환할지
-  확답 아직 안 받음 — 다음 세션에서 결정 후 진행
-
-## In progress / not committed
-(코드 변경 없음 — 조사·계획 단계에서 세션 종료. working tree 클린, 무관한 untracked 파일만 있음)
+- 맥북 환경 세팅: IntelliJ 2023.3 Ultimate(회사와 버전 맞춤) 부팅 실패 문제 해결
+  (`disabled_plugins.txt`에 `com.intellij.modules.ultimate`가 잘못 비활성화돼 있던 게 원인) + Docker(mysql
+  3307/redis 6379) + `.env` + IntelliJ run config까지 정상 동작 확인
+- S15P11A706-68(공개방 목록 선택 입장) 구현·검증 완료:
+  `LiveRoomService.list()`(`liveroom/service/LiveRoomService.java:63-79`)에 `visibility==PUBLIC` 필터 추가.
+  curl로 목록필터/입장/잘못된 비밀번호 3개 시나리오 통과. 커밋 `c67d55b`
+- API 명세서(`MotionTok/docs/모톡_API_명세서.html`) v0.2.2→v0.2.3, `GET /live-rooms` 설명을 -68 기준으로 정정
+  (Redis 키맵은 확인 결과 변경 불필요 — `rooms:index`는 여전히 공개+비공개 전체를 담고, 필터링은 서비스
+  레이어에서만 일어남). 커밋 `2ffd05a`
+- 개발로그 저장: `08_개발 로그/S15P11A706-68.md`
+- MR·handoff 빈도 방침 변경(기능마다 X, 하루/큰 단위로 묶어서) — 옵시디언 워크플로우 문서 2개 +
+  `motiontalk-start.skill`(zip 재압축) + `handoff_SKILL.md` 전부 갱신 완료. 클로드 데스크탑 앱 재업로드는
+  사용자가 직접 할 예정
 
 ## Next
-- S15P11A706-68 구현 시작:
-  1. `LiveRoomService.list()`(`LiveRoomService.java:63-74`)에서 `visibility != PUBLIC`인 방 skip
-     (쿼리파라미터 방식 대신 단순 필터링으로 확답받으면 바로 진행, 사용자가 파라미터 방식 원하면 그쪽으로)
-  2. `motiontok-api-test`로 검증: 공개방+비공개방 생성 → 목록에 공개방만 노출 확인 → 그 roomId로 join 성공
-     확인
-  3. 완료되면 `dev-guidelines`의 6단계(코드검증→문서수정→MR준비→개발로그→MR생성→handoff) 순서 따르기
-- 계속 범위 밖으로 남아있는 것: 프론트엔드 `rooms.ts`의 `/rooms`→`live-rooms` 전환, `dy` 브랜치 OAuth 코드
-  (안 건드림)
+- S15P11A706-68: MR은 아직 안 냄 — 다음 기능들과 묶어서 마감 작업 시간에 한 번에 요청 예정
+- 옵시디언에서 고친 스킬 파일들(`motiontalk-start.skill`, `handoff_SKILL.md`) 클로드 데스크탑 앱에
+  재업로드 필요 (사용자가 직접)
+- 다음 기능 착수 전 Jira에서 우선순위 확인
