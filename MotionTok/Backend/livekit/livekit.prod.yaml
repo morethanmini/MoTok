@@ -1,0 +1,12 @@
+# LiveKit 운영(EC2)용 설정 (docker-compose.prod.yml 의 livekit 서비스가 마운트)
+# 키는 파일에 넣지 않는다 — compose 가 .env 의 LIVEKIT_API_KEY/SECRET 을 LIVEKIT_KEYS 환경변수로 주입.
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100          # UFW/보안그룹 오픈 범위와 반드시 일치
+  # EC2 는 인스턴스가 자기 공인 IP 를 모르는 NAT 구조 — 이거 없으면 미디어 연결이 무조건 실패한다
+  # (coturn external-ip 와 같은 함정. LiveKit 이 STUN 으로 자동 탐지)
+  use_external_ip: true
+logging:
+  level: info
