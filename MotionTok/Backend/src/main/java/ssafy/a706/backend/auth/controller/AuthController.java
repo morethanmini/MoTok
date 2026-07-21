@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 import ssafy.a706.backend.auth.service.AuthService;
 import ssafy.a706.backend.auth.controller.dto.*;
 import ssafy.a706.backend.auth.email.EmailVerificationService;
+import ssafy.a706.backend.auth.password.PasswordResetService;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
 import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
 
@@ -27,6 +28,7 @@ public class AuthController {
 
     private final AuthService authService;
     private final EmailVerificationService emailVerificationService;
+    private final PasswordResetService passwordResetService;
 
     /** GET /auth/availability/email — 이메일 중복 확인 */
     @GetMapping("/availability/email")
@@ -64,6 +66,32 @@ public class AuthController {
     @PostMapping("/login")
     public TokenResponse login(@Valid @RequestBody LoginRequest req) {
         return authService.login(req);
+    }
+
+    /** POST /auth/find-id — 닉네임으로 마스킹된 이메일 찾기 */
+    @PostMapping("/find-id")
+    public FindIdResponse findId(@Valid @RequestBody FindIdRequest req) {
+        return authService.findId(req.nickname());
+    }
+
+    /** POST /auth/social/{provider} — 소셜 로그인(google·kakao). 최초 로그인 시 계정 자동 생성·연동 */
+    @PostMapping("/social/{provider}")
+    public TokenResponse social(@PathVariable String provider, @Valid @RequestBody SocialLoginRequest req) {
+        return authService.socialLogin(provider, req);
+    }
+
+    /** POST /auth/password/reset-request — 재설정 링크 메일 발송(존재 여부 무관 202) */
+    @PostMapping("/password/reset-request")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public void requestPasswordReset(@Valid @RequestBody PasswordResetRequest req) {
+        passwordResetService.requestReset(req.email());
+    }
+
+    /** POST /auth/password/reset — 1회용 토큰으로 새 비밀번호 설정 */
+    @PostMapping("/password/reset")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void resetPassword(@Valid @RequestBody PasswordResetConfirm req) {
+        passwordResetService.resetPassword(req.token(), req.newPassword());
     }
 
     /** POST /auth/token/refresh — Access 토큰 재발급 */

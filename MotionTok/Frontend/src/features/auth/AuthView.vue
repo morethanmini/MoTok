@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 로그인 / 회원가입 화면 — 기본은 로그인, 하단 링크로 회원가입 전환. ?mode 쿼리로 초기 모드 결정. */
-import { computed, nextTick, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { useSessionStore } from '@/stores/session'
@@ -350,6 +350,51 @@ async function submitResetRequest() {
     resetLoading.value = false
   }
 }
+
+// ── 소셜 로그인 (google · kakao) — 명세 POST /auth/social/{provider} ──────────
+// client_id(구글)·REST 키(카카오)는 authorize URL에 노출되는 공개값이라 VITE_ 환경변수로 둔다.
+const KAKAO_REST_KEY = import.meta.env.VITE_KAKAO_REST_KEY ?? ''
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? ''
+const SOCIAL_REDIRECT_URI = `${window.location.origin}/auth`
+
+/** provider authorize 페이지로 이동. 콜백은 이 화면(/auth)으로 돌아온다. */
+function startSocial(provider: 'google' | 'kakao') {
+  const clientId = provider === 'kakao' ? KAKAO_REST_KEY : GOOGLE_CLIENT_ID
+  if (!clientId) {
+    submitError.value = `${provider} 로그인이 아직 설정되지 않았어요.`
+    return
+  }
+  sessionStorage.setItem('social_provider', provider)
+  const base =
+    provider === 'kakao'
+      ? 'https://kauth.kakao.com/oauth/authorize'
+      : 'https://accounts.google.com/o/oauth2/v2/auth'
+  const scope = provider === 'google' ? '&scope=openid%20email%20profile' : ''
+  window.location.href =
+    `${base}?client_id=${clientId}` +
+    `&redirect_uri=${encodeURIComponent(SOCIAL_REDIRECT_URI)}` +
+    `&response_type=code${scope}`
+}
+
+// provider가 ?code=로 돌아오면 백엔드로 넘겨 JWT를 받고 로비로 이동
+onMounted(async () => {
+  const code = route.query.code
+  if (typeof code !== 'string') return
+  const provider = sessionStorage.getItem('social_provider') as 'google' | 'kakao' | null
+  sessionStorage.removeItem('social_provider')
+  if (!provider) return
+  try {
+    const token = await recoveryApi.social(provider, {
+      authorizationCode: code,
+      redirectUri: SOCIAL_REDIRECT_URI,
+    })
+    session.applyToken(token)
+    router.replace({ name: RouteName.Lobby })
+  } catch (e) {
+    submitError.value = messageFor(e, { AUTH_SOCIAL_LOGIN_FAILED: '소셜 로그인에 실패했어요.' })
+    router.replace({ name: RouteName.Auth }) // URL에서 code 제거
+  }
+})
 </script>
 
 <template>
@@ -551,11 +596,11 @@ async function submitResetRequest() {
         <div class="divider"><span>또는</span></div>
 
         <div class="social">
-          <button>
+          <button :disabled="!GOOGLE_CLIENT_ID" @click="startSocial('google')">
             <img src="/assets/icons/google.svg" alt="" class="social-icon" />
             로그인
           </button>
-          <button>
+          <button @click="startSocial('kakao')">
             <img src="/assets/icons/kakao.svg" alt="" class="social-icon" />
             로그인
           </button>
