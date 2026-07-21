@@ -1,6 +1,6 @@
-# Handoff — 2026-07-21 15:10
+# Handoff — 2026-07-21 15:20
 
-**Branch:** lee (origin/lee와 동기화 필요 — 문서 수정분 아직 push 전)
+**Branch:** lee (origin/lee와 동기화됨)
 
 ## Did this session
 - Redis 키 설계 문서를 실제 코드 기준으로 감사·갱신: `docs/모톡_Redis_키맵_v0.3.html` 신규 작성(v0.2 png는 삭제),
@@ -13,22 +13,19 @@
 - Swagger 자동화가 CodeMirror 텍스트 편집 때문에 느렸던 문제를 curl 기반 검증 절차로 스킬화:
   `Backend/.claude/skills/motiontok-api-test/SKILL.md` 작성, 바탕화면에 `motiontok-api-test.skill`로 패키징해 전달
   (사용자가 수동으로 Claude 스킬 업로드 예정)
-- 커밋 `3bd67d9`로 -25 변경사항 push 완료
-- dev-guidelines 스킬 기준(팀 MR 템플릿, 제목 형식 `이상민:BE_...`, description은 URL에 안 넣고 따로 붙여넣기)으로
-  MR 자료 재작성: 제목만 프리필된 GitLab 링크 + `dev-specs/S15P11A706-25-MR.md`에 description 저장
 - 개발로그(`08_개발 로그/S15P11A706-25.md`) 작성 완료
-- 후속으로 남겨뒀던 문서 2개도 마저 반영: `모톡_Redis_키맵_v0.3.html`의 `room:invite:{code}` 설명(이제 공개방도
-  공통 발급)과 `모톡_API_명세서.html`의 `join-by-invite-code` 설명·`CreateLiveRoomResponse.inviteCode`·
-  `LiveRoomDetailResponse`(inviteCode 필드 자체가 누락돼 있었음, 신규 추가) 전부 -25 코드 기준으로 정정
-- `dev-specs/S15P11A706-25-MR.md`의 체크리스트("관련 문서/API 명세 업데이트")를 이제 체크 가능한 상태로 갱신 필요
+- 문서 후속 반영: `모톡_Redis_키맵_v0.3.html`의 `room:invite:{code}` 설명(공개방 공통 발급으로 정정)과
+  `모톡_API_명세서.html`의 `join-by-invite-code` 설명·`CreateLiveRoomResponse.inviteCode`·
+  `LiveRoomDetailResponse`(inviteCode 필드 누락 → 신규 추가) 전부 -25 코드 기준으로 정정
+- dev-guidelines 스킬 기준으로 MR 자료 정리: 제목만 프리필된 GitLab 링크 + `dev-specs/S15P11A706-25-MR.md`에
+  팀 템플릿 형식 description 저장(체크리스트 "문서/API 명세 업데이트" 항목까지 체크 완료로 갱신)
+- 커밋 3개 push 완료: `3bd67d9`(feat, -25 코드) → `33fbace`(docs, 문서 정정) → `5ccecae`(chore, handoff) —
+  코드·문서·인계노트를 팀 컨벤션대로 커밋 분리
 
 ## In progress / not committed
-- `MotionTok/docs/모톡_Redis_키맵_v0.3.html`, `MotionTok/docs/모톡_API_명세서.html` — 방금 수정, 아직 커밋 전
-- `MotionTok/dev-specs/S15P11A706-25-MR.md` — 문서 반영 체크리스트 갱신 필요(위 항목), 아직 안 함
+(없음 — working tree 클린, 무관한 untracked 파일(`.idea/`, `run-dev.bat`)만 있음)
 
 ## Next
-- `dev-specs/S15P11A706-25-MR.md` 체크리스트 갱신 후, 문서 2개는 커밋 컨벤션(docs 변경은 코드와 다른 커밋)에
-  따라 별도 `docs:` 커밋으로 push
 - 사용자가 GitLab에서 `dev-specs/S15P11A706-25-MR.md` 내용 붙여넣고 MR 생성 버튼 클릭 (Claude가 직접 생성 불가)
 - Jira S15P11A706-25 상태를 "완료"로 전환 (MR merge 확인 후)
 - 프론트엔드 `rooms.ts`가 아직 옛 `/rooms`(room 패키지 계약)를 보고 있어 `live-rooms`로 전환 필요 — 계속 범위 밖 확인 사항으로 남아있음
