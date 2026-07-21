@@ -51,7 +51,7 @@ onBeforeUnmount(() => clearTimeout(timer))
 .splash-bg {
   position: absolute;
   inset: 0 0 122px;
-  background: url('/assets/dot3.png') center / contain no-repeat;
+  background: url('/assets/motok-v1.png') center / contain no-repeat;
   animation: splash-pan 5s steps(10) infinite;
 }
 .splash::before {

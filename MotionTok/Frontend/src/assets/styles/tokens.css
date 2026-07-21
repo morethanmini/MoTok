@@ -15,6 +15,10 @@
   --c-yellow: #ffc83d;
   --c-violet: #9a72d8;
   --c-muted: #88798b;
+  --c-sky: #cfe8ff;
+  --c-peach: #ffd9c9;
+  --c-lilac: #ded2ff;
+  --c-green: #54bd6b;
 
   /* 게임 썸네일 톤 (t1~t8) */
   --tone-1: #d8f4ec;
@@ -31,6 +35,7 @@
   --shadow-md: 4px 4px 0 var(--c-ink);
   --shadow-lg: 6px 6px 0 var(--c-ink);
   --shadow-xl: 8px 8px 0 var(--c-ink);
+  --shadow-soft: 0 12px 28px rgba(56, 38, 61, 0.12);
 
   /* ── 테두리 / 모서리 ─────────────────────── */
   --border: 3px solid var(--c-ink);
