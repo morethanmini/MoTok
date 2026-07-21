@@ -197,6 +197,9 @@ function messageFor(e: unknown, map: Record<string, string>): string {
 const showPassword = ref(false)
 const showPasswordConfirm = ref(false)
 
+// 비밀번호 입력 중엔 고양이가 쏙 숨는다
+const catShy = ref(false)
+
 // 서버 규칙과 동일: 12~64자, 소문자·대문자·숫자·특수문자 중 3종 이상
 const passwordValid = computed(() => {
   const pw = password.value
@@ -287,7 +290,7 @@ const back = () => router.push({ name: RouteName.Start })
 <template>
   <main class="page">
     <section class="card">
-      <PixelCat v-if="!isSignup" />
+      <PixelCat :shy="catShy" />
       <div class="head">
         <BrandLogo size="sm" subtitle="친구들과 움직일 준비가 되었나요?" title="MoToK" />
       </div>
@@ -378,6 +381,8 @@ const back = () => router.push({ name: RouteName.Start })
               v-model="password"
               :type="showPassword ? 'text' : 'password'"
               placeholder="비밀번호 입력"
+              @focus="catShy = true"
+              @blur="catShy = false"
             />
             <button
               type="button"
@@ -401,6 +406,8 @@ const back = () => router.push({ name: RouteName.Start })
               v-model="passwordConfirm"
               :type="showPasswordConfirm ? 'text' : 'password'"
               placeholder="비밀번호 재입력"
+              @focus="catShy = true"
+              @blur="catShy = false"
             />
             <button
               type="button"
@@ -443,7 +450,13 @@ const back = () => router.push({ name: RouteName.Start })
         </label>
         <label class="field">
           비밀번호
-          <input v-model="password" type="password" placeholder="비밀번호 입력" />
+          <input
+            v-model="password"
+            type="password"
+            placeholder="비밀번호 입력"
+            @focus="catShy = true"
+            @blur="catShy = false"
+          />
         </label>
 
         <label class="remember">
@@ -493,6 +506,7 @@ const back = () => router.push({ name: RouteName.Start })
 }
 .card {
   position: relative;
+  z-index: 1;
   width: 440px;
   max-width: 92vw;
   padding: 28px;
