@@ -56,7 +56,6 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/users").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/users/check-id").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/rooms").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/live-rooms").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/games/*/leaderboard").permitAll()
                         // 명세서 🔓 공개 — 가입·로그인·게스트·중복확인·이메일 인증·토큰 갱신
@@ -68,8 +67,7 @@ public class SecurityConfig {
                                 "/api/auth/login",
                                 "/api/auth/guest",
                                 "/api/auth/token/refresh").permitAll()
-                        // 공개 조회. /api/v1/*는 명세 이전 경로로, 방 도메인 마이그레이션 전까지 함께 허용한다.
-                        .requestMatchers(HttpMethod.GET, "/api/rooms", "/api/v1/rooms").permitAll()
+                        // 공개 조회. /api/v1/*는 명세 이전 경로로, 게임 도메인 마이그레이션 전까지 함께 허용한다.
                         .requestMatchers(HttpMethod.GET, "/api/games/*/leaderboard", "/api/v1/games/*/leaderboard").permitAll()
                         // 로그아웃은 인증 필요(명세 401)
                         .anyRequest().authenticated())
