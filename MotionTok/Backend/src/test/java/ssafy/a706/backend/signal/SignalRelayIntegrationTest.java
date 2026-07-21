@@ -19,15 +19,16 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
 import ssafy.a706.backend.global.response.ErrorResponse;
-import ssafy.a706.backend.room.RoomRegistry;
-import ssafy.a706.backend.room.model.RoomParticipant;
+import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
 import ssafy.a706.backend.signal.dto.SignalMessage;
 
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
@@ -56,18 +57,30 @@ class SignalRelayIntegrationTest {
     private JwtTokenProvider tokenProvider;
 
     @Autowired
-    private RoomRegistry roomRegistry;
+    private LiveRoomRepository liveRoomRepository;
+
+    @Autowired
+    private StringRedisTemplate redisTemplate;
 
     private String roomId;
     private final List<StompSession> sessions = new ArrayList<>();
 
+    /** liveroom Redis 스키마로 방을 시딩한다(멤버 필드 키는 게스트 g:{id} 규격). */
     @BeforeEach
     void setUpRoom() {
         long now = System.currentTimeMillis();
-        var room = roomRegistry.create("시그널 테스트", 8, "GAME",
-                new RoomParticipant(SENDER_ID, "보낸이", true, now));
-        roomId = room.getRoomId();
-        roomRegistry.join(roomId, new RoomParticipant(RECEIVER_ID, "받는이", true, now));
+        roomId = liveRoomRepository.generateUniqueRoomId();
+        liveRoomRepository.saveRoom(roomId, Map.of(
+                "title", "시그널 테스트",
+                "visibility", "PRIVATE",
+                "maxPlayers", "8",
+                "status", "WAITING",
+                "hostUserId", SENDER_ID,
+                "hostDisplayName", "보낸이",
+                "createdAt", String.valueOf(now)
+        ));
+        liveRoomRepository.addMember(roomId, "g:" + SENDER_ID, SENDER_ID, "보낸이", true, now);
+        liveRoomRepository.addMember(roomId, "g:" + RECEIVER_ID, RECEIVER_ID, "받는이", true, now);
     }
 
     @AfterEach
@@ -76,7 +89,7 @@ class SignalRelayIntegrationTest {
             if (s.isConnected()) s.disconnect();
         });
         sessions.clear();
-        roomRegistry.remove(roomId);
+        redisTemplate.delete(List.of("room:" + roomId, "room:" + roomId + ":members"));
     }
 
     @Test

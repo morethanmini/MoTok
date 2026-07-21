@@ -5,13 +5,11 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
-import ssafy.a706.backend.room.RoomRegistry;
-import ssafy.a706.backend.room.model.RoomState;
 import ssafy.a706.backend.signal.dto.SignalMessage;
 
 /**
  * 시그널 릴레이 — 같은 방 참가자 간 1:1 전달만 한다(토폴로지 비종속: mesh든 SFU든 재사용).
- * RoomRegistry를 직접 쓴다(참가자 존재 확인 쿼리가 registry의 RoomState에만 있음).
+ * 방 상태는 RoomMembershipReader 포트로만 읽는다(현재 구현: liveroom Redis).
  *
  * <h4>개념: SimpMessagingTemplate과 개인 큐(/user/queue/*)</h4>
  * SimpMessagingTemplate = 서버 코드에서 브로커로 메시지를 밀어 넣는 발행용 API
@@ -36,7 +34,7 @@ public class SignalService {
 
     private static final String SIGNAL_QUEUE = "/queue/signal";
 
-    private final RoomRegistry roomRegistry;
+    private final RoomMembershipReader membershipReader;
     private final SimpMessagingTemplate messagingTemplate;
 
     /**
@@ -49,12 +47,13 @@ public class SignalService {
         if (message.type() == null || message.toUserId() == null || message.toUserId().isBlank()) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
-        RoomState room = roomRegistry.find(roomId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.ROOM_NOT_FOUND));
-        if (!room.hasParticipant(senderId)) {
+        if (!membershipReader.existsRoom(roomId)) {
+            throw new BusinessException(ErrorCode.ROOM_NOT_FOUND);
+        }
+        if (!membershipReader.isMember(roomId, senderId)) {
             throw new BusinessException(ErrorCode.SIGNAL_NOT_IN_ROOM);
         }
-        if (!room.hasParticipant(message.toUserId())) {
+        if (!membershipReader.isMember(roomId, message.toUserId())) {
             throw new BusinessException(ErrorCode.SIGNAL_TARGET_NOT_FOUND);
         }
         // withFrom: fromUserId를 인증 주체로 덮어써 발신자 위조를 차단한다.
