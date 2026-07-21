@@ -1,21 +1,18 @@
 # Handoff — 2026-07-22 (밤, 퇴근)
 
-**Branch:** lee (origin/lee와 동일, 새 코드 커밋 없음 — 오늘은 워크플로우/스킬 정리만 함)
+**Branch:** lee (origin/lee와 동일, 새 코드 커밋 없음 — 오늘도 워크플로우/스킬 정리만 함)
 
 ## Did this session
-- 어제 세션에서 이어서 S15P11A706-68 마무리 확인 (코드는 어제 이미 커밋·push됨)
-- Claude 워크플로우 대청소: 옵시디언 문서-스킬 이중 관리 제거, `handoff`↔`motiontalk-start` 트리거 충돌
-  수정, `handoff` 로컬 스킬에 `.claude/` gitignore 프로젝트 override 추가, 스킬 6개 전부 `.md` 단일
-  파일로 통일(파일명도 통일), `dev-guidelines`↔`motiontok-api-test`의 Swagger/curl 모순 해결, 팀원
-  매핑 표 중복 제거(옵시디언 `CLAUDE.md` 한 곳만 원본), `motiontalk-start` A절에 `dev-guidelines` 자동
-  호출 추가(트리거 의존 리스크 완화)
-- 옵시디언 `09_Claude/Claude Code 개발 워크플로우.md`에 "딸깍 모드 사이클" 표 추가 — 세션 시작부터
-  퇴근까지 각 시점에 할 말 한 줄 정리
-- 이 세션 작업물은 전부 옵시디언 볼트(별도 git 저장소 아님)에만 있음 — 이 repo(S15P11A706)엔 반영할
-  코드/문서 변경 없음
+- Cowork에서 데일리 Jira↔옵시디언 동기화 진행 (`프로젝트 현황.md` 갱신: -24·-29 완료 반영, -25 누락 추가,
+  -30·-108 신규 착수 추가, -68 갭 명시)
+- 그 과정에서 `motiontalk-devlog` 스킬의 구조적 공백 발견: 스토리 문서(`{Jira키}.md`)는 갱신되는데
+  인덱스 파일 `08_개발 로그/개발 로그.md` 표는 스킬이 안 건드리게 설계돼 있어서 -25·-68이 표에서
+  누락돼 있었음 → `motiontalk-devlog`에 "4. 인덱스 갱신" 단계 추가해서 고침(로컬·옵시디언 동기화 완료)
+- 어제 세션에서 시작한 워크플로우 대청소 마무리: `handoff.md`(옵시디언 사본)가 로컬 원본보다 뒤처져
+  있던 것 발견해 동기화(gitignore override, 자동 push 정책)
+- 이 세션 작업물도 전부 옵시디언 볼트에만 있음 — 이 repo엔 반영할 코드/문서 변경 없음
 
 ## Next
-- 클로드 데스크탑 앱에 스킬 6개(`dev-guidelines`, `handoff`, `motiontalk-devlog`, `motiontalk-jira`,
-  `motiontalk-start`, `motiontok-api-test`) 전부 최신 버전으로 재업로드 완료 확인 — 안 됐으면 옵시디언
-  `09_Claude/skills/` 폴더에서 재업로드
-- 다음 기능 착수 전 Jira에서 우선순위 확인
+- **`motiontalk-devlog` 계정 스킬 재업로드 필요** (인덱스 갱신 단계 추가한 최신본, 옵시디언
+  `09_Claude/skills/motiontalk-devlog.md`에서)
+- 다음 기능 착수 전 Jira에서 우선순위 확인 — 워크플로우 정비는 끝났으니 이제 개발에 집중
