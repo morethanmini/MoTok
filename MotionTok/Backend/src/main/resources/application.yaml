@@ -58,3 +58,14 @@ app:
     daily-send-limit: 5    # 이메일당 1일 발송 상한
     max-verify-attempts: 5 # 코드 검증 시도 상한(초과 시 코드 폐기)
     from: ${MAIL_FROM:no-reply@mottok.local}
+
+  # 소셜 로그인 OAuth (API 명세서 POST /auth/social/{provider}).
+  # client-id가 비어 있으면 해당 provider 호출은 401(SOCIAL_LOGIN_FAILED)로 실패한다.
+  # 발급처 — Google: Google Cloud Console OAuth 2.0 클라이언트 / Kakao: Kakao Developers 앱의 REST API 키.
+  oauth:
+    google:
+      client-id: ${GOOGLE_CLIENT_ID:}
+      client-secret: ${GOOGLE_CLIENT_SECRET:}
+    kakao:
+      client-id: ${KAKAO_CLIENT_ID:}       # 카카오 REST API 키
+      client-secret: ${KAKAO_CLIENT_SECRET:} # 콘솔에서 사용 설정 시에만(선택)

@@ -66,6 +66,12 @@ public class AuthController {
         return authService.login(req);
     }
 
+    /** POST /auth/social/{provider} — 소셜 로그인(google·kakao). 최초 로그인 시 계정 자동 생성·연동 */
+    @PostMapping("/social/{provider}")
+    public TokenResponse social(@PathVariable String provider, @Valid @RequestBody SocialLoginRequest req) {
+        return authService.socialLogin(provider, req);
+    }
+
     /** POST /auth/token/refresh — Access 토큰 재발급 */
     @PostMapping("/token/refresh")
     public TokenResponse refresh(@Valid @RequestBody RefreshRequest req) {
