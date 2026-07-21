@@ -58,3 +58,8 @@ app:
     daily-send-limit: 5    # 이메일당 1일 발송 상한
     max-verify-attempts: 5 # 코드 검증 시도 상한(초과 시 코드 폐기)
     from: ${MAIL_FROM:no-reply@mottok.local}
+
+  # 비밀번호 재설정 (API 명세서 POST /auth/password/*)
+  password-reset:
+    token-ttl: 30m   # 재설정 토큰 유효시간(Redis auth:pwreset:{token})
+    link-base-url: ${PW_RESET_LINK_BASE:http://localhost:5173/auth/reset-password}

@@ -67,6 +67,9 @@ public class SecurityConfig {
                                 "/api/auth/signup",
                                 "/api/auth/login",
                                 "/api/auth/guest",
+                                "/api/auth/find-id",
+                                "/api/auth/password/reset-request",
+                                "/api/auth/password/reset",
                                 "/api/auth/token/refresh").permitAll()
                         // 공개 조회. /api/v1/*는 명세 이전 경로로, 방 도메인 마이그레이션 전까지 함께 허용한다.
                         .requestMatchers(HttpMethod.GET, "/api/rooms", "/api/v1/rooms").permitAll()
