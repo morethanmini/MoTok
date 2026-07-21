@@ -1,0 +1,93 @@
+# 운영(EC2)용 compose.
+#  app     : 이 프로젝트를 빌드해 실행 (외부 비공개, nginx 만 접근)
+#  mysql   : 앱 EC2 안에서 함께 실행 (app 은 DB_HOST=mysql 로 접속)
+#  redis   : 앱 EC2 안에서 함께 실행
+#  nginx   : 443/80 에서 HTTPS 종료 후 app 으로 프록시
+#  certbot : Let's Encrypt 인증서 자동 갱신
+#
+# 최초 1회: ./init-letsencrypt.sh  (인증서 발급)
+# 이후 배포: docker compose -f docker-compose.prod.yml up -d --build
+services:
+  app:
+    build: .
+    image: motiontok-backend:latest
+    container_name: motiontok-app
+    restart: unless-stopped
+    env_file: .env
+    expose:
+      - "8080"          # 호스트에 직접 노출 안 함. nginx 만 내부 네트워크로 접근.
+    depends_on:
+      mysql:
+        condition: service_healthy    # DB 준비된 뒤 앱 기동 (초기 접속 실패 방지)
+      redis:
+        condition: service_started
+
+  mysql:
+    image: mysql:8.4
+    container_name: motiontok-mysql
+    restart: unless-stopped
+    # ${...} 는 같은 폴더 .env 에서 compose 가 주입 (CI 가 생성)
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}        # 최초 기동 시 이 DB(스키마) 자동 생성
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      TZ: Asia/Seoul
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql      # 데이터 영속화 (컨테이너 재생성돼도 유지)
+    # 호스트에 포트 노출 안 함. app 이 compose 네트워크로 mysql:3306 접속.
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: motiontok-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: motiontok-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot-conf:/etc/letsencrypt:ro
+      - certbot-www:/var/www/certbot:ro
+      - /srv/motok/frontend:/usr/share/nginx/html:ro   # deploy-frontend 가 채우는 dist
+    depends_on:
+      - app
+    # 6시간마다 reload 해서 certbot 이 갱신한 인증서를 반영
+    command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+
+  certbot:
+    image: certbot/certbot
+    container_name: motiontok-certbot
+    restart: unless-stopped
+    volumes:
+      - certbot-conf:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    # 12시간마다 갱신 시도 (만료 30일 이내일 때만 실제 갱신됨)
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done'"
+
+volumes:
+  mysql-data:
+  redis-data:
+  certbot-conf:
+  certbot-www:
