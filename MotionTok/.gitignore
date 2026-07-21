@@ -394,3 +394,6 @@ gradle-app.setting
 *.hprof
 
 # End of https://www.toptal.com/developers/gitignore/api/vuejs,intellij,macos,windows,java,gradle,node,visualstudiocode,dotenv
+
+# 구현 전 상세 명세 문서 (로컬 참고용, 원격에 올리지 않음)
+dev-specs/
