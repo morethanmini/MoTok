@@ -66,7 +66,11 @@ public class LiveRoomService {
             repository.findRoomFields(roomId)
                     .map(fields -> toLiveRoom(roomId, fields, repository.findMembers(roomId)))
                     .ifPresentOrElse(
-                            room -> result.add(LiveRoomSummaryResponse.from(room)),
+                            room -> {
+                                if (room.visibility() == LiveRoomVisibility.PUBLIC) {
+                                    result.add(LiveRoomSummaryResponse.from(room));
+                                }
+                            },
                             () -> repository.removeFromIndex(roomId) // 죽은 방 lazy 청소
                     );
         }
