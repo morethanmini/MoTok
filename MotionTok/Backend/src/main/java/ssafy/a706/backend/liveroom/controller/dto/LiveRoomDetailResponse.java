@@ -13,6 +13,7 @@ public record LiveRoomDetailResponse(
         int participantCount,
         String status,
         String hostUserId,
+        String inviteCode,
         List<MemberView> members
 ) {
     public record MemberView(String userId, String displayName, boolean guest) {
@@ -30,6 +31,7 @@ public record LiveRoomDetailResponse(
                 room.participantCount(),
                 room.status(),
                 room.hostUserId(),
+                room.inviteCode(),
                 room.members().stream().map(MemberView::from).toList()
         );
     }
