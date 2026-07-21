@@ -1,6 +1,6 @@
-# Handoff — 2026-07-21 14:50
+# Handoff — 2026-07-21 15:10
 
-**Branch:** lee (origin/lee와 동기화됨, main보다 3커밋 앞섬)
+**Branch:** lee (origin/lee와 동기화 필요 — 문서 수정분 아직 push 전)
 
 ## Did this session
 - Redis 키 설계 문서를 실제 코드 기준으로 감사·갱신: `docs/모톡_Redis_키맵_v0.3.html` 신규 작성(v0.2 png는 삭제),
@@ -17,12 +17,18 @@
 - dev-guidelines 스킬 기준(팀 MR 템플릿, 제목 형식 `이상민:BE_...`, description은 URL에 안 넣고 따로 붙여넣기)으로
   MR 자료 재작성: 제목만 프리필된 GitLab 링크 + `dev-specs/S15P11A706-25-MR.md`에 description 저장
 - 개발로그(`08_개발 로그/S15P11A706-25.md`) 작성 완료
+- 후속으로 남겨뒀던 문서 2개도 마저 반영: `모톡_Redis_키맵_v0.3.html`의 `room:invite:{code}` 설명(이제 공개방도
+  공통 발급)과 `모톡_API_명세서.html`의 `join-by-invite-code` 설명·`CreateLiveRoomResponse.inviteCode`·
+  `LiveRoomDetailResponse`(inviteCode 필드 자체가 누락돼 있었음, 신규 추가) 전부 -25 코드 기준으로 정정
+- `dev-specs/S15P11A706-25-MR.md`의 체크리스트("관련 문서/API 명세 업데이트")를 이제 체크 가능한 상태로 갱신 필요
 
 ## In progress / not committed
-(없음 — working tree 클린, 무관한 untracked 파일(`.idea/`, `run-dev.bat`)만 있음)
+- `MotionTok/docs/모톡_Redis_키맵_v0.3.html`, `MotionTok/docs/모톡_API_명세서.html` — 방금 수정, 아직 커밋 전
+- `MotionTok/dev-specs/S15P11A706-25-MR.md` — 문서 반영 체크리스트 갱신 필요(위 항목), 아직 안 함
 
 ## Next
+- `dev-specs/S15P11A706-25-MR.md` 체크리스트 갱신 후, 문서 2개는 커밋 컨벤션(docs 변경은 코드와 다른 커밋)에
+  따라 별도 `docs:` 커밋으로 push
 - 사용자가 GitLab에서 `dev-specs/S15P11A706-25-MR.md` 내용 붙여넣고 MR 생성 버튼 클릭 (Claude가 직접 생성 불가)
 - Jira S15P11A706-25 상태를 "완료"로 전환 (MR merge 확인 후)
-- Redis 키맵 v0.3의 `room:invite:{code}` 설명·API 명세서 응답 스키마에 "공개방도 발급" 반영 필요 (이번 MR 범위 밖으로 남김)
 - 프론트엔드 `rooms.ts`가 아직 옛 `/rooms`(room 패키지 계약)를 보고 있어 `live-rooms`로 전환 필요 — 계속 범위 밖 확인 사항으로 남아있음
