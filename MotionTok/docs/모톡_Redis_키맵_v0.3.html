@@ -101,7 +101,7 @@
           <div class="badges"><span class="badge b-type">String</span><span class="badge b-ttl">TTL 24h</span></div></div>
           <div class="desc">초대코드 → roomId 역조회 · <b>공개방·비공개방 공통 발급</b>(-25, <code>3bd67d9</code>) · 상세 조회 응답에도 노출돼 호스트가 나중에 다시 꺼내볼 수 있음</div></div>
         <div class="note"><b>2026-07-21 반영</b>: 팀장 지시로 인메모리 <code>room</code> 패키지(임대연) 전체 삭제(<code>b8c38ee</code>) — Redis 키를 전혀 갖지 않던 스텁이라 키 설계엔 영향 없음, 다만 이제 방 도메인은 <code>liveroom</code> 패키지 하나로 단일화됐다는 사실만 기록.</div>
-        <div class="note"><b>2026-07-21 반영(-25)</b>: <code>generateUniqueInviteCode()</code> 호출을 방 생성 로직에서 visibility 조건 없이 항상 실행하도록 변경 — 공개방도 참여코드·초대링크 공유로 입장 가능.</div>
+        <div class="note"><b>2026-07-21 반영(-25)</b>: <code>generateUniqueInviteCode()</code> 호출을 방 생성 로직에서 visibility 조건 없이 항상 실행하도록 변경 — 공개방도 참여코드로 입장 가능. (초대 <b>링크</b>(공유 URL) 생성은 팀장 결정으로 스코프 제외, 코드 수동 입력만 지원)</div>
       </div>
     </div>
 
