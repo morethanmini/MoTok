@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>모톡 — Redis 키 설계 v0.3</title>
+<style>
+  :root{
+    --ink:#1d1b2e; --sub:#5c5876; --line:#e4e1f0; --bg:#fbfaff;
+    --brand:#5b4be6; --brand-deep:#4436c9; --brand-soft:#f2f0ff;
+    --teal:#0f7d6c; --teal-soft:#eafaf6;
+    --blue:#1a5fb4; --blue-soft:#eaf3ff;
+    --gray:#6b6880; --gray-soft:#f1f0f5;
+    --amber:#9a5b12; --amber-bg:#fff7ed; --amber-line:#f5b768;
+    --red:#b3311f; --red-bg:#fdf0ee;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Pretendard","Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;
+    line-height:1.6;font-size:15px}
+  .wrap{max-width:1180px;margin:0 auto;padding:44px 28px 80px}
+
+  .doc-badge{display:inline-block;background:var(--brand);color:#fff;font-size:12px;
+    font-weight:700;letter-spacing:.06em;padding:4px 12px;border-radius:99px}
+  h1{font-size:32px;margin:14px 0 6px;letter-spacing:-.02em}
+  .lede{color:var(--sub);max-width:90ch;margin:0 0 4px;font-size:14px}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:28px}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+
+  .card{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .card-h{padding:12px 18px;color:#fff;font-weight:700;font-size:15.5px;
+    display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .card-h .tag{font-size:11px;font-weight:700;background:rgba(255,255,255,.22);
+    padding:3px 9px;border-radius:99px;white-space:nowrap}
+  .card-body{padding:14px 18px 18px}
+
+  .h-room{background:var(--brand)} .h-session{background:var(--brand)}
+  .h-rank{background:var(--brand)} .h-infra{background:var(--brand)}
+  .h-auth{background:var(--teal)} .h-notif{background:var(--blue)}
+  .h-guest{background:var(--gray)}
+
+  .kv{border-top:1px solid var(--line);padding:10px 0}
+  .kv:first-child{border-top:none;padding-top:2px}
+  .kv .row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .kv code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13.5px;
+    color:var(--brand-deep);font-weight:600}
+  .kv .desc{color:var(--sub);font-size:12.8px;margin-top:3px}
+  .badges{display:flex;gap:6px;flex-shrink:0}
+  .badge{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;white-space:nowrap}
+  .b-type{background:var(--brand-soft);color:var(--brand-deep)}
+  .b-ttl{background:var(--gray-soft);color:var(--gray)}
+  .b-done{background:var(--teal-soft);color:var(--teal);font-size:10px}
+  .b-todo{background:var(--amber-bg);color:var(--amber);font-size:10px}
+  .b-new{background:var(--red-bg);color:var(--red);font-size:10px}
+  .kv.removed code, .kv.removed .desc{text-decoration:line-through;opacity:.55}
+
+  .note{background:var(--amber-bg);border:1px solid var(--amber-line);color:var(--amber);
+    border-radius:10px;padding:10px 14px;font-size:12.8px;margin-top:12px}
+  .note b{color:#7a4600}
+  .newnote{background:var(--red-bg);border:1px solid #f3c6bd;color:var(--red);
+    border-radius:10px;padding:10px 14px;font-size:12.8px;margin-top:12px}
+
+  .callout{background:var(--brand-soft);border:1px solid #d8d2fa;border-radius:12px;
+    padding:14px 18px;margin:22px 0;font-size:13.5px}
+  .callout b{color:var(--brand-deep)}
+
+  .changelog{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 22px;margin-top:28px}
+  .changelog h2{font-size:18px;margin:0 0 10px}
+  .changelog ul{margin:0;padding-left:20px;font-size:13.5px}
+  .changelog li{margin:6px 0}
+  .changelog code{background:var(--gray-soft);padding:1px 6px;border-radius:5px;
+    font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+
+  footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--line);
+    font-size:12.5px;color:var(--sub);line-height:1.9}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <span class="doc-badge">DOCS · REDIS DESIGN</span>
+  <h1>모톡 — Redis 키 설계 v0.3</h1>
+  <p class="lede">원칙(D5): 휘발 데이터는 Redis, 영속 데이터는 MySQL · v0.2 대비 2026-07-21 커밋 이력을 근거로 실제 구현 상태를 전면 대조·갱신했다.
+  각 카드에 <span class="badge b-done">✅ 구현됨</span> / <span class="badge b-todo">📋 미구현·설계뿐</span> 배지를 붙여 지금 뭐가 실제로 도는지 한눈에 구분한다.</p>
+
+  <div class="grid">
+
+    <div class="card">
+      <div class="card-h h-room">① 방 (ROOM)<span class="tag">✅ 구현됨 · liveroom 단일화</span></div>
+      <div class="card-body">
+        <div class="kv"><div class="row"><code>room:{roomId}</code>
+          <div class="badges"><span class="badge b-type">Hash</span><span class="badge b-ttl">TTL 24h</span></div></div>
+          <div class="desc">방 기본 정보(title·visibility·maxPlayers·status·hostUserId 등) · 비공개방은 <code>password</code> 필드(6자리 숫자)도 같은 Hash에 <b>평문 저장</b> — 게임방 PIN 성격으로 판단해 우선 평문, 해싱 여부는 팀 협의 필요(개발로그 미결 사항)</div></div>
+        <div class="kv"><div class="row"><code>room:{roomId}:members</code>
+          <div class="badges"><span class="badge b-type">Hash</span><span class="badge b-ttl">TTL 24h</span></div></div>
+          <div class="desc">참가자 목록 · playerKey(u:{id}/g:{id}) → URL-encoded 필드값(jackson 미의존, JSON 아님)</div></div>
+        <div class="kv"><div class="row"><code>rooms:index</code>
+          <div class="badges"><span class="badge b-type">ZSET</span><span class="badge b-ttl">TTL 없음</span></div></div>
+          <div class="desc"><b>정정(구 <code>rooms:public</code>)</b>: 공개방만이 아니라 공개+비공개 방 전체 인덱스. score=createdAt · 조회 시 죽은 방 lazy 청소</div></div>
+        <div class="kv"><div class="row"><code>room:invite:{code}</code>
+          <div class="badges"><span class="badge b-type">String</span><span class="badge b-ttl">TTL 24h</span></div></div>
+          <div class="desc">초대코드 → roomId 역조회 · 현재 코드 기준 <b>비공개방 생성 시에만</b> 발급됨(공개방 확장은 -25 예정, 아직 미반영)</div></div>
+        <div class="note"><b>2026-07-21 반영</b>: 팀장 지시로 인메모리 <code>room</code> 패키지(임대연) 전체 삭제(<code>b8c38ee</code>) — Redis 키를 전혀 갖지 않던 스텁이라 키 설계엔 영향 없음, 다만 이제 방 도메인은 <code>liveroom</code> 패키지 하나로 단일화됐다는 사실만 기록.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h h-session">② 게임 세션<span class="tag">📋 미구현</span></div>
+      <div class="card-body">
+        <div class="kv"><div class="row"><code>room:{roomId}:session</code>
+          <div class="badges"><span class="badge b-type">String</span><span class="badge b-ttl">TTL 2h</span></div></div>
+          <div class="desc">방 → 현재 진행 중 세션 ID 연결</div></div>
+        <div class="kv"><div class="row"><code>session:{sessionId}</code>
+          <div class="badges"><span class="badge b-type">Hash</span><span class="badge b-ttl">TTL 2h</span></div></div>
+          <div class="desc">세션 상태 · endsAt(서버 확정 마감 시각)</div></div>
+        <div class="kv"><div class="row"><code>session:{sessionId}:scores</code>
+          <div class="badges"><span class="badge b-type">ZSET</span><span class="badge b-ttl">TTL 2h</span></div></div>
+          <div class="desc">실시간 점수판 · 봇·회원 동일 규격 공존(설계 단계)</div></div>
+        <div class="kv"><div class="row"><code>session:{sessionId}:submits:{playerKey}</code>
+          <div class="badges"><span class="badge b-type">카운터</span><span class="badge b-ttl">TTL 2h</span></div></div>
+          <div class="desc">판정 제출 횟수(설계 단계)</div></div>
+        <div class="note">코드 스캔 결과 <code>session</code> 관련 패키지·클래스 0개 — v0.2 설계 그대로, 아직 착수 전.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h h-rank">③ 랭킹 — 유일한 영구 키(예외)<span class="tag">📋 미구현</span></div>
+      <div class="card-body">
+        <div class="kv"><div class="row"><code>rank:{gameId}</code>
+          <div class="badges"><span class="badge b-type">ZSET</span><span class="badge b-ttl">TTL 없음</span></div></div>
+          <div class="desc">게임별 랭킹(회원만) · ZADD GT · 유실 시 MySQL LEADERBOARD로 warm-up 복구(설계 단계)</div></div>
+        <div class="note">랭킹 관련 코드 0개 — 변경 없음.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h h-infra">④ 인프라 · Pub/Sub<span class="tag">📋 미구현</span></div>
+      <div class="card-body">
+        <div class="kv"><div class="row"><code>kms:registry</code>
+          <div class="badges"><span class="badge b-type">Hash</span><span class="badge b-ttl">TTL 없음</span></div></div>
+          <div class="desc">KMS 목록(설계 단계, 코드 없음)</div></div>
+        <div class="kv"><div class="row"><code>kms:load:{kmsId}</code>
+          <div class="badges"><span class="badge b-type">카운터</span><span class="badge b-ttl">TTL 없음</span></div></div>
+          <div class="desc">KMS별 부하(설계 단계, 코드 없음)</div></div>
+        <div class="kv"><div class="row"><code>chan:room:{roomId}</code>
+          <div class="badges"><span class="badge b-type">Pub/Sub</span><span class="badge b-ttl">TTL —</span></div></div>
+          <div class="desc">방 단위 브로드캐스트(설계 단계)</div></div>
+        <div class="kv"><div class="row"><code>chan:lobby</code>
+          <div class="badges"><span class="badge b-type">Pub/Sub</span><span class="badge b-ttl">TTL —</span></div></div>
+          <div class="desc">로비 방 목록 변경 알림(설계 단계)</div></div>
+        <div class="newnote"><b>확인됨</b>: 코드에 <code>RedisConfig</code>도, Redis Pub/Sub(<code>RedisMessageListenerContainer</code>/<code>convertAndSend</code>)도 전혀 없음. 현재 방 실시간 브로드캐스트는 Redis가 아니라 <b>STOMP 인메모리 브로커</b>(<code>WebSocketConfig</code>)로 동작 중 — 코드 주석에도 "Redis 릴레이는 향후 교체 대상"이라고 명시. 이 섹션은 순수 설계도이며 구현 착수 전.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h h-auth">⑤ 인증 토큰<span class="tag">✅ 부분 구현 · 누락분 추가</span></div>
+      <div class="card-body">
+        <div class="kv"><div class="row"><code>auth:refresh:{userId}</code>
+          <div class="badges"><span class="badge b-done">✅</span><span class="badge b-type">String</span><span class="badge b-ttl">TTL 14d</span></div></div>
+          <div class="desc">Refresh Token 저장 · 로그아웃 시 DEL = 서버측 무효화 (<code>JWT_REFRESH_EXPIRATION_MS</code> 기본값과 동일하게 맞춰짐)</div></div>
+        <div class="kv"><div class="row"><code>auth:pwreset:{token}</code>
+          <div class="badges"><span class="badge b-todo">📋</span><span class="badge b-type">String</span><span class="badge b-ttl">TTL 30m</span></div></div>
+          <div class="desc">비밀번호 재설정 1회성 토큰 — 코드에 미구현(이메일 <b>인증</b>만 있고 비번 <b>재설정</b>은 아직 없음)</div></div>
+        <div class="kv"><div class="row"><code>auth:email:code:{email}</code>
+          <div class="badges"><span class="badge b-new">v0.3 신규</span><span class="badge b-type">Hash</span><span class="badge b-ttl">TTL 5m</span></div></div>
+          <div class="desc">회원가입 6자리 인증코드 해시 + 검증 시도 횟수(5회 초과 시 폐기) — v0.2 문서에 누락돼 있던 실제 구현 키</div></div>
+        <div class="kv"><div class="row"><code>auth:email:verified:{token}</code>
+          <div class="badges"><span class="badge b-new">v0.3 신규</span><span class="badge b-type">String</span><span class="badge b-ttl">TTL 5m</span></div></div>
+          <div class="desc">인증 완료 토큰 → 이메일, 회원가입 시 1회 소비(get-and-delete)</div></div>
+        <div class="kv"><div class="row"><code>auth:email:cooldown:{email}</code>
+          <div class="badges"><span class="badge b-new">v0.3 신규</span><span class="badge b-type">String</span><span class="badge b-ttl">TTL 60s</span></div></div>
+          <div class="desc">인증코드 재발송 최소 간격 마커</div></div>
+        <div class="kv"><div class="row"><code>auth:email:sent:{email}:{date}</code>
+          <div class="badges"><span class="badge b-new">v0.3 신규</span><span class="badge b-type">카운터</span><span class="badge b-ttl">TTL 24h</span></div></div>
+          <div class="desc">1일 발송 횟수 상한(5회) 제한용 INCR 카운터</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h h-notif">⑥ 알림 · 프레즌스<span class="tag">📋 미구현</span></div>
+      <div class="card-body">
+        <div class="kv"><div class="row"><code>chan:user:{userId}</code>
+          <div class="badges"><span class="badge b-type">Pub/Sub</span><span class="badge b-ttl">TTL —</span></div></div>
+          <div class="desc">개인 알림 채널(설계 단계, 코드 없음)</div></div>
+        <div class="kv"><div class="row"><code>presence:{userId}</code>
+          <div class="badges"><span class="badge b-type">Hash</span><span class="badge b-ttl">TTL 60s</span></div></div>
+          <div class="desc">접속 상태·현재 방·하트비트(설계 단계, 코드 없음)</div></div>
+        <div class="note">v0.2와 동일 — 방 멤버십은 <code>room:{roomId}:members</code>로 알 수 있지만, 별도 온라인/하트비트 추적은 아직 없음.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h h-guest">⑦ 게스트 — v0.2에서 제거<span class="tag">변경 없음</span></div>
+      <div class="card-body">
+        <div class="kv removed"><div class="row"><code>guest:{uuid}</code>
+          <div class="badges"><span class="badge b-type">Hash</span><span class="badge b-ttl">TTL 7d</span></div></div>
+          <div class="desc">[제거 유지] 게스트 기록은 클라이언트 로컬 저장</div></div>
+        <div class="kv removed"><div class="row"><code>guest:{uuid}:results</code>
+          <div class="badges"><span class="badge b-type">List</span><span class="badge b-ttl">TTL 7d</span></div></div>
+          <div class="desc">[제거 유지] 익명 UUID JWT만으로 충분</div></div>
+        <div class="note">코드 확인: 게스트는 별도 키 없이 <code>room:{roomId}:members</code> Hash 값 안의 <code>guest</code> boolean 필드로만 존재 — v0.2 결정과 완전히 일치.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="callout">
+    <b>playerKey 통일 규격</b> — 회원 <code>u:{userId}</code> · AI 봇 <code>bot:{difficulty}-{n}</code>, 하나의 문자열 규격.
+    2026-07-21 <code>5f4f47d</code>에서 <code>SignalMessage.fromUserId/toUserId</code>도 int64 → String(participantId)로 정정되어, 시그널링 계층까지 이 문자열 규격과 타입이 일치하게 됐다.
+  </div>
+
+  <div class="changelog">
+    <h2>v0.2 → v0.3 변경 이력 (2026-07-21 커밋 이력 기준)</h2>
+    <ul>
+      <li><code>rooms:public</code> → <code>rooms:index</code>로 정정, "공개방만" → "공개+비공개 방 전체"로 범위 수정 (코드: <code>LiveRoomRepository.ROOM_INDEX_KEY</code>)</li>
+      <li>① 방 섹션에 "<code>liveroom</code> 패키지 단일화" 메모 추가 — 인메모리 <code>room</code>(임대연) 패키지 삭제(<code>b8c38ee</code>, 11:02) 반영</li>
+      <li>⑤ 인증 토큰 섹션에 누락돼 있던 이메일 인증 키 4종(<code>auth:email:code/verified/cooldown/sent</code>) 신규 추가 — <code>EmailVerificationService</code> 실구현 기준</li>
+      <li>모든 섹션에 ✅ 구현됨 / 📋 미구현 배지 부여 — ②③④⑥은 코드 0줄로 확인, 순수 설계 단계임을 명시</li>
+      <li>④ 섹션에 "Redis Pub/Sub 자체가 코드에 없고 현재 브로드캐스트는 STOMP 인메모리 브로커" 사실 확인 노트 추가</li>
+      <li>playerKey 규격 카드에 <code>SignalMessage</code> 타입 정정(<code>5f4f47d</code>) 반영</li>
+      <li>PNG(<code>모톡_Redis_키맵_v0.2.png</code>)는 원본 그대로 보존, 이 문서가 최신 텍스트 기준본</li>
+    </ul>
+  </div>
+
+  <footer>
+    금기: <code>KEYS *</code> 금지(인덱스 유지·SCAN) · TTL 없는 임시 키 금지(예외는 rank·kms·rooms:index뿐) · Pub/Sub에 상태를 싣지 말 것(신호만) · 갱신 검사는 Lua로 원자화<br>
+    근거 커밋: <code>b8c38ee</code>(room 제거) · <code>ab14680</code>(API 명세서 반영) · <code>5f4f47d</code>(SignalMessage 타입) · <code>1a44fa9</code>(비공개방·초대코드) · <code>20f85cc</code>(방 생성)<br>
+    상위 문서: Redis 키 설계 v0.1 · v0.2(<code>모톡_Redis_키맵_v0.2.png</code>) · 아키텍처 결정기록 v0.3(D4·D5·D6) · <a href="./모톡_ERD_v0.2.html">MySQL ERD v0.2</a> · <a href="./모톡_API_명세서.html">API 명세서</a>
+  </footer>
+</div>
+</body>
+</html>
