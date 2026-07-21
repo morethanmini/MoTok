@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { useCamera } from '@/composables/useCamera'
 import PixelButton from '@/components/common/PixelButton.vue'
+import BrandLogo from '@/components/common/BrandLogo.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -39,15 +40,21 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
 </script>
 
 <template>
-  <main class="page px-dot-bg">
+  <main class="page px-party-bg">
     <header class="top">
-      <h1>장치 설정 · 카메라 프리뷰</h1>
-      <span class="step">방 입장 전 준비</span>
+      <BrandLogo subtitle="PLAY CHECK STATION" />
+      <div class="top-copy">
+        <span class="px-kicker">STEP 01 · READY</span>
+        <h1>카메라 앞에 설 준비가 됐나요?</h1>
+      </div>
+      <span class="step">{{ game }} · {{ room }}</span>
     </header>
 
     <div class="grid">
       <!-- 프리뷰 -->
       <section class="preview">
+        <img class="preview-art art-note" src="/assets/intro/tambourine.png" alt="" />
+        <img class="preview-art art-star" src="/assets/intro/constellation.png" alt="" />
         <span class="badge">{{ isOn ? 'CAMERA READY' : '권한 필요' }}</span>
         <div class="cam">
           <video
@@ -59,7 +66,7 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
             class="cam-video"
           />
           <div v-if="!isOn" class="cam-empty">
-            <b>▣</b>
+            <img src="/assets/intro/person.png" alt="카메라 준비" />
             <p>카메라·마이크 권한을 허용해 주세요</p>
           </div>
         </div>
@@ -68,7 +75,8 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
 
       <!-- 설정 -->
       <section class="settings">
-        <h2>카메라와 마이크를 확인해 주세요</h2>
+        <span class="setting-no">CHECK LIST · 3</span>
+        <h2>입장 전 마지막 체크!</h2>
 
         <div class="permission" :class="{ ok: isOn }">
           {{ isOn
@@ -117,13 +125,15 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
 </template>
 
 <style scoped>
-.page { height: 100%; padding: 24px 6%; }
-.top { display: flex; align-items: center; justify-content: space-between; }
-.top h1 { font-size: 22px; }
+.page { height: 100%; padding: 20px 5%; overflow: hidden; }
+.top { height: 76px; display: flex; align-items: center; gap: 24px; }
+.top-copy { margin-left: 24px; }
+.top h1 { margin: 8px 0 0; font-size: 18px; }
 .step { font-size: 10px; padding: 7px 10px; border: 2px solid var(--c-ink); border-radius: 999px; background: #fff; }
+.top .step { margin-left: auto; box-shadow: 2px 2px 0 var(--c-ink); }
 
 .grid {
-  height: calc(100% - 76px);
+  height: calc(100% - 84px);
   display: grid;
   grid-template-columns: 1.25fr 0.75fr;
   gap: 20px;
@@ -138,7 +148,9 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
 .preview {
   position: relative;
   overflow: hidden;
-  background: linear-gradient(135deg, #dff3ee, #fff0c4);
+  background:
+    linear-gradient(35deg, transparent 0 46%, rgba(101,121,221,.1) 46% 53%, transparent 53%),
+    linear-gradient(135deg, #dff3ee, #fff0c4);
   display: grid;
   place-items: center;
 }
@@ -147,7 +159,7 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
   height: 68%;
   border: var(--border-thick);
   border-radius: 21px;
-  background: #322c37;
+  background: #2b2333;
   display: grid;
   place-items: center;
   color: #fff;
@@ -156,6 +168,8 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
 }
 .cam-video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
 .cam-empty b { font-size: 46px; }
+.cam-empty img { width: 180px; max-height: 170px; object-fit: contain; filter: drop-shadow(5px 5px 0 rgba(0,0,0,.24)); }
+.cam-empty p { font-size: 10px; }
 .badge {
   position: absolute;
   top: 17px;
@@ -167,8 +181,12 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
   font-size: 9px;
 }
 .decor { position: absolute; right: 18%; top: 25%; font-size: 42px; }
+.preview-art { position: absolute; z-index: 2; width: 105px; pointer-events: none; filter: drop-shadow(4px 4px 0 rgba(56,38,61,.18)); }
+.art-note { left: -24px; bottom: -12px; transform: rotate(16deg); }
+.art-star { right: -32px; bottom: -12px; transform: rotate(-13deg); }
 
-.settings { padding: 24px; overflow: auto; }
+.settings { padding: 24px; overflow: auto; background: rgba(255,255,255,.94); }
+.setting-no { display: inline-block; margin-bottom: 9px; color: var(--c-coral); font-size: 9px; font-weight: 700; }
 .settings h2 { font-size: 16px; margin: 0 0 16px; }
 .permission {
   padding: 13px;

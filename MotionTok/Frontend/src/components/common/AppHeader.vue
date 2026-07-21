@@ -54,11 +54,18 @@ function toLogin() {
 }
 
 // 포인트 잔액 + 충전 모달
-const balance = ref(session.profile?.coins ?? 1250)
+const balance = ref(session.profile?.pointBalance ?? 1250)
 const showCharge = ref(false)
 function onCharged(amount: number) {
   balance.value += amount
-  if (session.profile) session.profile.coins = balance.value
+  if (session.profile) session.profile.pointBalance = balance.value
+}
+
+// 로그아웃 — 게스트/회원 공통(세션 정리 후 시작 화면으로)
+const logoutLabel = computed(() => (session.isGuest ? '나가기' : '로그아웃'))
+async function onLogout() {
+  await session.logout()
+  router.push({ name: RouteName.Start })
 }
 </script>
 
@@ -86,6 +93,7 @@ function onCharged(amount: number) {
         <CoinIcon :size="15" /> {{ balance.toLocaleString() }} <b>＋</b>
       </button>
       <button class="avatar" title="마이페이지" @click="onNav(RouteName.MyPage)">😎</button>
+      <button class="logout" :title="logoutLabel" @click="onLogout">{{ logoutLabel }}</button>
     </div>
 
     <ChargePointsModal
@@ -126,6 +134,8 @@ function onCharged(amount: number) {
 .coin { height: 39px; padding: 0 12px; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; display: flex; align-items: center; gap: 7px; font-weight: 700; }
 .coin b { color: #36a17f; }
 .avatar { width: 43px; height: 43px; border: var(--border); border-radius: var(--radius-md); background: var(--c-mint-soft); display: grid; place-items: center; box-shadow: var(--shadow-sm); font-size: 20px; }
+.logout { height: 39px; padding: 0 12px; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; font-weight: 700; font-size: 9px; }
+.logout:hover { background: var(--c-coral); color: #fff; }
 
 @media (max-width: 720px) {
   .top { gap: 14px; }

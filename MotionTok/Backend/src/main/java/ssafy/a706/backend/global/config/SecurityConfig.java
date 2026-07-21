@@ -53,6 +53,12 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/ws/**").permitAll()
                         .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/users").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/users/check-id").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/rooms").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/live-rooms").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/games/*/leaderboard").permitAll()
                         // 명세서 🔓 공개 — 가입·로그인·게스트·중복확인·이메일 인증·토큰 갱신
                         .requestMatchers(HttpMethod.GET, "/api/auth/availability/**").permitAll()
                         .requestMatchers(HttpMethod.POST,

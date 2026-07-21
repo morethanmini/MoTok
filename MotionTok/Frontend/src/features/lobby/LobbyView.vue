@@ -3,14 +3,14 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
+import { roomsApi, ApiError, type RoomSummary } from '@/api'
 import { useSessionStore } from '@/stores/session'
+import { useAsyncData } from '@/composables/useAsyncData'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
 import { MOCK_FRIENDS, MOCK_ROOMS, type Room } from './data'
 
-import BrandLogo from '@/components/common/BrandLogo.vue'
-import BgmToggle from '@/components/common/BgmToggle.vue'
-import CoinIcon from '@/components/common/CoinIcon.vue'
+import AppHeader from '@/components/common/AppHeader.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import RoomCard from './components/RoomCard.vue'
@@ -33,9 +33,29 @@ const showCreate = ref(false)
 
 const friends = MOCK_FRIENDS
 
+// API RoomSummary → 로비 카드용 Room 매핑
+function toRoom(s: RoomSummary): Room {
+  return {
+    roomId: s.roomId,
+    title: s.title,
+    game: s.selectedGameId ? `게임 #${s.selectedGameId}` : '게임 선택 중',
+    emoji: '🎮',
+    count: s.currentPlayers,
+    max: s.maxPlayers,
+    state: s.status === 'WAITING' ? '대기 중' : '게임 중',
+    visibility: s.visibility === 'PUBLIC' ? '공개' : '비공개',
+    disabled: s.status === 'IN_GAME' || s.currentPlayers >= s.maxPlayers,
+  }
+}
+// 공개방 목록 (GET /rooms) — 실패 시 목업 폴백
+const { data: rooms, reload: reloadRooms } = useAsyncData(
+  () => roomsApi.list().then((r) => r.content.map(toRoom)),
+  MOCK_ROOMS,
+)
+
 const filteredRooms = computed(() => {
   const q = query.value.trim().toLowerCase()
-  return MOCK_ROOMS.filter((r) => !q || r.title.toLowerCase().includes(q))
+  return rooms.value.filter((r) => !q || r.title.toLowerCase().includes(q))
 })
 
 onMounted(() => {
@@ -62,32 +82,66 @@ function guardMember(action: () => void) {
   else action()
 }
 
-const quickStart = () => guardMember(() => goDevice('리듬 펀치', 'MP7R2D'))
+// ⚡ 빠른 시작 — 퀵매치(POST /rooms/quick-match)
+const quickStart = () =>
+  guardMember(async () => {
+    try {
+      const res = await roomsApi.quickMatch()
+      if (res.matched && res.roomId) return goDevice('빠른 매칭', res.roomId)
+      if (res.suggestCreate) return (showCreate.value = true)
+      flash('지금은 매칭 가능한 방이 없어요')
+    } catch {
+      goDevice('리듬 펀치', 'MP7R2D') // 백엔드 미연동 폴백
+    }
+  })
 const openCreate = () => guardMember(() => (showCreate.value = true))
 const openJoin = () => guardMember(() => (showJoin.value = true))
 
+// 공개방 입장 (POST /rooms/{roomId}/participants)
 function enterPublic(room: Room) {
-  guardMember(() => {
-    if (!room.disabled) goDevice(room.game, 'MP4X9K')
+  guardMember(async () => {
+    if (room.disabled) return
+    if (!room.roomId) return goDevice(room.game, 'MP4X9K') // 목업 폴백
+    try {
+      const res = await roomsApi.joinPublic(room.roomId)
+      goDevice(room.game, res.roomId)
+    } catch (e) {
+      if (e instanceof ApiError) return flash(e.message)
+      goDevice(room.game, room.roomId)
+    }
   })
 }
 
-function joinRoom(code: string) {
+// 코드 참가 (POST /rooms/join-by-code)
+async function joinRoom(code: string) {
   if (code.length < 6) {
     flash('6자리 방 코드를 입력해 주세요')
     return
   }
   showJoin.value = false
-  goDevice('친구의 게임', code)
+  try {
+    const res = await roomsApi.joinByCode(code)
+    goDevice('친구의 게임', res.roomId)
+  } catch (e) {
+    if (e instanceof ApiError) return flash(e.message)
+    goDevice('친구의 게임', code) // 폴백
+  }
 }
 
-function createRoom(payload: { title: string }) {
+// 방 만들기 (POST /rooms)
+async function createRoom(payload: { title: string }) {
   if (!payload.title.trim()) {
     flash('방 제목을 입력해 주세요')
     return
   }
   showCreate.value = false
-  goDevice('게임 선택 중', 'MP' + Math.random().toString(36).slice(2, 6).toUpperCase())
+  try {
+    const res = await roomsApi.create({ title: payload.title.trim(), visibility: 'PUBLIC', maxPlayers: 8 })
+    goDevice('게임 선택 중', res.roomId)
+  } catch (e) {
+    if (e instanceof ApiError) return flash(e.message)
+    goDevice('게임 선택 중', 'MP' + Math.random().toString(36).slice(2, 6).toUpperCase())
+  }
 }
 
 const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
@@ -106,22 +160,8 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
       <i class="spark s3">✦</i>
     </div>
 
-    <!-- 상단 바 -->
-    <header class="top">
-      <BrandLogo class="brand" subtitle="친구와 함께 즐기는 모션 파티" />
-      <nav class="nav">
-        <button class="active">로비</button>
-        <button @click="router.push({ name: RouteName.GamesCatalog })">게임</button>
-        <button @click="router.push({ name: RouteName.Ranking })">랭킹</button>
-        <button @click="router.push({ name: RouteName.Shop })">상점</button>
-      </nav>
-      <div class="account">
-        <BgmToggle />
-        <span class="user-pill">{{ session.userLabel }}</span>
-        <div class="coin"><CoinIcon :size="15" /> 1,250 <b>＋</b></div>
-        <button class="avatar" title="마이페이지" @click="router.push({ name: RouteName.MyPage })">😎</button>
-      </div>
-    </header>
+    <!-- 상단 바 (공용 헤더) -->
+    <AppHeader />
 
     <!-- 본문 -->
     <div class="layout">
@@ -148,7 +188,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
           <label class="room-search">
             ⌕ <input v-model="query" placeholder="방 제목 검색" />
           </label>
-          <button>새로고침 ↻</button>
+          <button @click="reloadRooms">새로고침 ↻</button>
         </div>
 
         <section class="room-list">
@@ -244,28 +284,6 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 .s1 { left: 17px; top: 10%; }
 .s2 { right: 24px; top: 36%; color: var(--c-coral); animation-delay: 0.4s; }
 .s3 { left: 18px; bottom: 29%; color: var(--c-blue); animation-delay: 0.8s; }
-
-/* 상단 바 */
-.top {
-  height: 78px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  padding: 0 28px;
-  gap: 28px;
-  background: rgba(255, 253, 247, 0.96);
-  border-bottom: var(--border);
-  z-index: 4;
-}
-.brand { min-width: 228px; }
-.nav { display: flex; gap: 8px; }
-.nav button { border: 0; background: transparent; padding: 11px 15px; border-radius: 12px; font-weight: 700; }
-.nav button.active { background: var(--c-yellow); border: 2px solid var(--c-ink); box-shadow: var(--shadow-sm); }
-.account { margin-left: auto; display: flex; align-items: center; gap: 10px; }
-.user-pill { padding: 6px 9px; border: 2px solid var(--c-ink); border-radius: 999px; background: #fff; font-size: 9px; font-weight: 700; }
-.coin { height: 39px; padding: 0 12px; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; display: flex; align-items: center; gap: 7px; font-weight: 700; }
-.coin b { color: #36a17f; }
-.avatar { width: 43px; height: 43px; border: var(--border); border-radius: var(--radius-md); background: var(--c-mint-soft); display: grid; place-items: center; box-shadow: var(--shadow-sm); font-size: 20px; }
 
 /* 레이아웃 */
 .layout {
