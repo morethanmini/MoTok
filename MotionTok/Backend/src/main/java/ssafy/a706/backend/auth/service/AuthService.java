@@ -39,6 +39,27 @@ public class AuthService {
         return new AvailabilityResponse(!userRepository.existsByNickname(nickname.trim()));
     }
 
+    /** 아이디(이메일) 찾기 — 닉네임으로 가입 계정을 찾아 일부 마스킹된 이메일을 돌려준다. 없으면 404. */
+    public FindIdResponse findId(String nickname) {
+        User user = userRepository.findByNickname(nickname.trim())
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+        if (user.getEmail() == null) {
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND); // 소셜 전용 계정은 이메일이 없다
+        }
+        return new FindIdResponse(maskEmail(user.getEmail()));
+    }
+
+    /** 이메일 로컬 파트 일부를 가린다. 예: abcde@x.com → ab***@x.com */
+    private String maskEmail(String email) {
+        int at = email.indexOf('@');
+        if (at <= 0) {
+            return "***";
+        }
+        String local = email.substring(0, at);
+        String head = local.length() <= 2 ? local.substring(0, 1) : local.substring(0, 2);
+        return head + "***" + email.substring(at);
+    }
+
     /**
      * 회원가입. 이메일 인증 토큰을 먼저 소비하므로 인증을 거치지 않은 요청은 여기서 막힌다.
      * 중복 검사와 INSERT 사이의 경합은 UNIQUE 제약 위반을 잡아 409로 변환해 처리한다.

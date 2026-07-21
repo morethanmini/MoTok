@@ -21,6 +21,9 @@ public enum ErrorCode {
     INVALID_TOKEN(HttpStatus.UNAUTHORIZED, "AUTH_INVALID_TOKEN", "유효하지 않은 토큰입니다."),
     ACCOUNT_NOT_ACTIVE(HttpStatus.FORBIDDEN, "AUTH_ACCOUNT_NOT_ACTIVE", "이용이 제한된 계정입니다."),
 
+    // 비밀번호 재설정 (명세서 POST /auth/password/reset)
+    PASSWORD_RESET_TOKEN_INVALID(HttpStatus.BAD_REQUEST, "AUTH_PASSWORD_RESET_TOKEN_INVALID", "비밀번호 재설정 링크가 유효하지 않거나 만료되었습니다."),
+
     // 이메일 인증 (명세서 v0.2.1)
     EMAIL_ALREADY_REGISTERED(HttpStatus.CONFLICT, "AUTH_EMAIL_ALREADY_REGISTERED", "이미 가입된 이메일입니다."),
     NICKNAME_ALREADY_USED(HttpStatus.CONFLICT, "AUTH_NICKNAME_ALREADY_USED", "이미 사용 중인 닉네임입니다."),
