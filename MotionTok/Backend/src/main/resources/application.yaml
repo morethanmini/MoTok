@@ -3,9 +3,9 @@ spring:
     name: backend
 
   datasource:
-    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3307}/${DB_NAME:motiontok}?serverTimezone=Asia/Seoul&characterEncoding=UTF-8&allowPublicKeyRetrieval=true&useSSL=false
-    username: ${DB_USERNAME:ssafy}
-    password: ${DB_PASSWORD:ssafy}
+    url: jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}?serverTimezone=Asia/Seoul&characterEncoding=UTF-8&allowPublicKeyRetrieval=true&useSSL=false
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   jpa:
@@ -25,10 +25,10 @@ spring:
   # 메일 발송. MAIL_HOST 미설정 시 JavaMailSender 빈이 만들어지지 않고,
   # 인증번호는 발송 대신 로그로 출력된다(로컬 개발용). 운영에서는 반드시 설정할 것.
   mail:
-    host: ${MAIL_HOST:}
-    port: ${MAIL_PORT:587}
-    username: ${MAIL_USERNAME:}
-    password: ${MAIL_PASSWORD:}
+    host: ${MAIL_HOST}
+    port: ${MAIL_PORT}
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
     properties:
       mail:
         smtp:
@@ -41,7 +41,7 @@ server:
 
 # JWT: dev default is overridable via env (JWT_SECRET). Do NOT ship the default secret.
 jwt:
-  secret: ${JWT_SECRET:motiontok-local-dev-secret-change-me-to-a-long-random-value-at-least-64-bytes-long}
+  secret: ${JWT_SECRET}
   access-expiration-ms: ${JWT_ACCESS_EXPIRATION_MS:1800000}      # 30분
   refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:1209600000} # 14일 (Redis auth:refresh:{userId} TTL과 동일)
 
