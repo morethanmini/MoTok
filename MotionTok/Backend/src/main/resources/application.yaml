@@ -35,6 +35,9 @@ spring:
           auth: true
           starttls:
             enable: true
+          connectiontimeout: 5000  # SMTP 연결 5초 타임아웃(포트 막힌 네트워크에서 무한 대기 방지)
+          timeout: 5000
+          writetimeout: 5000
 
 server:
   port: 8080

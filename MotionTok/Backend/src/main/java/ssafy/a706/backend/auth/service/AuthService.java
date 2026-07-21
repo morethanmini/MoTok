@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.auth.controller.dto.*;
@@ -120,6 +121,7 @@ public class AuthService {
      * provider 인가 코드로 사용자 정보를 받고(외부 HTTP는 트랜잭션 밖), 이미 연동된 계정이면 그대로,
      * 아니면 계정을 생성·연동한 뒤 토큰을 발급한다. 계정 생성·조회는 OauthLinkService가 각각 별도 트랜잭션으로 처리한다.
      */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED) // 클래스 기본 readOnly 트랜잭션을 벗어나, 아래 OauthLinkService가 각자 새 트랜잭션(생성은 read-write)을 열게 한다.
     public TokenResponse socialLogin(String providerPath, SocialLoginRequest req) {
         OauthProvider provider = OauthProvider.from(providerPath);
         OauthUserInfo info = oauthClientResolver.resolve(provider)
