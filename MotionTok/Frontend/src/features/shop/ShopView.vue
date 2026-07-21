@@ -19,13 +19,13 @@ const session = useSessionStore()
 const { message: toast, flash } = useToast()
 
 // 현재 포인트 (세션 프로필 기준, 없으면 헤더와 동일한 기본값)
-const currentPoints = ref(session.profile?.coins ?? 1250)
+const currentPoints = ref(session.profile?.pointBalance ?? 1250)
 
 // 충전 모달
 const showCharge = ref(false)
 function onCharged(amount: number) {
   currentPoints.value += amount
-  if (session.profile) session.profile.coins = currentPoints.value
+  if (session.profile) session.profile.pointBalance = currentPoints.value
   showCharge.value = false // 닫히면 구매 확인 모달이 갱신된 잔액으로 다시 표시됨
 }
 
@@ -47,6 +47,12 @@ const CATEGORIES: { key: ItemCategory | 'ALL'; label: string; emoji: string }[] 
   { key: 'BACKGROUND', label: '배경', emoji: '🌌' },
 ]
 const emojiOf: Record<ItemCategory, string> = { MASK: '🎭', EFFECT: '✨', STICKER: '🌟', BACKGROUND: '🌌' }
+const artOf: Record<ItemCategory, string> = {
+  MASK: '/assets/intro/person.png',
+  EFFECT: '/assets/intro/constellation.png',
+  STICKER: '/assets/intro/trophy.png',
+  BACKGROUND: '/assets/intro/moon.png',
+}
 
 const active = ref<ItemCategory | 'ALL'>('ALL')
 const { data: items } = useAsyncData(() => shopApi.listItems(), MOCK_ITEMS)
@@ -83,12 +89,29 @@ async function confirmPurchase() {
 <template>
   <AppPage title="상점" subtitle="포인트로 화면 꾸미기 아이템을 구매하세요">
     <template #actions>
-      <PixelButton variant="guest" @click="router.push({ name: RouteName.Inventory })">
-        🎒 내 아바타
-      </PixelButton>
-      <PixelButton variant="mint" @click="router.push({ name: RouteName.AiItemCreate })">
-        ✎ AI 아이템 만들기
-      </PixelButton>
+      <div class="balance bottom-balance">
+        <small>MY POINT</small>
+        <b><CoinIcon :size="17" /> {{ currentPoints.toLocaleString() }}</b>
+      </div>
+    </template>
+
+    <template #hero>
+      <section class="shop-hero">
+        <div>
+          <span class="px-kicker">NEW ITEM DROP!</span>
+          <h2>나만의 플레이 화면을 꾸며봐요</h2>
+          <p>가면, 반짝이는 효과, 배경까지 모션 파티에 개성을 더해요.</p>
+        </div>
+        <div class="hero-actions">
+          <PixelButton variant="guest" @click="router.push({ name: RouteName.Inventory })">
+            🎒 내 아바타
+          </PixelButton>
+          <PixelButton variant="mint" @click="router.push({ name: RouteName.AiItemCreate })">
+            ✎ AI 아이템 만들기
+          </PixelButton>
+        </div>
+        <img src="/assets/intro/sketchbook.png" alt="꾸미기 아이템" />
+      </section>
     </template>
 
     <div class="chips">
@@ -105,7 +128,11 @@ async function confirmPurchase() {
 
     <div class="grid">
       <article v-for="item in filtered" :key="item.id" class="item">
-        <div class="thumb">{{ emojiOf[item.category] }}</div>
+        <div class="thumb">
+          <img :src="artOf[item.category]" alt="" />
+          <span>{{ emojiOf[item.category] }}</span>
+          <i v-if="item.owned">OWNED</i>
+        </div>
         <div class="name">{{ item.name }}</div>
         <div class="row">
           <span class="price"><CoinIcon :size="13" /> {{ item.pricePoint?.toLocaleString() ?? '-' }}</span>
@@ -141,13 +168,26 @@ async function confirmPurchase() {
 </template>
 
 <style scoped>
+.shop-hero { position: relative; height: 150px; margin-bottom: 18px; padding: 22px 28px; display: flex; align-items: center; overflow: hidden; border: var(--border); border-radius: 21px 21px 15px 21px; background: linear-gradient(115deg, #ffe1d4, #fff2be); box-shadow: var(--shadow-lg); }
+.shop-hero h2 { margin: 12px 0 6px; font-size: 18px; }
+.shop-hero p { margin: 0; color: var(--c-muted); font-size: 10px; }
+.shop-hero > img { width: 180px; margin-left: 14px; transform: translateY(19px) rotate(5deg); }
+.hero-actions { margin-left: auto; display: flex; gap: 9px; }
+.balance { min-width: 130px; margin-left: 18px; padding: 13px 15px; border: var(--border); border-radius: 14px; background: #fff; box-shadow: var(--shadow-md); }
+.bottom-balance { margin-left: 0; }
+.balance small { display: block; margin-bottom: 7px; color: var(--c-muted); font-size: 8px; }
+.balance b { display: flex; align-items: center; gap: 7px; color: #d79600; font-size: 15px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
 .chip { border: 2px solid var(--c-ink); background: #fff; border-radius: 999px; padding: 8px 13px; font-size: 11px; box-shadow: 2px 2px 0 #d8c9d8; }
 .chip.on { background: var(--c-yellow); box-shadow: var(--shadow-sm); font-weight: 700; }
 
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; }
-.item { border: var(--border); border-radius: 17px 17px 13px 17px; background: #fff; box-shadow: var(--shadow-md); padding: 14px; }
-.thumb { height: 88px; display: grid; place-items: center; font-size: 42px; border: 2px solid var(--c-ink); border-radius: 12px; background: var(--tone-4); margin-bottom: 10px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
+.item { border: var(--border); border-radius: 17px 17px 13px 17px; background: #fff; box-shadow: var(--shadow-md); padding: 14px; transition: var(--t-fast); }
+.item:hover { transform: translate(-2px,-2px); box-shadow: var(--shadow-lg); }
+.thumb { position: relative; height: 118px; display: grid; place-items: center; overflow: hidden; border: 2px solid var(--c-ink); border-radius: 12px; background: linear-gradient(135deg, var(--tone-4), #fff4d5); margin-bottom: 12px; }
+.thumb img { width: 78%; height: 90%; object-fit: contain; }
+.thumb > span { position: absolute; right: 8px; bottom: 7px; font-size: 25px; }
+.thumb i { position: absolute; left: 7px; top: 7px; padding: 4px 6px; border: 2px solid var(--c-ink); border-radius: 7px; background: var(--c-mint-soft); font-size: 7px; font-style: normal; font-weight: 700; }
 .name { font-size: 12px; font-weight: 700; }
 .row { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
 .price { font-size: 11px; color: #d79600; font-weight: 700; }

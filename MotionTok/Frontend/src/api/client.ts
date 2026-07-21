@@ -1,30 +1,13 @@
 /**
- * 백엔드 REST 클라이언트.
- * 오류 응답은 API 명세서 Error 스키마({ code, message, path, timestamp })이므로
- * 이를 ApiError로 변환해 호출부가 code로 분기할 수 있게 한다.
+ * 인증 도메인용 REST 클라이언트 (명시적 토큰 주입 방식).
+ * 오류 응답은 API 명세서 Error 스키마({ code, message, path, timestamp })이며,
+ * 앱 전체에서 단일한 ApiError(= http.ts)로 정규화해 호출부가 code로 분기할 수 있게 한다.
  */
+import { API_BASE, ApiError } from './http'
+import type { ApiError as ApiErrorBody } from './types'
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080/api'
-
-/** 명세서 Error 스키마 */
-export interface ApiErrorBody {
-  code: string
-  message: string
-  path?: string
-  timestamp?: string
-}
-
-export class ApiError extends Error {
-  readonly status: number
-  readonly code: string
-
-  constructor(status: number, body: ApiErrorBody) {
-    super(body.message)
-    this.name = 'ApiError'
-    this.status = status
-    this.code = body.code
-  }
-}
+// 단일 ApiError를 이 경로에서도 그대로 노출한다(`import { ApiError } from '@/api/client'` 유지).
+export { ApiError }
 
 /** 네트워크 자체가 실패한 경우(서버 미기동 등) */
 export class NetworkError extends Error {
@@ -50,7 +33,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   let res: Response
   try {
-    res = await fetch(`${BASE_URL}${path}`, {
+    res = await fetch(`${API_BASE}${path}`, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
