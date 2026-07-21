@@ -1,6 +1,7 @@
 package ssafy.a706.backend.auth.password;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,6 +19,7 @@ import java.util.UUID;
  *    Redis(auth:pwreset:{token}, TTL 30m)에 저장하고 재설정 링크 메일을 보낸다.
  *  - reset: 토큰을 1회 소비하고 새 비밀번호를 저장한다. 재설정 시 기존 Refresh 토큰을 무효화해 다른 세션을 로그아웃시킨다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PasswordResetService {
@@ -35,7 +37,12 @@ public class PasswordResetService {
         userRepository.findByEmail(email).ifPresent(user -> {
             String token = UUID.randomUUID().toString();
             tokenStore.save(token, user.getId(), props.tokenTtl());
-            mailSender.send(email, props.linkBaseUrl() + "?token=" + token);
+            try {
+                mailSender.send(email, props.linkBaseUrl() + "?token=" + token);
+            } catch (Exception e) {
+                // 메일 발송 실패가 요청 자체를 실패(500)시키면 안 된다. 명세상 reset-request는 항상 202.
+                log.warn("비밀번호 재설정 메일 발송 실패: {} ({})", email, e.getMessage());
+            }
         });
     }
 
