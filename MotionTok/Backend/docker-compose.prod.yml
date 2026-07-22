@@ -4,6 +4,8 @@
 #  redis   : 앱 EC2 안에서 함께 실행
 #  nginx   : 443/80 에서 HTTPS 종료 후 app 으로 프록시
 #  certbot : Let's Encrypt 인증서 자동 갱신
+#  livekit : WebRTC SFU 미디어서버 (-30). 시그널링(7880)은 nginx /livekit 프록시,
+#            미디어는 nginx 를 거치지 않고 UDP 50000-50100 직행 (보안그룹/UFW 오픈 필요)
 #
 # 최초 1회: ./init-letsencrypt.sh  (인증서 발급)
 # 이후 배포: docker compose -f docker-compose.prod.yml up -d --build
@@ -59,6 +61,23 @@ services:
       timeout: 3s
       retries: 10
 
+  livekit:
+    image: livekit/livekit-server:v1.13.4
+    container_name: motiontok-livekit
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    environment:
+      # 키를 설정 파일에 안 박고 .env 에서 주입 (형식: "키: 시크릿").
+      # Spring(app)과 같은 값 공유 — 토큰 서명·검증의 근거. GitLab Variables 등록 필수.
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+    volumes:
+      - ./livekit/livekit.prod.yaml:/etc/livekit.yaml:ro
+    expose:
+      - "7880"          # 시그널링/API — 호스트 비공개, nginx 만 접근
+    ports:
+      - "7881:7881"                      # TCP 폴백 (UDP 차단망용)
+      - "50000-50100:50000-50100/udp"    # RTC 미디어 (livekit.prod.yaml 범위와 일치)
+
   nginx:
     image: nginx:1.27-alpine
     container_name: motiontok-nginx
@@ -73,6 +92,7 @@ services:
       - /srv/motok/frontend:/usr/share/nginx/html:ro   # deploy-frontend 가 채우는 dist
     depends_on:
       - app
+      - livekit         # /livekit 프록시 대상 — 없으면 nginx 기동 시 upstream 해석 실패
     # 6시간마다 reload 해서 certbot 이 갱신한 인증서를 반영
     command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
 
