@@ -1,13 +1,14 @@
 <script setup lang="ts">
 /** 마이페이지 — 프로필·포인트·포인트내역·내 전적 (API §2 /users/me, /users/me/points/history, /users/me/records). */
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { usersApi, type GameRecord, type PointHistory, type PointType, type UserProfile } from '@/api'
 import { useAsyncData } from '@/composables/useAsyncData'
-import { RouteName } from '@/router/routeNames'
-import AppPage from '@/components/common/AppPage.vue'
 import PixelCard from '@/components/common/PixelCard.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import CoinIcon from '@/components/common/CoinIcon.vue'
+import AppPage from '@/components/common/AppPage.vue'
+import { RouteName } from '@/router/routeNames'
 
 const router = useRouter()
 
@@ -37,22 +38,39 @@ const { data: records } = useAsyncData(() => usersApi.getRecords(), MOCK_RECORDS
 const { data: history } = useAsyncData(() => usersApi.getPointHistory(0, 20).then((p) => p.content), MOCK_HISTORY)
 
 const fmtDate = (iso: string) => iso.slice(0, 10)
+
+// 프로필 사진 변경 (클라이언트 로컬 미리보기, 백엔드 업로드 API 없음)
+const avatarUrl = ref<string | null>(null)
+const avatarInput = ref<HTMLInputElement | null>(null)
+function pickAvatar() {
+  avatarInput.value?.click()
+}
+function onAvatarChange(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  if (avatarUrl.value) URL.revokeObjectURL(avatarUrl.value)
+  avatarUrl.value = URL.createObjectURL(file)
+}
 </script>
 
 <template>
-  <AppPage title="마이페이지" :subtitle="me.email ?? '소셜 계정'">
-    <template #actions>
-      <PixelButton @click="router.push({ name: RouteName.AccountSettings })">계정 설정</PixelButton>
-    </template>
-
-    <template #hero>
-      <section class="profile-hero"><img src="/assets/intro/person.png" alt="내 모션 캐릭터" /><div><span class="px-kicker">MY MOTOK</span><h2>{{ me.nickname }}님의 플레이 공간</h2><p>기록을 확인하고 나만의 화면을 완성해보세요.</p></div><b>★ {{ records.reduce((sum, r) => sum + r.playCount, 0) }} PLAY</b></section>
-    </template>
+  <AppPage :title="`${me.nickname}님의 마이페이지`" :subtitle="me.email ?? '소셜 계정'" title-style="plain">
     <div class="grid">
       <!-- 프로필 -->
       <PixelCard title="프로필">
         <div class="profile">
-          <div class="avatar">😎</div>
+          <button class="avatar" title="프로필 사진 변경" @click="pickAvatar">
+            <img v-if="avatarUrl" :src="avatarUrl" alt="내 프로필 사진" />
+            <template v-else>😎</template>
+            <span class="avatar-edit">📷</span>
+          </button>
+          <input
+            ref="avatarInput"
+            type="file"
+            accept="image/*"
+            class="avatar-input"
+            @change="onAvatarChange"
+          />
           <div class="info">
             <div class="nick">{{ me.nickname }}</div>
             <div class="meta">가입일 {{ fmtDate(me.createdAt) }} · {{ me.role }}</div>
@@ -112,13 +130,41 @@ const fmtDate = (iso: string) => iso.slice(0, 10)
 </template>
 
 <style scoped>
-.profile-hero { height: 145px; margin-bottom: 18px; padding: 14px 24px; display: flex; align-items: center; gap: 20px; overflow: hidden; border: var(--border); border-radius: 21px; background: linear-gradient(115deg, #cff4e7, #fff0b9); box-shadow: var(--shadow-lg); }
-.profile-hero img { width: 145px; transform: translateY(17px); } .profile-hero h2 { margin: 10px 0 5px; font-size: 18px; } .profile-hero p { margin: 0; color: var(--c-muted); font-size: 9px; } .profile-hero > b { margin-left: auto; padding: 10px 12px; border: 2px solid var(--c-ink); border-radius: 11px; background: #fff; box-shadow: var(--shadow-sm); font-size: 10px; }
 .grid { display: grid; grid-template-columns: 340px 1fr; gap: 18px; }
 @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
 
 .profile { display: flex; align-items: center; gap: 14px; }
-.avatar { width: 60px; height: 60px; display: grid; place-items: center; border: var(--border); border-radius: var(--radius-md); background: var(--c-mint-soft); box-shadow: var(--shadow-sm); font-size: 30px; }
+.avatar {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  display: grid;
+  place-items: center;
+  border: var(--border);
+  border-radius: var(--radius-md);
+  background: var(--c-mint-soft);
+  box-shadow: var(--shadow-sm);
+  font-size: 30px;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+}
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar-edit {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--c-ink);
+  border-radius: 50%;
+  background: var(--c-yellow);
+  font-size: 10px;
+  box-shadow: var(--shadow-sm);
+}
+.avatar-input { display: none; }
 .nick { font-size: 16px; font-weight: 700; }
 .meta { margin-top: 4px; font-size: 9px; color: var(--c-muted); }
 .point {

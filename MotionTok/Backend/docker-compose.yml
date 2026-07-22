@@ -39,6 +39,19 @@ services:
       timeout: 3s
       retries: 10
 
+  # WebRTC SFU 미디어서버 (-30). 화상 개발 시에만 필요 — 안 쓰면 안 떠 있어도 무방.
+  livekit:
+    image: livekit/livekit-server:v1.13.4
+    container_name: motiontok-livekit
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7880:7880"        # ws 시그널링/API
+      - "7881:7881"        # TCP 폴백
+      - "7882:7882/udp"    # RTC 미디어 (로컬은 단일 포트 멀티플렉스)
+
 volumes:
   mysql-data:
   redis-data:

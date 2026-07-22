@@ -4,7 +4,7 @@
  * 서브 페이지들이 로비와 같은 헤더를 갖도록 AppPage에 내장됩니다.
  * (Lobby/GameRoom 등 자체 헤더를 가진 코어 화면에서는 사용하지 않음)
  */
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { useSessionStore } from '@/stores/session'
@@ -30,7 +30,12 @@ const current = computed(() => route.name)
 const go = (name: string) => router.push({ name })
 
 // 게스트에게 막을 회원 전용 라우트 (게임·랭킹은 열람 허용)
-const MEMBER_ONLY = new Set<string>([RouteName.Lobby, RouteName.Shop, RouteName.MyPage])
+const MEMBER_ONLY = new Set<string>([
+  RouteName.Lobby,
+  RouteName.Shop,
+  RouteName.MyPage,
+  RouteName.AccountSettings,
+])
 const showLogin = ref(false)
 const loginMsg = ref('로그인이 필요한 기능이에요.')
 
@@ -67,12 +72,36 @@ async function onLogout() {
   await session.logout()
   router.push({ name: RouteName.Start })
 }
+
+// 아바타 클릭 시 토글되는 계정 메뉴
+const showAccountMenu = ref(false)
+const accountMenuRef = ref<HTMLElement | null>(null)
+const nickname = computed(() => session.profile?.nickname ?? 'P1')
+
+function toggleAccountMenu() {
+  showAccountMenu.value = !showAccountMenu.value
+}
+function onMenuNav(name: string) {
+  showAccountMenu.value = false
+  onNav(name)
+}
+async function onMenuLogout() {
+  showAccountMenu.value = false
+  await onLogout()
+}
+function onDocClick(e: MouseEvent) {
+  if (accountMenuRef.value && !accountMenuRef.value.contains(e.target as Node)) {
+    showAccountMenu.value = false
+  }
+}
+onMounted(() => document.addEventListener('click', onDocClick))
+onUnmounted(() => document.removeEventListener('click', onDocClick))
 </script>
 
 <template>
   <header class="top">
     <button class="brand-btn" title="홈" @click="goHome">
-      <BrandLogo class="brand" subtitle="친구와 함께 즐기는 모션 파티" />
+      <BrandLogo class="brand" />
     </button>
 
     <nav class="nav">
@@ -88,12 +117,27 @@ async function onLogout() {
 
     <div class="account">
       <BgmToggle />
-      <span class="user-pill">{{ session.userLabel }}</span>
       <button class="coin" title="포인트 충전" @click="showCharge = true">
         <CoinIcon :size="15" /> {{ balance.toLocaleString() }} <b>＋</b>
       </button>
-      <button class="avatar" title="마이페이지" @click="onNav(RouteName.MyPage)">😎</button>
-      <button class="logout" :title="logoutLabel" @click="onLogout">{{ logoutLabel }}</button>
+      <div class="avatar-wrap" ref="accountMenuRef">
+        <button class="avatar-pill" title="계정 메뉴" @click="toggleAccountMenu">
+          <span class="nickname">{{ nickname }}</span>
+          <span class="avatar-circle">😎</span>
+        </button>
+        <div v-if="showAccountMenu" class="account-menu">
+          <div class="menu-head">
+            <span>{{ nickname }}</span>
+            <span><CoinIcon :size="12" /> {{ balance.toLocaleString() }}</span>
+          </div>
+          <!-- 마이페이지·설정은 회원 전용 — 게스트에게는 헤더에서 숨긴다 -->
+          <template v-if="!session.isGuest">
+            <button class="menu-item" @click="onMenuNav(RouteName.MyPage)">마이페이지</button>
+            <button class="menu-item" @click="onMenuNav(RouteName.AccountSettings)">설정</button>
+          </template>
+          <button class="menu-item" @click="onMenuLogout">{{ logoutLabel }}</button>
+        </div>
+      </div>
     </div>
 
     <ChargePointsModal
@@ -130,12 +174,68 @@ async function onLogout() {
 .nav button.active { background: var(--c-yellow); border: 2px solid var(--c-ink); box-shadow: var(--shadow-sm); }
 
 .account { margin-left: auto; display: flex; align-items: center; gap: 10px; }
-.user-pill { padding: 6px 9px; border: 2px solid var(--c-ink); border-radius: 999px; background: #fff; font-size: 9px; font-weight: 700; }
 .coin { height: 39px; padding: 0 12px; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; display: flex; align-items: center; gap: 7px; font-weight: 700; }
 .coin b { color: #36a17f; }
-.avatar { width: 43px; height: 43px; border: var(--border); border-radius: var(--radius-md); background: var(--c-mint-soft); display: grid; place-items: center; box-shadow: var(--shadow-sm); font-size: 20px; }
-.logout { height: 39px; padding: 0 12px; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; font-weight: 700; font-size: 9px; }
-.logout:hover { background: var(--c-coral); color: #fff; }
+.avatar-wrap { position: relative; }
+.avatar-pill {
+  height: 43px;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.nickname { font-size: 14px; font-weight: 700; }
+.avatar-circle {
+  width: 43px;
+  height: 43px;
+  border: var(--border);
+  border-radius: 50%;
+  background: var(--c-mint-soft);
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+}
+
+.account-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 180px;
+  border: var(--border);
+  border-radius: var(--radius-md);
+  background: #fff;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  z-index: 30;
+}
+.menu-head {
+  display: flex;
+  border-bottom: var(--border);
+  padding: 12px 8px;
+}
+.menu-head > span {
+  flex: 1;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.menu-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-top: var(--border);
+  background: #fff;
+  padding: 12px 8px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+.menu-item:hover { background: var(--c-mint-soft); }
 
 @media (max-width: 720px) {
   .top { gap: 14px; }

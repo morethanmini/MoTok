@@ -58,7 +58,10 @@ public enum ErrorCode {
 
     // signal
     SIGNAL_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "SIGNAL_NOT_IN_ROOM", "방 참가자만 시그널을 보낼 수 있습니다."),
-    SIGNAL_TARGET_NOT_FOUND(HttpStatus.NOT_FOUND, "SIGNAL_TARGET_NOT_FOUND", "시그널 수신 대상이 방에 없습니다.");
+    SIGNAL_TARGET_NOT_FOUND(HttpStatus.NOT_FOUND, "SIGNAL_TARGET_NOT_FOUND", "시그널 수신 대상이 방에 없습니다."),
+
+    // sfu
+    SFU_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "SFU_NOT_IN_ROOM", "방 참가자만 화상 접속 토큰을 발급받을 수 있습니다.");
 
     private final HttpStatus status;
     private final String code;
