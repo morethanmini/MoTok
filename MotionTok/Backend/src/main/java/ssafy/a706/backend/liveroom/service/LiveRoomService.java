@@ -22,6 +22,7 @@ import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.model.LiveRoomVisibility;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -129,6 +130,36 @@ public class LiveRoomService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVITE_CODE_NOT_FOUND));
         LiveRoom room = loadRoom(roomId);
         return joinRoom(principal, room);
+    }
+
+    /**
+     * 빠른 시작(랜덤 매칭, S15P11A706-27). 조건(공개·대기중·정원 여유·강퇴 안 됨) 맞는 방을 무작위 순서로
+     * 시도해 첫 성공한 방에 입장한다. 스캔과 입장 사이 다른 요청이 먼저 채웠으면(ROOM_FULL 등) 다음
+     * 후보로 넘어간다 — 새 원자성 보장 없이 기존 joinRoom() 가드를 재시도 트리거로 재사용.
+     * 조건에 맞는 방이 하나도 없거나 전부 실패하면 자동 생성 없이 에러만 반환한다.
+     */
+    public LiveRoomDetailResponse quickStart(AuthPrincipal principal) {
+        String key = playerKey(principal);
+        List<LiveRoom> candidates = new ArrayList<>();
+        for (String roomId : repository.listRoomIdsNewestFirst(PUBLIC_LIST_LIMIT)) {
+            repository.findRoomFields(roomId)
+                    .map(fields -> toLiveRoom(roomId, fields, repository.findMembers(roomId)))
+                    .filter(room -> room.visibility() == LiveRoomVisibility.PUBLIC)
+                    .filter(room -> "WAITING".equals(room.status()))
+                    .filter(room -> room.participantCount() < room.maxPlayers())
+                    .filter(room -> !repository.isKicked(roomId, key))
+                    .ifPresent(candidates::add);
+        }
+        Collections.shuffle(candidates);
+
+        for (LiveRoom room : candidates) {
+            try {
+                return joinRoom(principal, room);
+            } catch (BusinessException e) {
+                // 스캔 이후 다른 요청이 먼저 채웠거나 상태가 바뀐 경우 — 다음 후보로 넘어간다
+            }
+        }
+        throw new BusinessException(ErrorCode.QUICK_START_NO_ROOM);
     }
 
     /**
