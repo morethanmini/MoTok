@@ -13,8 +13,8 @@ defineEmits<{ invite: [] }>()
       <b>{{ friend.name }}</b>
       <small>{{ friend.game }}</small>
     </div>
-    <button v-if="friend.playing" class="invite" @click="$emit('invite')">초대</button>
-    <i v-if="friend.online" class="status" />
+    <button v-if="friend.playing" class="invite" @click="$emit('invite')">참가</button>
+    <i class="status" :class="{ offline: !friend.online }" />
   </div>
 </template>
 
@@ -31,7 +31,7 @@ defineEmits<{ invite: [] }>()
   width: 38px;
   height: 38px;
   border: 2px solid var(--c-ink);
-  border-radius: 12px;
+  border-radius: 50%;
   display: grid;
   place-items: center;
   font-size: 17px;
@@ -52,8 +52,12 @@ defineEmits<{ invite: [] }>()
   background: var(--c-mint);
   box-shadow: 0 0 0 3px var(--c-mint-soft);
 }
+.status.offline {
+  background: #b3aab3;
+  box-shadow: 0 0 0 3px #ece6ec;
+}
 .invite {
-  margin-left: auto;
+  margin-left: 8px;
   border: 2px solid var(--c-ink);
   border-radius: 8px;
   background: #fff;
