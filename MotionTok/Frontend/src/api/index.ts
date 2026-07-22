@@ -5,7 +5,8 @@
  *   const me = await usersApi.getMe()
  *   try { ... } catch (e) { if (e instanceof ApiError) ... }
  */
-export { http, ApiError, API_BASE } from './http'
+export { http, httpEnvelope, ApiError, API_BASE } from './http'
+export type { ApiEnvelope } from './http'
 export * from './token'
 export * from './types'
 
@@ -19,3 +20,4 @@ export { reportsApi } from './modules/reports'
 export { contentApi } from './modules/content'
 export { adminApi } from './modules/admin'
 export { rtcApi } from './modules/rtc'
+export { sfuApi } from './modules/sfu'

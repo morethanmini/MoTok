@@ -1,13 +1,17 @@
 <script setup lang="ts">
-/** 게임룸 — 화상 파티룸(자기/친구 타일), 무대 데모, 채팅, 게임 선택, 컨트롤 바. */
+/** 게임룸 — 화상 파티룸(LiveKit SFU). 방 정원만큼 슬롯을 만들고, 참가자는 실시간 타일로,
+ *  빈 자리는 "대기 중"으로 표시한다. 무대/채팅/게임 선택은 데모. */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
+import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
+import { roomsApi } from '@/api'
 import { useCamera } from '@/composables/useCamera'
+import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
-import { LEFT_FRIENDS, MOVE_PATHS, RIGHT_FRIENDS, type GameEntry } from './data'
-import FriendTile from './components/FriendTile.vue'
+import { MOVE_PATHS, type GameEntry } from './data'
+import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
@@ -15,17 +19,73 @@ import PixelButton from '@/components/common/PixelButton.vue'
 
 const route = useRoute()
 const router = useRouter()
-const camera = useCamera()
 const bgm = useBgm()
 const { message: toast, flash } = useToast(2600)
+
+// LiveKit 실시간 방 + 로컬 카메라 프리뷰 폴백(백엔드 미연동 시)
+const lk = useLiveKitRoom()
+const camera = useCamera()
 
 const roomCode = computed(() => (route.query.room as string) || 'MP-4X9K')
 const roomGame = computed(() => (route.query.game as string) || 'DANCE BATTLE')
 const isHost = computed(() => route.query.host === '1')
 
+// ── 방 정원/방장 (상세 조회) ─────────────────
+const capacity = ref(8)
+const hostId = ref<string | null>(null)
+
+// ── 실시간 참가자 → 슬롯 매핑 ────────────────
+const connected = computed(() => lk.state.value === ConnectionState.Connected)
+const lkLocal = computed(() => lk.participants.value.find((p) => p.isLocal) ?? null)
+const remotes = computed(() => lk.participants.value.filter((p) => !p.isLocal))
+const onlineCount = computed(() => Math.max(1, lk.participants.value.length))
+
+interface Slot { view: ParticipantView | null; host: boolean }
+// self를 뺀 나머지 정원만큼 슬롯을 미리 만든다. 참가자가 있으면 채우고, 없으면 빈 자리.
+const otherSlots = computed<Slot[]>(() => {
+  const slots: Slot[] = []
+  for (let i = 0; i < Math.max(0, capacity.value - 1); i++) {
+    const view = remotes.value[i] ?? null
+    slots.push({ view, host: !!view && view.identity === hostId.value })
+  }
+  return slots
+})
+const leftCount = computed(() => Math.ceil(otherSlots.value.length / 2))
+const leftSlots = computed(() => otherSlots.value.slice(0, leftCount.value))
+const rightSlots = computed(() => otherSlots.value.slice(leftCount.value))
+
+// ── 자기 타일 상태 (연결 시 LiveKit, 미연결 시 로컬 프리뷰) ──
+const demoMic = ref(true)
+const selfCamOn = computed(() => (connected.value ? !!lkLocal.value?.cameraOn : camera.isOn.value))
+const selfMicOn = computed(() => (connected.value ? !!lkLocal.value?.micOn : demoMic.value))
+const selfIsHost = computed(
+  () => isHost.value || (!!lkLocal.value && lkLocal.value.identity === hostId.value),
+)
+
+const selfVideoEl = ref<HTMLVideoElement>()
+// LiveKit 로컬 트랙(안정적 참조)만 의존. 트랙/스트림/엘리먼트가 실제 바뀔 때만 재부착(발화 이벤트로 인한 깜빡임 방지).
+const selfTrack = computed(() => (lkLocal.value?.cameraOn ? (lkLocal.value.videoTrack ?? null) : null))
+watch(
+  [selfTrack, () => camera.stream.value, selfVideoEl],
+  ([track, stream, el], _prev, onCleanup) => {
+    if (!el) return
+    if (track) {
+      track.attach(el)
+      onCleanup(() => track.detach(el))
+      return
+    }
+    // 폴백: LiveKit 미연결 시 로컬 getUserMedia 프리뷰
+    if (stream) {
+      el.srcObject = stream
+      onCleanup(() => {
+        el.srcObject = null
+      })
+    }
+  },
+  { immediate: true },
+)
+
 // ── 데모 상태 ────────────────────────────────
-const micOn = ref(true)
-const camOn = ref(false)
 const speakerOn = ref(true)
 const screenOn = ref(false)
 const combo = ref(32)
@@ -33,21 +93,28 @@ const judgement = ref('GREAT!')
 const selectedMove = ref(0)
 const picker = ref(false)
 
-const videoEl = ref<HTMLVideoElement>()
-watch(camera.stream, (s) => {
-  if (videoEl.value) videoEl.value.srcObject = s
-})
-
 let comboTimer: ReturnType<typeof setInterval>
 let greetTimer: ReturnType<typeof setTimeout>
 const JUDGES = ['GREAT!', 'PERFECT!', 'NICE!', 'COOL!']
 
-onMounted(() => {
+onMounted(async () => {
+  bgm.setVolume(0.2)
   comboTimer = setInterval(() => {
     combo.value += 1
     judgement.value = JUDGES[combo.value % JUDGES.length] ?? 'GREAT!'
   }, 1700)
   greetTimer = setTimeout(() => pushChat('곧 시작할게요! 준비됐죠? 🎮', false, 'Alex'), 1500)
+
+  // 정원/방장 조회(실패해도 진행) → LiveKit 접속(방 멤버만 토큰 발급됨)
+  try {
+    const d = await roomsApi.detail(roomCode.value)
+    capacity.value = d.maxPlayers
+    hostId.value = d.hostUserId
+  } catch {
+    /* 백엔드 미연동 — 기본 정원 유지 */
+  }
+  const ok = await lk.connect(roomCode.value)
+  if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
 })
 onBeforeUnmount(() => {
   clearInterval(comboTimer)
@@ -72,16 +139,25 @@ function send() {
   draft.value = ''
 }
 
-// ── 카메라 / 컨트롤 ─────────────────────────
+// ── 카메라 / 마이크 컨트롤 ───────────────────
+// 연결 시 LiveKit 발행 토글, 미연결 시 로컬 프리뷰 토글.
 async function toggleCam() {
-  if (camOn.value) {
-    camera.stop()
-    camOn.value = false
+  if (connected.value) {
+    await lk.toggleCamera()
     return
   }
-  const s = await camera.start({ video: { width: 640, height: 400 }, audio: false })
-  if (s) camOn.value = true
-  else flash('카메라 권한을 허용해 주세요')
+  if (camera.isOn.value) camera.stop()
+  else {
+    const s = await camera.start({ video: { width: 640, height: 400 }, audio: false })
+    if (!s) flash('카메라 권한을 허용해 주세요')
+  }
+}
+async function toggleMic() {
+  if (connected.value) {
+    await lk.toggleMicrophone()
+    return
+  }
+  demoMic.value = !demoMic.value
 }
 
 // ── 게임 선택 ────────────────────────────────
@@ -120,8 +196,9 @@ function showResult() {
     query: { game: roomGame.value, room: roomCode.value },
   })
 }
-function leave() {
+async function leave() {
   leavingIntentionally = true
+  await lk.disconnect()
   camera.stop()
   router.push({ name: RouteName.Lobby })
 }
@@ -131,9 +208,6 @@ const startLabel = computed(() => (isHost.value ? 'START' : 'WAIT'))
 const startHint = computed(() =>
   isHost.value ? '게임을 선택하고 시작!' : '방장이 게임을 선택 중이에요',
 )
-
-// 게임룸 진입/이탈 시 BGM 볼륨 유지 (게임 실제 실행 시 suspendForGame 사용 예정)
-onMounted(() => bgm.setVolume(0.2))
 </script>
 
 <template>
@@ -145,7 +219,7 @@ onMounted(() => bgm.setVolume(0.2))
       <span class="px-kicker"><i /> LIVE PARTY ROOM</span>
       <b>{{ roomGame }}</b>
       <span>친구들과 함께 준비 중이에요</span>
-      <div class="ribbon-code">ROOM {{ roomCode }} · 6/8 ONLINE</div>
+      <div class="ribbon-code">ROOM {{ roomCode }} · {{ onlineCount }}/{{ capacity }} ONLINE</div>
     </div>
 
     <!-- 본문 -->
@@ -153,21 +227,27 @@ onMounted(() => bgm.setVolume(0.2))
       <!-- 좌측: 자기 화면 + 친구 -->
       <section class="people">
         <div class="self-tile">
-          <video v-show="camOn" ref="videoEl" autoplay playsinline muted class="self-video" />
-          <div v-if="!camOn" class="cam-off">
+          <video v-show="selfCamOn" ref="selfVideoEl" autoplay playsinline muted class="self-video" />
+          <div v-if="!selfCamOn" class="cam-off">
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">
               <path d="M2 6h11v12H2zM16 10l6-4v12l-6-4" /><line x1="2" y1="2" x2="22" y2="22" />
             </svg>
             <button class="px cam-on-btn" @click="toggleCam">CAM ON</button>
           </div>
           <div class="self-label">
-            <span class="c-g">{{ isHost ? 'YOU · HOST' : 'YOU' }}</span>
-            <span :style="{ color: micOn ? '#5cbf4a' : '#e85d6e' }">
+            <span class="c-g">{{ selfIsHost ? 'YOU · HOST' : 'YOU' }}</span>
+            <span :style="{ color: selfMicOn ? '#5cbf4a' : '#e85d6e' }">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square"><rect x="9" y="3" width="6" height="11" /><path d="M5 11a7 7 0 0014 0M12 18v3" /></svg>
             </span>
           </div>
         </div>
-        <FriendTile v-for="f in LEFT_FRIENDS" :key="f.name" :name="f.name" :crown="f.crown" />
+        <ParticipantTile
+          v-for="(slot, i) in leftSlots"
+          :key="'L' + i"
+          :view="slot.view"
+          :host="slot.host"
+          play-audio
+        />
       </section>
 
       <!-- 중앙: 무대 -->
@@ -244,14 +324,20 @@ onMounted(() => bgm.setVolume(0.2))
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="9" y="9" width="11" height="11" /><path d="M5 15V5a2 2 0 012-2h10" /></svg>
               </button>
             </div>
-            <span class="code-note">현재 6/8명 · 링크 공유 가능</span>
+            <span class="code-note">현재 {{ onlineCount }}/{{ capacity }}명 · 링크 공유 가능</span>
           </div>
         </div>
       </section>
 
-      <!-- 우측: 친구 -->
+      <!-- 우측: 참가자 슬롯 -->
       <section class="people">
-        <FriendTile v-for="f in RIGHT_FRIENDS" :key="f.name" :name="f.name" :muted="f.muted" />
+        <ParticipantTile
+          v-for="(slot, i) in rightSlots"
+          :key="'R' + i"
+          :view="slot.view"
+          :host="slot.host"
+          play-audio
+        />
       </section>
     </main>
 
@@ -261,10 +347,10 @@ onMounted(() => bgm.setVolume(0.2))
         <button class="ctrl" :class="{ off: !speakerOn }" title="스피커" @click="speakerOn = !speakerOn">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 9a3.5 3.5 0 010 6" /></svg>
         </button>
-        <button class="ctrl" :class="{ off: !micOn }" title="마이크" @click="micOn = !micOn">
+        <button class="ctrl" :class="{ off: !selfMicOn }" title="마이크" @click="toggleMic">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="9" y="3" width="6" height="11" /><path d="M5 11a7 7 0 0014 0M12 18v3" /></svg>
         </button>
-        <button class="ctrl" :class="{ on: camOn }" title="카메라" @click="toggleCam">
+        <button class="ctrl" :class="{ on: selfCamOn }" title="카메라" @click="toggleCam">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="2" y="6" width="14" height="12" /><path d="M16 10l6-4v12l-6-4" /></svg>
         </button>
         <button class="ctrl" :class="{ on: screenOn }" title="화면 공유" @click="screenOn = !screenOn">
