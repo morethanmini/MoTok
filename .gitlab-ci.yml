@@ -66,6 +66,8 @@ deploy-backend:
       add LIVEKIT_API_SECRET "$LIVEKIT_API_SECRET"
     # ── 빌드 + 실행 (변경분만 재빌드) ──
     - docker compose -f docker-compose.prod.yml up -d --build
+    # 재생성된 컨테이너(livekit 등)의 새 IP 를 nginx 가 다시 해석하도록 reload (무중단)
+    - docker exec motiontok-nginx nginx -s reload || true
     # ── 오래된 dangling 이미지 정리 ──
     - docker image prune -f
 
