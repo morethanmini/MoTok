@@ -351,6 +351,23 @@ async function submitResetRequest() {
   }
 }
 
+// ── 게스트 시작 — 명세 POST /auth/guest (서버가 임시 닉네임·1인방 부여) ──────────
+async function startGuest() {
+  if (submitting.value) return
+  submitting.value = true
+  submitError.value = ''
+  try {
+    const res = await recoveryApi.guest()
+    session.loginAsGuest(res.guestNickname, res.roomId)
+    // 게스트는 멀티플레이 로비 대신 1인 게임 화면에서 시작 (StartView와 동일 정책)
+    router.push({ name: RouteName.GamesCatalog })
+  } catch (e) {
+    submitError.value = messageFor(e, {})
+  } finally {
+    submitting.value = false
+  }
+}
+
 // ── 소셜 로그인 (google · kakao) — 명세 POST /auth/social/{provider} ──────────
 // client_id(구글)·REST 키(카카오)는 authorize URL에 노출되는 공개값이라 VITE_ 환경변수로 둔다.
 const KAKAO_REST_KEY = import.meta.env.VITE_KAKAO_REST_KEY ?? ''
@@ -609,6 +626,10 @@ onMounted(async () => {
         <p class="signup-cta">
           MoToK이 처음이세요?
           <button type="button" @click="mode = 'signup'">회원가입</button>
+        </p>
+
+        <p class="signup-cta">
+          <button type="button" :disabled="submitting" @click="startGuest">게스트로 시작하기</button>
         </p>
       </template>
 

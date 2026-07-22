@@ -70,7 +70,7 @@ const back = () => router.push({ name: RouteName.Auth, query: { mode: 'login' } 
           <input
             v-model="newPassword"
             type="password"
-            placeholder="8자 이상"
+            placeholder="12자 이상, 영문 대/소문자·숫자·특수기호 중 3종 이상"
             @keydown.enter="reset"
           />
         </label>
