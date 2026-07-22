@@ -12,6 +12,7 @@ import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomResponse;
 import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomByInviteCodeRequest;
 import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomRequest;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomDetailResponse;
+import ssafy.a706.backend.liveroom.controller.dto.LiveRoomHostChangedEvent;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomMemberLeftEvent;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomSummaryResponse;
 import ssafy.a706.backend.liveroom.model.LiveRoom;
@@ -19,6 +20,7 @@ import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.model.LiveRoomVisibility;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -105,18 +107,35 @@ public class LiveRoomService {
         return joinRoom(principal, room);
     }
 
-    /** 참가자는 언제든 방을 나갈 수 있다(S15P11A706-71). 방장 위임·빈 방 정리는 -72 별도 스토리. */
+    /**
+     * 참가자는 언제든 방을 나갈 수 있다(S15P11A706-71).
+     * 마지막 인원이 나가면 방을 즉시 종료하고, 방장이 나가면 남은 참가자 중 입장 순으로 위임한다(S15P11A706-72).
+     */
     public void leave(AuthPrincipal principal, String roomId) {
-        loadRoom(roomId); // 방 존재 검증(없으면 ROOM_NOT_FOUND)
+        LiveRoom room = loadRoom(roomId); // 방 존재 검증(없으면 ROOM_NOT_FOUND)
         String key = playerKey(principal);
         if (!repository.hasMember(roomId, key)) {
             return; // 이미 나간 상태 — 멱등 처리, 유령 브로드캐스트 방지
         }
         repository.removeMember(roomId, key);
-        int remaining = repository.findMembers(roomId).size();
+        List<LiveRoomMemberValue> remaining = repository.findMembers(roomId);
         messagingTemplate.convertAndSend(
                 String.format(MEMBERS_TOPIC, roomId),
-                new LiveRoomMemberLeftEvent(principal.userId(), principal.displayName(), remaining));
+                new LiveRoomMemberLeftEvent(principal.userId(), principal.displayName(), remaining.size()));
+
+        if (remaining.isEmpty()) {
+            repository.deleteRoom(roomId);
+            return;
+        }
+        if (room.hostUserId().equals(principal.userId())) {
+            LiveRoomMemberValue newHost = remaining.stream()
+                    .min(Comparator.comparingLong(LiveRoomMemberValue::joinedAt))
+                    .orElseThrow();
+            repository.updateHost(roomId, newHost.userId(), newHost.displayName());
+            messagingTemplate.convertAndSend(
+                    String.format(MEMBERS_TOPIC, roomId),
+                    new LiveRoomHostChangedEvent(newHost.userId(), newHost.displayName()));
+        }
     }
 
     private LiveRoomDetailResponse joinRoom(AuthPrincipal principal, LiveRoom room) {
