@@ -351,6 +351,23 @@ async function submitResetRequest() {
   }
 }
 
+// ── 게스트 시작 — 명세 POST /auth/guest (서버가 임시 닉네임·1인방 부여) ──────────
+async function startGuest() {
+  if (submitting.value) return
+  submitting.value = true
+  submitError.value = ''
+  try {
+    const res = await recoveryApi.guest()
+    session.loginAsGuest(res.guestNickname, res.roomId)
+    // 게스트는 멀티플레이 로비 대신 1인 게임 화면에서 시작 (StartView와 동일 정책)
+    router.push({ name: RouteName.GamesCatalog })
+  } catch (e) {
+    submitError.value = messageFor(e, {})
+  } finally {
+    submitting.value = false
+  }
+}
+
 // ── 소셜 로그인 (google · kakao) — 명세 POST /auth/social/{provider} ──────────
 // client_id(구글)·REST 키(카카오)는 authorize URL에 노출되는 공개값이라 VITE_ 환경변수로 둔다.
 const KAKAO_REST_KEY = import.meta.env.VITE_KAKAO_REST_KEY ?? ''
@@ -370,28 +387,40 @@ function startSocial(provider: 'google' | 'kakao') {
       ? 'https://kauth.kakao.com/oauth/authorize'
       : 'https://accounts.google.com/o/oauth2/v2/auth'
   const scope = provider === 'google' ? '&scope=openid%20email%20profile' : ''
+  // 매번 계정을 입력하도록 강제 — 이전 소셜 세션이 남아 있어도 자동 로그인/계정 고정을 막고 계정 전환을 허용한다.
+  // (kakao: prompt=login 재로그인 강제 / google: select_account 계정 선택)
+  const prompt = provider === 'kakao' ? '&prompt=login' : '&prompt=select_account'
   window.location.href =
     `${base}?client_id=${clientId}` +
     `&redirect_uri=${encodeURIComponent(SOCIAL_REDIRECT_URI)}` +
-    `&response_type=code${scope}`
+    `&response_type=code${scope}${prompt}`
 }
+
+// 소셜 콜백(?code=)으로 들어온 진입인지. 이 경우 로그인 폼 대신 로딩 화면을 렌더링해
+// 토큰 교환(~1-2초) 동안 로그인 폼이 잠깐 깜빡이는 것을 막는다. 초기값을 setup에서 정해 첫 렌더부터 로딩으로 시작.
+const socialCallback = ref(typeof route.query.code === 'string')
 
 // provider가 ?code=로 돌아오면 백엔드로 넘겨 JWT를 받고 로비로 이동
 onMounted(async () => {
-  const code = route.query.code
-  if (typeof code !== 'string') return
+  if (!socialCallback.value) return
   const provider = sessionStorage.getItem('social_provider') as 'google' | 'kakao' | null
   sessionStorage.removeItem('social_provider')
-  if (!provider) return
+  if (!provider) {
+    socialCallback.value = false // provider 유실 등 잘못된 진입 — 로그인 폼으로 되돌림
+    return
+  }
   try {
     const token = await recoveryApi.social(provider, {
-      authorizationCode: code,
+      authorizationCode: route.query.code as string,
       redirectUri: SOCIAL_REDIRECT_URI,
     })
     session.applyToken(token)
+    // 방금 로딩바를 보여줬으니 로비 진입 스플래시는 건너뛴다 → '로딩바 한 번 → 로비'.
+    sessionStorage.setItem('motok.splashSeen', '1')
     router.replace({ name: RouteName.Lobby })
   } catch (e) {
     submitError.value = messageFor(e, { AUTH_SOCIAL_LOGIN_FAILED: '소셜 로그인에 실패했어요.' })
+    socialCallback.value = false // 로딩 종료 → 로그인 폼 + 에러 표시
     router.replace({ name: RouteName.Auth }) // URL에서 code 제거
   }
 })
@@ -399,7 +428,16 @@ onMounted(async () => {
 
 <template>
   <main class="page">
-    <section class="card">
+    <!-- 소셜 로그인 콜백 처리 중: 로그인 폼 대신 로딩바 (완료 후 로비로 이동) -->
+    <section v-if="socialCallback" class="card loading-card">
+      <div class="head">
+        <BrandLogo size="sm" subtitle="잠시만 기다려 주세요" title="MoToK" />
+      </div>
+      <div class="loading-track"><div class="loading-fill" /></div>
+      <p class="loading-msg">로그인 처리 중…</p>
+    </section>
+
+    <section v-else class="card">
       <PixelCat :shy="catShy" />
       <div class="head">
         <BrandLogo size="sm" subtitle="친구들과 움직일 준비가 되었나요?" title="MoToK" />
@@ -610,6 +648,10 @@ onMounted(async () => {
           MoToK이 처음이세요?
           <button type="button" @click="mode = 'signup'">회원가입</button>
         </p>
+
+        <p class="signup-cta">
+          <button type="button" :disabled="submitting" @click="startGuest">게스트로 시작하기</button>
+        </p>
       </template>
 
       <button class="back" @click="back">← 시작 화면으로</button>
@@ -706,6 +748,47 @@ onMounted(async () => {
 .head {
   margin-bottom: 22px;
   padding-right: 76px;
+}
+
+/* 소셜 로그인 콜백 로딩 화면 (LobbySplash와 같은 로딩바 스타일) */
+.loading-card {
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 16px;
+}
+.loading-card .head {
+  padding-right: 0;
+  margin-bottom: 4px;
+}
+.loading-track {
+  height: 18px;
+  padding: 3px;
+  border: 2px solid var(--c-ink);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+.loading-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: repeating-linear-gradient(90deg, var(--c-mint) 0 18px, #73d8bd 18px 22px);
+  animation: auth-loadbar 1s steps(8) infinite;
+}
+@keyframes auth-loadbar {
+  from { width: 12%; }
+  to { width: 100%; }
+}
+.loading-msg {
+  margin: 0;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-fill { animation: none; width: 100%; }
 }
 
 .field {

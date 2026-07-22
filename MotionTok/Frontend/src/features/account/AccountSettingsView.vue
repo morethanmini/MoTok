@@ -22,7 +22,6 @@ const newPassword = ref('')
 const newPasswordConfirm = ref('')
 
 // 비밀번호 표시/검증 — 회원가입(AuthView) 로직과 동일한 규칙
-const showNewPassword = ref(false)
 const showNewPasswordConfirm = ref(false)
 
 // 서버 규칙과 동일: 12~64자, 소문자·대문자·숫자·특수문자 중 3종 이상
@@ -125,6 +124,9 @@ async function withdraw() {
   showWithdrawModal.value = false
   try {
     await usersApi.withdraw()
+    // 서버는 이미 refresh 토큰을 무효화했다 — 로컬 세션·토큰도 즉시 정리해 탈퇴 계정의 잔존 로그인 상태를 없앤다.
+    // (logout()이 아니라 clear() — 죽은 계정 토큰으로 POST /auth/logout을 다시 부를 필요가 없다)
+    session.clear()
     flash('탈퇴 처리되었어요')
     setTimeout(() => router.push({ name: RouteName.Start }), 1000)
   } catch (e) {
@@ -173,26 +175,7 @@ async function withdraw() {
 
         <label class="field">
           새 비밀번호
-          <div class="hint">12자 이상, 영문 대/소문자·숫자·특수기호 중 3가지 이상 조합</div>
-          <div class="input-wrap solo has-eye">
-            <input
-              v-model="newPassword"
-              :type="showNewPassword ? 'text' : 'password'"
-              placeholder="새 비밀번호 입력"
-            />
-            <button
-              type="button"
-              class="eye-btn"
-              :aria-label="showNewPassword ? '비밀번호 숨기기' : '비밀번호 보기'"
-              @click="showNewPassword = !showNewPassword"
-            >
-              <i
-                class="eye-icon"
-                :style="{ backgroundImage: `url('/assets/icons/eye-${showNewPassword ? 'open' : 'closed'}.svg')` }"
-              />
-            </button>
-            <i class="dot" :class="{ ok: newPasswordValid, bad: newPassword && !newPasswordValid }" />
-          </div>
+          <input v-model="newPassword" type="password" placeholder="12자 이상, 영문 대/소문자·숫자·특수기호 중 3종 이상" />
         </label>
 
         <label class="field">

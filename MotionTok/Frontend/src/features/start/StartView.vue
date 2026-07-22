@@ -4,6 +4,8 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { useSessionStore } from '@/stores/session'
+import { authApi } from '@/api'
+import type { GuestResponse } from '@/api'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
@@ -21,9 +23,16 @@ const playAsGuest = () => {
   showGuestWarning.value = true
 }
 
-const confirmGuest = () => {
+const confirmGuest = async () => {
+  let res: GuestResponse | null = null
+  try {
+    // 서버 게스트 세션(JWT)·1인방 생성 — 이후 인증 API 호출에 필요 (명세 POST /auth/guest)
+    res = await authApi.guest()
+  } catch {
+    // 서버 미기동 시에도 화면 흐름은 막지 않는다(기존 동작 유지)
+  }
   showGuestWarning.value = false
-  session.loginAsGuest()
+  session.loginAsGuest(res?.guestNickname, res?.roomId)
   // 게스트는 멀티플레이 로비 대신 게임(1인) 화면에서 시작
   router.push({ name: RouteName.GamesCatalog })
 }

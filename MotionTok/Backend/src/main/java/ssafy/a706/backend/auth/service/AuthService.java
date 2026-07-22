@@ -16,14 +16,17 @@ import ssafy.a706.backend.auth.oauth.OauthLinkService;
 import ssafy.a706.backend.auth.oauth.OauthProvider;
 import ssafy.a706.backend.auth.oauth.OauthUserInfo;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
+import ssafy.a706.backend.auth.principal.GuestPrincipal;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.liveroom.service.LiveRoomService;
 import ssafy.a706.backend.user.entity.User;
 import ssafy.a706.backend.user.repository.UserRepository;
 import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
 
 import java.time.Duration;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Service
 @RequiredArgsConstructor
@@ -37,6 +40,7 @@ public class AuthService {
     private final EmailVerificationService emailVerificationService;
     private final OauthClientResolver oauthClientResolver;
     private final OauthLinkService oauthLinkService;
+    private final LiveRoomService liveRoomService;
 
     public AvailabilityResponse checkEmail(String email) {
         return new AvailabilityResponse(!userRepository.existsByEmail(email.trim().toLowerCase()));
@@ -183,10 +187,13 @@ public class AuthService {
         refreshTokenStore.delete(userId);
     }
 
-    public TokenResponse guestLogin(GuestLoginRequest req) {
+    /** 게스트 시작 (명세 POST /auth/guest) — 임시 닉네임 부여 + 게스트 1인방 자동 생성(공개 목록 미노출). */
+    public GuestResponse guestLogin() {
         String guestId = "guest-" + UUID.randomUUID().toString().substring(0, 8);
-        String accessToken = tokenProvider.createGuestToken(guestId, req.nickname());
-        return TokenResponse.of(accessToken, null, tokenProvider.accessExpiresInSeconds(), null);
+        String nickname = "게스트" + ThreadLocalRandom.current().nextInt(1000, 10000);
+        String accessToken = tokenProvider.createGuestToken(guestId, nickname);
+        String roomId = liveRoomService.createGuestSoloRoom(new GuestPrincipal(guestId, nickname));
+        return new GuestResponse(accessToken, nickname, roomId);
     }
 
     private TokenResponse issueTokens(User user) {
