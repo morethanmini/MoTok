@@ -73,6 +73,8 @@ public class SecurityConfig {
                                 "/api/auth/token/refresh").permitAll()
                         // 공개 조회. /api/v1/*는 명세 이전 경로로, 게임 도메인 마이그레이션 전까지 함께 허용한다.
                         .requestMatchers(HttpMethod.GET, "/api/games/*/leaderboard", "/api/v1/games/*/leaderboard").permitAll()
+                        // 회원 전용 — 게스트 토큰(ROLE_GUEST)의 /users/me 접근을 403으로 차단한다
+                        .requestMatchers("/api/users/**").hasRole("USER")
                         // 로그아웃은 인증 필요(명세 401)
                         .anyRequest().authenticated())
                 .exceptionHandling(eh -> eh

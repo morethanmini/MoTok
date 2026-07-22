@@ -60,6 +60,28 @@ public class LiveRoomService {
         return CreateLiveRoomResponse.from(room);
     }
 
+    /**
+     * 게스트 1인방 자동 생성(-109) — 정원 1, 공개 목록 미노출(rooms:index 미등록), 초대코드·비밀번호 없음.
+     * 방 데이터(room:{roomId})는 존재하므로 게스트 본인은 roomId로 접근할 수 있다.
+     */
+    public String createGuestSoloRoom(AuthPrincipal principal) {
+        String roomId = repository.generateUniqueRoomId();
+        long now = System.currentTimeMillis();
+
+        Map<String, String> fields = new LinkedHashMap<>();
+        fields.put("title", principal.displayName() + "의 1인방");
+        fields.put("visibility", LiveRoomVisibility.PRIVATE.name());
+        fields.put("maxPlayers", "1");
+        fields.put("status", "WAITING");
+        fields.put("hostUserId", principal.userId());
+        fields.put("hostDisplayName", principal.displayName());
+        fields.put("createdAt", String.valueOf(now));
+        repository.saveRoom(roomId, fields);
+        repository.addMember(roomId, playerKey(principal), principal.userId(), principal.displayName(),
+                principal.isGuest(), now);
+        return roomId;
+    }
+
     public List<LiveRoomSummaryResponse> list() {
         List<LiveRoomSummaryResponse> result = new ArrayList<>();
         for (String roomId : repository.listRoomIdsNewestFirst(PUBLIC_LIST_LIMIT)) {
