@@ -86,3 +86,7 @@ app:
   password-reset:
     token-ttl: 30m   # 재설정 토큰 유효시간(Redis auth:pwreset:{token})
     link-base-url: ${PW_RESET_LINK_BASE:http://localhost:5173/auth/reset-password}
+
+  # 초대 링크 (S15P11A706-69, 참여 코드 외부 공유용)
+  live-room:
+    invite-link-base-url: ${LIVE_ROOM_INVITE_LINK_BASE:http://localhost:5173/room}

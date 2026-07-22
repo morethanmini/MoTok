@@ -10,9 +10,10 @@ public record CreateLiveRoomResponse(
         String status,
         String hostUserId,
         long createdAt,
-        String inviteCode
+        String inviteCode,
+        String inviteLink
 ) {
-    public static CreateLiveRoomResponse from(LiveRoom room) {
+    public static CreateLiveRoomResponse from(LiveRoom room, String inviteLinkBaseUrl) {
         return new CreateLiveRoomResponse(
                 room.roomId(),
                 room.title(),
@@ -21,7 +22,8 @@ public record CreateLiveRoomResponse(
                 room.status(),
                 room.hostUserId(),
                 room.createdAt(),
-                room.inviteCode()
+                room.inviteCode(),
+                room.inviteCode() == null ? null : inviteLinkBaseUrl + "?code=" + room.inviteCode()
         );
     }
 }

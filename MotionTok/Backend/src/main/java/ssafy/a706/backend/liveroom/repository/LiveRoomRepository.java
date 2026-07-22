@@ -33,7 +33,7 @@ public class LiveRoomRepository {
 
     private static final String CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     private static final int ROOM_ID_LENGTH = 6;
-    private static final int INVITE_CODE_LENGTH = 8;
+    private static final int INVITE_CODE_LENGTH = 6;
     private static final Duration ROOM_TTL = Duration.ofHours(24);
     private static final String ROOM_INDEX_KEY = "rooms:index";
 
