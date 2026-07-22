@@ -4,10 +4,13 @@
 stages:
   - deploy
 
-# 프론트 빌드가 docker(root) 로 만든 node_modules 를 git clean 이 못 지워
-# "Permission denied" 경고가 나므로, 청소 대상에서 제외한다. (frozen-lockfile 이라 재사용 안전)
+# 프론트 빌드가 docker(root) 로 만든 산출물(node_modules/.pnpm-store/dist/tsbuildinfo 등)을
+# git clean(gitlab-runner 권한)이 못 지워 "Permission denied" 로 job 이 실패했다.
+# 이 산출물은 전부 .gitignore 에 등록돼 있는데, 기본 -ffdx 의 'x' 가 "무시된 파일까지 지워라"라
+# 문제가 됐다. 'x' 를 빼면(-ffd) git 은 무시된 생성물을 손대지 않는다 → 권한 문제 원천 차단.
+# 개별 -e 나열이 불필요하고 앞으로 생길 산출물도 자동으로 안전. (빌드가 매번 재생성하므로 스테일 걱정 없음)
 variables:
-  GIT_CLEAN_FLAGS: -ffdx -e MotionTok/Frontend/node_modules
+  GIT_CLEAN_FLAGS: -ffd
 
 deploy-backend:
   stage: deploy
@@ -85,8 +88,3 @@ deploy-frontend:
     - mkdir -p /srv/motok/frontend
     - rm -rf /srv/motok/frontend/*
     - cp -r dist/. /srv/motok/frontend/
-  after_script:
-    # 컨테이너(root)가 만든 node_modules/dist 소유권을 runner 로 환원 → 다음 git clean 정상화.
-    # $(id -u/-g) 는 호스트 셸(gitlab-runner)에서 먼저 평가돼 runner uid/gid 로 들어간다.
-    - docker run --rm -v "$PWD/MotionTok/Frontend":/app -w /app alpine
-        chown -R "$(id -u):$(id -g)" .
