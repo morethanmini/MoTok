@@ -13,8 +13,10 @@ import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomByInviteCodeReques
 import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomRequest;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomDetailResponse;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomHostChangedEvent;
+import ssafy.a706.backend.liveroom.controller.dto.LiveRoomMemberKickedEvent;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomMemberLeftEvent;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomSummaryResponse;
+import ssafy.a706.backend.liveroom.model.KickReason;
 import ssafy.a706.backend.liveroom.model.LiveRoom;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.model.LiveRoomVisibility;
@@ -138,8 +140,42 @@ public class LiveRoomService {
         }
     }
 
+    /**
+     * 방장이 참가자를 강퇴한다(S15P11A706-73). 강퇴된 참가자는 재입장 차단 목록에 등록되어
+     * 방이 유지되는 동안 어떤 경로(roomId 직접 입장·초대코드)로도 재입장할 수 없다({@link #joinRoom}).
+     */
+    public void kick(AuthPrincipal host, String roomId, String targetUserId, KickReason reason) {
+        LiveRoom room = loadRoom(roomId);
+        if (!room.hostUserId().equals(host.userId())) {
+            throw new BusinessException(ErrorCode.NOT_ROOM_HOST);
+        }
+        if (targetUserId.equals(host.userId())) {
+            throw new BusinessException(ErrorCode.ROOM_CANNOT_KICK_SELF);
+        }
+        LiveRoomMemberValue target = room.members().stream()
+                .filter(m -> m.userId().equals(targetUserId))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException(ErrorCode.ROOM_MEMBER_NOT_FOUND));
+
+        String key = playerKey(target.userId(), target.guest());
+        repository.removeMember(roomId, key);
+        repository.addKicked(roomId, key);
+
+        List<LiveRoomMemberValue> remaining = repository.findMembers(roomId);
+        messagingTemplate.convertAndSend(
+                String.format(MEMBERS_TOPIC, roomId),
+                new LiveRoomMemberKickedEvent(target.userId(), target.displayName(), reason, remaining.size()));
+
+        if (remaining.isEmpty()) {
+            repository.deleteRoom(roomId);
+        }
+    }
+
     private LiveRoomDetailResponse joinRoom(AuthPrincipal principal, LiveRoom room) {
         String key = playerKey(principal);
+        if (repository.isKicked(room.roomId(), key)) {
+            throw new BusinessException(ErrorCode.ROOM_KICKED);
+        }
         if (!repository.hasMember(room.roomId(), key) && room.participantCount() >= room.maxPlayers()) {
             throw new BusinessException(ErrorCode.ROOM_FULL);
         }
@@ -181,6 +217,10 @@ public class LiveRoomService {
 
     /** 회원은 u:{userId}, 게스트는 g:{guestId} — 회원/게스트 참가자를 하나의 문자열 규격으로 통일. */
     private String playerKey(AuthPrincipal principal) {
-        return (principal.isGuest() ? "g:" : "u:") + principal.userId();
+        return playerKey(principal.userId(), principal.isGuest());
+    }
+
+    private String playerKey(String userId, boolean guest) {
+        return (guest ? "g:" : "u:") + userId;
     }
 }

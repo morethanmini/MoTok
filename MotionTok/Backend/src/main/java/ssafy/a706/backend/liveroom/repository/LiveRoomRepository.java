@@ -19,6 +19,7 @@ import java.util.Set;
 /**
  * 방(-24) 전용 Redis 접근 계층. 모톡 Redis 키맵 v0.2를 그대로 따른다.
  * room:{roomId}(Hash, TTL 24h) · room:{roomId}:members(Hash, TTL 24h) ·
+ * room:{roomId}:kicked(Set, TTL 24h, 강퇴자 재입장 차단 목록) ·
  * rooms:index(ZSET, TTL 없음, 공개방·비공개방 모두 포함) · room:invite:{code}(String, TTL 24h)
  *
  * <p>members 필드 값은 원래 JSON 문자열로 설계됐지만, 이 프로젝트 build.gradle에
@@ -115,10 +116,22 @@ public class LiveRoomRepository {
                 Map.of("hostUserId", hostUserId, "hostDisplayName", hostDisplayName));
     }
 
-    /** 마지막 참가자 퇴장 시 방 즉시 종료(S15P11A706-72). room 해시 · members 해시 · rooms:index 항목을 모두 제거한다. */
+    /** 강퇴자를 재입장 차단 목록에 추가한다(S15P11A706-73). */
+    public void addKicked(String roomId, String playerKey) {
+        String key = kickedKey(roomId);
+        redisTemplate.opsForSet().add(key, playerKey);
+        redisTemplate.expire(key, ROOM_TTL);
+    }
+
+    public boolean isKicked(String roomId, String playerKey) {
+        return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(kickedKey(roomId), playerKey));
+    }
+
+    /** 마지막 참가자 퇴장 시 방 즉시 종료(S15P11A706-72). room 해시 · members 해시 · kicked 목록 · rooms:index 항목을 모두 제거한다. */
     public void deleteRoom(String roomId) {
         redisTemplate.delete(roomKey(roomId));
         redisTemplate.delete(membersKey(roomId));
+        redisTemplate.delete(kickedKey(roomId));
         removeFromIndex(roomId);
     }
 
@@ -169,5 +182,9 @@ public class LiveRoomRepository {
 
     private String inviteKey(String code) {
         return "room:invite:" + code;
+    }
+
+    private String kickedKey(String roomId) {
+        return "room:" + roomId + ":kicked";
     }
 }
