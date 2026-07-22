@@ -5,6 +5,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import ssafy.a706.backend.auth.oauth.repository.OauthAccountRepository;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
@@ -20,6 +21,7 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenStore refreshTokenStore;
+    private final OauthAccountRepository oauthAccountRepository;
 
     public UserProfileResponse getProfile(Long userId) {
         return UserProfileResponse.from(findActiveById(userId));
@@ -68,6 +70,7 @@ public class UserService {
         User user = findById(userId);
         user.softDelete();
         userRepository.saveAndFlush(user);
+        oauthAccountRepository.deleteByUser(user); // 소셜 연동 해제 — 탈퇴 후 같은 소셜 계정으로 신규 가입 가능
         refreshTokenStore.delete(userId);
     }
 
