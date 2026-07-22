@@ -173,8 +173,8 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
             <p>대기 중인 공개방에 입장하거나 직접 새 방을 만들 수 있어요.</p>
           </div>
           <div class="hero-actions">
-            <PixelButton variant="primary" @click="quickStart">⚡ 빠른 시작</PixelButton>
-            <PixelButton @click="openCreate">＋ 방 만들기</PixelButton>
+            <PixelButton variant="primary" @click="quickStart">⚡ 빠른 참가</PixelButton>
+            <PixelButton @click="openJoin">⌁ 코드 참가</PixelButton>
           </div>
         </section>
 
@@ -188,7 +188,8 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
           <label class="room-search">
             ⌕ <input v-model="query" placeholder="방 제목 검색" />
           </label>
-          <button @click="reloadRooms">새로고침 ↻</button>
+          <PixelButton class="create-room-btn" @click="openCreate">＋ 방 만들기</PixelButton>
+          <button class="refresh-btn" @click="reloadRooms">새로고침 ↻</button>
         </div>
 
         <section class="room-list">
@@ -205,25 +206,19 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
       </main>
 
       <aside class="side">
-        <section class="side-card">
-          <div class="side-title">빠른 메뉴 <span>ONLINE</span></div>
-          <div class="quick">
-            <button @click="quickStart">⚡<br />빠른 시작</button>
-            <button @click="openJoin">⌁<br />코드 참가</button>
-          </div>
-        </section>
-
         <section class="side-card friends-card">
           <div class="side-title">
-            접속 중인 친구
-            <button class="side-link" @click="router.push({ name: RouteName.Friends })">전체 →</button>
+            친구 목록
+            <button class="side-link" @click="router.push({ name: RouteName.Friends })">친구 목록 관리 →</button>
           </div>
-          <FriendItem
-            v-for="(f, i) in friends"
-            :key="i"
-            :friend="f"
-            @invite="flash(`${f.name}에게 초대를 보냈어요`)"
-          />
+          <div class="friends-list">
+            <FriendItem
+              v-for="(f, i) in friends"
+              :key="i"
+              :friend="f"
+              @invite="flash(`${f.name}에게 초대를 보냈어요`)"
+            />
+          </div>
         </section>
 
         <section class="side-card notice">
@@ -338,6 +333,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 .section-head { display: flex; align-items: center; margin: 27px 0 12px; }
 .section-head h2 { margin: 0; font-size: 17px; }
 .section-head p { margin: 0 0 0 9px; font-size: 10px; color: var(--c-muted); }
+.create-room-btn { height: 34px; padding: 0 14px; font-size: 11px; border-radius: 11px 11px 8px 11px; margin-left: 10px; }
 .room-search {
   margin-left: auto;
   display: flex;
@@ -352,7 +348,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   font-size: 12px;
 }
 .room-search input { width: 150px; border: 0; outline: 0; background: transparent; font-size: 11px; }
-.section-head > button { margin-left: 12px; border: 0; background: transparent; color: var(--c-blue); font-size: 11px; font-weight: 700; }
+.refresh-btn { margin-left: 12px; border: 0; background: transparent; color: var(--c-blue); font-size: 11px; font-weight: 700; }
 
 .room-list { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 14px; }
 .empty {
@@ -368,7 +364,36 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 /* 사이드 */
 .side { min-height: 0; display: flex; flex-direction: column; gap: 14px; }
 .side-card { border: var(--border); border-radius: 19px 19px 14px 19px; background: #fff; box-shadow: var(--shadow-lg); padding: 17px; }
-.friends-card { flex: 1; min-height: 0; overflow: auto; }
+.friends-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.friends-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 12px;
+  margin-right: -12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-mint) #f3ecf3;
+}
+.friends-list::-webkit-scrollbar { width: 10px; }
+.friends-list::-webkit-scrollbar-button,
+.friends-list::-webkit-scrollbar-button:start:decrement,
+.friends-list::-webkit-scrollbar-button:end:increment,
+.friends-list::-webkit-scrollbar-button:vertical:start,
+.friends-list::-webkit-scrollbar-button:vertical:end {
+  display: none;
+  height: 0;
+  width: 0;
+  -webkit-appearance: none;
+}
+.friends-list::-webkit-scrollbar-track { background: #f3ecf3; border-left: 2px solid var(--c-ink); }
+.friends-list::-webkit-scrollbar-thumb { background: var(--c-mint); border: 2px solid var(--c-ink); border-radius: 0; }
+.friends-list::-webkit-scrollbar-thumb:hover { background: var(--c-yellow); }
 .side-title { display: flex; align-items: center; font-size: 13px; font-weight: 700; margin-bottom: 13px; }
 .side-title span { margin-left: auto; font-size: 9px; color: var(--c-mint); }
 .side-link { margin-left: auto; border: 0; background: transparent; color: var(--c-blue); font-size: 9px; font-weight: 700; }
