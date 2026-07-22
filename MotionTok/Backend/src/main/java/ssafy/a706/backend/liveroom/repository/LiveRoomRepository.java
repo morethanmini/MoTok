@@ -106,6 +106,10 @@ public class LiveRoomRepository {
         return Boolean.TRUE.equals(redisTemplate.opsForHash().hasKey(membersKey(roomId), playerKey));
     }
 
+    public void removeMember(String roomId, String playerKey) {
+        redisTemplate.opsForHash().delete(membersKey(roomId), playerKey);
+    }
+
     private String encodeMember(LiveRoomMemberValue v) {
         return "userId=" + urlEncode(v.userId())
                 + "&displayName=" + urlEncode(v.displayName())
