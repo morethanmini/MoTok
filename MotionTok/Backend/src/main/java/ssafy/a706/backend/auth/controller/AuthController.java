@@ -12,6 +12,7 @@ import ssafy.a706.backend.auth.service.AuthService;
 import ssafy.a706.backend.auth.controller.dto.*;
 import ssafy.a706.backend.auth.email.EmailVerificationService;
 import ssafy.a706.backend.auth.password.PasswordResetService;
+import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
 import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
 
@@ -100,16 +101,23 @@ public class AuthController {
         return authService.refresh(req);
     }
 
-    /** POST /auth/logout — 서버측 Refresh 토큰 무효화 */
+    /**
+     * POST /auth/logout — 서버측 Refresh 토큰 무효화.
+     * 게스트 토큰(GuestPrincipal)은 서버측 상태가 없으므로 no-op 204 — MemberPrincipal로 좁혀 받으면
+     * 타입 불일치로 principal이 null 주입돼 NPE(500)가 나므로 공통 인터페이스로 받는다.
+     */
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout(@AuthenticationPrincipal MemberPrincipal principal) {
-        authService.logout(principal.id());
+    public ResponseEntity<Void> logout(@AuthenticationPrincipal AuthPrincipal principal) {
+        if (principal instanceof MemberPrincipal member) {
+            authService.logout(member.id());
+        }
         return ResponseEntity.noContent().build();
     }
 
-    /** POST /auth/guest — 게스트 시작 (명세의 GuestResponse·자동 방 생성은 후속 작업) */
+    /** POST /auth/guest — 게스트 시작. 임시 닉네임 부여 + 1인방 자동 생성(공개방 미노출)(-109) */
     @PostMapping("/guest")
-    public TokenResponse guest(@Valid @RequestBody GuestLoginRequest req) {
-        return authService.guestLogin(req);
+    @ResponseStatus(HttpStatus.CREATED)
+    public GuestResponse guest() {
+        return authService.guestLogin();
     }
 }

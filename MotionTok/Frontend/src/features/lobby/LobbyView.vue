@@ -168,13 +168,12 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
       <main class="content">
         <section class="lobby-hero">
           <div>
-            <span class="eyebrow"><i class="live" /> PUBLIC LOBBY</span>
             <h1>같이 놀 방을 찾아볼까요?</h1>
             <p>대기 중인 공개방에 입장하거나 직접 새 방을 만들 수 있어요.</p>
           </div>
           <div class="hero-actions">
-            <PixelButton variant="primary" @click="quickStart">⚡ 빠른 시작</PixelButton>
-            <PixelButton @click="openCreate">＋ 방 만들기</PixelButton>
+            <PixelButton variant="primary" @click="quickStart">⚡ 빠른 참가</PixelButton>
+            <PixelButton @click="openJoin">⌁ 코드 참가</PixelButton>
           </div>
         </section>
 
@@ -188,7 +187,8 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
           <label class="room-search">
             ⌕ <input v-model="query" placeholder="방 제목 검색" />
           </label>
-          <button @click="reloadRooms">새로고침 ↻</button>
+          <PixelButton class="create-room-btn" @click="openCreate">＋ 방 만들기</PixelButton>
+          <button class="refresh-btn" @click="reloadRooms">새로고침 ↻</button>
         </div>
 
         <section class="room-list">
@@ -205,25 +205,19 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
       </main>
 
       <aside class="side">
-        <section class="side-card">
-          <div class="side-title">빠른 메뉴 <span>ONLINE</span></div>
-          <div class="quick">
-            <button @click="quickStart">⚡<br />빠른 시작</button>
-            <button @click="openJoin">⌁<br />코드 참가</button>
-          </div>
-        </section>
-
         <section class="side-card friends-card">
           <div class="side-title">
-            접속 중인 친구
-            <button class="side-link" @click="router.push({ name: RouteName.Friends })">전체 →</button>
+            친구 목록
+            <button class="side-link" @click="router.push({ name: RouteName.Friends })">친구 목록 관리 →</button>
           </div>
-          <FriendItem
-            v-for="(f, i) in friends"
-            :key="i"
-            :friend="f"
-            @invite="flash(`${f.name}에게 초대를 보냈어요`)"
-          />
+          <div class="friends-list">
+            <FriendItem
+              v-for="(f, i) in friends"
+              :key="i"
+              :friend="f"
+              @invite="flash(`${f.name}에게 초대를 보냈어요`)"
+            />
+          </div>
         </section>
 
         <section class="side-card notice">
@@ -295,36 +289,26 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   padding: 20px 28px 22px;
   z-index: 2;
 }
-.content { min-width: 0; overflow: auto; padding: 0 4px 10px 0; scrollbar-width: none; }
+.content { min-width: 0; overflow: auto; padding: 0 4px 10px 6px; margin-left: -6px; scrollbar-width: none; }
 .content::-webkit-scrollbar { display: none; }
 
 /* 로비 히어로 배너 */
 .lobby-hero {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 18px;
-  margin-bottom: 18px;
+  min-height: 200px;
+  margin-bottom: 100px;
   padding: 18px 22px;
   border: var(--border);
   border-radius: 20px;
   background: linear-gradient(110deg, #cff4e7, #fff0b9);
   box-shadow: var(--shadow-lg);
 }
-.lobby-hero h1 { margin: 0; font-size: 21px; }
-.lobby-hero p { margin: 5px 0 0; color: var(--c-muted); font-size: 10px; }
-.lobby-hero .hero-actions { margin: 0 0 0 auto; display: flex; gap: 10px; }
-.eyebrow {
-  display: inline-flex;
-  gap: 7px;
-  align-items: center;
-  background: #fff;
-  border: 2px solid var(--c-ink);
-  border-radius: 999px;
-  padding: 6px 11px;
-  font-size: 10px;
-  font-weight: 700;
-}
-.live { width: 7px; height: 7px; border-radius: 50%; background: var(--c-coral); animation: px-blink 1s steps(2) infinite; }
+.lobby-hero > div:first-child { align-self: flex-start; }
+.lobby-hero h1 { margin: 0; font-size: 28px; }
+.lobby-hero p { margin: 8px 0 0; color: var(--c-muted); font-size: 13px; }
+.lobby-hero .hero-actions { align-self: flex-end; margin: 0 0 0 auto; display: flex; gap: 10px; }
 
 .guest-note {
   margin-bottom: 12px;
@@ -336,23 +320,24 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 }
 
 .section-head { display: flex; align-items: center; margin: 27px 0 12px; }
-.section-head h2 { margin: 0; font-size: 17px; }
-.section-head p { margin: 0 0 0 9px; font-size: 10px; color: var(--c-muted); }
+.section-head h2 { margin: 0; font-size: 22px; }
+.section-head p { margin: 0 0 0 9px; font-size: 13px; color: var(--c-muted); }
+.create-room-btn { height: 38px; padding: 0 16px; font-size: 14px; border-radius: 11px 11px 8px 11px; margin-left: 10px; }
 .room-search {
   margin-left: auto;
   display: flex;
   align-items: center;
   gap: 7px;
-  height: 34px;
-  padding: 0 11px;
+  height: 38px;
+  padding: 0 13px;
   background: #fff;
   border: 2px solid var(--c-ink);
   border-radius: 11px;
   box-shadow: 2px 2px 0 #d9cbd9;
-  font-size: 12px;
+  font-size: 15px;
 }
-.room-search input { width: 150px; border: 0; outline: 0; background: transparent; font-size: 11px; }
-.section-head > button { margin-left: 12px; border: 0; background: transparent; color: var(--c-blue); font-size: 11px; font-weight: 700; }
+.room-search input { width: 240px; border: 0; outline: 0; background: transparent; font-size: 14px; }
+.refresh-btn { margin-left: 12px; border: 0; background: transparent; color: var(--c-blue); font-size: 14px; font-weight: 700; }
 
 .room-list { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 14px; }
 .empty {
@@ -368,7 +353,36 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 /* 사이드 */
 .side { min-height: 0; display: flex; flex-direction: column; gap: 14px; }
 .side-card { border: var(--border); border-radius: 19px 19px 14px 19px; background: #fff; box-shadow: var(--shadow-lg); padding: 17px; }
-.friends-card { flex: 1; min-height: 0; overflow: auto; }
+.friends-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.friends-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 12px;
+  margin-right: -12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-mint) #f3ecf3;
+}
+.friends-list::-webkit-scrollbar { width: 10px; }
+.friends-list::-webkit-scrollbar-button,
+.friends-list::-webkit-scrollbar-button:start:decrement,
+.friends-list::-webkit-scrollbar-button:end:increment,
+.friends-list::-webkit-scrollbar-button:vertical:start,
+.friends-list::-webkit-scrollbar-button:vertical:end {
+  display: none;
+  height: 0;
+  width: 0;
+  -webkit-appearance: none;
+}
+.friends-list::-webkit-scrollbar-track { background: #f3ecf3; border-left: 2px solid var(--c-ink); }
+.friends-list::-webkit-scrollbar-thumb { background: var(--c-mint); border: 2px solid var(--c-ink); border-radius: 0; }
+.friends-list::-webkit-scrollbar-thumb:hover { background: var(--c-yellow); }
 .side-title { display: flex; align-items: center; font-size: 13px; font-weight: 700; margin-bottom: 13px; }
 .side-title span { margin-left: auto; font-size: 9px; color: var(--c-mint); }
 .side-link { margin-left: auto; border: 0; background: transparent; color: var(--c-blue); font-size: 9px; font-weight: 700; }
