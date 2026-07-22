@@ -82,11 +82,16 @@ deploy-frontend:
   script:
     - cd MotionTok/Frontend
     # ── Node 컨테이너에서 빌드 (호스트에 node/pnpm 불필요) ──
-    #    VITE_API_BASE_URL=/api : 같은 도메인 상대경로 → CORS 없음. 빌드 시점에 코드에 박힘.
+    #    VITE_* 는 빌드 시점에 코드에 박힘. GitLab Variables 값을 -e 로 컨테이너에 넘겨야 vite 가 읽음.
+    #    (Variables 에만 등록하고 -e 를 안 넘기면 빌드에 반영 안 됨)
+    #    VITE_API_BASE_URL=/api : 같은 도메인 상대경로 → CORS 없음.
+    #    VITE_GOOGLE_CLIENT_ID / VITE_KAKAO_REST_KEY : authorize URL 노출용 공개값(소셜 로그인).
     - |
       docker run --rm \
         -v "$PWD":/app -w /app \
         -e VITE_API_BASE_URL=/api \
+        -e VITE_GOOGLE_CLIENT_ID="$VITE_GOOGLE_CLIENT_ID" \
+        -e VITE_KAKAO_REST_KEY="$VITE_KAKAO_REST_KEY" \
         node:22-alpine \
         sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm build"
     # ── 빌드 결과(dist)를 nginx 서빙 폴더로 교체 배치 (nginx bind mount 라 재시작 불필요) ──
