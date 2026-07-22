@@ -4,6 +4,11 @@
 stages:
   - deploy
 
+# 프론트 빌드가 docker(root) 로 만든 node_modules 를 git clean 이 못 지워
+# "Permission denied" 경고가 나므로, 청소 대상에서 제외한다. (frozen-lockfile 이라 재사용 안전)
+variables:
+  GIT_CLEAN_FLAGS: -ffdx -e MotionTok/Frontend/node_modules
+
 deploy-backend:
   stage: deploy
   tags:
@@ -78,3 +83,8 @@ deploy-frontend:
     - mkdir -p /srv/motok/frontend
     - rm -rf /srv/motok/frontend/*
     - cp -r dist/. /srv/motok/frontend/
+  after_script:
+    # 컨테이너(root)가 만든 node_modules/dist 소유권을 runner 로 환원 → 다음 git clean 정상화.
+    # $(id -u/-g) 는 호스트 셸(gitlab-runner)에서 먼저 평가돼 runner uid/gid 로 들어간다.
+    - docker run --rm -v "$PWD/MotionTok/Frontend":/app -w /app alpine
+        chown -R "$(id -u):$(id -g)" .
