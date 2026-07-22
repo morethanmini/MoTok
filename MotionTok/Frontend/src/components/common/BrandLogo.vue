@@ -9,7 +9,7 @@ withDefaults(
     subtitle?: string
     size?: 'sm' | 'md'
   }>(),
-  { title: '모션톡', subtitle: '', size: 'md' },
+  { title: 'MoToK', subtitle: '', size: 'md' },
 )
 </script>
 
@@ -27,10 +27,14 @@ withDefaults(
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 4px;
 }
 .mark {
-  transform: rotate(-2deg);
+  transform: rotate(-2deg) translateX(-6px);
+}
+.text {
+  text-align: left;
+  transform: translateX(4px);
 }
 .s-md .mark { width: 47px; height: 47px; font-size: 24px; border-radius: 13px 13px 9px 13px; }
 .s-sm .mark { width: 40px; height: 40px; font-size: 20px; border-radius: 11px; box-shadow: var(--shadow-sm); }
