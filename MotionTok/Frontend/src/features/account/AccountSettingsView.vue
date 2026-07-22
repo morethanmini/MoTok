@@ -4,6 +4,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { usersApi, ApiError } from '@/api'
 import { RouteName } from '@/router/routeNames'
+import { useSessionStore } from '@/stores/session'
 import AppPage from '@/components/common/AppPage.vue'
 import PixelCard from '@/components/common/PixelCard.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -11,6 +12,7 @@ import PixelToast from '@/components/common/PixelToast.vue'
 import { useToast } from '@/composables/useToast'
 
 const router = useRouter()
+const session = useSessionStore()
 const { message: toast, flash } = useToast()
 
 const nickname = ref('')
@@ -43,6 +45,9 @@ async function withdraw() {
   if (!confirm('정말 탈퇴하시겠어요? 계정은 비활성 처리되고 랭킹에서 제외됩니다.')) return
   try {
     await usersApi.withdraw()
+    // 서버는 이미 refresh 토큰을 무효화했다 — 로컬 세션·토큰도 즉시 정리해 탈퇴 계정의 잔존 로그인 상태를 없앤다.
+    // (logout()이 아니라 clear() — 죽은 계정 토큰으로 POST /auth/logout을 다시 부를 필요가 없다)
+    session.clear()
     flash('탈퇴 처리되었어요')
     setTimeout(() => router.push({ name: RouteName.Start }), 1000)
   } catch (e) {
@@ -69,7 +74,7 @@ async function withdraw() {
         </label>
         <label class="field">
           새 비밀번호
-          <input v-model="newPassword" type="password" placeholder="8자 이상" />
+          <input v-model="newPassword" type="password" placeholder="12자 이상, 영문 대/소문자·숫자·특수기호 중 3종 이상" />
         </label>
         <PixelButton variant="primary" block @click="savePassword">변경</PixelButton>
       </PixelCard>
