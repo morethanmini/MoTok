@@ -63,6 +63,11 @@ public class LiveRoomController {
         return ApiResponse.ok(liveRoomService.joinByInviteCode(principal, req));
     }
 
+    @PostMapping("/quick-start")
+    public ApiResponse<LiveRoomDetailResponse> quickStart(@AuthenticationPrincipal AuthPrincipal principal) {
+        return ApiResponse.ok(liveRoomService.quickStart(principal));
+    }
+
     @DeleteMapping("/{roomId}/members/me")
     public ApiResponse<Void> leave(
             @AuthenticationPrincipal AuthPrincipal principal,
