@@ -30,7 +30,12 @@ const current = computed(() => route.name)
 const go = (name: string) => router.push({ name })
 
 // 게스트에게 막을 회원 전용 라우트 (게임·랭킹은 열람 허용)
-const MEMBER_ONLY = new Set<string>([RouteName.Lobby, RouteName.Shop, RouteName.MyPage])
+const MEMBER_ONLY = new Set<string>([
+  RouteName.Lobby,
+  RouteName.Shop,
+  RouteName.MyPage,
+  RouteName.AccountSettings,
+])
 const showLogin = ref(false)
 const loginMsg = ref('로그인이 필요한 기능이에요.')
 
@@ -125,8 +130,11 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
             <span>{{ nickname }}</span>
             <span><CoinIcon :size="12" /> {{ balance.toLocaleString() }}</span>
           </div>
-          <button class="menu-item" @click="onMenuNav(RouteName.MyPage)">마이페이지</button>
-          <button class="menu-item" @click="onMenuNav(RouteName.AccountSettings)">설정</button>
+          <!-- 마이페이지·설정은 회원 전용 — 게스트에게는 헤더에서 숨긴다 -->
+          <template v-if="!session.isGuest">
+            <button class="menu-item" @click="onMenuNav(RouteName.MyPage)">마이페이지</button>
+            <button class="menu-item" @click="onMenuNav(RouteName.AccountSettings)">설정</button>
+          </template>
           <button class="menu-item" @click="onMenuLogout">{{ logoutLabel }}</button>
         </div>
       </div>
