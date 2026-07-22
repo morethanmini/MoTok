@@ -110,6 +110,18 @@ public class LiveRoomRepository {
         redisTemplate.opsForHash().delete(membersKey(roomId), playerKey);
     }
 
+    public void updateHost(String roomId, String hostUserId, String hostDisplayName) {
+        redisTemplate.<String, String>opsForHash().putAll(roomKey(roomId),
+                Map.of("hostUserId", hostUserId, "hostDisplayName", hostDisplayName));
+    }
+
+    /** 마지막 참가자 퇴장 시 방 즉시 종료(S15P11A706-72). room 해시 · members 해시 · rooms:index 항목을 모두 제거한다. */
+    public void deleteRoom(String roomId) {
+        redisTemplate.delete(roomKey(roomId));
+        redisTemplate.delete(membersKey(roomId));
+        removeFromIndex(roomId);
+    }
+
     private String encodeMember(LiveRoomMemberValue v) {
         return "userId=" + urlEncode(v.userId())
                 + "&displayName=" + urlEncode(v.displayName())
