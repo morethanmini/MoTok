@@ -57,6 +57,14 @@ jwt:
   access-expiration-ms: ${JWT_ACCESS_EXPIRATION_MS:1800000}      # 30분
   refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:1209600000} # 14일 (Redis auth:refresh:{userId} TTL과 동일)
 
+# TURN/STUN 자격 발급(-31). secret은 EC2 coturn의 static-auth-secret과 동일 값이어야 한다.
+# secret 미설정 시 STUN-only 응답(coturn 없는 로컬 개발용 degrade).
+turn:
+  host: ${TURN_HOST:i15a706.p.ssafy.io}
+  port: ${TURN_PORT:3478}
+  secret: ${TURN_SECRET:}
+  credential-ttl-seconds: ${TURN_CREDENTIAL_TTL:600}
+
 app:
   # Frontend dev origin(s) for CORS (Vite default 5173)
   cors:
