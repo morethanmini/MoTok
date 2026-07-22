@@ -13,6 +13,7 @@ import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomRequest;
 import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomResponse;
 import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomByInviteCodeRequest;
 import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomRequest;
+import ssafy.a706.backend.liveroom.controller.dto.KickMemberRequest;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomDetailResponse;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomSummaryResponse;
 
@@ -60,5 +61,28 @@ public class LiveRoomController {
             @AuthenticationPrincipal AuthPrincipal principal,
             @Valid @RequestBody JoinLiveRoomByInviteCodeRequest req) {
         return ApiResponse.ok(liveRoomService.joinByInviteCode(principal, req));
+    }
+
+    @PostMapping("/quick-start")
+    public ApiResponse<LiveRoomDetailResponse> quickStart(@AuthenticationPrincipal AuthPrincipal principal) {
+        return ApiResponse.ok(liveRoomService.quickStart(principal));
+    }
+
+    @DeleteMapping("/{roomId}/members/me")
+    public ApiResponse<Void> leave(
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @PathVariable String roomId) {
+        liveRoomService.leave(principal, roomId);
+        return ApiResponse.ok("방 나가기 완료");
+    }
+
+    @PostMapping("/{roomId}/members/{userId}/kick")
+    public ApiResponse<Void> kick(
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @PathVariable String roomId,
+            @PathVariable String userId,
+            @Valid @RequestBody KickMemberRequest req) {
+        liveRoomService.kick(principal, roomId, userId, req.reason());
+        return ApiResponse.ok("강퇴 완료");
     }
 }
