@@ -8,43 +8,52 @@ defineEmits<{ enter: [] }>()
 
 <template>
   <article class="room-card">
-    <div class="room-icon">{{ room.emoji }}</div>
-    <div class="room-copy">
-      <strong>{{ room.title }}</strong>
-      <div class="room-meta">
-        <i>{{ room.count }}/{{ room.max }}명</i>
-        <i>{{ room.game }}</i>
-        <i>{{ room.visibility }}</i>
+    <div class="room-card-inner">
+      <div class="room-icon">{{ room.emoji }}</div>
+      <div class="room-copy">
+        <strong>
+          {{ room.title }}
+          <i class="lock" :title="room.visibility">{{ room.visibility === '비공개' ? '🔒' : '🔓' }}</i>
+        </strong>
+        <div class="room-state" :class="{ playing: room.disabled }">● {{ room.state }}</div>
       </div>
-      <div class="room-state" :class="{ playing: room.disabled }">● {{ room.state }}</div>
+      <div class="room-side">
+        <span class="room-count">{{ room.count }}/{{ room.max }}명</span>
+        <button class="room-enter" :disabled="room.disabled" @click="$emit('enter')">
+          {{ room.disabled ? '입장 불가' : '입장' }}
+        </button>
+      </div>
     </div>
-    <button class="room-enter" :disabled="room.disabled" @click="$emit('enter')">
-      {{ room.disabled ? '입장 불가' : '입장' }}
-    </button>
   </article>
 </template>
 
 <style scoped>
 .room-card {
+  text-align: left;
+}
+.room-card-inner {
   display: grid;
   grid-template-columns: 74px 1fr auto;
   gap: 13px;
   align-items: center;
-  padding: 14px;
+  padding: 22px 18px;
   border: var(--border);
   border-radius: 18px 18px 13px 18px;
   background: #fff;
   box-shadow: var(--shadow-md);
-  text-align: left;
   transition: var(--t-fast);
+  /* 항상 자체 컴포지팅 레이어에 두어, 호버 시작/종료마다 레이어가 새로 생기며
+     그림자가 다시 그려지는 깜빡임(promote/demote flicker)을 막는다 */
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
-.room-card:hover {
-  transform: translate(-2px, -2px);
+.room-card:hover .room-card-inner {
+  transform: translate3d(-2px, -2px, 0);
   box-shadow: var(--shadow-lg);
 }
 .room-icon {
   width: 70px;
-  height: 65px;
+  height: 78px;
   border: 2px solid var(--c-ink);
   border-radius: 15px;
   display: grid;
@@ -55,22 +64,15 @@ defineEmits<{ enter: [] }>()
   background-size: 9px 9px;
 }
 .room-copy strong {
-  display: block;
-  font-size: 12px;
-  margin-bottom: 7px;
-}
-.room-meta {
   display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
+  align-items: center;
+  gap: 6px;
+  font-size: 20px;
+  margin-bottom: 9px;
 }
-.room-meta i {
+.lock {
   font-style: normal;
-  font-size: 8px;
-  padding: 4px 6px;
-  border: 1.5px solid var(--c-ink);
-  border-radius: 999px;
-  background: #fff7d9;
+  font-size: 16px;
 }
 .room-state {
   font-size: 8px;
@@ -78,6 +80,17 @@ defineEmits<{ enter: [] }>()
   margin-top: 7px;
 }
 .room-state.playing { color: var(--c-coral); }
+.room-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+}
+.room-count {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 6px;
+}
 .room-enter {
   padding: 9px 10px;
   border: 2px solid var(--c-ink);
