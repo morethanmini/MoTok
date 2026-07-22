@@ -1,6 +1,7 @@
 package ssafy.a706.backend.liveroom.service;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.global.exception.BusinessException;
@@ -11,6 +12,7 @@ import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomResponse;
 import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomByInviteCodeRequest;
 import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomRequest;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomDetailResponse;
+import ssafy.a706.backend.liveroom.controller.dto.LiveRoomMemberLeftEvent;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomSummaryResponse;
 import ssafy.a706.backend.liveroom.model.LiveRoom;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
@@ -27,7 +29,10 @@ public class LiveRoomService {
 
     private static final int PUBLIC_LIST_LIMIT = 50;
 
+    private static final String MEMBERS_TOPIC = "/topic/rooms/%s/members";
+
     private final LiveRoomRepository repository;
+    private final SimpMessagingTemplate messagingTemplate;
 
     public CreateLiveRoomResponse create(AuthPrincipal principal, CreateLiveRoomRequest req) {
         validatePasswordRule(req.visibility(), req.password());
@@ -98,6 +103,20 @@ public class LiveRoomService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVITE_CODE_NOT_FOUND));
         LiveRoom room = loadRoom(roomId);
         return joinRoom(principal, room);
+    }
+
+    /** 참가자는 언제든 방을 나갈 수 있다(S15P11A706-71). 방장 위임·빈 방 정리는 -72 별도 스토리. */
+    public void leave(AuthPrincipal principal, String roomId) {
+        loadRoom(roomId); // 방 존재 검증(없으면 ROOM_NOT_FOUND)
+        String key = playerKey(principal);
+        if (!repository.hasMember(roomId, key)) {
+            return; // 이미 나간 상태 — 멱등 처리, 유령 브로드캐스트 방지
+        }
+        repository.removeMember(roomId, key);
+        int remaining = repository.findMembers(roomId).size();
+        messagingTemplate.convertAndSend(
+                String.format(MEMBERS_TOPIC, roomId),
+                new LiveRoomMemberLeftEvent(principal.userId(), principal.displayName(), remaining));
     }
 
     private LiveRoomDetailResponse joinRoom(AuthPrincipal principal, LiveRoom room) {

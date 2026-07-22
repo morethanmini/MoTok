@@ -61,4 +61,12 @@ public class LiveRoomController {
             @Valid @RequestBody JoinLiveRoomByInviteCodeRequest req) {
         return ApiResponse.ok(liveRoomService.joinByInviteCode(principal, req));
     }
+
+    @DeleteMapping("/{roomId}/members/me")
+    public ApiResponse<Void> leave(
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @PathVariable String roomId) {
+        liveRoomService.leave(principal, roomId);
+        return ApiResponse.ok("방 나가기 완료");
+    }
 }
