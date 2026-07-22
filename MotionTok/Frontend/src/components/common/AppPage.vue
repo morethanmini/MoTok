@@ -17,8 +17,10 @@ withDefaults(
     header?: boolean
     /** 페이지 전체 배율. 로비 대비 서브 페이지가 작아 보여 기본 1.1로 키움 */
     zoom?: number
+    /** 'boxed'(기본): 박스형 타이틀 바를 하단에 표시. 'plain': 박스 없이 글씨만 최상단에 표시. 'none': 타이틀 바 자체를 표시하지 않음 */
+    titleStyle?: 'boxed' | 'plain' | 'none'
   }>(),
-  { subtitle: '', maxWidth: '1040px', back: true, header: true, zoom: 1.1 },
+  { subtitle: '', maxWidth: '1040px', back: true, header: true, zoom: 1.1, titleStyle: 'boxed' },
 )
 
 const router = useRouter()
@@ -36,6 +38,15 @@ function goBack() {
     <img class="page-sticker sticker-right" src="/assets/intro/headset.png" alt="" />
 
     <main class="app-page" :style="{ zoom: String(zoom) }">
+      <div v-if="titleStyle === 'plain'" class="plain-title" :style="{ maxWidth }">
+        <button v-if="back" class="back-btn" @click="goBack">←</button>
+        <div class="titles">
+          <h1>{{ title }}</h1>
+          <p v-if="subtitle">{{ subtitle }}</p>
+        </div>
+        <div class="actions"><slot name="actions" /></div>
+      </div>
+
       <div v-if="$slots.hero" class="hero" :style="{ maxWidth }">
         <slot name="hero" />
       </div>
@@ -44,7 +55,7 @@ function goBack() {
         <slot />
       </div>
 
-      <header class="bar bottom-bar">
+      <header v-if="titleStyle === 'boxed'" class="bar bottom-bar">
         <button v-if="back" class="back-btn" @click="goBack">←</button>
         <div class="titles">
           <span class="px-kicker">✦ MOTOK PLAYGROUND</span>
@@ -81,6 +92,14 @@ function goBack() {
   background: linear-gradient(112deg, rgba(207, 244, 231, .96), rgba(255, 240, 185, .96));
   box-shadow: var(--shadow-lg);
 }
+.plain-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 auto 20px;
+}
+.plain-title .titles h1 { margin: 0; font-size: 22px; }
+.plain-title .titles p { margin: 4px 0 0; font-size: 10px; color: var(--c-muted); }
 .hero {
   margin: 0 auto 24px;
 }
