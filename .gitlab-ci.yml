@@ -56,6 +56,11 @@ deploy-backend:
       add GOOGLE_CLIENT_SECRET "$GOOGLE_CLIENT_SECRET"
       add KAKAO_CLIENT_ID "$KAKAO_CLIENT_ID"
       add KAKAO_CLIENT_SECRET "$KAKAO_CLIENT_SECRET"
+      # 화상(SFU) — Spring 토큰 서명과 livekit 컨테이너(LIVEKIT_KEYS)가 같은 .env 를 공유.
+      # 미등록 시 화상만 비활성(앱 기동엔 영향 없음). URL 은 wss://motok.co.kr/livekit
+      add LIVEKIT_URL "$LIVEKIT_URL"
+      add LIVEKIT_API_KEY "$LIVEKIT_API_KEY"
+      add LIVEKIT_API_SECRET "$LIVEKIT_API_SECRET"
     # ── 빌드 + 실행 (변경분만 재빌드) ──
     - docker compose -f docker-compose.prod.yml up -d --build
     # ── 오래된 dangling 이미지 정리 ──
