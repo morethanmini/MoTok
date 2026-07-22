@@ -38,10 +38,11 @@ const confirmGuest = () => {
     <section class="panel">
       <div class="stars">★ ✦</div>
       <BrandLogo subtitle="" title="MoToK" />
-      <h1>몸을 움직이면<br />게임이 시작돼요!</h1>
+      <h1>온몸으로 즐기는 ★<br />실시간 게임!</h1>
       <p>
-        친구와 화상으로 만나 별자리, 리듬, 낚시와<br />
-        드로잉 게임을 함께 즐겨보세요.
+        친구와 화상으로 만나<br />
+        별자리·리듬·낚시·드로잉까지—<br />
+        함께 놀 수 있어요
       </p>
       <div class="actions">
         <PixelButton variant="primary" size="lg" block @click="goAuth('login')">
