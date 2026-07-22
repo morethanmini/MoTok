@@ -176,6 +176,9 @@ public class LiveRoomService {
         if (repository.isKicked(room.roomId(), key)) {
             throw new BusinessException(ErrorCode.ROOM_KICKED);
         }
+        if (!repository.hasMember(room.roomId(), key) && !"WAITING".equals(room.status())) {
+            throw new BusinessException(ErrorCode.ROOM_GAME_IN_PROGRESS);
+        }
         if (!repository.hasMember(room.roomId(), key) && room.participantCount() >= room.maxPlayers()) {
             throw new BusinessException(ErrorCode.ROOM_FULL);
         }
