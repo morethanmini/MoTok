@@ -1,0 +1,14 @@
+# LiveKit 로컬 개발용 설정 (docker-compose.yml 의 livekit 서비스가 마운트)
+# 운영 설정은 livekit.prod.yaml. 키는 application.yaml 의 livekit.* 기본값과 일치해야 한다.
+port: 7880
+rtc:
+  tcp_port: 7881
+  # 로컬은 UDP 단일 포트 멀티플렉스 — Docker for Mac 에서 포트 범위(수백 개) 매핑이 느려서.
+  # 운영은 포트 범위(50000-50100) 방식 (livekit.prod.yaml)
+  udp_port: 7882
+  use_external_ip: false
+keys:
+  # 로컬 전용 키 (운영 키는 .env 의 LIVEKIT_API_KEY/SECRET — 여기 절대 넣지 말 것)
+  devkey: devsecret-local-only-0123456789abcdef
+logging:
+  level: info
