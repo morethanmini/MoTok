@@ -3,7 +3,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, ApiError, type RoomSummary } from '@/api'
+import { roomsApi, ApiError, type LiveRoomSummary } from '@/api'
 import { useSessionStore } from '@/stores/session'
 import { useAsyncData } from '@/composables/useAsyncData'
 import { useBgm } from '@/composables/useBgm'
@@ -33,23 +33,24 @@ const showCreate = ref(false)
 
 const friends = MOCK_FRIENDS
 
-// API RoomSummary → 로비 카드용 Room 매핑
-function toRoom(s: RoomSummary): Room {
+// API LiveRoomSummary → 로비 카드용 Room 매핑
+// 목록 응답엔 선택 게임 정보가 없음(selectedGameId 제거). currentPlayers → participantCount.
+function toRoom(s: LiveRoomSummary): Room {
   return {
     roomId: s.roomId,
     title: s.title,
-    game: s.selectedGameId ? `게임 #${s.selectedGameId}` : '게임 선택 중',
+    game: '게임 선택 중',
     emoji: '🎮',
-    count: s.currentPlayers,
+    count: s.participantCount,
     max: s.maxPlayers,
     state: s.status === 'WAITING' ? '대기 중' : '게임 중',
     visibility: s.visibility === 'PUBLIC' ? '공개' : '비공개',
-    disabled: s.status === 'IN_GAME' || s.currentPlayers >= s.maxPlayers,
+    disabled: s.status === 'IN_GAME' || s.participantCount >= s.maxPlayers,
   }
 }
-// 공개방 목록 (GET /rooms) — 실패 시 목업 폴백
+// 방 목록 (GET /v1/live-rooms, 배열 반환) — 실패 시 목업 폴백
 const { data: rooms, reload: reloadRooms } = useAsyncData(
-  () => roomsApi.list().then((r) => r.content.map(toRoom)),
+  () => roomsApi.list().then((r) => r.map(toRoom)),
   MOCK_ROOMS,
 )
 
@@ -82,28 +83,24 @@ function guardMember(action: () => void) {
   else action()
 }
 
-// ⚡ 빠른 시작 — 퀵매치(POST /rooms/quick-match)
+// ⚡ 빠른 시작 — 퀵매치 API는 제거됨. 입장 가능한 공개방 중 첫 번째로 입장, 없으면 방 만들기.
 const quickStart = () =>
-  guardMember(async () => {
-    try {
-      const res = await roomsApi.quickMatch()
-      if (res.matched && res.roomId) return goDevice('빠른 매칭', res.roomId)
-      if (res.suggestCreate) return (showCreate.value = true)
-      flash('지금은 매칭 가능한 방이 없어요')
-    } catch {
-      goDevice('리듬 펀치', 'MP7R2D') // 백엔드 미연동 폴백
-    }
+  guardMember(() => {
+    const target = rooms.value.find((r) => !r.disabled && r.roomId)
+    if (target) return enterPublic(target)
+    flash('지금은 입장 가능한 방이 없어요. 새 방을 만들어 보세요')
+    showCreate.value = true
   })
 const openCreate = () => guardMember(() => (showCreate.value = true))
 const openJoin = () => guardMember(() => (showJoin.value = true))
 
-// 공개방 입장 (POST /rooms/{roomId}/participants)
+// 공개방 입장 (POST /v1/live-rooms/{roomId}/join)
 function enterPublic(room: Room) {
   guardMember(async () => {
     if (room.disabled) return
     if (!room.roomId) return goDevice(room.game, 'MP4X9K') // 목업 폴백
     try {
-      const res = await roomsApi.joinPublic(room.roomId)
+      const res = await roomsApi.join(room.roomId)
       goDevice(room.game, res.roomId)
     } catch (e) {
       if (e instanceof ApiError) return flash(e.message)
@@ -112,7 +109,7 @@ function enterPublic(room: Room) {
   })
 }
 
-// 코드 참가 (POST /rooms/join-by-code)
+// 코드 참가 (POST /v1/live-rooms/join-by-invite-code)
 async function joinRoom(code: string) {
   if (code.length < 6) {
     flash('6자리 방 코드를 입력해 주세요')
@@ -120,7 +117,7 @@ async function joinRoom(code: string) {
   }
   showJoin.value = false
   try {
-    const res = await roomsApi.joinByCode(code)
+    const res = await roomsApi.joinByInviteCode(code)
     goDevice('친구의 게임', res.roomId)
   } catch (e) {
     if (e instanceof ApiError) return flash(e.message)
@@ -128,7 +125,7 @@ async function joinRoom(code: string) {
   }
 }
 
-// 방 만들기 (POST /rooms)
+// 방 만들기 (POST /v1/live-rooms)
 async function createRoom(payload: { title: string }) {
   if (!payload.title.trim()) {
     flash('방 제목을 입력해 주세요')

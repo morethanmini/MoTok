@@ -118,62 +118,68 @@ export interface AiItemRequest {
   category?: ItemCategory
 }
 
-// ── 방 ────────────────────────────────────
+// ── 라이브룸 (구 rooms → live-rooms, 명세 §4) ──────
 export type Visibility = 'PUBLIC' | 'PRIVATE'
+// 백엔드 status는 String. 생성 시 WAITING, 게임 시작 시 IN_GAME(예정).
 export type RoomStatus = 'WAITING' | 'IN_GAME'
-export interface RoomSummary {
+
+/** GET /v1/live-rooms 목록 항목 (LiveRoomSummaryResponse) */
+export interface LiveRoomSummary {
   roomId: string
   title: string
   visibility: Visibility
-  currentPlayers: number
   maxPlayers: number
+  participantCount: number
   status: RoomStatus
-  selectedGameId: number | null
+  hasPassword: boolean
 }
-export interface RoomListResponse {
-  content: RoomSummary[]
-  page: PageMeta
+
+/**
+ * 상세/입장 응답의 참가자 (LiveRoomDetailResponse.MemberView).
+ * 기존 Participant의 카메라·마이크·연결상태는 시그널링 계층으로 이동 예정(아직 미구현).
+ */
+export interface LiveRoomMember {
+  userId: string
+  displayName: string
+  guest: boolean
 }
-export interface CreateRoomRequest {
+
+/** GET /v1/live-rooms/{id}, POST .../join, POST .../join-by-invite-code 공통 응답 (LiveRoomDetailResponse) */
+export interface LiveRoomDetail {
+  roomId: string
   title: string
   visibility: Visibility
   maxPlayers: number
-}
-export interface CreateRoomResponse {
-  roomId: string
+  participantCount: number
+  status: RoomStatus
+  hostUserId: string
   inviteCode: string | null
-  inviteUrl: string | null
+  members: LiveRoomMember[]
 }
-export type ConnectionState = 'CONNECTING' | 'CONNECTED' | 'RECONNECTING' | 'FAILED'
-export interface Participant {
-  userId: number
-  nickname: string
-  isHost: boolean
-  cameraOn: boolean
-  micOn: boolean
-  connection: ConnectionState
+
+/** POST /v1/live-rooms 요청 (CreateLiveRoomRequest). PRIVATE이면 password(숫자 6자리) 필수, PUBLIC이면 생략 */
+export interface CreateLiveRoomRequest {
+  title: string
+  visibility: Visibility
+  maxPlayers: number
+  password?: string
 }
-export interface RoomDetail {
+
+/** POST /v1/live-rooms 응답 (CreateLiveRoomResponse) */
+export interface CreateLiveRoomResponse {
   roomId: string
   title: string
   visibility: Visibility
-  status: RoomStatus
   maxPlayers: number
-  selectedGameId: number | null
-  participants: Participant[]
+  status: RoomStatus
+  hostUserId: string
+  createdAt: number
+  inviteCode: string | null
 }
-export interface JoinResult {
-  roomId: string
-  sessionToken: string
-}
-export interface QuickMatchResponse {
-  matched: boolean
-  roomId: string | null
-  suggestCreate: boolean
-}
-export interface InvitationInfo {
-  inviteCode: string
-  inviteUrl: string
+
+/** POST /v1/live-rooms/{id}/join 요청 (JoinLiveRoomRequest). 비공개방(hasPassword)이면 password 필요 */
+export interface JoinLiveRoomRequest {
+  password?: string
 }
 
 // ── 게임 ──────────────────────────────────
@@ -280,9 +286,20 @@ export interface CreateChartRequest {
 }
 
 // ── 실시간 인프라 ─────────────────────────
+// (구) P2P mesh용 TURN 자격증명. 현재 백엔드에 /rtc/ice-servers 컨트롤러 없음(SFU 전환으로 미사용).
 export interface IceServersResponse {
   iceServers: object[]
   ttl: number
+}
+
+/**
+ * SFU(LiveKit) 접속 토큰 (GET /v1/live-rooms/{roomId}/video-token, ApiResponse 래핑).
+ * livekit-client의 Room.connect(url, token)에 그대로 투입. expiresIn(초) 만료 전 접속 시작.
+ */
+export interface SfuTokenResponse {
+  url: string
+  token: string
+  expiresIn: number
 }
 
 // ── 관리자 ────────────────────────────────
