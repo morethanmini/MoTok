@@ -56,6 +56,15 @@ livekit:
   api-secret: ${LIVEKIT_API_SECRET:devsecret-local-only-0123456789abcdef}
   token-ttl: ${LIVEKIT_TOKEN_TTL:10m}
 
+# OpenVidu(SFU) 접속 토큰 발급 (-123). 내부 엔진이 LiveKit라 설정 구성 동일 — URL·키만 별도.
+# 기본값은 로컬 개발 전용(OpenVidu 로컬 배포도 LiveKit 호환 API를 7880에 연다).
+# 운영은 OPENVIDU_* 환경변수로 주입. rtc.provider=openvidu일 때만 실제 사용된다.
+openvidu:
+  url: ${OPENVIDU_URL:ws://localhost:7880}
+  api-key: ${OPENVIDU_API_KEY:devkey}
+  api-secret: ${OPENVIDU_API_SECRET:devsecret-local-only-0123456789abcdef}
+  token-ttl: ${OPENVIDU_TOKEN_TTL:10m}
+
 # JWT: dev default is overridable via env (JWT_SECRET). Do NOT ship the default secret.
 jwt:
   secret: ${JWT_SECRET}
