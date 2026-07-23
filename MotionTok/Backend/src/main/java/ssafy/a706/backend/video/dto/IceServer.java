@@ -1,4 +1,4 @@
-package ssafy.a706.backend.rtc.dto;
+package ssafy.a706.backend.video.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 
