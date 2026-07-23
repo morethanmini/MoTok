@@ -320,6 +320,8 @@ erDiagram
   게스트 프로필·기록 → <b>클라이언트 로컬</b>. Refresh Token·비밀번호 재설정 토큰 → <b>Redis</b>(TTL이 만료 정책 그 자체 —
   키 설계 문서에 <code>auth:refresh:{userId}</code>, <code>auth:pwreset:{token}</code> 추가 권장).</div>
 
+  <div class="callout"><b>구현 현황(2026-07-24 · -117 게임 정산)</b> — <code>GAME</code>은 <code>games</code>로 구현(카탈로그 + <code>round_duration_sec</code>·<code>countdown_sec</code> 컬럼 추가: 게임별 서버 권위 타이머). <code>LEADERBOARD</code>는 <code>leaderboards</code>로 구현(집계, <code>uk(game_id, user_id)</code>) — 세계순위의 영속 원천. <b>최소 RDB 방침으로 <code>GAME_SESSION</code>·<code>GAME_SESSION_RESULT</code>는 1차 미영속</b>(개별 판 로그는 후속 -122): <code>GAME_END</code>는 Redis 세션에서 정산해 <b>집계만</b> 남긴다. 실시간 세계순위는 Redis <code>rank:{gameId}</code>, 유실 시 <code>leaderboards</code>로 warm-up. 회원만 적재(게스트 제외, D5).</div>
+
   <div class="secnum">03</div>
   <h2>설계 포인트 — 구현 시 헷갈릴 지점</h2>
   <ol class="points">
