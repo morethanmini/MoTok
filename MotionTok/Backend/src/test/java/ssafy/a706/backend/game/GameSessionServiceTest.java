@@ -11,6 +11,8 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
 import ssafy.a706.backend.game.dto.GameEventResponse;
+import ssafy.a706.backend.game.entity.Game;
+import ssafy.a706.backend.game.repository.GameRepository;
 import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameStartRequest;
 import ssafy.a706.backend.game.model.GamePlayerScore;
@@ -49,6 +51,7 @@ class GameSessionServiceTest {
     @Mock RoomMembershipReader membershipReader;
     @Mock LiveRoomRepository liveRoomRepository;
     @Mock GameSessionRepository sessionRepository;
+    @Mock GameRepository gameRepository;
     @Mock SimpMessagingTemplate messagingTemplate;
     @Mock TaskScheduler gameTaskScheduler;
 
@@ -67,6 +70,12 @@ class GameSessionServiceTest {
                 .thenReturn(Optional.of(Map.of("hostUserId", "1")));
     }
 
+    /** 카탈로그에서 게임1(핑거 스타, 라운드 30s·카운트다운 3s)을 조회하도록 스텁. */
+    private void givenGame1() {
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(Game.builder()
+                .id(1L).name("핑거 스타").roundDurationSec(30).countdownSec(3).active(true).build()));
+    }
+
     @Test
     void 방장이_아니면_게임을_시작할_수_없다() {
         givenRoomWithHost();
@@ -83,6 +92,7 @@ class GameSessionServiceTest {
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.empty());
         when(gameTaskScheduler.schedule(any(Runnable.class), any(Instant.class)))
                 .thenReturn(mock(ScheduledFuture.class));
+        givenGame1();
 
         service.start(ROOM_ID, new GameStartRequest(1L, "orion"), host);
 
@@ -102,6 +112,7 @@ class GameSessionServiceTest {
         long now = System.currentTimeMillis();
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(
                 new GameSession("s1", 1L, "orion", now, now + 30_000, GameSession.STATUS_PLAYING)));
+        givenGame1();
 
         assertThatThrownBy(() -> service.start(ROOM_ID, new GameStartRequest(1L, null), host))
                 .isInstanceOf(BusinessException.class)
@@ -149,6 +160,7 @@ class GameSessionServiceTest {
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.empty());
         when(gameTaskScheduler.schedule(endTaskCaptor.capture(), any(Instant.class)))
                 .thenReturn(mock(ScheduledFuture.class));
+        givenGame1();
 
         service.start(ROOM_ID, new GameStartRequest(1L, "gemini"), host);
         verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
