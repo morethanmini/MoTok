@@ -332,6 +332,28 @@ export interface SfuTokenResponse {
   expiresIn: number
 }
 
+// ── 대기실 채팅 (STOMP, 명세 §7) ──────────────
+// 수신: SUBSCRIBE /topic/rooms/{roomId}/chat. 발신: SEND /app/rooms/{roomId}/chat · /app/rooms/{roomId}/game-suggest.
+// 비영속 — 서버는 저장하지 않으며, 자기 메시지도 이 토픽으로 에코되어 돌아온다(로컬에 미리 추가 금지).
+interface ChatMessageBase {
+  /** 참가자 식별자 — 회원: userId(숫자 문자열), 게스트: "guest-xxxx" */
+  userId: string
+  nickname: string
+  text: string
+  /** 서버 시각(UTC, ISO-8601) — 표시 시 로컬 타임존으로 변환 */
+  sentAt: string
+}
+export type ChatMessage =
+  | (ChatMessageBase & { type: 'TALK'; gameId: null; gameName: null })
+  | (ChatMessageBase & { type: 'GAME_SUGGEST'; gameId: number; gameName: string })
+
+/** /user/queue/errors 수신 페이로드 — 시그널·채팅 공용 큐, path로 구분 */
+export interface StompErrorPayload {
+  code: string
+  message: string
+  path?: string
+}
+
 // ── 관리자 ────────────────────────────────
 export interface ReportedUser {
   userId: number
