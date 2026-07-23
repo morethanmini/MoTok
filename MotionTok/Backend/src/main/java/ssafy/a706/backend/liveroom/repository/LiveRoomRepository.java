@@ -116,6 +116,11 @@ public class LiveRoomRepository {
                 Map.of("hostUserId", hostUserId, "hostDisplayName", hostDisplayName));
     }
 
+    /** 방 상태 전환(WAITING ↔ PLAYING). 게임 시작·종료 시 game 도메인이 호출한다 — status ≠ WAITING이면 join이 차단된다. */
+    public void updateStatus(String roomId, String status) {
+        redisTemplate.<String, String>opsForHash().put(roomKey(roomId), "status", status);
+    }
+
     /** 강퇴자를 재입장 차단 목록에 추가한다(S15P11A706-73). */
     public void addKicked(String roomId, String playerKey) {
         String key = kickedKey(roomId);
