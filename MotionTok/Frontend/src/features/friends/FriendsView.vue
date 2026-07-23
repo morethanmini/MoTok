@@ -30,6 +30,14 @@ const MOCK_REQS: FriendRequestItem[] = [
   { requestId: 11, requesterNickname: '수아', addresseeNickname: 'P1', status: 'PENDING', createdAt: '2025-07-18T00:00:00Z' },
 ]
 
+// 받은 요청 목록에 "친구 요청"이라는 고정 문구 대신 실제 받은 일시를 보여준다.
+function fmtRequestedAt(iso: string) {
+  const d = new Date(iso)
+  const date = `${d.getMonth() + 1}.${d.getDate()}`
+  const time = d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+  return `${date} ${time}`
+}
+
 const presenceLabel: Record<Presence, string> = { ONLINE: '온라인', OFFLINE: '오프라인', IN_ROOM: '게임 중' }
 const presenceColor: Record<Presence, string> = { ONLINE: '#48c8a4', OFFLINE: '#b7abb8', IN_ROOM: '#ef6872' }
 
@@ -84,7 +92,7 @@ async function removeFriend(f: Friend) {
 </script>
 
 <template>
-  <AppPage title="친구" subtitle="닉네임으로 친구를 찾고 초대해요" max-width="640px">
+  <AppPage title="친구" max-width="640px" title-style="plain">
     <PixelCard>
       <div class="tabs">
         <button class="tab-btn" :class="{ on: tab === 'friends' }" @click="tab = 'friends'">친구 {{ friends.length }}</button>
@@ -107,11 +115,14 @@ async function removeFriend(f: Friend) {
       </ul>
 
       <!-- 받은 요청 -->
-      <ul v-else class="list">
+      <ul v-else class="list requests-list">
         <li v-for="r in requests" :key="r.requestId">
-          <div class="who"><b>{{ r.requesterNickname }}</b><small>친구 요청</small></div>
-          <PixelButton variant="mint" @click="respond(r, 'ACCEPT')">수락</PixelButton>
-          <button class="del" @click="respond(r, 'REJECT')">거절</button>
+          <div class="req-avatar">{{ r.requesterNickname.charAt(0) }}</div>
+          <div class="who"><b class="req-nick">{{ r.requesterNickname }}</b><small>{{ fmtRequestedAt(r.createdAt) }}</small></div>
+          <div class="req-actions">
+            <PixelButton variant="mint" @click="respond(r, 'ACCEPT')">수락</PixelButton>
+            <PixelButton variant="primary" @click="respond(r, 'REJECT')">거절</PixelButton>
+          </div>
         </li>
         <li v-if="requests.length === 0" class="empty">받은 요청이 없어요</li>
       </ul>
@@ -132,8 +143,23 @@ async function removeFriend(f: Friend) {
 .dot { width: 9px; height: 9px; border-radius: 50%; }
 .who { min-width: 0; }
 .who b { display: block; font-size: 12px; }
+.req-nick { font-size: 18px; }
+.req-avatar {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border: 2px solid var(--c-ink);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--c-mint-soft);
+  font-size: 16px;
+  font-weight: 700;
+}
 .who small { display: block; font-size: 9px; color: var(--c-muted); margin-top: 3px; }
 .list li > :nth-child(3) { margin-left: auto; }
+.requests-list .req-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.req-actions :deep(.px-btn) { height: 32px; padding: 0 12px; font-size: 10px; }
 .del { border: 0; background: transparent; color: var(--c-muted); font-size: 10px; }
 .empty { justify-content: center; color: var(--c-muted); font-size: 11px; }
 </style>
