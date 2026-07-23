@@ -17,6 +17,7 @@ import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
+import ssafy.a706.backend.chat.dto.ChatGameSuggestRequest;
 import ssafy.a706.backend.chat.dto.ChatMessageResponse;
 import ssafy.a706.backend.chat.dto.ChatSendRequest;
 import ssafy.a706.backend.global.response.ErrorResponse;
@@ -98,6 +99,7 @@ class ChatBroadcastIntegrationTest {
 
         ChatMessageResponse received = receiverInbox.poll(5, TimeUnit.SECONDS);
         assertThat(received).isNotNull();
+        assertThat(received.type()).isEqualTo(ChatMessageResponse.MessageType.TALK);
         assertThat(received.userId()).isEqualTo(SENDER_ID);
         assertThat(received.nickname()).isEqualTo("보낸이");
         assertThat(received.text()).isEqualTo("안녕하세요!");
@@ -134,6 +136,48 @@ class ChatBroadcastIntegrationTest {
         ErrorResponse error = errors.poll(5, TimeUnit.SECONDS);
         assertThat(error).isNotNull();
         assertThat(error.code()).isEqualTo("COMMON_INVALID_INPUT");
+        assertThat(inbox.poll(1, TimeUnit.SECONDS)).isNull();
+    }
+
+    @Test
+    @DisplayName("게임 제안이 type=GAME_SUGGEST와 게임 정보·폴백 문구로 브로드캐스트된다")
+    void broadcastGameSuggest() throws Exception {
+        StompSession sender = connect(SENDER_ID, "보낸이");
+        StompSession receiver = connect(RECEIVER_ID, "받는이");
+        BlockingQueue<ChatMessageResponse> receiverInbox =
+                subscribe(receiver, "/topic/rooms/" + roomId + "/chat", ChatMessageResponse.class);
+
+        sender.send("/app/rooms/" + roomId + "/game-suggest", new ChatGameSuggestRequest(7L, "몸으로 말해요"));
+
+        ChatMessageResponse received = receiverInbox.poll(5, TimeUnit.SECONDS);
+        assertThat(received).isNotNull();
+        assertThat(received.type()).isEqualTo(ChatMessageResponse.MessageType.GAME_SUGGEST);
+        assertThat(received.userId()).isEqualTo(SENDER_ID);
+        assertThat(received.nickname()).isEqualTo("보낸이");
+        assertThat(received.gameId()).isEqualTo(7L);
+        assertThat(received.gameName()).isEqualTo("몸으로 말해요");
+        assertThat(received.text()).isEqualTo("'몸으로 말해요' 게임을 제안했습니다.");
+        assertThat(received.sentAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("gameId가 없거나 게임명이 비면 게임 제안은 COMMON_INVALID_INPUT으로 거부된다")
+    void rejectInvalidGameSuggest() throws Exception {
+        StompSession sender = connect(SENDER_ID, "보낸이");
+        BlockingQueue<ChatMessageResponse> inbox =
+                subscribe(sender, "/topic/rooms/" + roomId + "/chat", ChatMessageResponse.class);
+        BlockingQueue<ErrorResponse> errors = subscribe(sender, "/user/queue/errors", ErrorResponse.class);
+
+        sender.send("/app/rooms/" + roomId + "/game-suggest", new ChatGameSuggestRequest(null, "몸으로 말해요"));
+        ErrorResponse noId = errors.poll(5, TimeUnit.SECONDS);
+        assertThat(noId).isNotNull();
+        assertThat(noId.code()).isEqualTo("COMMON_INVALID_INPUT");
+
+        sender.send("/app/rooms/" + roomId + "/game-suggest", new ChatGameSuggestRequest(7L, "  "));
+        ErrorResponse blankName = errors.poll(5, TimeUnit.SECONDS);
+        assertThat(blankName).isNotNull();
+        assertThat(blankName.code()).isEqualTo("COMMON_INVALID_INPUT");
+
         assertThat(inbox.poll(1, TimeUnit.SECONDS)).isNull();
     }
 
