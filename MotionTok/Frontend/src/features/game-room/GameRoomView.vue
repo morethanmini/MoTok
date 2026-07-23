@@ -5,9 +5,10 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi } from '@/api'
+import { roomsApi, readAccessClaims, type ChatMessage } from '@/api'
 import { useCamera } from '@/composables/useCamera'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
+import { useRoomChat } from '@/composables/useRoomChat'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
 import type { GameEntry } from './data'
@@ -25,6 +26,9 @@ const { message: toast, flash } = useToast(2600)
 // LiveKit 실시간 방 + 로컬 카메라 프리뷰 폴백(백엔드 미연동 시)
 const lk = useLiveKitRoom()
 const camera = useCamera()
+// 대기실 채팅 + 게임 제안 (STOMP, 명세 §7)
+const roomChat = useRoomChat()
+const myParticipantId = computed(() => readAccessClaims()?.sub ?? null)
 
 const roomCode = computed(() => (route.query.room as string) || 'MP-4X9K')
 const roomGame = computed(() => (route.query.game as string) || 'DANCE BATTLE')
@@ -90,11 +94,8 @@ const speakerOn = ref(true)
 const screenOn = ref(false)
 const picker = ref(false)
 
-let greetTimer: ReturnType<typeof setTimeout>
-
 onMounted(async () => {
   bgm.setVolume(0.2)
-  greetTimer = setTimeout(() => pushChat('곧 시작할게요! 준비됐죠? 🎮', false, 'Alex'), 1500)
 
   // 정원/방장 조회(실패해도 진행) → LiveKit 접속(방 멤버만 토큰 발급됨)
   try {
@@ -107,27 +108,58 @@ onMounted(async () => {
   }
   const ok = await lk.connect(roomCode.value)
   if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
+
+  // 채팅은 이력이 없어서(비영속) 구독이 늦은 만큼 그대로 유실 — 입장 직후 바로 연결.
+  void roomChat.connect(roomCode.value)
 })
 onBeforeUnmount(() => {
-  clearTimeout(greetTimer)
+  roomChat.disconnect()
 })
 
 // ── 채팅 ────────────────────────────────────
-interface ChatMsg { id: number; name: string; text: string; me: boolean }
-const chat = ref<ChatMsg[]>([])
+// 표시용 말풍선 — 서버에서 수신한 메시지만 여기 담긴다(발신 시 로컬 append 금지: 자기 메시지도 topic으로 에코됨).
+interface ChatBubble { id: number; nickname: string; text: string; me: boolean; kind: ChatMessage['type']; gameName: string | null }
+const bubbles = ref<ChatBubble[]>([])
 const draft = ref('')
-let msgId = 0
+let bubbleId = 0
+const CHAT_MAX_LEN = 500
 
-function pushChat(text: string, me = true, name = 'You') {
-  const id = ++msgId
-  chat.value.push({ id, name, text, me })
-  setTimeout(() => (chat.value = chat.value.filter((m) => m.id !== id)), 5200)
-}
+watch(roomChat.messages, (all, prev) => {
+  const startIdx = prev?.length ?? 0
+  for (const m of all.slice(startIdx)) {
+    const id = ++bubbleId
+    bubbles.value.push({
+      id,
+      nickname: m.nickname,
+      text: m.text,
+      me: m.userId === myParticipantId.value,
+      kind: m.type,
+      gameName: m.gameName,
+    })
+    // 게임 제안 카드는 계속 보이게 두고, 일반 채팅만 잠시 후 사라진다.
+    if (m.type === 'TALK') {
+      setTimeout(() => (bubbles.value = bubbles.value.filter((b) => b.id !== id)), 5200)
+    }
+  }
+})
+watch(
+  () => roomChat.lastError.value,
+  (e) => {
+    if (e) flash(e.message)
+  },
+)
+
 function send() {
   const t = draft.value.trim()
-  if (!t) return
-  pushChat(t, true, 'You')
+  if (!t || t.length > CHAT_MAX_LEN) return
+  roomChat.sendChat(t)
   draft.value = ''
+}
+
+// 방장이 제안받은 게임을 그대로 선택 — 기존 방장 START 흐름과 동일 처리(실제 게임 빌드 전이라 준비 중 안내).
+function selectSuggested(gameName: string | null) {
+  if (!gameName) return
+  flash(`${gameName} 는 준비 중이에요`)
 }
 
 // ── 카메라 / 마이크 컨트롤 ───────────────────
@@ -152,10 +184,9 @@ async function toggleMic() {
 }
 
 // ── 게임 선택 (방장: 바로 시작 / 참가자: 제안) ─
-const myName = computed(() => lkLocal.value?.name || '나')
-// 제안 도배 방지 — 참가자 1인당 쿨다운 안에는 새 제안을 막는다.
-const SUGGEST_COOLDOWN_MS = 20_000
-let lastSuggestAt = 0
+// 서버엔 제안 발신 rate-limit이 없어 연타하면 방 전체에 도배되므로, 버튼에 짧은 쿨다운을 둔다.
+const SUGGEST_COOLDOWN_MS = 3000
+const suggestCooldown = ref(false)
 
 function openPicker() {
   picker.value = true
@@ -167,14 +198,10 @@ function launch(g: GameEntry) {
     flash(`${g.name} 는 준비 중이에요`)
     return
   }
-  const now = Date.now()
-  if (now - lastSuggestAt < SUGGEST_COOLDOWN_MS) {
-    const waitSec = Math.ceil((SUGGEST_COOLDOWN_MS - (now - lastSuggestAt)) / 1000)
-    flash(`제안은 너무 자주 보낼 수 없어요 · ${waitSec}초 후 다시 시도해주세요`)
-    return
-  }
-  lastSuggestAt = now
-  flash(`${myName.value}님이 ${g.name} 게임을 제안합니다!`)
+  if (suggestCooldown.value) return
+  roomChat.suggestGame(g.gameId, g.name)
+  suggestCooldown.value = true
+  setTimeout(() => (suggestCooldown.value = false), SUGGEST_COOLDOWN_MS)
 }
 
 function copyCode() {
@@ -299,24 +326,44 @@ const startHint = computed(() =>
       <!-- 채팅 독 -->
       <div class="chat-dock">
         <div class="chat-log">
+          <div class="px chat-notice">입장 이후의 대화만 표시돼요</div>
           <div
-            v-for="c in chat"
-            :key="c.id"
+            v-for="b in bubbles"
+            :key="b.id"
             class="px bubble"
-            :class="{ me: c.me }"
+            :class="{ me: b.me, suggest: b.kind === 'GAME_SUGGEST' }"
           >
-            <span class="bubble-name" :class="{ me: c.me }">{{ c.name }}</span> {{ c.text }}
+            <template v-if="b.kind === 'GAME_SUGGEST'">
+              <span class="bubble-name">🎮 {{ b.nickname }}</span> {{ b.text }}
+              <button v-if="isHost" class="px suggest-pick" @click="selectSuggested(b.gameName)">
+                이 게임으로 선택
+              </button>
+            </template>
+            <template v-else>
+              <span class="bubble-name" :class="{ me: b.me }">{{ b.nickname }}</span> {{ b.text }}
+            </template>
           </div>
         </div>
         <span class="chat-face">☺</span>
-        <input v-model="draft" placeholder="메시지 입력..." @keydown.enter="send" />
+        <input
+          v-model="draft"
+          placeholder="메시지 입력..."
+          maxlength="500"
+          @keydown.enter="send"
+        />
+        <span class="chat-count" :class="{ over: draft.length > 500 }">{{ draft.length }}/500</span>
         <button class="chat-send" @click="send">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
         </button>
       </div>
 
       <!-- 게임 시작 (메시지창 오른쪽) -->
-      <button class="px start-btn" :class="{ suggest: !isHost }" @click="openPicker">
+      <button
+        class="px start-btn"
+        :class="{ suggest: !isHost }"
+        :disabled="!isHost && suggestCooldown"
+        @click="openPicker"
+      >
         <span class="play-ico">▶</span>
         <span class="start-text"><span class="start-title">{{ startLabel }}</span><span class="start-hint">{{ startHint }}</span></span>
       </button>
@@ -428,6 +475,7 @@ const startHint = computed(() =>
   box-shadow: var(--shadow-sm); text-align: left;
 }
 .start-btn.suggest { background: var(--c-yellow); color: var(--c-ink-soft); }
+.start-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .play-ico { font-size: 18px; }
 .start-text { line-height: 1.4; }
 .start-title { display: block; font-size: 11px; }
@@ -454,14 +502,19 @@ const startHint = computed(() =>
 .ctrl.off { background: #fbdbe0; color: #e85d6e; }
 
 .chat-dock { position: relative; flex: none; width: 300px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; height: 52px; background: #fff; border: 3px solid var(--c-ink-soft); border-radius: 14px; box-shadow: var(--shadow-sm); }
-.chat-log { position: absolute; bottom: 62px; left: 0; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
-.bubble { max-width: 360px; padding: 9px 12px; font-size: 9px; line-height: 1.7; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); }
+.chat-log { position: absolute; bottom: 62px; left: 0; width: 320px; max-height: 300px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+.chat-notice { align-self: center; padding: 4px 10px; font-size: 7px; color: #a99f86; background: rgba(255, 253, 247, .9); border-radius: 999px; }
+.bubble { max-width: 300px; padding: 9px 12px; font-size: 9px; line-height: 1.7; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); }
 .bubble.me { background: #fff4cc; }
+.bubble.suggest { background: var(--c-mint-soft); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .bubble-name { color: #5cbf4a; }
 .bubble-name.me { color: #f0a815; }
+.suggest-pick { border: 2px solid var(--c-ink-soft); border-radius: 8px; background: var(--c-yellow); padding: 5px 8px; font-size: 8px; font-weight: 700; }
 .chat-face { color: #a99f86; font-size: 16px; }
-.chat-dock input { flex: 1; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 13px; }
-.chat-send { width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
+.chat-dock input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 13px; }
+.chat-count { flex: none; font-size: 7px; color: #a99f86; }
+.chat-count.over { color: var(--c-coral); }
+.chat-send { flex: none; width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
 
 .footer-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .leave { display: flex; align-items: center; gap: 9px; padding: 0 18px; height: 52px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; background: var(--c-coral); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
