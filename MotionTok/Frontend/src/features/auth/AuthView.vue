@@ -10,6 +10,13 @@ import { authApi as recoveryApi } from '@/api'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelCat from './components/PixelCat.vue'
+import {
+  SOCIAL_REDIRECT_URI,
+  consumeAuthorizeContext,
+  isSocialConfigured,
+  startSocialAuthorize,
+  stashWithdrawProof,
+} from './socialAuthorize'
 
 const route = useRoute()
 const router = useRouter()
@@ -369,31 +376,10 @@ async function startGuest() {
 }
 
 // ── 소셜 로그인 (google · kakao) — 명세 POST /auth/social/{provider} ──────────
-// client_id(구글)·REST 키(카카오)는 authorize URL에 노출되는 공개값이라 VITE_ 환경변수로 둔다.
-const KAKAO_REST_KEY = import.meta.env.VITE_KAKAO_REST_KEY ?? ''
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? ''
-const SOCIAL_REDIRECT_URI = `${window.location.origin}/auth`
-
 /** provider authorize 페이지로 이동. 콜백은 이 화면(/auth)으로 돌아온다. */
 function startSocial(provider: 'google' | 'kakao') {
-  const clientId = provider === 'kakao' ? KAKAO_REST_KEY : GOOGLE_CLIENT_ID
-  if (!clientId) {
-    submitError.value = `${provider} 로그인이 아직 설정되지 않았어요.`
-    return
-  }
-  sessionStorage.setItem('social_provider', provider)
-  const base =
-    provider === 'kakao'
-      ? 'https://kauth.kakao.com/oauth/authorize'
-      : 'https://accounts.google.com/o/oauth2/v2/auth'
-  const scope = provider === 'google' ? '&scope=openid%20email%20profile' : ''
-  // 매번 계정을 입력하도록 강제 — 이전 소셜 세션이 남아 있어도 자동 로그인/계정 고정을 막고 계정 전환을 허용한다.
-  // (kakao: prompt=login 재로그인 강제 / google: select_account 계정 선택)
-  const prompt = provider === 'kakao' ? '&prompt=login' : '&prompt=select_account'
-  window.location.href =
-    `${base}?client_id=${clientId}` +
-    `&redirect_uri=${encodeURIComponent(SOCIAL_REDIRECT_URI)}` +
-    `&response_type=code${scope}${prompt}`
+  const failure = startSocialAuthorize(provider, 'login')
+  if (failure) submitError.value = failure
 }
 
 // 소셜 콜백(?code=)으로 들어온 진입인지. 이 경우 로그인 폼 대신 로딩 화면을 렌더링해
@@ -403,10 +389,19 @@ const socialCallback = ref(typeof route.query.code === 'string')
 // provider가 ?code=로 돌아오면 백엔드로 넘겨 JWT를 받고 로비로 이동
 onMounted(async () => {
   if (!socialCallback.value) return
-  const provider = sessionStorage.getItem('social_provider') as 'google' | 'kakao' | null
-  sessionStorage.removeItem('social_provider')
+  const { provider, intent } = consumeAuthorizeContext()
   if (!provider) {
     socialCallback.value = false // provider 유실 등 잘못된 진입 — 로그인 폼으로 되돌림
+    return
+  }
+  // 탈퇴 재인증으로 받아 온 코드다 — 로그인시키지 않고 설정 화면으로 넘겨 탈퇴를 마저 진행한다(-111).
+  if (intent === 'withdraw') {
+    stashWithdrawProof({
+      provider,
+      authorizationCode: route.query.code as string,
+      redirectUri: SOCIAL_REDIRECT_URI,
+    })
+    router.replace({ name: RouteName.AccountSettings })
     return
   }
   try {
@@ -415,6 +410,11 @@ onMounted(async () => {
       redirectUri: SOCIAL_REDIRECT_URI,
     })
     session.applyToken(token)
+    // 최초 소셜 로그인이면 닉네임을 아직 정하지 않았다 — 로비 대신 닉네임 설정 화면으로(-22).
+    if (token.nicknameSetupRequired) {
+      router.replace({ name: RouteName.NicknameSetup })
+      return
+    }
     // 방금 로딩바를 보여줬으니 로비 진입 스플래시는 건너뛴다 → '로딩바 한 번 → 로비'.
     sessionStorage.setItem('motok.splashSeen', '1')
     router.replace({ name: RouteName.Lobby })
@@ -635,7 +635,7 @@ onMounted(async () => {
         <div class="divider"><span>또는</span></div>
 
         <div class="social">
-          <button :disabled="!GOOGLE_CLIENT_ID" @click="startSocial('google')">
+          <button :disabled="!isSocialConfigured('google')" @click="startSocial('google')">
             <img src="/assets/icons/google.svg" alt="" class="social-icon" />
             로그인
           </button>

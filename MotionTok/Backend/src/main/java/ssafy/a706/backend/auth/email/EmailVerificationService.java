@@ -7,6 +7,8 @@ import ssafy.a706.backend.auth.controller.dto.EmailVerifyResult;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.user.repository.UserRepository;
+import ssafy.a706.backend.user.withdrawal.RejoinPolicy;
+import ssafy.a706.backend.user.withdrawal.WithdrawnIdentifierType;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -44,6 +46,7 @@ public class EmailVerificationService {
     private final UserRepository userRepository;
     private final VerificationMailSender mailSender;
     private final EmailVerificationProperties props;
+    private final RejoinPolicy rejoinPolicy;
 
     /** 인증번호 발송 — 중복 가입 차단, 쿨다운·1일 한도 검사 후 6자리 코드를 메일로 보낸다. */
     public void sendCode(String rawEmail) {
@@ -52,6 +55,8 @@ public class EmailVerificationService {
         if (userRepository.existsByEmail(email)) {
             throw new BusinessException(ErrorCode.EMAIL_ALREADY_REGISTERED);
         }
+        // 재가입 쿨다운은 가입 시점에도 다시 검사하지만, 여기서 먼저 막아야 인증번호를 헛되이 소모하지 않는다(-111).
+        rejoinPolicy.ensureRejoinable(email, WithdrawnIdentifierType.EMAIL);
         if (Boolean.TRUE.equals(redis.hasKey(KEY_COOLDOWN + email))) {
             throw new BusinessException(ErrorCode.RESEND_COOLDOWN);
         }

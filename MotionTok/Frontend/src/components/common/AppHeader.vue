@@ -76,7 +76,11 @@ async function onLogout() {
 // 아바타 클릭 시 토글되는 계정 메뉴
 const showAccountMenu = ref(false)
 const accountMenuRef = ref<HTMLElement | null>(null)
-const nickname = computed(() => session.profile?.nickname ?? 'P1')
+// 게스트는 서버가 준 임시 닉네임, 회원은 프로필 닉네임.
+// 임의의 기본값(P1)을 쓰지 않는다 — 세션이 복원되지 않았는데 로그인한 것처럼 보이던 원인이었다.
+const nickname = computed(() =>
+  session.isGuest ? (session.guestNickname ?? '게스트') : (session.profile?.nickname ?? '…'),
+)
 
 function toggleAccountMenu() {
   showAccountMenu.value = !showAccountMenu.value

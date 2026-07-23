@@ -6,5 +6,6 @@ export const friendsRoutes: RouteRecordRaw[] = [
     path: '/friends',
     name: RouteName.Friends,
     component: () => import('./FriendsView.vue'),
+    meta: { requiresMember: true },
   },
 ]

@@ -7,5 +7,6 @@ export const gameResultRoutes: RouteRecordRaw[] = [
     name: RouteName.GameResult,
     component: () => import('./GameResultView.vue'),
     // ?game=...&room=...
+    meta: { requiresAuth: true },
   },
 ]
