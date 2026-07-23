@@ -2,6 +2,7 @@ package ssafy.a706.backend.game;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
@@ -67,6 +68,7 @@ public class GameSessionService {
     private final GameRepository gameRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final TaskScheduler gameTaskScheduler;
+    private final ApplicationEventPublisher eventPublisher;
 
     /** 조기 종료 시 취소할 라운드 종료 예약 (roomId → future). 인메모리 — 단일 인스턴스 전제. */
     private final Map<String, ScheduledFuture<?>> endTasks = new ConcurrentHashMap<>();
@@ -163,6 +165,9 @@ public class GameSessionService {
         List<LiveRoomMemberValue> members = liveRoomRepository.findMembers(roomId);
         List<GameResultEntry> results = rank(members, scores);
         broadcast(roomId, GameEventResponse.gameEnd(sessionId, results));
+        // write-behind 정산(-117) — 회원 결과 leaderboards 적재 + rank ZSET 갱신은 비동기 리스너에 위임.
+        // endRound가 SETNX 가드로 1회만 실행되므로 정산도 1회 발행된다.
+        eventPublisher.publishEvent(new GameSettledEvent(session.gameId(), results));
         log.info("game session ended: room={} session={} players={} submitted={}",
                 roomId, sessionId, members.size(), scores.size());
     }
