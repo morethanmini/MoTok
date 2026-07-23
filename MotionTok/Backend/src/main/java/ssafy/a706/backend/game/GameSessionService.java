@@ -1,0 +1,242 @@
+package ssafy.a706.backend.game;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.scheduling.TaskScheduler;
+import org.springframework.stereotype.Service;
+import ssafy.a706.backend.auth.principal.AuthPrincipal;
+import ssafy.a706.backend.game.dto.GameEventResponse;
+import ssafy.a706.backend.game.dto.GameFinishRequest;
+import ssafy.a706.backend.game.dto.GameProgressRequest;
+import ssafy.a706.backend.game.dto.GameResultEntry;
+import ssafy.a706.backend.game.dto.GameStartRequest;
+import ssafy.a706.backend.game.model.GamePlayerScore;
+import ssafy.a706.backend.game.model.GameSession;
+import ssafy.a706.backend.global.exception.BusinessException;
+import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
+import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
+import ssafy.a706.backend.signal.RoomMembershipReader;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ThreadLocalRandom;
+
+/**
+ * 게임 세션 서버 (S15P11A706-116) — 타이머 권위·판정 수리·점수판.
+ *
+ * <p>타이머 권위: 라운드 시작/종료 시각(epoch millis)은 서버가 확정해 GAME_START로 배포하고,
+ * 종료 시각에 스케줄러가 정산(GAME_END)을 브로드캐스트한다. 클라이언트 타이머는 표시용.</p>
+ *
+ * <p>판정: 랜드마크 분석·점수 계산은 각 클라이언트가 수행하고(브라우저 로컬 MediaPipe),
+ * 서버는 범위 클램프 + 참가자당 최초 1회 제출만 수리한다. 전 참가자 제출 시 조기 정산.</p>
+ *
+ * <p>세션 상태는 Redis(game:session:*)에 두지만 종료 스케줄은 인메모리(단일 인스턴스 전제,
+ * simple broker와 동일 제약). 서버 재시작으로 스케줄이 유실되면 stale 세션은 새 게임
+ * 시작 시 덮어써 복구된다 — start()의 활성 판정이 endAt 경과를 함께 보는 이유.</p>
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class GameSessionService {
+
+    private static final String GAME_TOPIC = "/topic/rooms/%s/game";
+
+    /** 현재 플레이 가능한 게임 카탈로그 id — 핑거 스타. 게임 추가 시 카탈로그 테이블로 이관. */
+    private static final Set<Long> PLAYABLE_GAME_IDS = Set.of(1L);
+    private static final Set<String> CONSTELLATION_KEYS = Set.of("cassiopeia", "orion", "gemini");
+
+    /** GAME_START 배포 후 라운드 시작까지의 카운트다운. */
+    private static final long COUNTDOWN_MILLIS = 3_000;
+    private static final long ROUND_MILLIS = 30_000;
+    /** endAt 경과 후 정산까지의 유예 — 마지막 순간 finish 프레임의 전송 지연 흡수. */
+    private static final long END_GRACE_MILLIS = 1_500;
+
+    private static final int MAX_STARS = 10;
+    private static final int MAX_SCORE = 100;
+
+    private final RoomMembershipReader membershipReader;
+    private final LiveRoomRepository liveRoomRepository;
+    private final GameSessionRepository sessionRepository;
+    private final SimpMessagingTemplate messagingTemplate;
+    private final TaskScheduler gameTaskScheduler;
+
+    /** 조기 종료 시 취소할 라운드 종료 예약 (roomId → future). 인메모리 — 단일 인스턴스 전제. */
+    private final Map<String, ScheduledFuture<?>> endTasks = new ConcurrentHashMap<>();
+
+    /** 방장 게임 시작 → 세션 생성·방 잠금·GAME_START 브로드캐스트·정산 예약. */
+    public void start(String roomId, GameStartRequest request, AuthPrincipal sender) {
+        Long gameId = request.gameId();
+        if (gameId == null || !PLAYABLE_GAME_IDS.contains(gameId)) {
+            throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
+        }
+        Map<Object, Object> roomFields = liveRoomRepository.findRoomFields(roomId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ROOM_NOT_FOUND));
+        requireMembership(roomId, sender);
+        if (!sender.userId().equals(roomFields.get("hostUserId"))) {
+            throw new BusinessException(ErrorCode.NOT_ROOM_HOST);
+        }
+        long now = System.currentTimeMillis();
+        boolean activeExists = sessionRepository.findSession(roomId)
+                .map(s -> s.isPlaying(now, END_GRACE_MILLIS))
+                .orElse(false);
+        if (activeExists) {
+            throw new BusinessException(ErrorCode.GAME_SESSION_ALREADY_ACTIVE);
+        }
+
+        String constellationKey = resolveConstellation(request.constellationKey());
+        String sessionId = UUID.randomUUID().toString();
+        long startAt = now + COUNTDOWN_MILLIS;
+        long endAt = startAt + ROUND_MILLIS;
+        GameSession session = new GameSession(sessionId, gameId, constellationKey,
+                startAt, endAt, GameSession.STATUS_PLAYING);
+        sessionRepository.saveSession(roomId, session);
+        liveRoomRepository.updateStatus(roomId, "PLAYING");
+
+        broadcast(roomId, GameEventResponse.gameStart(sessionId, gameId, constellationKey, now, startAt, endAt));
+        scheduleEnd(roomId, sessionId, endAt + END_GRACE_MILLIS);
+        log.info("game session started: room={} session={} game={} constellation={}",
+                roomId, sessionId, gameId, constellationKey);
+    }
+
+    /** 라운드 중 진행 상황 중계 — 저장 없음, 클램프 후 방 토픽으로 재방송. */
+    public void progress(String roomId, GameProgressRequest request, AuthPrincipal sender) {
+        requireMembership(roomId, sender);
+        GameSession session = requireActiveSession(roomId);
+        int starsLit = clamp(request.starsLit() == null ? 0 : request.starsLit(), 0, MAX_STARS);
+        double holdProgress = clampDouble(request.holdProgress() == null ? 0 : request.holdProgress());
+        broadcast(roomId, GameEventResponse.progress(
+                session.sessionId(), sender.userId(), sender.displayName(), starsLit, holdProgress));
+    }
+
+    /** 참가자 최종 제출 수리(최초 1회) → PLAYER_FINISHED 브로드캐스트, 전원 제출 시 조기 정산. */
+    public void finish(String roomId, GameFinishRequest request, AuthPrincipal sender) {
+        requireMembership(roomId, sender);
+        GameSession session = requireActiveSession(roomId);
+        int score = clamp(request.score() == null ? 0 : request.score(), 0, MAX_SCORE);
+        int starsHit = clamp(request.starsHit() == null ? 0 : request.starsHit(), 0, MAX_STARS);
+        GamePlayerScore playerScore = new GamePlayerScore(
+                sender.userId(), sender.displayName(), score, starsHit, System.currentTimeMillis());
+        // 최초 제출만 수리 — 재제출·중복 프레임은 조용히 무시(브로드캐스트도 없음).
+        if (!sessionRepository.saveScoreIfAbsent(roomId, playerScore)) {
+            return;
+        }
+        broadcast(roomId, GameEventResponse.playerFinished(
+                session.sessionId(), sender.userId(), sender.displayName(), score, starsHit));
+
+        long memberCount = liveRoomRepository.findMembers(roomId).size();
+        if (memberCount > 0 && sessionRepository.countScores(roomId) >= memberCount) {
+            endRound(roomId, session.sessionId());
+        }
+    }
+
+    /**
+     * 라운드 정산 — 스케줄러(시간 종료)와 finish(전원 완주)가 모두 호출할 수 있어
+     * Redis SETNX 가드로 1회만 실행된다. 미제출 참가자는 0점 미완주로 포함.
+     */
+    private void endRound(String roomId, String sessionId) {
+        if (!sessionRepository.tryAcquireEndGuard(roomId, sessionId)) {
+            return;
+        }
+        cancelScheduledEnd(roomId);
+        GameSession session = sessionRepository.findSession(roomId).orElse(null);
+        if (session == null || !session.sessionId().equals(sessionId)) {
+            return; // 이미 새 세션으로 대체된 stale 예약
+        }
+        sessionRepository.markEnded(roomId);
+        liveRoomRepository.updateStatus(roomId, "WAITING");
+
+        Map<String, GamePlayerScore> scores = sessionRepository.findScores(roomId);
+        List<LiveRoomMemberValue> members = liveRoomRepository.findMembers(roomId);
+        List<GameResultEntry> results = rank(members, scores);
+        broadcast(roomId, GameEventResponse.gameEnd(sessionId, results));
+        log.info("game session ended: room={} session={} players={} submitted={}",
+                roomId, sessionId, members.size(), scores.size());
+    }
+
+    /** 점수 내림차순(동점은 먼저 제출한 쪽 우선) 순위. 방에 남은 전원 포함 — 미제출자는 0점. */
+    private List<GameResultEntry> rank(List<LiveRoomMemberValue> members, Map<String, GamePlayerScore> scores) {
+        record Row(String userId, String nickname, int score, int starsHit, boolean finished, long finishedAt) {}
+        List<Row> rows = new ArrayList<>();
+        for (LiveRoomMemberValue m : members) {
+            GamePlayerScore s = scores.get(m.userId());
+            if (s != null) {
+                rows.add(new Row(m.userId(), s.nickname(), s.score(), s.starsHit(), true, s.finishedAt()));
+            } else {
+                rows.add(new Row(m.userId(), m.displayName(), 0, 0, false, Long.MAX_VALUE));
+            }
+        }
+        rows.sort(Comparator.comparingInt(Row::score).reversed()
+                .thenComparingLong(Row::finishedAt));
+        List<GameResultEntry> results = new ArrayList<>(rows.size());
+        for (int i = 0; i < rows.size(); i++) {
+            Row r = rows.get(i);
+            results.add(new GameResultEntry(i + 1, r.userId(), r.nickname(), r.score(), r.starsHit(), r.finished()));
+        }
+        return results;
+    }
+
+    private void scheduleEnd(String roomId, String sessionId, long atMillis) {
+        cancelScheduledEnd(roomId);
+        ScheduledFuture<?> future = gameTaskScheduler.schedule(
+                () -> {
+                    try {
+                        endRound(roomId, sessionId);
+                    } catch (Exception e) {
+                        log.error("game round settlement failed: room={} session={}", roomId, sessionId, e);
+                    }
+                },
+                Instant.ofEpochMilli(atMillis));
+        endTasks.put(roomId, future);
+    }
+
+    private void cancelScheduledEnd(String roomId) {
+        ScheduledFuture<?> prev = endTasks.remove(roomId);
+        if (prev != null) {
+            prev.cancel(false);
+        }
+    }
+
+    private GameSession requireActiveSession(String roomId) {
+        return sessionRepository.findSession(roomId)
+                .filter(s -> s.isPlaying(System.currentTimeMillis(), END_GRACE_MILLIS))
+                .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
+    }
+
+    private void requireMembership(String roomId, AuthPrincipal sender) {
+        if (!membershipReader.existsRoom(roomId)) {
+            throw new BusinessException(ErrorCode.ROOM_NOT_FOUND);
+        }
+        if (!membershipReader.isMember(roomId, sender.userId())) {
+            throw new BusinessException(ErrorCode.GAME_NOT_IN_ROOM);
+        }
+    }
+
+    private String resolveConstellation(String requested) {
+        if (requested != null && CONSTELLATION_KEYS.contains(requested)) {
+            return requested;
+        }
+        List<String> keys = List.copyOf(CONSTELLATION_KEYS);
+        return keys.get(ThreadLocalRandom.current().nextInt(keys.size()));
+    }
+
+    private void broadcast(String roomId, GameEventResponse event) {
+        messagingTemplate.convertAndSend(String.format(GAME_TOPIC, roomId), event);
+    }
+
+    private int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private double clampDouble(double value) {
+        return Math.max(0.0, Math.min(1.0, value));
+    }
+}
