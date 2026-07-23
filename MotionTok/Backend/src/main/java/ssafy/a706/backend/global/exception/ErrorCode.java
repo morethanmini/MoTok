@@ -37,10 +37,10 @@ public enum ErrorCode {
     SEND_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_SEND_LIMIT_EXCEEDED", "하루 인증번호 발송 한도를 초과했습니다."),
     VERIFY_ATTEMPT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_VERIFY_ATTEMPT_EXCEEDED", "인증 시도 횟수를 초과했습니다. 인증번호를 다시 요청해 주세요."),
 
-    // 소셜 최초 로그인 닉네임 설정 (명세서 v0.2.12, -22)
+    // 소셜 최초 로그인 닉네임 설정 (명세서 v0.2.15, -22)
     NICKNAME_SETUP_REQUIRED(HttpStatus.FORBIDDEN, "AUTH_NICKNAME_SETUP_REQUIRED", "닉네임 설정을 먼저 완료해 주세요."),
 
-    // 탈퇴·재가입 정책 (명세서 v0.2.12, -111)
+    // 탈퇴·재가입 정책 (명세서 v0.2.15, -111)
     REJOIN_COOLDOWN(HttpStatus.CONFLICT, "AUTH_REJOIN_COOLDOWN", "탈퇴 후 1주일이 지나야 다시 가입할 수 있습니다."),
     WITHDRAW_REAUTH_REQUIRED(HttpStatus.BAD_REQUEST, "USER_WITHDRAW_REAUTH_REQUIRED", "탈퇴하려면 비밀번호를 입력해 주세요."),
     WITHDRAW_SOCIAL_REAUTH_REQUIRED(HttpStatus.BAD_REQUEST, "USER_WITHDRAW_SOCIAL_REAUTH_REQUIRED", "소셜 계정으로 다시 인증해야 탈퇴할 수 있습니다."),
@@ -70,7 +70,10 @@ public enum ErrorCode {
     SIGNAL_TARGET_NOT_FOUND(HttpStatus.NOT_FOUND, "SIGNAL_TARGET_NOT_FOUND", "시그널 수신 대상이 방에 없습니다."),
 
     // sfu
-    SFU_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "SFU_NOT_IN_ROOM", "방 참가자만 화상 접속 토큰을 발급받을 수 있습니다.");
+    SFU_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "SFU_NOT_IN_ROOM", "방 참가자만 화상 접속 토큰을 발급받을 수 있습니다."),
+
+    // chat
+    CHAT_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "CHAT_NOT_IN_ROOM", "방 참가자만 채팅을 보낼 수 있습니다.");
 
     private final HttpStatus status;
     private final String code;

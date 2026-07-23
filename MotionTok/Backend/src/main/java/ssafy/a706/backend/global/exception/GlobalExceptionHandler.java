@@ -9,6 +9,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import ssafy.a706.backend.global.response.ErrorResponse;
 
 /**
@@ -54,6 +55,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleMissingParam(MissingServletRequestParameterException e,
                                                             HttpServletRequest req) {
         return badRequest("필수 파라미터가 없습니다: " + e.getParameterName(), req);
+    }
+
+    /** @RequestParam 타입 불일치(예: int에 "abc") — 400. */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException e,
+                                                             HttpServletRequest req) {
+        return badRequest("파라미터 형식이 올바르지 않습니다: " + e.getName(), req);
     }
 
     private ResponseEntity<ErrorResponse> badRequest(String message, HttpServletRequest req) {

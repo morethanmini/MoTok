@@ -33,10 +33,10 @@ defineEmits<{ enter: [] }>()
 }
 .room-card-inner {
   display: grid;
-  grid-template-columns: 74px 1fr auto;
-  gap: 13px;
+  grid-template-columns: 62px 1fr auto;
+  gap: 12px;
   align-items: center;
-  padding: 22px 18px;
+  padding: 13px 18px;
   border: var(--border);
   border-radius: 18px 18px 13px 18px;
   background: #fff;
@@ -52,13 +52,13 @@ defineEmits<{ enter: [] }>()
   box-shadow: var(--shadow-lg);
 }
 .room-icon {
-  width: 70px;
-  height: 78px;
+  width: 62px;
+  height: 58px;
   border: 2px solid var(--c-ink);
-  border-radius: 15px;
+  border-radius: 14px;
   display: grid;
   place-items: center;
-  font-size: 31px;
+  font-size: 25px;
   background: var(--c-mint-soft);
   background-image: radial-gradient(rgba(255, 255, 255, 0.85) 1px, transparent 2px);
   background-size: 9px 9px;
@@ -67,8 +67,8 @@ defineEmits<{ enter: [] }>()
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 20px;
-  margin-bottom: 9px;
+  font-size: 17px;
+  margin-bottom: 6px;
 }
 .lock {
   font-style: normal;
@@ -77,7 +77,7 @@ defineEmits<{ enter: [] }>()
 .room-state {
   font-size: 8px;
   color: #378e74;
-  margin-top: 7px;
+  margin-top: 5px;
 }
 .room-state.playing { color: var(--c-coral); }
 .room-side {
