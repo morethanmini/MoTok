@@ -181,6 +181,14 @@ function answerLeave(ok: boolean) {
 
 async function leave() {
   leavingIntentionally = true
+  const id = route.query.room as string | undefined
+  if (id) {
+    try {
+      await roomsApi.leave(id)
+    } catch {
+      // 방이 이미 없어졌거나 네트워크 오류여도 클라이언트 퇴장은 계속 진행
+    }
+  }
   await lk.disconnect()
   camera.stop()
   router.push({ name: RouteName.Lobby })
