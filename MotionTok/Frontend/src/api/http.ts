@@ -2,12 +2,21 @@
  * 핵심 HTTP 클라이언트 (fetch 래퍼, 외부 의존성 없음).
  * - 베이스 URL 자동 결합, JSON 직렬화/역직렬화
  * - 액세스 토큰 Bearer 자동 주입
+ * - 액세스 토큰 만료 대응: 만료 임박 시 선제 갱신 + 401 시 1회 재발급 후 재시도
  * - 비 2xx 응답을 ApiError로 정규화 (명세의 Error 스키마)
  *
  * 각 도메인 모듈(api/modules/*)은 이 파일의 http.get/post/... 만 사용합니다.
  */
-import { getAccessToken } from './token'
-import type { ApiError as ApiErrorBody } from './types'
+import { emitSessionExpired } from './authEvents'
+import {
+  accessTokenRemainingMs,
+  clearTokens,
+  getAccessToken,
+  getRefreshToken,
+  isPersistentSession,
+  setTokens,
+} from './token'
+import type { ApiError as ApiErrorBody, TokenResponse } from './types'
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080/api'
 
@@ -43,11 +52,75 @@ function buildUrl(path: string, query?: Query): string {
   return url.toString()
 }
 
+// ── 액세스 토큰 갱신 ────────────────────────────────────────────────
+// 한 세션(로비 → 방 → 게임)이 30분을 훌쩍 넘기는 서비스라, 요청이 없는 동안에도 토큰이 만료된다.
+// 그래서 "요청 직전 만료 임박이면 미리 갱신"과 "그래도 401이면 한 번 갱신 후 재시도"를 둘 다 건다.
+// 갱신은 항상 단일 비행(single-flight) — 여러 요청이 동시에 401이 나도 refresh는 한 번만 돈다.
+// (서버가 refresh를 회전시키므로 동시에 두 번 부르면 하나는 무효 토큰으로 실패한다)
+
+/** 남은 시간이 이보다 적으면 요청 전에 미리 갱신한다. */
+const REFRESH_SKEW_MS = 5 * 60 * 1000
+
+let refreshInFlight: Promise<boolean> | null = null
+
+/** 인증 도메인 경로 — 토큰 없이도 부르고, refresh 자신이라 재귀·순환을 막아야 한다. */
+function isAuthPath(path: string): boolean {
+  return path.startsWith('/auth/')
+}
+
+async function runRefresh(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = doRefresh().finally(() => {
+      refreshInFlight = null
+    })
+  }
+  return refreshInFlight
+}
+
+async function doRefresh(): Promise<boolean> {
+  const token = getRefreshToken()
+  if (!token) return false
+
+  // 저장소를 옮기지 않도록 지금 세션이 어디에 있는지 먼저 기억한다(rememberMe 여부 유지).
+  const persist = isPersistentSession()
+  try {
+    const res = await fetch(buildUrl('/auth/token/refresh'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ refreshToken: token }),
+    })
+    if (!res.ok) throw new Error('refresh failed')
+    const body = (await res.json()) as TokenResponse
+    setTokens(body.accessToken, body.refreshToken, persist)
+    return true
+  } catch {
+    // Refresh까지 죽었으면 되살릴 방법이 없다 — 로컬 토큰을 지우고 세션 만료를 알린다.
+    clearTokens()
+    emitSessionExpired()
+    return false
+  }
+}
+
+/** 액세스 토큰이 곧 만료되고 갱신 수단이 있으면 미리 갱신한다(게스트는 refresh가 없어 그냥 지나간다). */
+async function ensureFreshAccessToken(): Promise<void> {
+  if (!getAccessToken() || !getRefreshToken()) return
+  if (accessTokenRemainingMs() > REFRESH_SKEW_MS) return
+  await runRefresh()
+}
+
+/** 화면 복귀·타이머 등 요청 밖에서도 갱신을 돌릴 수 있게 열어 둔다(refreshScheduler.ts). */
+export async function refreshAccessTokenIfNeeded(): Promise<void> {
+  await ensureFreshAccessToken()
+}
+
 async function request<T>(
   method: string,
   path: string,
   opts: { query?: Query; body?: unknown } = {},
+  allowRetry = true,
 ): Promise<T> {
+  if (!isAuthPath(path)) await ensureFreshAccessToken()
+
   const headers: Record<string, string> = { Accept: 'application/json' }
   const token = getAccessToken()
   if (token) headers.Authorization = `Bearer ${token}`
@@ -59,6 +132,11 @@ async function request<T>(
   }
 
   const res = await fetch(buildUrl(path, opts.query), { method, headers, body: bodyInit })
+
+  // 선제 갱신이 빗나갔거나(시계 오차) 서버가 토큰을 무효화한 경우 — 한 번만 갱신 후 재시도한다.
+  if (res.status === 401 && allowRetry && !isAuthPath(path) && getRefreshToken()) {
+    if (await runRefresh()) return request<T>(method, path, opts, false)
+  }
 
   if (res.status === 204) return undefined as T
 
@@ -76,7 +154,8 @@ export const http = {
   post: <T>(path: string, body?: unknown, query?: Query) => request<T>('POST', path, { body, query }),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, { body }),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, { body }),
-  delete: <T>(path: string) => request<T>('DELETE', path),
+  // 탈퇴처럼 본인 확인 값을 실어 보내는 DELETE가 있어 본문을 허용한다(명세 DELETE /users/me).
+  delete: <T>(path: string, body?: unknown) => request<T>('DELETE', path, { body }),
 }
 
 /**

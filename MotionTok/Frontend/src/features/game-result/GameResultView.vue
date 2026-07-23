@@ -1,12 +1,21 @@
 <script setup lang="ts">
 /** 게임 결과 — 시상대 랭킹 + 획득 포인트. */
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
+import { useSessionStore } from '@/stores/session'
+import { promptGuestSignup } from '@/composables/useGuestSignupPrompt'
 import PixelButton from '@/components/common/PixelButton.vue'
 
 const route = useRoute()
 const router = useRouter()
+const session = useSessionStore()
+
+// 게스트는 한 판이 끝날 때마다 가입 유도 팝업을 본다(-109).
+// 게임 세션이 붙기 전까지는 결과 화면 진입이 '게임 종료' 신호 역할을 한다.
+onMounted(() => {
+  if (session.isGuest) promptGuestSignup()
+})
 
 const game = computed(() => (route.query.game as string) || '리듬 펀치')
 const room = computed(() => (route.query.room as string) || 'MP4X9K')

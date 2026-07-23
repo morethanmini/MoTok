@@ -56,7 +56,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/users").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/users/check-id").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/live-rooms").permitAll()
+                        // 로비(방 목록)는 로그인 이후 플로우 — 게스트(ROLE_GUEST)는 1인방만 쓰므로 목록을 열지 않는다.
+                        // (개별 방 조회·입장·화상 접속은 게스트 1인방에도 필요해 인증만 요구한다)
+                        .requestMatchers(HttpMethod.GET, "/api/v1/live-rooms").hasRole("USER")
                         .requestMatchers(HttpMethod.GET, "/api/v1/games/*/leaderboard").permitAll()
                         // 명세서 🔓 공개 — 가입·로그인·게스트·중복확인·이메일 인증·토큰 갱신
                         .requestMatchers(HttpMethod.GET, "/api/auth/availability/**").permitAll()

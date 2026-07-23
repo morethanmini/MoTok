@@ -37,6 +37,14 @@ public enum ErrorCode {
     SEND_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_SEND_LIMIT_EXCEEDED", "하루 인증번호 발송 한도를 초과했습니다."),
     VERIFY_ATTEMPT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_VERIFY_ATTEMPT_EXCEEDED", "인증 시도 횟수를 초과했습니다. 인증번호를 다시 요청해 주세요."),
 
+    // 소셜 최초 로그인 닉네임 설정 (명세서 v0.2.15, -22)
+    NICKNAME_SETUP_REQUIRED(HttpStatus.FORBIDDEN, "AUTH_NICKNAME_SETUP_REQUIRED", "닉네임 설정을 먼저 완료해 주세요."),
+
+    // 탈퇴·재가입 정책 (명세서 v0.2.15, -111)
+    REJOIN_COOLDOWN(HttpStatus.CONFLICT, "AUTH_REJOIN_COOLDOWN", "탈퇴 후 1주일이 지나야 다시 가입할 수 있습니다."),
+    WITHDRAW_REAUTH_REQUIRED(HttpStatus.BAD_REQUEST, "USER_WITHDRAW_REAUTH_REQUIRED", "탈퇴하려면 비밀번호를 입력해 주세요."),
+    WITHDRAW_SOCIAL_REAUTH_REQUIRED(HttpStatus.BAD_REQUEST, "USER_WITHDRAW_SOCIAL_REAUTH_REQUIRED", "소셜 계정으로 다시 인증해야 탈퇴할 수 있습니다."),
+
     // user
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "존재하지 않는 계정입니다."),
 
@@ -67,7 +75,10 @@ public enum ErrorCode {
     // shop
     ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "ITEM_NOT_FOUND", "존재하지 않는 아이템입니다."),
     ITEM_ALREADY_OWNED(HttpStatus.CONFLICT, "ITEM_ALREADY_OWNED", "이미 보유한 아이템입니다."),
-    INSUFFICIENT_POINT(HttpStatus.CONFLICT, "INSUFFICIENT_POINT", "포인트가 부족합니다.");
+    INSUFFICIENT_POINT(HttpStatus.CONFLICT, "INSUFFICIENT_POINT", "포인트가 부족합니다."),
+
+    // chat
+    CHAT_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "CHAT_NOT_IN_ROOM", "방 참가자만 채팅을 보낼 수 있습니다.");
 
     private final HttpStatus status;
     private final String code;
