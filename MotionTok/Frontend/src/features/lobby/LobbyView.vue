@@ -17,7 +17,7 @@ import RoomCard from './components/RoomCard.vue'
 import FriendItem from './components/FriendItem.vue'
 import LobbySplash from './components/LobbySplash.vue'
 import JoinRoomModal from './components/JoinRoomModal.vue'
-import CreateRoomModal from './components/CreateRoomModal.vue'
+import CreateRoomModal, { type NewRoom } from './components/CreateRoomModal.vue'
 
 const router = useRouter()
 const session = useSessionStore()
@@ -126,14 +126,18 @@ async function joinRoom(code: string) {
 }
 
 // 방 만들기 (POST /v1/live-rooms)
-async function createRoom(payload: { title: string }) {
+async function createRoom(payload: NewRoom) {
   if (!payload.title.trim()) {
     flash('방 제목을 입력해 주세요')
     return
   }
   showCreate.value = false
   try {
-    const res = await roomsApi.create({ title: payload.title.trim(), visibility: 'PUBLIC', maxPlayers: 8 })
+    const res = await roomsApi.create({
+      title: payload.title.trim(),
+      visibility: payload.visibility === '비밀' ? 'PRIVATE' : 'PUBLIC',
+      maxPlayers: Number(payload.max),
+    })
     goDevice('게임 선택 중', res.roomId)
   } catch (e) {
     if (e instanceof ApiError) return flash(e.message)

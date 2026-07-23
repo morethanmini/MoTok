@@ -10,7 +10,7 @@ import { useCamera } from '@/composables/useCamera'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
-import { MOVE_PATHS, type GameEntry } from './data'
+import type { GameEntry } from './data'
 import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
 import AppHeader from '@/components/common/AppHeader.vue'
@@ -50,9 +50,9 @@ const otherSlots = computed<Slot[]>(() => {
   }
   return slots
 })
-const leftCount = computed(() => Math.ceil(otherSlots.value.length / 2))
-const leftSlots = computed(() => otherSlots.value.slice(0, leftCount.value))
-const rightSlots = computed(() => otherSlots.value.slice(leftCount.value))
+// 내 캠은 왼쪽에 크게 고정, 나머지는 오른쪽 좁은 트레이에 인원수(2~8명)에 맞춰 세로로 쌓는다.
+// 1~2명: 1열(위아래로 쌓임). 3명 이상: 2열.
+const othersColumns = computed(() => (otherSlots.value.length <= 2 ? 1 : 2))
 
 // ── 자기 타일 상태 (연결 시 LiveKit, 미연결 시 로컬 프리뷰) ──
 const demoMic = ref(true)
@@ -88,21 +88,12 @@ watch(
 // ── 데모 상태 ────────────────────────────────
 const speakerOn = ref(true)
 const screenOn = ref(false)
-const combo = ref(32)
-const judgement = ref('GREAT!')
-const selectedMove = ref(0)
 const picker = ref(false)
 
-let comboTimer: ReturnType<typeof setInterval>
 let greetTimer: ReturnType<typeof setTimeout>
-const JUDGES = ['GREAT!', 'PERFECT!', 'NICE!', 'COOL!']
 
 onMounted(async () => {
   bgm.setVolume(0.2)
-  comboTimer = setInterval(() => {
-    combo.value += 1
-    judgement.value = JUDGES[combo.value % JUDGES.length] ?? 'GREAT!'
-  }, 1700)
   greetTimer = setTimeout(() => pushChat('곧 시작할게요! 준비됐죠? 🎮', false, 'Alex'), 1500)
 
   // 정원/방장 조회(실패해도 진행) → LiveKit 접속(방 멤버만 토큰 발급됨)
@@ -117,7 +108,6 @@ onMounted(async () => {
   if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
 })
 onBeforeUnmount(() => {
-  clearInterval(comboTimer)
   clearTimeout(greetTimer)
 })
 
@@ -174,7 +164,7 @@ function copyCode() {
   navigator.clipboard?.writeText(roomCode.value)
   flash('룸 코드를 복사했어요')
 }
-// 헤더 링크·뒤로가기 등으로 방을 벗어나려 하면 확인 모달. "나가기/결과" 같은 의도된 이동은 통과.
+// 헤더 링크·뒤로가기 등으로 방을 벗어나려 하면 확인 모달. "나가기" 같은 의도된 이동은 통과.
 let leavingIntentionally = false
 const showLeaveConfirm = ref(false)
 let resolveLeave: ((ok: boolean) => void) | null = null
@@ -189,21 +179,21 @@ function answerLeave(ok: boolean) {
   resolveLeave = null
 }
 
-function showResult() {
-  leavingIntentionally = true
-  router.push({
-    name: RouteName.GameResult,
-    query: { game: roomGame.value, room: roomCode.value },
-  })
-}
 async function leave() {
   leavingIntentionally = true
+  const id = route.query.room as string | undefined
+  if (id) {
+    try {
+      await roomsApi.leave(id)
+    } catch {
+      // 방이 이미 없어졌거나 네트워크 오류여도 클라이언트 퇴장은 계속 진행
+    }
+  }
   await lk.disconnect()
   camera.stop()
   router.push({ name: RouteName.Lobby })
 }
 
-const moves = computed(() => MOVE_PATHS.map((path, i) => ({ path, sel: selectedMove.value === i })))
 const startLabel = computed(() => (isHost.value ? 'START' : 'WAIT'))
 const startHint = computed(() =>
   isHost.value ? '게임을 선택하고 시작!' : '방장이 게임을 선택 중이에요',
@@ -222,11 +212,11 @@ const startHint = computed(() =>
       <div class="ribbon-code">ROOM {{ roomCode }} · {{ onlineCount }}/{{ capacity }} ONLINE</div>
     </div>
 
-    <!-- 본문 -->
+    <!-- 본문: 내 캠을 크게, 나머지는 인원수에 맞춰 그리드로 배치 -->
     <main class="room-main">
-      <!-- 좌측: 자기 화면 + 친구 -->
-      <section class="people">
-        <div class="self-tile">
+      <div class="cam-stage">
+        <!-- 내 캠 — 항상 가장 크게 -->
+        <div class="self-tile self-spot">
           <video v-show="selfCamOn" ref="selfVideoEl" autoplay playsinline muted class="self-video" />
           <div v-if="!selfCamOn" class="cam-off">
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">
@@ -241,104 +231,19 @@ const startHint = computed(() =>
             </span>
           </div>
         </div>
-        <ParticipantTile
-          v-for="(slot, i) in leftSlots"
-          :key="'L' + i"
-          :view="slot.view"
-          :host="slot.host"
-          play-audio
-        />
-      </section>
 
-      <!-- 중앙: 무대 -->
-      <section class="center">
-        <div class="stage">
-          <div class="stage-glow" />
-          <img class="stage-art stage-headset" src="/assets/intro/headset.png" alt="" />
-          <img class="stage-art stage-tambourine" src="/assets/intro/tambourine.png" alt="" />
-          <div class="stage-toys">
-            <i class="token tok-note">♫</i><i class="token tok-star">★</i>
-            <i class="token tok-hand">✋</i><i class="token tok-drum">🥁</i>
-          </div>
-
-          <!-- 게임명 + 진행 + 타이머 -->
-          <div class="stage-top">
-            <div class="px game-chip">
-              <span class="c-y">♪</span>
-              <span>{{ roomGame }}</span>
-              <span class="progress"><i class="on" /><i class="on" /><i class="on" /><i /><i /></span>
-            </div>
-            <div class="px timer">01:30</div>
-          </div>
-
-          <!-- 판정 -->
-          <div class="px judgement">{{ judgement }}</div>
-
-          <!-- 픽셀 댄서 -->
-          <div class="dancer">
-            <svg width="150" height="210" viewBox="0 0 60 84" shape-rendering="crispEdges">
-              <rect x="24" y="6" width="12" height="12" fill="#ffd9a8" /><rect x="24" y="4" width="12" height="4" fill="#8a5cd6" />
-              <rect x="24" y="12" width="3" height="3" fill="#2b2333" /><rect x="33" y="12" width="3" height="3" fill="#2b2333" />
-              <rect x="22" y="20" width="16" height="20" fill="#5cbf4a" /><rect x="26" y="24" width="8" height="4" fill="#f5c518" />
-              <rect x="12" y="14" width="6" height="6" fill="#ffd9a8" /><rect x="14" y="20" width="6" height="8" fill="#5cbf4a" /><rect x="18" y="26" width="4" height="8" fill="#5cbf4a" />
-              <rect x="42" y="14" width="6" height="6" fill="#ffd9a8" /><rect x="40" y="20" width="6" height="8" fill="#5cbf4a" /><rect x="38" y="26" width="4" height="8" fill="#5cbf4a" />
-              <rect x="22" y="40" width="6" height="16" fill="#4a7fd6" /><rect x="32" y="40" width="6" height="16" fill="#4a7fd6" />
-              <rect x="20" y="56" width="10" height="5" fill="#fff" /><rect x="30" y="56" width="10" height="5" fill="#fff" />
-            </svg>
-          </div>
-
-          <!-- 콤보 -->
-          <div class="px combo">
-            <span class="combo-cap">COMBO</span>
-            <span class="combo-val">{{ combo }}</span>
-          </div>
-
-          <!-- 동작 선택 -->
-          <div class="moves">
-            <button
-              v-for="(m, i) in moves"
-              :key="i"
-              class="move"
-              :class="{ sel: m.sel }"
-              @click="selectedMove = i"
-            >
-              <svg width="30" height="36" viewBox="0 0 40 48" fill="none" :stroke="m.sel ? '#f0a815' : '#8a8072'" stroke-width="4" stroke-linecap="square">
-                <rect x="16" y="3" width="8" height="8" :fill="m.sel ? '#f0a815' : '#8a8072'" stroke="none" />
-                <path :d="m.path" />
-              </svg>
-            </button>
-          </div>
+        <!-- 나머지 참가자 — 인원수(2~8명)에 맞춰 열 수가 달라지는 그리드 -->
+        <div class="others-tray" :style="{ '--cols': othersColumns }">
+          <ParticipantTile
+            v-for="(slot, i) in otherSlots"
+            :key="i"
+            :view="slot.view"
+            :host="slot.host"
+            play-audio
+          />
         </div>
+      </div>
 
-        <!-- 액션 행 -->
-        <div class="action-row">
-          <button class="px start-btn" :class="{ off: !isHost }" :disabled="!isHost" @click="openPicker">
-            <span class="play-ico">▶</span>
-            <span class="start-text"><span class="start-title">{{ startLabel }}</span><span class="start-hint">{{ startHint }}</span></span>
-          </button>
-          <div class="code-box">
-            <span class="px code-cap">ROOM CODE</span>
-            <div class="code-line">
-              <span class="px code-val">{{ roomCode }}</span>
-              <button class="copy" @click="copyCode">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="9" y="9" width="11" height="11" /><path d="M5 15V5a2 2 0 012-2h10" /></svg>
-              </button>
-            </div>
-            <span class="code-note">현재 {{ onlineCount }}/{{ capacity }}명 · 링크 공유 가능</span>
-          </div>
-        </div>
-      </section>
-
-      <!-- 우측: 참가자 슬롯 -->
-      <section class="people">
-        <ParticipantTile
-          v-for="(slot, i) in rightSlots"
-          :key="'R' + i"
-          :view="slot.view"
-          :host="slot.host"
-          play-audio
-        />
-      </section>
     </main>
 
     <!-- 하단 바 -->
@@ -378,8 +283,23 @@ const startHint = computed(() =>
         </button>
       </div>
 
+      <!-- 게임 시작 (메시지창 오른쪽) -->
+      <button class="px start-btn" :class="{ off: !isHost }" :disabled="!isHost" @click="openPicker">
+        <span class="play-ico">▶</span>
+        <span class="start-text"><span class="start-title">{{ startLabel }}</span><span class="start-hint">{{ startHint }}</span></span>
+      </button>
+
       <div class="footer-right">
-        <button class="px result-demo" @click="showResult">RESULT DEMO</button>
+        <!-- 방 코드 (나가기 버튼 왼쪽) -->
+        <div class="code-box">
+          <span class="px code-cap">ROOM CODE</span>
+          <div class="code-line">
+            <span class="px code-val">{{ roomCode }}</span>
+            <button class="copy" @click="copyCode">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="9" y="9" width="11" height="11" /><path d="M5 15V5a2 2 0 012-2h10" /></svg>
+            </button>
+          </div>
+        </div>
         <button class="px leave" @click="leave">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4M9 16l4-4-4-4M13 12H3" /></svg>
           LEAVE
@@ -440,93 +360,66 @@ const startHint = computed(() =>
 .room-ribbon > span:not(.px-kicker) { color: var(--c-muted); font-size: 9px; }
 .ribbon-code { margin-left: auto; padding: 7px 10px; border: 2px solid var(--c-ink); border-radius: 9px; background: #fff; font-size: 8px; font-weight: 700; }
 
-/* 본문 그리드 */
+/* 본문 */
 .room-main {
   flex: 1; min-height: 0;
-  display: grid;
-  grid-template-columns: 250px minmax(520px, 1fr) 250px;
-  gap: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   padding: 18px 24px;
 }
-.people { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 
-/* 자기 타일 */
+/* 캠 영역 — 내 캠(왼쪽, 크게) + 나머지 참가자(오른쪽, 인원수에 맞춰 그리드). 화면 안에 스크롤 없이 모두 들어가고,
+   카메라 비율은 유지하되 박스를 꽉 채우지는 않는다(letterbox는 object-fit: contain으로 처리). */
+.cam-stage { flex: 1; min-height: 0; display: flex; flex-direction: row; gap: 14px; }
+
+/* 자기 타일 — 항상 가장 크게 */
+.self-tile.self-spot {
+  flex: 0 0 62%;
+  min-width: 0;
+}
 .self-tile {
-  position: relative; flex: 1; min-height: 0; overflow: hidden;
+  position: relative; min-height: 0; overflow: hidden;
   background: #fff; border: 3px solid var(--c-mint); border-radius: 14px 14px 10px 14px;
   box-shadow: 4px 4px 0 rgba(43, 35, 51, 0.2);
 }
-.self-video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); background: #eee6cf; }
+.self-video { width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); background: #eee6cf; }
 .cam-off { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; background: #f3ead2; color: #a99f86; }
 .cam-off { background: linear-gradient(135deg, var(--c-mint-soft), #fff0c4); }
 .cam-on-btn { padding: 10px 16px; border: 3px solid var(--c-ink-soft); border-radius: 11px; background: var(--c-mint); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
 .self-label { position: absolute; top: 8px; left: 8px; display: flex; align-items: center; gap: 7px; padding: 6px 9px; background: #fffdf3; border: 2px solid var(--c-ink-soft); font-size: 9px; }
 
-/* 중앙 */
-.center { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
-.stage {
-  position: relative; flex: 1; min-height: 0; overflow: hidden;
-  background: #fff6d9;
-  border: var(--border-thick);
-  border-radius: 20px 20px 15px 20px;
-  box-shadow: var(--shadow-xl);
+/* 나머지 참가자 그리드 — 열 수(--cols)는 인원수(2~8명)에 따라 스크립트에서 계산, 세로로 쌓인다 */
+.others-tray {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 1), 1fr);
+  grid-auto-rows: 1fr;
+  gap: 12px;
 }
-.stage-art { position: absolute; z-index: 1; width: 105px; opacity: .3; pointer-events: none; filter: saturate(.8); }
-.stage-headset { left: -18px; bottom: 18px; transform: rotate(-15deg); }
-.stage-tambourine { right: -15px; bottom: 18px; transform: rotate(14deg); }
-.stage-glow {
-  position: absolute; inset: 0;
-  background: repeating-linear-gradient(48deg, rgba(255, 182, 193, 0.22) 0 70px, rgba(197, 180, 255, 0.22) 70px 140px, rgba(160, 225, 200, 0.22) 140px 210px, rgba(255, 222, 153, 0.22) 210px 280px);
-  -webkit-mask-image: radial-gradient(75% 75% at 50% 80%, #000 0%, transparent 82%);
-  mask-image: radial-gradient(75% 75% at 50% 80%, #000 0%, transparent 82%);
-}
-.stage::before { content: 'MOVE!'; position: absolute; left: 24px; bottom: 22px; font-size: 10px; color: var(--c-coral); transform: rotate(-8deg); z-index: 2; }
-.stage::after { content: '★ PARTY ★'; position: absolute; right: 20px; bottom: 22px; font-size: 8px; color: var(--c-blue); transform: rotate(6deg); z-index: 2; }
-.stage-toys { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
-.token { position: absolute; display: grid; place-items: center; border: 3px solid var(--c-ink-soft); box-shadow: 4px 4px 0 var(--c-ink-soft); background: #fff; animation: token-spin 2.5s steps(3) infinite; }
-.tok-note { left: 6%; top: 12%; width: 48px; height: 48px; border-radius: 50%; background: #e0d3fb; color: var(--c-violet); font-size: 24px; }
-.tok-star { right: 5%; top: 13%; width: 48px; height: 48px; border-radius: 15px; background: var(--c-yellow); font-size: 23px; animation-delay: 0.6s; }
-.tok-hand { left: 5%; bottom: 15%; width: 51px; height: 46px; border-radius: 15px; background: #d5f4ea; font-size: 24px; animation-delay: 1s; }
-.tok-drum { right: 4%; bottom: 14%; width: 55px; height: 49px; border-radius: 50%; background: #ffe0a8; font-size: 25px; animation-delay: 1.4s; }
 
-.stage-top { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; z-index: 2; }
-.game-chip { display: flex; align-items: center; gap: 9px; padding: 9px 13px; background: #fff; border: 3px solid var(--c-ink-soft); box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); font-size: 9px; }
-.progress { display: flex; gap: 4px; margin-left: 2px; }
-.progress i { width: 7px; height: 7px; background: #e0d6bd; }
-.progress i.on { background: #f5c518; }
-.timer { padding: 9px 13px; background: #fff; border: 3px solid var(--c-ink-soft); font-size: 11px; color: #f0a815; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); }
-
-.judgement { position: absolute; left: 11%; top: 33%; padding: 11px 15px; background: #fff; font-size: 11px; border: 3px solid var(--c-ink-soft); box-shadow: 4px 4px 0 rgba(43, 35, 51, 0.25); z-index: 2; }
-.dancer { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; animation: px-bob 1.4s steps(2) infinite; }
-.dancer svg { filter: drop-shadow(4px 4px 0 rgba(43, 35, 51, 0.25)); }
-.combo { position: absolute; right: 9%; top: 36%; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 18px; background: #fff; border: 3px solid #f0a815; box-shadow: 4px 4px 0 rgba(43, 35, 51, 0.25); z-index: 2; }
-.combo-cap { font-size: 9px; color: #a99f86; }
-.combo-val { font-size: 26px; color: #f0a815; }
-
-.moves { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 9px; z-index: 2; }
-.move { width: 66px; height: 66px; background: #fff; border: 3px solid var(--c-ink-soft); display: flex; align-items: center; justify-content: center; box-shadow: 3px 3px 0 rgba(43, 35, 51, 0.2); }
-.move.sel { background: #fff4cc; border-color: #f0a815; }
-
-/* 액션 행 */
-.action-row { flex: none; display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; height: 104px; }
+/* 게임 시작 (하단 바, 메시지창 오른쪽) */
 .start-btn {
+  flex: none;
   border: var(--border-thick); background: #5cbf4a; color: #fff;
-  display: flex; align-items: center; gap: 16px; padding: 0 22px;
-  border-radius: 15px 15px 11px 15px;
-  box-shadow: 7px 7px 0 var(--c-ink-soft); text-align: left;
+  display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 16px;
+  border-radius: 14px 14px 10px 14px;
+  box-shadow: var(--shadow-sm); text-align: left;
 }
 .start-btn.off { background: #bcb3b6; }
 .start-btn:disabled { cursor: not-allowed; }
-.play-ico { font-size: 30px; }
-.start-text { line-height: 1.6; }
-.start-title { display: block; font-size: 15px; }
-.start-hint { display: block; font-size: 9px; opacity: 0.85; margin-top: 6px; }
-.code-box { border: var(--border-thick); background: #fff; padding: 12px 16px; display: flex; flex-direction: column; justify-content: center; gap: 6px; border-radius: 15px 15px 11px 15px; box-shadow: 6px 6px 0 var(--c-ink-soft); }
-.code-cap { font-size: 8px; color: #a99f86; }
+.play-ico { font-size: 18px; }
+.start-text { line-height: 1.4; }
+.start-title { display: block; font-size: 11px; }
+.start-hint { display: block; font-size: 7px; opacity: 0.85; }
+
+/* 방 코드 (하단 바, 나가기 버튼 왼쪽) */
+.code-box { border: var(--border-thick); background: #fff; padding: 0 14px; height: 52px; display: flex; align-items: center; gap: 8px; border-radius: 14px 14px 10px 14px; box-shadow: var(--shadow-sm); }
+.code-cap { font-size: 7px; color: #a99f86; }
 .code-line { display: flex; align-items: center; gap: 8px; }
-.code-val { font-size: 15px; color: #f0a815; }
-.copy { width: 28px; height: 28px; background: #f3ead2; border: 2px solid var(--c-ink-soft); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
-.code-note { font-size: 10px; color: #a99f86; }
+.code-val { font-size: 12px; color: #f0a815; }
+.copy { width: 24px; height: 24px; background: #f3ead2; border: 2px solid var(--c-ink-soft); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
 
 /* 하단 바 */
 .room-footer {
@@ -552,7 +445,6 @@ const startHint = computed(() =>
 .chat-send { width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
 
 .footer-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
-.result-demo { padding: 9px 12px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); font-size: 8px; }
 .leave { display: flex; align-items: center; gap: 9px; padding: 0 18px; height: 52px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; background: var(--c-coral); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
 
 .room-toast { position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 60; padding: 13px 20px; background: #fffdf3; border: 3px solid #f0a815; color: #f0a815; font-size: 9px; line-height: 1.7; box-shadow: 5px 5px 0 rgba(43, 35, 51, 0.25); }
@@ -560,14 +452,5 @@ const startHint = computed(() =>
 .toast-leave-active { transition: opacity 0.2s; }
 .toast-leave-to { opacity: 0; }
 
-@keyframes px-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
 @keyframes px-bubble { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-@keyframes token-spin { 0%, 100% { transform: rotate(-5deg) scale(1); } 50% { transform: rotate(5deg) scale(0.92); } }
-
-@media (max-width: 1280px) {
-  .room-main { grid-template-columns: 220px minmax(480px, 1fr) 220px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .dancer, .token { animation: none; }
-}
 </style>
