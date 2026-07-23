@@ -7,6 +7,7 @@ import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
@@ -54,6 +55,7 @@ class GameSessionServiceTest {
     @Mock GameRepository gameRepository;
     @Mock SimpMessagingTemplate messagingTemplate;
     @Mock TaskScheduler gameTaskScheduler;
+    @Mock ApplicationEventPublisher eventPublisher;
 
     @InjectMocks GameSessionService service;
 
