@@ -347,12 +347,54 @@ export type ChatMessage =
   | (ChatMessageBase & { type: 'TALK'; gameId: null; gameName: null })
   | (ChatMessageBase & { type: 'GAME_SUGGEST'; gameId: number; gameName: string })
 
-/** /user/queue/errors 수신 페이로드 — 시그널·채팅 공용 큐, path로 구분 */
+/** /user/queue/errors 수신 페이로드 — 시그널·채팅·게임 공용 큐, path로 구분 */
 export interface StompErrorPayload {
   code: string
   message: string
   path?: string
 }
+
+// ── 게임 세션 (STOMP, S15P11A706-115) ─────────
+// 수신: SUBSCRIBE /topic/rooms/{roomId}/game.
+// 발신: SEND /app/rooms/{roomId}/game/start(방장) · /game/progress(2~5Hz 스로틀) · /game/finish(1회).
+// 타이머 권위는 서버 — startAt/endAt/serverNow는 서버 epoch millis이며,
+// 클라이언트는 serverNow - Date.now()로 오프셋을 보정해 표시한다.
+export interface GameResultEntry {
+  rank: number
+  userId: string
+  nickname: string
+  score: number
+  starsHit: number
+  /** false = 미제출(중도 이탈·타임아웃) — 0점 처리 */
+  finished: boolean
+}
+export type GameEvent =
+  | {
+      type: 'GAME_START'
+      sessionId: string
+      gameId: number
+      constellationKey: string
+      serverNow: number
+      startAt: number
+      endAt: number
+    }
+  | {
+      type: 'PROGRESS'
+      sessionId: string
+      userId: string
+      nickname: string
+      starsLit: number
+      holdProgress: number
+    }
+  | {
+      type: 'PLAYER_FINISHED'
+      sessionId: string
+      userId: string
+      nickname: string
+      score: number
+      starsHit: number
+    }
+  | { type: 'GAME_END'; sessionId: string; results: GameResultEntry[] }
 
 // ── 관리자 ────────────────────────────────
 export interface ReportedUser {
