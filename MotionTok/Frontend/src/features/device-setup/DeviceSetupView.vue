@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 장치 설정 — 카메라/마이크 권한 요청 + 프리뷰 + 꾸미기. 입장 시 게임룸으로. */
 import { computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { roomsApi } from '@/api'
 import { useCamera } from '@/composables/useCamera'
@@ -27,16 +27,23 @@ async function allow() {
   await start({ video: { width: 640, height: 400 }, audio: true })
 }
 
+// 게임룸으로 넘어가는 건 이탈이 아니라 계속 진행이므로 퇴장 통보를 건너뛴다.
+let proceedingToRoom = false
 function enter() {
   if (!isOn.value) return
+  proceedingToRoom = true
   router.push({
     name: RouteName.GameRoom,
     query: { game: game.value, room: room.value, host: '1' },
   })
 }
 
-// 로비에서 이미 join된 상태로 여기 들어오므로, 취소 시 백엔드에도 퇴장을 알려야 인원수가 줄어든다.
-async function cancel() {
+// 로비에서 이미 join된 상태로 여기 들어오므로, 취소·로고 클릭·뒤로가기 등 어떤 경로로
+// 이 화면을 벗어나도 백엔드에 퇴장을 알려야 인원수가 줄어든다.
+let notified = false
+async function notifyLeave() {
+  if (notified) return
+  notified = true
   const roomId = route.query.room as string | undefined
   if (roomId) {
     try {
@@ -45,6 +52,16 @@ async function cancel() {
       // 이미 방이 없어졌거나 네트워크 오류여도 화면 이동은 계속 진행
     }
   }
+}
+
+onBeforeRouteLeave(async () => {
+  if (proceedingToRoom) return true
+  await notifyLeave()
+  return true
+})
+
+async function cancel() {
+  await notifyLeave()
   router.push({ name: RouteName.Lobby })
 }
 // 내 아바타(인벤토리·화면 꾸미기) 전체 편집으로 이동
@@ -54,7 +71,9 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
 <template>
   <main class="page px-party-bg">
     <header class="top">
-      <BrandLogo subtitle="PLAY CHECK STATION" />
+      <button type="button" class="logo-btn" @click="cancel">
+        <BrandLogo subtitle="PLAY CHECK STATION" />
+      </button>
       <div class="top-copy">
         <span class="px-kicker">STEP 01 · READY</span>
         <h1>카메라 앞에 설 준비가 됐나요?</h1>
@@ -139,6 +158,7 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
 <style scoped>
 .page { height: 100%; padding: 20px 5%; overflow: hidden; }
 .top { height: 76px; display: flex; align-items: center; gap: 24px; }
+.logo-btn { border: 0; background: transparent; padding: 0; cursor: pointer; }
 .top-copy { margin-left: 24px; }
 .top h1 { margin: 8px 0 0; font-size: 18px; }
 .step { font-size: 10px; padding: 7px 10px; border: 2px solid var(--c-ink); border-radius: 999px; background: #fff; }
