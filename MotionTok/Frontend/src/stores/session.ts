@@ -1,14 +1,46 @@
 /**
  * 세션 스토어 — 로그인 상태 / 게스트·회원 구분 / 프로필 / JWT 토큰.
  * 프로필 형태는 API 명세서 UserProfile 스키마를 그대로 따른다.
+ *
+ * 스토어 자체는 인메모리라 새로고침하면 비어 있다. 그래서 부팅·라우팅 시 restore()로
+ * 저장된 토큰을 근거로 상태를 다시 세운다 — 이 복원이 없으면 새로고침 후 "로그인한 것 같지만
+ * 프로필이 없는" 상태가 되어 화면이 기본값(P1)을 그리게 된다.
  */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { TokenResponse, UserProfile } from '@/api/types'
 import * as authApi from '@/api/auth'
-import { setTokens, clearTokens } from '@/api/token'
+import { usersApi } from '@/api/modules/users'
+import { clearTokens, getAccessToken, readAnyAccessClaims, setTokens } from '@/api/token'
+import { rescheduleTokenAutoRefresh } from '@/api/refreshScheduler'
 
 export type Role = 'guest' | 'member'
+
+/**
+ * 게스트 세션(임시 닉네임·1인방)은 sessionStorage에 둔다 (-109).
+ * 새로고침·화면 이동에는 살아남고, 창(탭)을 닫으면 브라우저가 알아서 지운다 = "세션 종료 시 소멸".
+ * 게스트 액세스 토큰도 같은 저장소를 쓰므로(authApi.guest) 둘의 수명이 어긋나지 않는다.
+ */
+const GUEST_KEY = 'motok.guest'
+
+interface GuestSession {
+  nickname: string | null
+  roomId: string | null
+}
+
+function saveGuestSession(session: GuestSession) {
+  sessionStorage.setItem(GUEST_KEY, JSON.stringify(session))
+}
+
+function loadGuestSession(): GuestSession | null {
+  const raw = sessionStorage.getItem(GUEST_KEY)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as GuestSession
+  } catch {
+    return null
+  }
+}
 
 export const useSessionStore = defineStore('session', () => {
   const role = ref<Role | null>(null)
@@ -22,12 +54,14 @@ export const useSessionStore = defineStore('session', () => {
   const isAuthenticated = computed(() => role.value !== null)
   const isGuest = computed(() => role.value === 'guest')
   const isMember = computed(() => role.value === 'member')
+  /** 소셜 최초 로그인 직후 — 닉네임을 직접 정하기 전까지 다른 화면으로 못 가게 막는다(-22) */
+  const nicknamePending = computed(() => isMember.value && profile.value?.nicknamePending === true)
 
   /** 로비 헤더 등에 노출되는 사용자 라벨 — 게스트는 서버가 부여한 임시 닉네임을 우선 표시 */
   const userLabel = computed(() =>
     isGuest.value
       ? `GUEST · ${guestNickname.value ?? '1인 전용'}`
-      : `MEMBER · ${profile.value?.nickname ?? 'P1'}`,
+      : `MEMBER · ${profile.value?.nickname ?? ''}`,
   )
 
   /**
@@ -39,9 +73,14 @@ export const useSessionStore = defineStore('session', () => {
     profile.value = res.user ?? null
     accessToken.value = res.accessToken
     refreshToken.value = res.refreshToken
+    guestNickname.value = null
+    guestRoomId.value = null
+    sessionStorage.removeItem(GUEST_KEY)
 
     // 토큰 저장/복원은 token.ts가 단일 관리(http.ts의 자동 인증 헤더도 여기서 갱신됨).
     setTokens(res.accessToken, res.refreshToken, rememberMe)
+    restored.value = true
+    rescheduleTokenAutoRefresh()
   }
 
   function loginAsGuest(nickname?: string, roomId?: string) {
@@ -49,13 +88,68 @@ export const useSessionStore = defineStore('session', () => {
     profile.value = null
     guestNickname.value = nickname ?? null
     guestRoomId.value = roomId ?? null
+    saveGuestSession({ nickname: guestNickname.value, roomId: guestRoomId.value })
+    restored.value = true
+    rescheduleTokenAutoRefresh()
   }
 
-  /** 로그아웃 — 서버측 Refresh 토큰까지 무효화해야 14일간 남지 않는다. */
+  // ── 새로고침 복원 ────────────────────────────────────────────────
+  const restored = ref(false)
+  let restoring: Promise<void> | null = null
+
+  /**
+   * 저장된 토큰으로 세션을 복원한다.
+   *  - 토큰 없음            → 비로그인
+   *  - 게스트 토큰          → sessionStorage에 남은 임시 닉네임·1인방 복원
+   *  - 회원 토큰(만료 포함) → GET /users/me. 만료됐다면 http.ts가 알아서 refresh하고,
+   *                           refresh까지 실패하면 토큰이 지워지며 세션 만료 이벤트가 발생한다.
+   */
+  async function restore(): Promise<void> {
+    const claims = readAnyAccessClaims()
+    if (!claims) {
+      clearLocal()
+      return
+    }
+    if (claims.type === 'guest') {
+      const guest = loadGuestSession()
+      role.value = 'guest'
+      profile.value = null
+      guestNickname.value = guest?.nickname ?? null
+      guestRoomId.value = guest?.roomId ?? null
+      return
+    }
+    try {
+      profile.value = await usersApi.getMe()
+      role.value = 'member'
+      rescheduleTokenAutoRefresh()
+    } catch {
+      // 401(갱신 실패)이든 서버 장애든, 신원을 확인하지 못한 채 회원 화면을 열어 줄 수는 없다.
+      clearLocal()
+    }
+  }
+
+  /** 라우터 가드·화면에서 부담 없이 부를 수 있는 단일 비행 복원. */
+  function ensureRestored(): Promise<void> {
+    if (restored.value) return Promise.resolve()
+    if (!restoring) {
+      restoring = restore().finally(() => {
+        restored.value = true
+        restoring = null
+      })
+    }
+    return restoring
+  }
+
+  /**
+   * 로그아웃 — 서버측 Refresh 토큰까지 무효화해야 14일간 남지 않는다.
+   * 토큰은 스토어 ref가 아니라 token.ts에서 읽는다 — 새로고침 복원이나 자동 갱신으로 토큰이 바뀌어도
+   * 항상 지금 유효한 값으로 무효화 요청을 보내기 위해서다.
+   */
   async function logout() {
-    if (accessToken.value) {
+    const token = getAccessToken()
+    if (token) {
       try {
-        await authApi.logout(accessToken.value)
+        await authApi.logout(token)
       } catch {
         // 서버 무효화에 실패해도 로컬 세션은 반드시 정리한다.
       }
@@ -63,14 +157,22 @@ export const useSessionStore = defineStore('session', () => {
     clear()
   }
 
-  function clear() {
+  /** 스토어 상태만 비운다(토큰 저장소 포함). 복원 완료 표시는 유지 — 다시 조회하러 가지 않게. */
+  function clearLocal() {
     role.value = null
     profile.value = null
     accessToken.value = null
     refreshToken.value = null
     guestNickname.value = null
     guestRoomId.value = null
+    sessionStorage.removeItem(GUEST_KEY)
     clearTokens()
+  }
+
+  function clear() {
+    clearLocal()
+    restored.value = true
+    rescheduleTokenAutoRefresh()
   }
 
   return {
@@ -83,9 +185,12 @@ export const useSessionStore = defineStore('session', () => {
     isAuthenticated,
     isGuest,
     isMember,
+    nicknamePending,
     userLabel,
+    restored,
     applyToken,
     loginAsGuest,
+    ensureRestored,
     logout,
     clear,
   }
