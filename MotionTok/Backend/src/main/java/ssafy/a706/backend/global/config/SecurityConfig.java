@@ -75,6 +75,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/games/*/leaderboard", "/api/v1/games/*/leaderboard").permitAll()
                         // 회원 전용 — 게스트 토큰(ROLE_GUEST)의 /users/me 접근을 403으로 차단한다
                         .requestMatchers("/api/users/**").hasRole("USER")
+                        // 회원 전용 — 상점(-56)은 게스트가 RDB에 영속되지 않아(D5) 대상이 아니다
+                        .requestMatchers("/api/shop/**").hasRole("USER")
                         // 로그아웃은 인증 필요(명세 401)
                         .anyRequest().authenticated())
                 .exceptionHandling(eh -> eh

@@ -62,7 +62,12 @@ public enum ErrorCode {
     SIGNAL_TARGET_NOT_FOUND(HttpStatus.NOT_FOUND, "SIGNAL_TARGET_NOT_FOUND", "시그널 수신 대상이 방에 없습니다."),
 
     // sfu
-    SFU_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "SFU_NOT_IN_ROOM", "방 참가자만 화상 접속 토큰을 발급받을 수 있습니다.");
+    SFU_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "SFU_NOT_IN_ROOM", "방 참가자만 화상 접속 토큰을 발급받을 수 있습니다."),
+
+    // shop
+    ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "ITEM_NOT_FOUND", "존재하지 않는 아이템입니다."),
+    ITEM_ALREADY_OWNED(HttpStatus.CONFLICT, "ITEM_ALREADY_OWNED", "이미 보유한 아이템입니다."),
+    INSUFFICIENT_POINT(HttpStatus.CONFLICT, "INSUFFICIENT_POINT", "포인트가 부족합니다.");
 
     private final HttpStatus status;
     private final String code;
