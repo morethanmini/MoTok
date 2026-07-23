@@ -35,4 +35,7 @@ export const roomsApi = {
   /** POST /v1/live-rooms/join-by-invite-code — 초대코드로 입장(비밀번호 검증 없음) */
   joinByInviteCode: (inviteCode: string) =>
     httpEnvelope.post<LiveRoomDetail>(`${BASE}/join-by-invite-code`, { inviteCode }),
+
+  /** DELETE /v1/live-rooms/{roomId}/members/me — 방 나가기(멱등). 마지막 인원이면 방 즉시 삭제. */
+  leave: (roomId: string) => httpEnvelope.delete<void>(`${BASE}/${roomId}/members/me`),
 }
