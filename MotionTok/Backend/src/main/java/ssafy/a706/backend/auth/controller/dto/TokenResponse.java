@@ -8,9 +8,15 @@ public record TokenResponse(
         String accessToken,
         String refreshToken,
         long expiresIn,
-        UserProfileResponse user
+        UserProfileResponse user,
+        /**
+         * true면 닉네임 설정 화면으로 보내야 한다(-22 소셜 최초 로그인).
+         * user.nicknamePending과 같은 값이지만, 클라이언트가 분기 하나만 보면 되도록 최상위에도 싣는다.
+         */
+        boolean nicknameSetupRequired
 ) {
     public static TokenResponse of(String accessToken, String refreshToken, long expiresIn, UserProfileResponse user) {
-        return new TokenResponse("Bearer", accessToken, refreshToken, expiresIn, user);
+        return new TokenResponse("Bearer", accessToken, refreshToken, expiresIn, user,
+                user != null && user.nicknamePending());
     }
 }

@@ -7,5 +7,6 @@ export const adminRoutes: RouteRecordRaw[] = [
     name: RouteName.Admin,
     component: () => import('./AdminView.vue'),
     // TODO: meta.requiresRole = 'ADMIN' + 라우터 가드에서 검증
+    meta: { requiresMember: true },
   },
 ]

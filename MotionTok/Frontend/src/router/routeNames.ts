@@ -5,6 +5,8 @@
 export const RouteName = {
   Start: 'start',
   Auth: 'auth',
+  /** 소셜 최초 로그인 후 닉네임을 직접 정하는 화면 (-22) */
+  NicknameSetup: 'nickname-setup',
   Lobby: 'lobby',
   DeviceSetup: 'device-setup',
   GameRoom: 'game-room',

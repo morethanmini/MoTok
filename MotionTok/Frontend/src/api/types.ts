@@ -24,6 +24,8 @@ export interface TokenResponse {
   refreshToken: string
   expiresIn?: number
   user?: UserProfile
+  /** 소셜 최초 로그인 — true면 닉네임 설정 화면으로 보내야 한다 (-22) */
+  nicknameSetupRequired?: boolean
 }
 export interface SignupRequest {
   email: string
@@ -61,6 +63,28 @@ export interface UserProfile {
   role: Role
   pointBalance: number
   createdAt: string
+  /** true면 nickname이 임시값이라 닉네임 설정을 마쳐야 한다 (-22) */
+  nicknamePending?: boolean
+  /** 비밀번호가 없는 소셜 전용 계정 — 비밀번호 변경 불가, 탈퇴 시 소셜 재인증 필요 (-111) */
+  socialOnly?: boolean
+}
+
+/** GET /users/{userId} — 랭킹 등에서 보는 다른 사용자의 공개 프로필 (-96) */
+export interface PublicUserProfile {
+  id: number
+  nickname: string
+  createdAt: string
+}
+
+/**
+ * DELETE /users/me 본인 확인 (-111).
+ * 자체 가입 계정은 password, 소셜 전용 계정은 소셜 재인증 값을 보낸다.
+ */
+export interface WithdrawRequest {
+  password?: string
+  provider?: SocialProvider
+  authorizationCode?: string
+  redirectUri?: string
 }
 export type PointType = 'GAME_REWARD' | 'SHOP_PURCHASE' | 'AI_GENERATE' | 'GUEST_MIGRATE'
 export interface PointHistory {

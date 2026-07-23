@@ -6,5 +6,6 @@ export const inventoryRoutes: RouteRecordRaw[] = [
     path: '/inventory',
     name: RouteName.Inventory,
     component: () => import('./InventoryView.vue'),
+    meta: { requiresMember: true },
   },
 ]

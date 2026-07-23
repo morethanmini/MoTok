@@ -8,6 +8,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -15,8 +16,10 @@ import org.springframework.web.bind.annotation.RestController;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
 import ssafy.a706.backend.user.service.UserService;
 import ssafy.a706.backend.user.controller.dto.ChangePasswordRequest;
+import ssafy.a706.backend.user.controller.dto.PublicUserProfileResponse;
 import ssafy.a706.backend.user.controller.dto.UpdateProfileRequest;
 import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
+import ssafy.a706.backend.user.controller.dto.WithdrawRequest;
 
 /**
  * API 명세서 회원 도메인 — 프로필 조회·수정, 비밀번호 변경, 탈퇴(-23·-111).
@@ -50,10 +53,24 @@ public class UserController {
         userService.changePassword(principal.id(), req.currentPassword(), req.newPassword());
     }
 
-    /** DELETE /users/me — 회원 탈퇴(soft delete) */
+    /**
+     * DELETE /users/me — 회원 탈퇴(soft delete).
+     * 본인 확인 필수 — 자체 가입은 비밀번호, 소셜 전용 계정은 소셜 재인증(-111).
+     * 본문이 없으면 400으로 어떤 확인이 필요한지 알려준다.
+     */
     @DeleteMapping("/me")
-    public ResponseEntity<Void> withdraw(@AuthenticationPrincipal MemberPrincipal principal) {
-        userService.withdraw(principal.id());
+    public ResponseEntity<Void> withdraw(@AuthenticationPrincipal MemberPrincipal principal,
+                                         @RequestBody(required = false) WithdrawRequest req) {
+        userService.withdraw(principal.id(), req);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * GET /users/{userId} — 다른 사용자의 공개 프로필(-96 랭킹에서 프로필 조회).
+     * 회원 전용(SecurityConfig에서 /api/users/**는 ROLE_USER)이고, 탈퇴·정지 계정은 404다.
+     */
+    @GetMapping("/{userId}")
+    public PublicUserProfileResponse publicProfile(@PathVariable Long userId) {
+        return userService.getPublicProfile(userId);
     }
 }
