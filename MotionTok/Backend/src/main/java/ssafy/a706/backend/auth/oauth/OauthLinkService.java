@@ -7,9 +7,11 @@ import ssafy.a706.backend.auth.oauth.entity.OauthAccount;
 import ssafy.a706.backend.auth.oauth.repository.OauthAccountRepository;
 import ssafy.a706.backend.user.entity.User;
 import ssafy.a706.backend.user.repository.UserRepository;
+import ssafy.a706.backend.user.withdrawal.RejoinPolicy;
+import ssafy.a706.backend.user.withdrawal.WithdrawnIdentifierType;
 
 import java.util.Optional;
-import java.util.concurrent.ThreadLocalRandom;
+import java.util.UUID;
 
 /**
  * 소셜 계정 조회·생성·연동 (OAUTH_ACCOUNT).
@@ -24,6 +26,7 @@ public class OauthLinkService {
 
     private final UserRepository userRepository;
     private final OauthAccountRepository oauthAccountRepository;
+    private final RejoinPolicy rejoinPolicy;
 
     /** 이미 연동된 계정의 userId. 복구 조회도 이 메서드(= 새 트랜잭션)를 쓴다. */
     @Transactional(readOnly = true)
@@ -38,6 +41,11 @@ public class OauthLinkService {
      */
     @Transactional
     public Long createAndLink(OauthProvider provider, OauthUserInfo info) {
+        // 여기까지 왔다는 건 이 소셜 계정에 연동된 회원이 없다는 뜻 — 탈퇴 직후 재가입인지 먼저 본다(-111).
+        rejoinPolicy.ensureRejoinable(
+                RejoinPolicy.socialIdentifier(provider.name(), info.providerUid()),
+                WithdrawnIdentifierType.SOCIAL);
+
         User user = resolveLinkTarget(info);
         oauthAccountRepository.saveAndFlush(OauthAccount.of(user, provider, info.providerUid()));
         return user.getId();
@@ -58,34 +66,26 @@ public class OauthLinkService {
     }
 
     private User createSocialUser(String email, OauthUserInfo info) {
+        // 소셜로 우회해 이메일 재가입 쿨다운을 건너뛰지 못하게 한다(-111).
+        if (email != null) {
+            rejoinPolicy.ensureRejoinable(email, WithdrawnIdentifierType.EMAIL);
+        }
         User user = User.builder()
                 .email(email)          // 미인증/미제공 시 null — 소셜 전용 계정
                 .passwordHash(null)    // 소셜 전용이라 로컬 로그인 불가
-                .nickname(generateUniqueNickname(info))
+                .nickname(placeholderNickname())
+                .nicknamePending(true) // 닉네임은 앱 안에서 사용자가 직접 정한다(-22)
                 .build();
         return userRepository.saveAndFlush(user);
     }
 
-    /** 닉네임은 UNIQUE·NOT NULL이라, provider 닉네임(없으면 기본값)을 기준으로 충돌 없는 값을 만든다(최대 16자). */
-    private String generateUniqueNickname(OauthUserInfo info) {
-        String base = (info.nickname() == null || info.nickname().isBlank())
-                ? (info.provider() == OauthProvider.KAKAO ? "카카오" : "구글") + "유저"
-                : info.nickname().trim();
-        if (base.length() > 12) {
-            base = base.substring(0, 12);
-        }
-        if (base.length() < 2) {
-            base = base + "유저";
-        }
-        for (int i = 0; i < 12; i++) {
-            String candidate = (i == 0) ? base : base + ThreadLocalRandom.current().nextInt(1000, 10000);
-            if (candidate.length() > 16) {
-                candidate = candidate.substring(0, 16);
-            }
-            if (!userRepository.existsByNickname(candidate)) {
-                return candidate;
-            }
-        }
-        return "user" + ThreadLocalRandom.current().nextInt(100_000_000);
+    /**
+     * 닉네임 설정 전까지 UNIQUE·NOT NULL 제약을 채워 둘 임시값.
+     * provider 닉네임을 그대로 쓰지 않는 이유 — 카카오·구글 닉네임은 서비스 밖에서 정해진 값이라
+     * 운영 정책(2~16자·중복 검사)을 통과했다고 볼 수 없고, 사용자가 고르지도 않은 이름이 노출된다.
+     * 길이를 28자로 잡아 닉네임 상한(16자)을 넘김으로써 사용자가 같은 값을 선점할 수 없게 한다(탈퇴 tombstone과 같은 방식).
+     */
+    private String placeholderNickname() {
+        return "pending_" + UUID.randomUUID().toString().replace("-", "").substring(0, 20);
     }
 }
