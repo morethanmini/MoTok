@@ -1,7 +1,7 @@
 package ssafy.a706.backend.user.controller.dto;
 
 /**
- * DELETE /users/me 본인 확인 (명세서 v0.2.12, -111).
+ * DELETE /users/me 본인 확인 (명세서 v0.2.15, -111).
  *
  * 자체 가입 계정은 password로, 소셜 전용 계정(비밀번호 없음)은 소셜 재인증으로 본인을 확인한다.
  * 소셜 전용 계정에게 비밀번호를 요구하면 탈퇴 자체가 불가능해지므로 두 경로를 모두 연다.
