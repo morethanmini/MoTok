@@ -27,7 +27,7 @@ function refreshPayload(accessToken = fakeJwt(3600)) {
   return { tokenType: 'Bearer', accessToken, refreshToken: 'refresh-v2', expiresIn: 3600 }
 }
 
-const fetchMock = vi.fn()
+const fetchMock = vi.fn<typeof fetch>()
 
 describe('액세스 토큰 자동 갱신', () => {
   beforeEach(() => {
@@ -53,7 +53,7 @@ describe('액세스 토큰 자동 갱신', () => {
     expect(String(refreshUrl)).toContain('/auth/token/refresh')
 
     const [, meInit] = fetchMock.mock.calls[1] ?? []
-    expect(meInit.headers.Authorization).toBe(`Bearer ${rotated}`)
+    expect((meInit?.headers as Record<string, string> | undefined)?.Authorization).toBe(`Bearer ${rotated}`)
     expect(getAccessToken()).toBe(rotated)
   })
 
@@ -80,7 +80,7 @@ describe('액세스 토큰 자동 갱신', () => {
 
   it('갱신에 실패하면 토큰을 지우고 세션 만료를 알린다', async () => {
     setTokens(fakeJwt(3600), 'refresh-dead')
-    const expired = vi.fn()
+    const expired = vi.fn<() => void>()
     const unsubscribe = onSessionExpired(expired)
     fetchMock
       .mockResolvedValueOnce(jsonResponse(401, { code: 'COMMON_UNAUTHORIZED' }))
@@ -94,7 +94,7 @@ describe('액세스 토큰 자동 갱신', () => {
 
   it('동시에 여러 요청이 401이어도 갱신은 한 번만 돈다', async () => {
     setTokens(fakeJwt(3600), 'refresh-v1')
-    fetchMock.mockImplementation((url: string | URL) => {
+    fetchMock.mockImplementation((url) => {
       const href = String(url)
       if (href.includes('/auth/token/refresh')) return Promise.resolve(jsonResponse(200, refreshPayload()))
       // 첫 호출(옛 토큰)은 401, 갱신 후 호출은 200
