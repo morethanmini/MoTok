@@ -125,7 +125,7 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
   background: #faf6ee;
 }
 
-.tile-video { width: 100%; height: 100%; object-fit: cover; background: #eee6cf; }
+.tile-video { width: 100%; height: 100%; object-fit: contain; background: #eee6cf; }
 .tile-video.mirror { transform: scaleX(-1); }
 
 .cam-off {
