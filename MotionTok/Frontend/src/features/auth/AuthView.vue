@@ -594,7 +594,7 @@ onMounted(async () => {
       <template v-else>
         <label class="field">
           이메일
-          <input v-model="email" placeholder="play@motok.com" />
+          <input v-model="email" placeholder="play@motok.com" @keydown.enter="submit" />
         </label>
         <label class="field">
           비밀번호
@@ -604,6 +604,7 @@ onMounted(async () => {
             placeholder="비밀번호 입력"
             @focus="catShy = true"
             @blur="catShy = false"
+            @keydown.enter="submit"
           />
         </label>
 

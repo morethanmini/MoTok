@@ -36,6 +36,33 @@ export function setTokens(access: string, refresh?: string, persist = true) {
   other.removeItem(REFRESH_KEY)
 }
 
+/** 액세스 토큰(JWT) 페이로드 — 백엔드 JwtTokenProvider가 싣는 클레임. */
+export interface AccessClaims {
+  /** 회원 PK 또는 guest-xxxx */
+  sub: string
+  type: 'member' | 'guest'
+  /** 만료 시각(초) */
+  exp: number
+}
+
+/**
+ * 저장된 액세스 토큰의 클레임을 읽는다. 토큰이 없거나 형식이 깨졌거나 이미 만료됐으면 null.
+ * 서명 검증은 서버 몫이고, 여기서는 화면 접근 제어(회원 전용 라우트) 판단에만 쓴다.
+ */
+export function readAccessClaims(): AccessClaims | null {
+  const payload = accessToken?.split('.')[1]
+  if (!payload) return null
+  try {
+    // JWT는 base64url — atob이 읽을 수 있게 문자 치환 + 패딩 복원
+    const b64 = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const claims = JSON.parse(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4))) as AccessClaims
+    if (typeof claims.exp !== 'number' || claims.exp * 1000 <= Date.now()) return null
+    return claims
+  } catch {
+    return null
+  }
+}
+
 export function clearTokens() {
   accessToken = null
   refreshToken = null
