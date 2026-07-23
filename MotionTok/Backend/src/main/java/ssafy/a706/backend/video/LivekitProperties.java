@@ -1,4 +1,4 @@
-package ssafy.a706.backend.sfu;
+package ssafy.a706.backend.video;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 

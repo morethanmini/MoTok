@@ -1,4 +1,4 @@
-package ssafy.a706.backend.sfu.dto;
+package ssafy.a706.backend.video.dto;
 
 /**
  * SFU 접속 정보. 프론트는 livekit-client로 {@code Room.connect(url, token)}에 그대로 투입한다.
