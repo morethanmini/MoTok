@@ -217,17 +217,19 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
           <button class="refresh-btn" @click="refreshRooms">새로고침 ↻</button>
         </div>
 
-        <section class="room-list">
-          <RoomCard
-            v-for="(room, i) in filteredRooms"
-            :key="i"
-            :room="room"
-            @enter="enterPublic(room)"
-          />
-          <div v-if="filteredRooms.length === 0" class="empty">
-            검색 결과가 없어요. 다른 방 제목을 입력해보세요.
-          </div>
-        </section>
+        <div class="room-list-wrap">
+          <section class="room-list">
+            <RoomCard
+              v-for="(room, i) in filteredRooms"
+              :key="i"
+              :room="room"
+              @enter="enterPublic(room)"
+            />
+            <div v-if="filteredRooms.length === 0" class="empty">
+              검색 결과가 없어요. 다른 방 제목을 입력해보세요.
+            </div>
+          </section>
+        </div>
 
         <div class="room-pager">
           <button class="pager-btn" :disabled="!hasPrev" @click="prevPage">← 이전</button>
@@ -321,17 +323,28 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   padding: 20px 28px 22px;
   z-index: 2;
 }
-.content { min-width: 0; overflow: auto; padding: 0 4px 10px 6px; margin-left: -6px; scrollbar-width: none; }
-.content::-webkit-scrollbar { display: none; }
+.content {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 4px 10px 6px;
+  margin-left: -6px;
+}
+/* 방 목록만 내부 스크롤 — 헤더/검색/이전·다음 버튼은 스크롤 없이 항상 보이게 고정 */
+/* 그림자(box-shadow)가 컨테이너 경계에 잘리지 않도록 최소 여백 확보 */
+.room-list-wrap { flex: 1; min-height: 0; overflow: auto; scrollbar-width: none; padding: 2px 6px 4px 6px; }
+.room-list-wrap::-webkit-scrollbar { display: none; }
 
 /* 로비 히어로 배너 */
 .lobby-hero {
+  flex: none;
   display: flex;
   align-items: stretch;
   gap: 18px;
-  min-height: 200px;
-  margin-bottom: 100px;
-  padding: 18px 22px;
+  min-height: 150px;
+  margin-bottom: 60px;
+  padding: 16px 22px;
   border: var(--border);
   border-radius: 20px;
   background: linear-gradient(110deg, #cff4e7, #fff0b9);
@@ -343,6 +356,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 .lobby-hero .hero-actions { align-self: flex-end; margin: 0 0 0 auto; display: flex; gap: 10px; }
 
 .guest-note {
+  flex: none;
   margin-bottom: 12px;
   padding: 10px 13px;
   border: 2px solid var(--c-ink);
@@ -351,7 +365,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   font-size: 10px;
 }
 
-.section-head { display: flex; align-items: center; margin: 27px 0 12px; }
+.section-head { flex: none; display: flex; align-items: center; margin: 2px 0 2px; }
 .section-head h2 { margin: 0; font-size: 22px; }
 .section-head p { margin: 0 0 0 9px; font-size: 13px; color: var(--c-muted); }
 .create-room-btn { height: 38px; padding: 0 16px; font-size: 14px; border-radius: 11px 11px 8px 11px; margin-left: 10px; }
@@ -371,7 +385,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 .room-search input { width: 240px; border: 0; outline: 0; background: transparent; font-size: 14px; }
 .refresh-btn { margin-left: 12px; border: 0; background: transparent; color: var(--c-blue); font-size: 14px; font-weight: 700; }
 
-.room-list { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 14px; }
+.room-list { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 7px; }
 .empty {
   grid-column: 1 / -1;
   padding: 40px;
@@ -382,7 +396,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   font-size: 11px;
 }
 
-.room-pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 18px; }
+.room-pager { flex: none; display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 6px; }
 .pager-btn { border: 2px solid var(--c-ink); border-radius: 10px; background: #fff; padding: 8px 14px; font-size: 11px; font-weight: 700; box-shadow: var(--shadow-sm); }
 .pager-btn:disabled { opacity: 0.35; cursor: not-allowed; box-shadow: none; }
 .pager-page { min-width: 20px; text-align: center; font-size: 12px; font-weight: 700; color: var(--c-muted); }
