@@ -6,7 +6,6 @@ import org.springframework.stereotype.Service;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
-import ssafy.a706.backend.liveroom.LiveRoomProperties;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
 import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomRequest;
 import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomResponse;
@@ -39,7 +38,6 @@ public class LiveRoomService {
 
     private final LiveRoomRepository repository;
     private final SimpMessagingTemplate messagingTemplate;
-    private final LiveRoomProperties properties;
 
     public CreateLiveRoomResponse create(AuthPrincipal principal, CreateLiveRoomRequest req) {
         validatePasswordRule(req.visibility(), req.password());
@@ -69,7 +67,7 @@ public class LiveRoomService {
 
         LiveRoom room = new LiveRoom(roomId, req.title(), req.visibility(), req.maxPlayers(), "WAITING",
                 principal.userId(), principal.displayName(), now, inviteCode, req.password(), List.of());
-        return CreateLiveRoomResponse.from(room, properties.inviteLinkBaseUrl());
+        return CreateLiveRoomResponse.from(room);
     }
 
     /**
@@ -113,7 +111,7 @@ public class LiveRoomService {
 
     public LiveRoomDetailResponse get(String roomId) {
         LiveRoom room = loadRoom(roomId);
-        return LiveRoomDetailResponse.from(room, properties.inviteLinkBaseUrl());
+        return LiveRoomDetailResponse.from(room);
     }
 
     public LiveRoomDetailResponse join(AuthPrincipal principal, String roomId, JoinLiveRoomRequest req) {
@@ -239,7 +237,7 @@ public class LiveRoomService {
         }
         repository.addMember(room.roomId(), key, principal.userId(), principal.displayName(),
                 principal.isGuest(), System.currentTimeMillis());
-        return LiveRoomDetailResponse.from(loadRoom(room.roomId()), properties.inviteLinkBaseUrl());
+        return LiveRoomDetailResponse.from(loadRoom(room.roomId()));
     }
 
     private LiveRoom loadRoom(String roomId) {

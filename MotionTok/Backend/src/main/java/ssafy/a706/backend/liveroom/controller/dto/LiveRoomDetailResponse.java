@@ -14,7 +14,6 @@ public record LiveRoomDetailResponse(
         String status,
         String hostUserId,
         String inviteCode,
-        String inviteLink,
         List<MemberView> members
 ) {
     public record MemberView(String userId, String displayName, boolean guest) {
@@ -23,7 +22,7 @@ public record LiveRoomDetailResponse(
         }
     }
 
-    public static LiveRoomDetailResponse from(LiveRoom room, String inviteLinkBaseUrl) {
+    public static LiveRoomDetailResponse from(LiveRoom room) {
         return new LiveRoomDetailResponse(
                 room.roomId(),
                 room.title(),
@@ -33,7 +32,6 @@ public record LiveRoomDetailResponse(
                 room.status(),
                 room.hostUserId(),
                 room.inviteCode(),
-                room.inviteCode() == null ? null : inviteLinkBaseUrl + "?code=" + room.inviteCode(),
                 room.members().stream().map(MemberView::from).toList()
         );
     }
