@@ -11,8 +11,10 @@ import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameProgressRequest;
 import ssafy.a706.backend.game.dto.GameResultEntry;
 import ssafy.a706.backend.game.dto.GameStartRequest;
+import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.model.GamePlayerScore;
 import ssafy.a706.backend.game.model.GameSession;
+import ssafy.a706.backend.game.repository.GameRepository;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
@@ -50,13 +52,9 @@ public class GameSessionService {
 
     private static final String GAME_TOPIC = "/topic/rooms/%s/game";
 
-    /** 현재 플레이 가능한 게임 카탈로그 id — 핑거 스타. 게임 추가 시 카탈로그 테이블로 이관. */
-    private static final Set<Long> PLAYABLE_GAME_IDS = Set.of(1L);
+    /** 별자리 과제 후보(핑거 스타 콘텐츠) — 게임1 전용. 공통 서버 밖(게임 모듈)으로 분리 대상. */
     private static final Set<String> CONSTELLATION_KEYS = Set.of("cassiopeia", "orion", "gemini");
 
-    /** GAME_START 배포 후 라운드 시작까지의 카운트다운. */
-    private static final long COUNTDOWN_MILLIS = 3_000;
-    private static final long ROUND_MILLIS = 30_000;
     /** endAt 경과 후 정산까지의 유예 — 마지막 순간 finish 프레임의 전송 지연 흡수. */
     private static final long END_GRACE_MILLIS = 1_500;
 
@@ -66,6 +64,7 @@ public class GameSessionService {
     private final RoomMembershipReader membershipReader;
     private final LiveRoomRepository liveRoomRepository;
     private final GameSessionRepository sessionRepository;
+    private final GameRepository gameRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final TaskScheduler gameTaskScheduler;
 
@@ -74,16 +73,22 @@ public class GameSessionService {
 
     /** 방장 게임 시작 → 세션 생성·방 잠금·GAME_START 브로드캐스트·정산 예약. */
     public void start(String roomId, GameStartRequest request, AuthPrincipal sender) {
-        Long gameId = request.gameId();
-        if (gameId == null || !PLAYABLE_GAME_IDS.contains(gameId)) {
-            throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
-        }
+        // 1) 인가 — 방 존재·참가·방장 권한을 먼저 본다(비방장에게 카탈로그를 노출하지 않는다).
         Map<Object, Object> roomFields = liveRoomRepository.findRoomFields(roomId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ROOM_NOT_FOUND));
         requireMembership(roomId, sender);
         if (!sender.userId().equals(roomFields.get("hostUserId"))) {
             throw new BusinessException(ErrorCode.NOT_ROOM_HOST);
         }
+        // 2) 게임 카탈로그 검증 — 하드코딩(Set.of(1L)) 대신 games 테이블. 라운드/카운트다운도 게임별 설정에서.
+        Long gameId = request.gameId();
+        if (gameId == null) {
+            throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
+        }
+        Game game = gameRepository.findById(gameId)
+                .filter(Game::isActive)
+                .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
+        // 3) 진행 중 세션 재시작 방지
         long now = System.currentTimeMillis();
         boolean activeExists = sessionRepository.findSession(roomId)
                 .map(s -> s.isPlaying(now, END_GRACE_MILLIS))
@@ -94,8 +99,8 @@ public class GameSessionService {
 
         String constellationKey = resolveConstellation(request.constellationKey());
         String sessionId = UUID.randomUUID().toString();
-        long startAt = now + COUNTDOWN_MILLIS;
-        long endAt = startAt + ROUND_MILLIS;
+        long startAt = now + game.getCountdownSec() * 1000L;
+        long endAt = startAt + game.getRoundDurationSec() * 1000L;
         GameSession session = new GameSession(sessionId, gameId, constellationKey,
                 startAt, endAt, GameSession.STATUS_PLAYING);
         sessionRepository.saveSession(roomId, session);
