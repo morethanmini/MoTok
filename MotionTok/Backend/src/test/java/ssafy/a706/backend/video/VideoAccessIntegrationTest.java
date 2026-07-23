@@ -1,8 +1,7 @@
-package ssafy.a706.backend.sfu;
+package ssafy.a706.backend.video;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.AfterEach;
@@ -27,12 +26,12 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 화상 접속 토큰 발급 API 통합 테스트.
- * 전제: MySQL(3307)·Redis(6379) 기동 상태(docker compose up -d). LiveKit 컨테이너는 불필요 —
- * 발급은 무상태 서명뿐이라 LiveKit 없이 검증 가능(실접속은 하네스 E2E에서).
+ * 통합 rtc-access API(-123) 테스트 — 기본 설정(rtc.provider=livekit) 경로.
+ * 전제: MySQL(3307)·Redis(6379) 기동 상태(docker compose up -d). 미디어서버 불필요(무상태 서명).
+ * mesh 전환 경로는 VideoAccessMeshIntegrationTest.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class SfuTokenIntegrationTest {
+class VideoAccessIntegrationTest {
 
     private static final String MEMBER_ID = "guest-member";
     private static final String OUTSIDER_ID = "guest-outsider";
@@ -57,13 +56,13 @@ class SfuTokenIntegrationTest {
 
     private String roomId;
 
-    /** liveroom Redis 스키마로 방 시딩 (SignalRelayIntegrationTest와 동일 규격). */
+    /** liveroom Redis 스키마로 방 시딩 (SfuTokenIntegrationTest와 동일 규격). */
     @BeforeEach
     void setUpRoom() {
         long now = System.currentTimeMillis();
         roomId = liveRoomRepository.generateUniqueRoomId();
         liveRoomRepository.saveRoom(roomId, Map.of(
-                "title", "SFU 토큰 테스트",
+                "title", "rtc-access 테스트",
                 "visibility", "PRIVATE",
                 "maxPlayers", "8",
                 "status", "WAITING",
@@ -80,24 +79,25 @@ class SfuTokenIntegrationTest {
     }
 
     @Test
-    @DisplayName("방 멤버는 200과 함께 LiveKit 접속 정보(url·검증 가능한 토큰)를 받는다")
-    void issueTokenForMember() throws Exception {
+    @DisplayName("방 멤버는 mode=SFU_LIVEKIT과 검증 가능한 sfu 접속 정보를 받고 p2p는 생략된다")
+    void issueAccessForMember() throws Exception {
         HttpResponse<String> response = get(roomId, tokenProvider.createGuestToken(MEMBER_ID, "멤버"));
 
         assertThat(response.statusCode()).isEqualTo(200);
         JsonNode body = objectMapper.readTree(response.body());
         assertThat(body.get("success").asBoolean()).isTrue();
-        assertThat(body.at("/data/url").asText()).isEqualTo(properties.url());
-        assertThat(body.at("/data/expiresIn").asLong()).isEqualTo(properties.tokenTtl().toSeconds());
+        assertThat(body.at("/data/mode").asText()).isEqualTo("SFU_LIVEKIT");
+        assertThat(body.at("/data/sfu/url").asText()).isEqualTo(properties.url());
+        assertThat(body.at("/data/sfu/expiresIn").asLong()).isEqualTo(properties.tokenTtl().toSeconds());
+        assertThat(body.at("/data/p2p").isMissingNode()).isTrue();   // NON_NULL 직렬화
 
-        Claims claims = Jwts.parser()
+        String sub = Jwts.parser()
                 .verifyWith(Keys.hmacShaKeyFor(properties.apiSecret().getBytes(StandardCharsets.UTF_8)))
                 .build()
-                .parseSignedClaims(body.at("/data/token").asText())
-                .getPayload();
-        assertThat(claims.getIssuer()).isEqualTo(properties.apiKey());
-        assertThat(claims.getSubject()).isEqualTo(MEMBER_ID);
-        assertThat(claims.get("video", Map.class)).containsEntry("room", roomId);
+                .parseSignedClaims(body.at("/data/sfu/token").asText())
+                .getPayload()
+                .getSubject();
+        assertThat(sub).isEqualTo(MEMBER_ID);
     }
 
     @Test
@@ -133,7 +133,7 @@ class SfuTokenIntegrationTest {
     // ---- helpers ----
 
     private String url(String roomId) {
-        return "http://localhost:" + port + "/api/v1/live-rooms/" + roomId + "/video-token";
+        return "http://localhost:" + port + "/api/v1/live-rooms/" + roomId + "/rtc-access";
     }
 
     private HttpResponse<String> get(String roomId, String jwt) throws Exception {
