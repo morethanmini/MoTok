@@ -125,12 +125,12 @@
     </div>
 
     <div class="card">
-      <div class="card-h h-rank">③ 랭킹 — 유일한 영구 키(예외)<span class="tag">📋 미구현</span></div>
+      <div class="card-h h-rank">③ 랭킹 — 유일한 영구 키(예외)<span class="tag">✅ 구현됨 (-117)</span></div>
       <div class="card-body">
         <div class="kv"><div class="row"><code>rank:{gameId}</code>
-          <div class="badges"><span class="badge b-type">ZSET</span><span class="badge b-ttl">TTL 없음</span></div></div>
-          <div class="desc">게임별 랭킹(회원만) · ZADD GT · 유실 시 MySQL LEADERBOARD로 warm-up 복구(설계 단계)</div></div>
-        <div class="note">랭킹 코드 0개 — <b>여전히 미구현</b>. ②(게임 세션)는 구현됐으나 <code>GAME_END</code>는 결과를 <b>브로드캐스트만</b> 하고 DB(GAME_SESSION_RESULT·LEADERBOARD)·<code>rank:{gameId}</code> 영속은 없음. 게임 세션 서버 다음 조각 = <b>정산(-117)</b>.</div>
+          <div class="badges"><span class="badge b-done">✅</span><span class="badge b-type">ZSET</span><span class="badge b-ttl">TTL 없음</span></div></div>
+          <div class="desc">게임별 세계순위(회원만, member=userId·score=best_score) · 정산 시 ZADD · 유실 시 MySQL <code>leaderboards</code>로 warm-up</div></div>
+        <div class="note"><b>2026-07-24 구현(-117)</b>: <code>GAME_END</code> 후 <b>write-behind 정산</b>으로 회원 결과를 MySQL <code>leaderboards</code>(집계: best_score·play_count, uk(game_id,user_id))에 적재하고 <code>rank:{gameId}</code> ZSET을 갱신한다(권위 best_score라 GT 불필요). <b>최소 RDB</b>: 개별 판(GAME_SESSION/RESULT)은 두지 않음 — 전적·세계순위엔 집계로 충분(ERD §03-1). 지갑(POINT_HISTORY) 반영은 후속.</div>
       </div>
     </div>
 
