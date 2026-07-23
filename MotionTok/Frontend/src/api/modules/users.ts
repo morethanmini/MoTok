@@ -5,13 +5,18 @@ import type {
   GameRecord,
   InventoryItem,
   PointHistoryPage,
+  PublicUserProfile,
   UserProfile,
+  WithdrawRequest,
 } from '../types'
 
 export const usersApi = {
   getMe: () => http.get<UserProfile>('/users/me'),
+  /** 랭킹 등에서 다른 사용자의 공개 프로필 조회. 탈퇴·정지 계정은 404 (-96) */
+  getProfile: (userId: number) => http.get<PublicUserProfile>(`/users/${userId}`),
   updateProfile: (nickname: string) => http.patch<UserProfile>('/users/me', { nickname }),
-  withdraw: () => http.delete<void>('/users/me'),
+  /** 탈퇴 — 본인 확인 값 필수(자체 가입은 비밀번호, 소셜 전용은 소셜 재인증) (-111) */
+  withdraw: (proof: WithdrawRequest) => http.delete<void>('/users/me', proof),
   changePassword: (currentPassword: string, newPassword: string) =>
     http.patch<void>('/users/me/password', { currentPassword, newPassword }),
 

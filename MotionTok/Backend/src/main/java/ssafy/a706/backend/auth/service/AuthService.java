@@ -23,6 +23,8 @@ import ssafy.a706.backend.liveroom.service.LiveRoomService;
 import ssafy.a706.backend.user.entity.User;
 import ssafy.a706.backend.user.repository.UserRepository;
 import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
+import ssafy.a706.backend.user.withdrawal.RejoinPolicy;
+import ssafy.a706.backend.user.withdrawal.WithdrawnIdentifierType;
 
 import java.time.Duration;
 import java.util.UUID;
@@ -41,6 +43,7 @@ public class AuthService {
     private final OauthClientResolver oauthClientResolver;
     private final OauthLinkService oauthLinkService;
     private final LiveRoomService liveRoomService;
+    private final RejoinPolicy rejoinPolicy;
 
     public AvailabilityResponse checkEmail(String email) {
         return new AvailabilityResponse(!userRepository.existsByEmail(email.trim().toLowerCase()));
@@ -81,6 +84,9 @@ public class AuthService {
         String nickname = req.nickname().trim();
 
         emailVerificationService.consumeToken(req.verificationToken(), email);
+
+        // 탈퇴 후 1주일이 지나지 않은 이메일은 재가입을 막는다(-111).
+        rejoinPolicy.ensureRejoinable(email, WithdrawnIdentifierType.EMAIL);
 
         if (userRepository.existsByEmail(email)) {
             throw new BusinessException(ErrorCode.EMAIL_ALREADY_REGISTERED);

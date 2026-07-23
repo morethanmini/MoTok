@@ -45,21 +45,31 @@ public class User extends BaseTimeEntity {
     @Column(name = "point_balance", nullable = false)
     private int pointBalance;
 
+    /**
+     * 닉네임을 아직 사용자가 직접 정하지 않은 상태(소셜 최초 로그인). true인 동안 nickname은
+     * 사람이 쓸 수 없는 placeholder이며, 닉네임 설정을 마쳐야 정상 이용이 시작된다(-22).
+     */
+    @Column(name = "nickname_pending", nullable = false)
+    private boolean nicknamePending;
+
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
     @Builder
-    public User(String email, String passwordHash, String nickname) {
+    public User(String email, String passwordHash, String nickname, boolean nicknamePending) {
         this.email = email;
         this.passwordHash = passwordHash;
         this.nickname = nickname;
+        this.nicknamePending = nicknamePending;
         this.role = UserRole.USER;
         this.status = UserStatus.ACTIVE;
         this.pointBalance = 0;
     }
 
+    /** 닉네임 변경 — 사용자가 직접 정한 값이므로 '설정 필요' 상태를 함께 해제한다. */
     public void changeNickname(String nickname) {
         this.nickname = nickname;
+        this.nicknamePending = false;
     }
 
     public void changePassword(String encodedPassword) {
@@ -83,5 +93,13 @@ public class User extends BaseTimeEntity {
     /** 로그인 가능 상태인지. SUSPENDED·BANNED·DELETED는 로그인을 거부한다. */
     public boolean isActive() {
         return this.status == UserStatus.ACTIVE;
+    }
+
+    /**
+     * 비밀번호가 없는 소셜 전용 계정인지.
+     * 이런 계정은 '비밀번호 확인'으로 본인 확인을 할 수 없어 탈퇴 시 소셜 재인증을 요구한다(-111).
+     */
+    public boolean isSocialOnly() {
+        return this.passwordHash == null;
     }
 }
