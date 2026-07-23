@@ -173,14 +173,15 @@ onBeforeRouteLeave(() => {
   showLeaveConfirm.value = true
   return new Promise<boolean>((resolve) => (resolveLeave = resolve))
 })
-function answerLeave(ok: boolean) {
+async function answerLeave(ok: boolean) {
   showLeaveConfirm.value = false
+  if (ok) await notifyLeave()
   resolveLeave?.(ok)
   resolveLeave = null
 }
 
-async function leave() {
-  leavingIntentionally = true
+// 백엔드 퇴장 통보 + LiveKit 연결 정리. "LEAVE" 버튼과 확인 모달("나가기") 양쪽 경로에서 공유.
+async function notifyLeave() {
   const id = route.query.room as string | undefined
   if (id) {
     try {
@@ -191,6 +192,11 @@ async function leave() {
   }
   await lk.disconnect()
   camera.stop()
+}
+
+async function leave() {
+  leavingIntentionally = true
+  await notifyLeave()
   router.push({ name: RouteName.Lobby })
 }
 
