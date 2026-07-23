@@ -9,6 +9,7 @@ import org.springframework.messaging.simp.annotation.SendToUser;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
+import ssafy.a706.backend.chat.dto.ChatGameSuggestRequest;
 import ssafy.a706.backend.chat.dto.ChatSendRequest;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
@@ -30,6 +31,12 @@ public class ChatController {
     @MessageMapping("/rooms/{roomId}/chat")
     public void send(@DestinationVariable String roomId, ChatSendRequest request, Principal principal) {
         chatService.send(roomId, request, extractSender(principal));
+    }
+
+    /** 게임 제안 — 같은 채팅 토픽에 type=GAME_SUGGEST로 브로드캐스트된다. */
+    @MessageMapping("/rooms/{roomId}/game-suggest")
+    public void suggestGame(@DestinationVariable String roomId, ChatGameSuggestRequest request, Principal principal) {
+        chatService.suggestGame(roomId, request, extractSender(principal));
     }
 
     /**
