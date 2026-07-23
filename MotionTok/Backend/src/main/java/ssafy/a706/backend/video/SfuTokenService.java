@@ -1,4 +1,4 @@
-package ssafy.a706.backend.sfu;
+package ssafy.a706.backend.video;
 
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
-import ssafy.a706.backend.sfu.dto.SfuTokenResponse;
+import ssafy.a706.backend.video.dto.SfuTokenResponse;
 import ssafy.a706.backend.signal.RoomMembershipReader;
 
 import java.nio.charset.StandardCharsets;

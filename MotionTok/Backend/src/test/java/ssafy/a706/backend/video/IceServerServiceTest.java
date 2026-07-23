@@ -1,9 +1,9 @@
-package ssafy.a706.backend.rtc;
+package ssafy.a706.backend.video;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import ssafy.a706.backend.rtc.dto.IceServer;
-import ssafy.a706.backend.rtc.dto.IceServersResponse;
+import ssafy.a706.backend.video.dto.IceServer;
+import ssafy.a706.backend.video.dto.IceServersResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
