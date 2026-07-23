@@ -13,6 +13,7 @@ import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomByInviteCodeReques
 import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomRequest;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomDetailResponse;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomHostChangedEvent;
+import ssafy.a706.backend.liveroom.controller.dto.LiveRoomListResponse;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomMemberKickedEvent;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomMemberLeftEvent;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomSummaryResponse;
@@ -33,6 +34,8 @@ import java.util.Map;
 public class LiveRoomService {
 
     private static final int PUBLIC_LIST_LIMIT = 50;
+
+    private static final int PAGE_SIZE = 6;
 
     private static final String MEMBERS_TOPIC = "/topic/rooms/%s/members";
 
@@ -92,21 +95,29 @@ public class LiveRoomService {
         return roomId;
     }
 
-    public List<LiveRoomSummaryResponse> list() {
-        List<LiveRoomSummaryResponse> result = new ArrayList<>();
+    /**
+     * 로비 방 목록(S15P11A706-124). 페이지당 {@link #PAGE_SIZE}개, 최신 생성 방이 최상단.
+     * ponytail: 기존 스캔 상한({@link #PUBLIC_LIST_LIMIT}) 안에서만 페이지네이션 — 공개방 수가
+     * 그 캡을 넘어서면 뒷 페이지가 실제보다 적게 잡힐 수 있음, 그때 커서 기반으로 전환.
+     */
+    public LiveRoomListResponse list(int page) {
+        int safePage = Math.max(page, 1);
+        List<LiveRoomSummaryResponse> all = new ArrayList<>();
         for (String roomId : repository.listRoomIdsNewestFirst(PUBLIC_LIST_LIMIT)) {
             repository.findRoomFields(roomId)
                     .map(fields -> toLiveRoom(roomId, fields, repository.findMembers(roomId)))
                     .ifPresentOrElse(
                             room -> {
                                 if (room.visibility() == LiveRoomVisibility.PUBLIC) {
-                                    result.add(LiveRoomSummaryResponse.from(room));
+                                    all.add(LiveRoomSummaryResponse.from(room));
                                 }
                             },
                             () -> repository.removeFromIndex(roomId) // 죽은 방 lazy 청소
                     );
         }
-        return result;
+        int from = Math.min((safePage - 1) * PAGE_SIZE, all.size());
+        int to = Math.min(from + PAGE_SIZE, all.size());
+        return new LiveRoomListResponse(all.subList(from, to), to < all.size());
     }
 
     public LiveRoomDetailResponse get(String roomId) {
