@@ -22,9 +22,9 @@ export interface RoomFriend {
 
 export const GAME_CATALOG: GameEntry[] = [
   {
-    id: 'finger', gameId: 1, name: 'FINGER STAR', tag: '손가락으로 별자리 만들기', emoji: '✨', thumb: '#eafbe0', playable: false,
-    description: '화면에 흩어진 별들을 손가락으로 이어 제한 시간 안에 별자리를 완성하는 게임이에요.',
-    howToPlay: ['카메라에 손이 잘 보이도록 위치를 잡아요', '검지로 별을 하나씩 순서대로 가리켜요', '제한 시간 안에 별자리를 모두 이으면 성공!'],
+    id: 'finger', gameId: 1, name: 'FINGER STAR', tag: '손가락으로 별자리 만들기', emoji: '✨', thumb: '#eafbe0', playable: true,
+    description: '두 손 열 손가락을 별 위치에 맞게 벌려 별자리 모양을 만드는 게임이에요. 어떤 손가락이든 별 위에 가 있으면 그 별이 켜져요.',
+    howToPlay: ['카메라에 두 손이 잘 보이도록 위치를 잡아요', '열 손가락을 움직여 모든 별을 동시에 켜요', '그대로 10초간 유지하면 완성 — 모양이 비슷할수록 고득점!'],
   },
   {
     id: 'fishing', gameId: 2, name: 'MOTION FISH', tag: '두 손으로 낚시하기', emoji: '🎣', thumb: '#dff1fb', playable: false,

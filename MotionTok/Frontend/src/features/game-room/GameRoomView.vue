@@ -1,19 +1,25 @@
 <script setup lang="ts">
 /** 게임룸 — 화상 파티룸(LiveKit SFU). 방 정원만큼 슬롯을 만들고, 참가자는 실시간 타일로,
  *  빈 자리는 "대기 중"으로 표시한다. 무대/채팅/게임 선택은 데모. */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
 import { roomsApi, readAccessClaims, type ChatMessage } from '@/api'
+import type { GameEvent, GameResultEntry } from '@/api/types'
+import type { ActiveGameSession } from '@/features/games/session'
 import { useCamera } from '@/composables/useCamera'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
 import { useRoomChat } from '@/composables/useRoomChat'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
-import type { GameEntry } from './data'
+import { GAME_CATALOG, type GameEntry } from './data'
 import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
+// MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
+const FingerStarGame = defineAsyncComponent(
+  () => import('@/features/games/finger-star/FingerStarGame.vue'),
+)
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -188,12 +194,110 @@ async function toggleMic() {
 const SUGGEST_COOLDOWN_MS = 3000
 const suggestCooldown = ref(false)
 
+// ── 게임 세션 (STOMP, S15P11A706-115/116) ────
+// GAME_START 수신 시 전원의 셀프 타일 위에 게임이 마운트된다. 타이머 권위는 서버 —
+// startAt/endAt(서버 epoch millis)과 serverNow 기반 시계 오프셋을 게임 컴포넌트에 내려준다.
+// STOMP 미연결(백엔드 미연동 데모)일 때는 로컬 솔로 플레이로 폴백.
+const activeGame = ref<GameEntry | null>(null)
+const activeSession = ref<ActiveGameSession | null>(null)
+const gameResults = ref<GameResultEntry[] | null>(null)
+
+// 실시간 스코어보드(S15P11A706-82) — PROGRESS/PLAYER_FINISHED 수신으로 갱신
+interface LiveScoreRow {
+  nickname: string
+  starsLit: number
+  holdProgress: number
+  finished: boolean
+  score: number | null
+}
+const liveScores = ref<Record<string, LiveScoreRow>>({})
+const scoreboardRows = computed(() => {
+  const rows = Object.entries(liveScores.value).map(([userId, r]) => ({ userId, ...r }))
+  rows.sort(
+    (a, b) =>
+      Number(b.finished) - Number(a.finished) ||
+      (b.score ?? 0) - (a.score ?? 0) ||
+      b.starsLit - a.starsLit,
+  )
+  return rows
+})
+
+watch(roomChat.gameEvents, (all, prev) => {
+  for (const e of all.slice(prev?.length ?? 0)) {
+    applyGameEvent(e)
+  }
+})
+function applyGameEvent(e: GameEvent) {
+  if (e.type === 'GAME_START') {
+    const entry = GAME_CATALOG.find((g) => g.gameId === e.gameId)
+    if (!entry) return
+    gameResults.value = null
+    liveScores.value = {}
+    activeSession.value = {
+      sessionId: e.sessionId,
+      constellationKey: e.constellationKey,
+      startAt: e.startAt,
+      endAt: e.endAt,
+      clockOffset: e.serverNow - Date.now(),
+    }
+    activeGame.value = entry
+    picker.value = false
+    if (!selfCamOn.value) flash('카메라를 켜면 게임에 참여할 수 있어요')
+    return
+  }
+  // 이하 이벤트는 현재 세션 것만 반영(닫은 뒤 늦게 도착한 프레임 방어)
+  if (activeSession.value?.sessionId !== e.sessionId) return
+  if (e.type === 'PROGRESS') {
+    const row = liveScores.value[e.userId]
+    if (row?.finished) return // 완주 확정 후의 늦은 진행 프레임은 무시
+    liveScores.value[e.userId] = {
+      nickname: e.nickname,
+      starsLit: e.starsLit,
+      holdProgress: e.holdProgress,
+      finished: false,
+      score: null,
+    }
+    return
+  }
+  if (e.type === 'PLAYER_FINISHED') {
+    liveScores.value[e.userId] = {
+      nickname: e.nickname,
+      starsLit: e.starsHit,
+      holdProgress: 1,
+      finished: true,
+      score: e.score,
+    }
+    return
+  }
+  if (e.type === 'GAME_END') {
+    gameResults.value = e.results
+  }
+}
+
 function openPicker() {
   picker.value = true
 }
 function launch(g: GameEntry) {
   picker.value = false
-  if (isHost.value) {
+  // 방장 + 서버 연결 + 플레이 가능 → 서버에 시작 요청. GAME_START가 방 전체에 돌아와 마운트된다.
+  if (g.playable && roomChat.connected.value && selfIsHost.value) {
+    if (!selfCamOn.value) {
+      flash('카메라를 켜고 시작해 주세요')
+      return
+    }
+    roomChat.startGame(g.gameId)
+    return
+  }
+  // 서버 미연동 데모 — 로컬 솔로 플레이 폴백
+  if (g.playable && !roomChat.connected.value) {
+    if (!selfCamOn.value) {
+      flash('카메라를 켜야 게임을 플레이할 수 있어요')
+      return
+    }
+    activeGame.value = g
+    return
+  }
+  if (selfIsHost.value) {
     // 실제 게임 빌드가 아직 없음 → 준비 중 안내. (연동 시 여기서 게임 URL/캔버스 로드)
     flash(`${g.name} 는 준비 중이에요`)
     return
@@ -202,6 +306,28 @@ function launch(g: GameEntry) {
   roomChat.suggestGame(g.gameId, g.name)
   suggestCooldown.value = true
   setTimeout(() => (suggestCooldown.value = false), SUGGEST_COOLDOWN_MS)
+}
+
+/** 게임 컴포넌트의 진행 상황(컴포넌트에서 300ms 스로틀) → 서버 중계 */
+function onGameProgress(starsLit: number, holdProgress: number) {
+  if (activeSession.value && !gameResults.value) roomChat.sendGameProgress(starsLit, holdProgress)
+}
+
+function onGameFinished(r: { constellation: string; score: number; starsHit: number; starsTotal: number }) {
+  if (activeSession.value) {
+    // 서버가 최초 1회만 수리하고 PLAYER_FINISHED → (전원 완주 시) GAME_END를 배포한다.
+    roomChat.sendGameFinish(r.score, r.starsHit)
+    return
+  }
+  // 솔로 폴백 — 결과를 토스트로만 알린다.
+  flash(`✨ ${r.score}점 · 별 ${r.starsHit}/${r.starsTotal}`)
+}
+
+function closeGame() {
+  activeGame.value = null
+  activeSession.value = null
+  gameResults.value = null
+  liveScores.value = {}
 }
 
 function copyCode() {
@@ -283,6 +409,17 @@ const startHint = computed(() =>
             </svg>
             <button class="px cam-on-btn" @click="toggleCam">CAM ON</button>
           </div>
+          <!-- 진행 중인 게임 — 비디오는 밑에서 계속 재생(LiveKit 발행 유지), 게임 캔버스가 덮는다 -->
+          <FingerStarGame
+            v-if="activeGame?.id === 'finger'"
+            :video="selfVideoEl ?? null"
+            :session="activeSession"
+            :results="gameResults"
+            :my-user-id="myParticipantId"
+            @close="closeGame"
+            @progress="onGameProgress"
+            @finished="onGameFinished"
+          />
           <div class="self-label">
             <span class="c-g">{{ selfIsHost ? 'YOU · HOST' : 'YOU' }}</span>
             <span :style="{ color: selfMicOn ? '#5cbf4a' : '#e85d6e' }">
@@ -300,6 +437,21 @@ const startHint = computed(() =>
             :host="slot.host"
             play-audio
           />
+        </div>
+
+        <!-- 실시간 스코어보드 (게임 중, S15P11A706-82) -->
+        <div v-if="activeSession && !gameResults" class="px game-scoreboard">
+          <div class="gs-title">⭐ LIVE SCORE</div>
+          <div
+            v-for="row in scoreboardRows"
+            :key="row.userId"
+            class="gs-row"
+            :class="{ me: row.userId === myParticipantId }"
+          >
+            <span class="gs-name">{{ row.nickname }}</span>
+            <span class="gs-val">{{ row.finished ? `${row.score}점 ✓` : `⭐ ${row.starsLit}` }}</span>
+          </div>
+          <div v-if="scoreboardRows.length === 0" class="gs-empty">진행 상황 수신 대기 중…</div>
         </div>
       </div>
 
@@ -438,7 +590,29 @@ const startHint = computed(() =>
 
 /* 캠 영역 — 내 캠(왼쪽, 크게) + 나머지 참가자(오른쪽, 인원수에 맞춰 그리드). 화면 안에 스크롤 없이 모두 들어가고,
    카메라 비율은 유지하되 박스를 꽉 채우지는 않는다(letterbox는 object-fit: contain으로 처리). */
-.cam-stage { flex: 1; min-height: 0; display: flex; flex-direction: row; gap: 14px; }
+.cam-stage { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: row; gap: 14px; }
+
+/* 게임 중 실시간 스코어보드 — 참가자 트레이 위 오버레이 */
+.game-scoreboard {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  min-width: 170px;
+  max-height: 60%;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: rgba(255, 253, 247, 0.96);
+  border: 3px solid var(--c-ink-soft);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+}
+.gs-title { font-size: 8px; color: #f0a815; margin-bottom: 8px; }
+.gs-row { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; font-size: 8px; color: var(--c-ink-soft); }
+.gs-row.me .gs-name { color: #f0a815; }
+.gs-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 110px; }
+.gs-val { color: #5cbf4a; white-space: nowrap; }
+.gs-empty { font-size: 7px; color: #a99f86; }
 
 /* 자기 타일 — 항상 가장 크게 */
 .self-tile.self-spot {
