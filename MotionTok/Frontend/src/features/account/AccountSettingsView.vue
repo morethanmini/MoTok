@@ -1,10 +1,15 @@
 <script setup lang="ts">
 /** 계정 설정 — 닉네임 변경 / 비밀번호 변경 / 회원 탈퇴 (API §2). */
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { usersApi, authApi, ApiError } from '@/api'
+import { usersApi, authApi, ApiError, type WithdrawRequest } from '@/api'
 import { RouteName } from '@/router/routeNames'
 import { useSessionStore } from '@/stores/session'
+import {
+  consumeWithdrawProof,
+  startSocialAuthorize,
+  type SocialProviderId,
+} from '@/features/auth/socialAuthorize'
 import AppPage from '@/components/common/AppPage.vue'
 import PixelCard from '@/components/common/PixelCard.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -118,21 +123,68 @@ async function savePassword() {
   }
 }
 
+// ── 회원 탈퇴 ────────────────────────────────────────────────
+// 본인 확인 필수(-111). 자체 가입 계정은 비밀번호, 소셜 전용 계정(비밀번호가 없는 계정)은
+// 같은 소셜 계정으로 다시 인가받아 온 코드로 확인한다.
 const showWithdrawModal = ref(false)
+const withdrawPassword = ref('')
+const withdrawError = ref('')
+const withdrawing = ref(false)
 
-async function withdraw() {
-  showWithdrawModal.value = false
+/** 소셜로만 만들어진 계정인지 — email이 있어도 비밀번호가 없을 수 있어 서버가 내려주는 값을 쓴다. */
+const socialOnly = computed(() => session.profile?.socialOnly === true)
+
+function openWithdraw() {
+  withdrawPassword.value = ''
+  withdrawError.value = ''
+  showWithdrawModal.value = true
+}
+
+async function submitWithdraw(proof: WithdrawRequest) {
+  withdrawing.value = true
+  withdrawError.value = ''
   try {
-    await usersApi.withdraw()
+    await usersApi.withdraw(proof)
+    showWithdrawModal.value = false
     // 서버는 이미 refresh 토큰을 무효화했다 — 로컬 세션·토큰도 즉시 정리해 탈퇴 계정의 잔존 로그인 상태를 없앤다.
     // (logout()이 아니라 clear() — 죽은 계정 토큰으로 POST /auth/logout을 다시 부를 필요가 없다)
     session.clear()
     flash('탈퇴 처리되었어요')
     setTimeout(() => router.push({ name: RouteName.Start }), 1000)
   } catch (e) {
-    flash(e instanceof ApiError ? e.message : '탈퇴 실패 (백엔드 미연동)')
+    withdrawError.value =
+      e instanceof ApiError && e.code === 'AUTH_INVALID_CREDENTIALS'
+        ? '본인 확인에 실패했어요. 가입에 사용한 계정·비밀번호가 맞는지 확인해 주세요.'
+        : e instanceof ApiError
+          ? e.message
+          : '탈퇴에 실패했어요.'
+    showWithdrawModal.value = true
+  } finally {
+    withdrawing.value = false
   }
 }
+
+function withdrawWithPassword() {
+  if (!withdrawPassword.value) {
+    withdrawError.value = '비밀번호를 입력해 주세요.'
+    return
+  }
+  void submitWithdraw({ password: withdrawPassword.value })
+}
+
+/** 소셜 재인증 — /auth로 돌아온 뒤 이 화면으로 다시 넘어와 탈퇴를 마저 진행한다. */
+function withdrawWithSocial(provider: SocialProviderId) {
+  const failure = startSocialAuthorize(provider, 'withdraw')
+  if (failure) withdrawError.value = failure
+}
+
+// 소셜 재인증을 마치고 돌아온 경우 — 받아 둔 인가 코드로 바로 탈퇴를 요청한다.
+onMounted(() => {
+  const proof = consumeWithdrawProof()
+  if (!proof) return
+  showWithdrawModal.value = true
+  void submitWithdraw(proof)
+})
 </script>
 
 <template>
@@ -167,7 +219,7 @@ async function withdraw() {
         <PixelButton variant="primary" block @click="saveNickname">변경</PixelButton>
       </PixelCard>
 
-      <PixelCard title="비밀번호 변경">
+      <PixelCard v-if="!socialOnly" title="비밀번호 변경">
         <label class="field">
           현재 비밀번호
           <input v-model="currentPassword" type="password" />
@@ -206,18 +258,53 @@ async function withdraw() {
         <PixelButton variant="primary" block @click="savePassword">변경</PixelButton>
       </PixelCard>
 
-      <PixelButton variant="primary" block @click="showWithdrawModal = true">회원 탈퇴</PixelButton>
+      <PixelButton variant="primary" block @click="openWithdraw">회원 탈퇴</PixelButton>
     </div>
     <PixelToast :message="toast" />
     <div v-if="centerNotice" :key="centerNoticeKey" class="center-notice">{{ centerNotice }}</div>
 
     <PixelModal v-if="showWithdrawModal" @close="showWithdrawModal = false">
       <h3 class="withdraw-title">⚠ 주의</h3>
-      <p class="withdraw-warn">탈퇴 시 계정은 비활성 처리(soft delete)되고 랭킹 등 노출 정보에서 제외됩니다.</p>
-      <div class="modal-actions">
-        <PixelButton block @click="showWithdrawModal = false">취소</PixelButton>
-        <PixelButton variant="primary" block @click="withdraw">탈퇴</PixelButton>
-      </div>
+      <p class="withdraw-warn">
+        탈퇴 시 계정은 비활성 처리(soft delete)되고 랭킹 등 노출 정보에서 제외됩니다.<br />
+        포인트·아이템·전적·친구는 <b>복구되지 않으며</b>, 다시 가입해도 이어지지 않습니다.<br />
+        같은 이메일·소셜 계정으로는 <b>탈퇴 후 1주일이 지나야</b> 다시 가입할 수 있어요.
+      </p>
+
+      <template v-if="socialOnly">
+        <p class="withdraw-reauth">
+          소셜 계정으로 가입해서 비밀번호가 없어요.<br />
+          가입에 사용한 소셜 계정으로 다시 인증하면 탈퇴가 진행됩니다.
+        </p>
+        <div class="modal-actions">
+          <PixelButton block :disabled="withdrawing" @click="withdrawWithSocial('kakao')">
+            카카오로 인증
+          </PixelButton>
+          <PixelButton block :disabled="withdrawing" @click="withdrawWithSocial('google')">
+            구글로 인증
+          </PixelButton>
+        </div>
+      </template>
+
+      <template v-else>
+        <label class="field">
+          비밀번호 확인
+          <input
+            v-model="withdrawPassword"
+            type="password"
+            placeholder="현재 비밀번호"
+            @keyup.enter="withdrawWithPassword"
+          />
+        </label>
+        <div class="modal-actions">
+          <PixelButton block @click="showWithdrawModal = false">취소</PixelButton>
+          <PixelButton variant="primary" block :disabled="withdrawing" @click="withdrawWithPassword">
+            {{ withdrawing ? '처리 중…' : '탈퇴' }}
+          </PixelButton>
+        </div>
+      </template>
+
+      <p v-if="withdrawError" class="withdraw-err">{{ withdrawError }}</p>
     </PixelModal>
   </AppPage>
 </template>
@@ -230,7 +317,10 @@ async function withdraw() {
   border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; outline: 0;
 }
 .withdraw-title { margin: 0 0 7px; color: var(--c-coral); }
-.withdraw-warn { margin: 0 0 18px; font-size: 11px; color: var(--c-muted); line-height: 1.6; }
+.withdraw-warn { margin: 0 0 14px; font-size: 11px; color: var(--c-muted); line-height: 1.7; }
+.withdraw-warn b { color: var(--c-coral); }
+.withdraw-reauth { margin: 0 0 14px; font-size: 11px; line-height: 1.7; }
+.withdraw-err { margin: 12px 0 0; font-size: 10px; color: var(--c-coral); line-height: 1.6; }
 .modal-actions { display: flex; gap: 9px; }
 .modal-actions > * { flex: 1; }
 .hint { font-size: 8px; color: var(--c-muted); margin-top: 5px; }
