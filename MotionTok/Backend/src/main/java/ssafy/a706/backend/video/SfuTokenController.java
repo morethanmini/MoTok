@@ -1,4 +1,4 @@
-package ssafy.a706.backend.sfu;
+package ssafy.a706.backend.video;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.global.response.ApiResponse;
-import ssafy.a706.backend.sfu.dto.SfuTokenResponse;
+import ssafy.a706.backend.video.dto.SfuTokenResponse;
 
 /**
  * SFU(LiveKit) 접속 토큰 발급. 인증 필수(익명 발급 허용 시 미디어서버가 무료 중계기가 됨).
