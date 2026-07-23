@@ -49,10 +49,10 @@ describe('액세스 토큰 자동 갱신', () => {
 
     await http.get('/users/me')
 
-    const [refreshUrl] = fetchMock.mock.calls[0]
+    const [refreshUrl] = fetchMock.mock.calls[0] ?? []
     expect(String(refreshUrl)).toContain('/auth/token/refresh')
 
-    const [, meInit] = fetchMock.mock.calls[1]
+    const [, meInit] = fetchMock.mock.calls[1] ?? []
     expect(meInit.headers.Authorization).toBe(`Bearer ${rotated}`)
     expect(getAccessToken()).toBe(rotated)
   })
@@ -64,7 +64,7 @@ describe('액세스 토큰 자동 갱신', () => {
     await http.get('/users/me')
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/users/me')
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/users/me')
   })
 
   it('401이면 한 번 갱신하고 원래 요청을 재시도한다', async () => {
