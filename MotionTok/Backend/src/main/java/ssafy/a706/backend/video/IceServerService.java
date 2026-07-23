@@ -1,9 +1,9 @@
-package ssafy.a706.backend.rtc;
+package ssafy.a706.backend.video;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import ssafy.a706.backend.rtc.dto.IceServer;
-import ssafy.a706.backend.rtc.dto.IceServersResponse;
+import ssafy.a706.backend.video.dto.IceServer;
+import ssafy.a706.backend.video.dto.IceServersResponse;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;

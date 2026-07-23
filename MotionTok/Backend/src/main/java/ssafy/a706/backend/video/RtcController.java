@@ -1,4 +1,4 @@
-package ssafy.a706.backend.rtc;
+package ssafy.a706.backend.video;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.global.response.ApiResponse;
-import ssafy.a706.backend.rtc.dto.IceServersResponse;
+import ssafy.a706.backend.video.dto.IceServersResponse;
 
 /**
  * API 명세서 "실시간 인프라" — GET /rtc/ice-servers (-31).

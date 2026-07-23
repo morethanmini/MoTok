@@ -48,11 +48,31 @@ function toRoom(s: LiveRoomSummary): Room {
     disabled: s.status === 'IN_GAME' || s.participantCount >= s.maxPlayers,
   }
 }
-// 방 목록 (GET /v1/live-rooms, 배열 반환) — 실패 시 목업 폴백
-const { data: rooms, reload: reloadRooms } = useAsyncData(
-  () => roomsApi.list().then((r) => r.map(toRoom)),
-  MOCK_ROOMS,
-)
+// 방 목록 (GET /v1/live-rooms?page=, 페이지당 6개 · 최신순) — 실패 시 목업 폴백
+// hasNext는 응답이 알려주지만, 이전 페이지 여부는 백엔드가 안 알려줘서 page > 1로 프론트에서 직접 판단한다.
+const page = ref(1)
+const hasNext = ref(false)
+const { data: rooms, reload: reloadRooms } = useAsyncData(async () => {
+  const res = await roomsApi.list(page.value)
+  hasNext.value = res.hasNext
+  return res.rooms.map(toRoom)
+}, MOCK_ROOMS)
+
+const hasPrev = computed(() => page.value > 1)
+function nextPage() {
+  if (!hasNext.value) return
+  page.value += 1
+  void reloadRooms()
+}
+function prevPage() {
+  if (!hasPrev.value) return
+  page.value -= 1
+  void reloadRooms()
+}
+function refreshRooms() {
+  page.value = 1
+  void reloadRooms()
+}
 
 const filteredRooms = computed(() => {
   const q = query.value.trim().toLowerCase()
@@ -194,7 +214,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
             ⌕ <input v-model="query" placeholder="방 제목 검색" />
           </label>
           <PixelButton class="create-room-btn" @click="openCreate">＋ 방 만들기</PixelButton>
-          <button class="refresh-btn" @click="reloadRooms">새로고침 ↻</button>
+          <button class="refresh-btn" @click="refreshRooms">새로고침 ↻</button>
         </div>
 
         <section class="room-list">
@@ -208,6 +228,12 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
             검색 결과가 없어요. 다른 방 제목을 입력해보세요.
           </div>
         </section>
+
+        <div class="room-pager">
+          <button class="pager-btn" :disabled="!hasPrev" @click="prevPage">← 이전</button>
+          <span class="pager-page">{{ page }}</span>
+          <button class="pager-btn" :disabled="!hasNext" @click="nextPage">다음 →</button>
+        </div>
       </main>
 
       <aside class="side">
@@ -355,6 +381,11 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   color: var(--c-muted);
   font-size: 11px;
 }
+
+.room-pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 18px; }
+.pager-btn { border: 2px solid var(--c-ink); border-radius: 10px; background: #fff; padding: 8px 14px; font-size: 11px; font-weight: 700; box-shadow: var(--shadow-sm); }
+.pager-btn:disabled { opacity: 0.35; cursor: not-allowed; box-shadow: none; }
+.pager-page { min-width: 20px; text-align: center; font-size: 12px; font-weight: 700; color: var(--c-muted); }
 
 /* 사이드 */
 .side { min-height: 0; display: flex; flex-direction: column; gap: 14px; }
