@@ -186,10 +186,14 @@ public class GameSessionService {
         }
         rows.sort(Comparator.comparingInt(Row::score).reversed()
                 .thenComparingLong(Row::finishedAt));
-        List<GameResultEntry> results = new ArrayList<>(rows.size());
+        int playerCount = rows.size();
+        List<GameResultEntry> results = new ArrayList<>(playerCount);
         for (int i = 0; i < rows.size(); i++) {
             Row r = rows.get(i);
-            results.add(new GameResultEntry(i + 1, r.userId(), r.nickname(), r.score(), r.starsHit(), r.finished()));
+            int rankNo = i + 1;
+            int pointsEarned = PointCalculator.calc(rankNo, r.score(), playerCount);
+            results.add(new GameResultEntry(
+                    rankNo, r.userId(), r.nickname(), r.score(), r.starsHit(), r.finished(), pointsEarned));
         }
         return results;
     }

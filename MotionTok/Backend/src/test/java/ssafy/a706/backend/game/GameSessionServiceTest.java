@@ -194,5 +194,7 @@ class GameSessionServiceTest {
         assertThat(end.results().get(1).userId()).isEqualTo("1");
         assertThat(end.results().get(1).finished()).isFalse();
         assertThat(end.results().get(1).score()).isZero();
+        // 획득 포인트(-83): 1등(88점, 2인 참가) = (2-1+1)*10 + 88/10 = 28
+        assertThat(end.results().get(0).pointsEarned()).isEqualTo(28);
     }
 }
