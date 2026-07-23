@@ -66,7 +66,8 @@ export function useRoomChat() {
       const c = new Client({
         brokerURL: resolveBrokerUrl(),
         reconnectDelay: 3000,
-        debug: import.meta.env.DEV ? (msg) => console.debug('[STOMP]', msg) : undefined,
+        // 운영 빌드에서는 no-op — undefined를 넘기면 Object.assign이 기본 no-op debug를 덮어써 연결이 죽는다.
+        debug: import.meta.env.DEV ? (msg) => console.debug('[STOMP]', msg) : () => {},
         beforeConnect: () => {
           // 재연결마다 최신 accessToken으로 갱신 — 만료 토큰으로 재연결하면 CONNECT가 거부된다.
           c.connectHeaders = { Authorization: `Bearer ${getAccessToken() ?? ''}` }
