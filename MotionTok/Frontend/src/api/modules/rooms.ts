@@ -13,14 +13,14 @@ import type {
   CreateLiveRoomRequest,
   CreateLiveRoomResponse,
   LiveRoomDetail,
-  LiveRoomSummary,
+  LiveRoomListResponse,
 } from '../types'
 
 const BASE = '/v1/live-rooms'
 
 export const roomsApi = {
-  /** GET /v1/live-rooms — 전체 목록(쿼리·페이지네이션 없음, 배열 반환) */
-  list: () => httpEnvelope.get<LiveRoomSummary[]>(BASE),
+  /** GET /v1/live-rooms?page= — 페이지당 6개 고정, page 생략 시 1. 최신 생성 순. */
+  list: (page = 1) => httpEnvelope.get<LiveRoomListResponse>(BASE, { page }),
 
   /** POST /v1/live-rooms — 방 생성 */
   create: (body: CreateLiveRoomRequest) => httpEnvelope.post<CreateLiveRoomResponse>(BASE, body),

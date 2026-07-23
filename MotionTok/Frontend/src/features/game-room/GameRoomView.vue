@@ -30,15 +30,15 @@ const roomCode = computed(() => (route.query.room as string) || 'MP-4X9K')
 const roomGame = computed(() => (route.query.game as string) || 'DANCE BATTLE')
 const isHost = computed(() => route.query.host === '1')
 
-// ── 방 정원/방장 (상세 조회) ─────────────────
+// ── 방 정원/방장/이름 (상세 조회) ─────────────
 const capacity = ref(8)
 const hostId = ref<string | null>(null)
+const roomTitle = ref<string | null>(null)
 
 // ── 실시간 참가자 → 슬롯 매핑 ────────────────
 const connected = computed(() => lk.state.value === ConnectionState.Connected)
 const lkLocal = computed(() => lk.participants.value.find((p) => p.isLocal) ?? null)
 const remotes = computed(() => lk.participants.value.filter((p) => !p.isLocal))
-const onlineCount = computed(() => Math.max(1, lk.participants.value.length))
 
 interface Slot { view: ParticipantView | null; host: boolean }
 // self를 뺀 나머지 정원만큼 슬롯을 미리 만든다. 참가자가 있으면 채우고, 없으면 빈 자리.
@@ -101,6 +101,7 @@ onMounted(async () => {
     const d = await roomsApi.detail(roomCode.value)
     capacity.value = d.maxPlayers
     hostId.value = d.hostUserId
+    roomTitle.value = d.title
   } catch {
     /* 백엔드 미연동 — 기본 정원 유지 */
   }
@@ -150,14 +151,30 @@ async function toggleMic() {
   demoMic.value = !demoMic.value
 }
 
-// ── 게임 선택 ────────────────────────────────
+// ── 게임 선택 (방장: 바로 시작 / 참가자: 제안) ─
+const myName = computed(() => lkLocal.value?.name || '나')
+// 제안 도배 방지 — 참가자 1인당 쿨다운 안에는 새 제안을 막는다.
+const SUGGEST_COOLDOWN_MS = 20_000
+let lastSuggestAt = 0
+
 function openPicker() {
-  if (isHost.value) picker.value = true
-  else flash('게임 시작은 방장만 할 수 있어요')
+  picker.value = true
 }
 function launch(g: GameEntry) {
-  // 실제 게임 빌드가 아직 없음 → 준비 중 안내. (연동 시 여기서 게임 URL/캔버스 로드)
-  flash(`${g.name} 는 준비 중이에요`)
+  picker.value = false
+  if (isHost.value) {
+    // 실제 게임 빌드가 아직 없음 → 준비 중 안내. (연동 시 여기서 게임 URL/캔버스 로드)
+    flash(`${g.name} 는 준비 중이에요`)
+    return
+  }
+  const now = Date.now()
+  if (now - lastSuggestAt < SUGGEST_COOLDOWN_MS) {
+    const waitSec = Math.ceil((SUGGEST_COOLDOWN_MS - (now - lastSuggestAt)) / 1000)
+    flash(`제안은 너무 자주 보낼 수 없어요 · ${waitSec}초 후 다시 시도해주세요`)
+    return
+  }
+  lastSuggestAt = now
+  flash(`${myName.value}님이 ${g.name} 게임을 제안합니다!`)
 }
 
 function copyCode() {
@@ -200,9 +217,9 @@ async function leave() {
   router.push({ name: RouteName.Lobby })
 }
 
-const startLabel = computed(() => (isHost.value ? 'START' : 'WAIT'))
+const startLabel = computed(() => (isHost.value ? 'START' : '제안'))
 const startHint = computed(() =>
-  isHost.value ? '게임을 선택하고 시작!' : '방장이 게임을 선택 중이에요',
+  isHost.value ? '게임을 선택하고 시작!' : '하고 싶은 게임을 제안해보세요',
 )
 </script>
 
@@ -212,10 +229,19 @@ const startHint = computed(() =>
     <AppHeader />
 
     <div class="room-ribbon">
-      <span class="px-kicker"><i /> LIVE PARTY ROOM</span>
+      <span class="px-kicker"><i /> {{ roomTitle ?? 'LIVE PARTY ROOM' }}</span>
       <b>{{ roomGame }}</b>
-      <span>친구들과 함께 준비 중이에요</span>
-      <div class="ribbon-code">ROOM {{ roomCode }} · {{ onlineCount }}/{{ capacity }} ONLINE</div>
+
+      <!-- 방 코드 (하단 바에서 이동) -->
+      <div class="code-box">
+        <span class="px code-cap">ROOM CODE</span>
+        <div class="code-line">
+          <span class="px code-val">{{ roomCode }}</span>
+          <button class="copy" @click="copyCode">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="9" y="9" width="11" height="11" /><path d="M5 15V5a2 2 0 012-2h10" /></svg>
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- 본문: 내 캠을 크게, 나머지는 인원수에 맞춰 그리드로 배치 -->
@@ -290,22 +316,12 @@ const startHint = computed(() =>
       </div>
 
       <!-- 게임 시작 (메시지창 오른쪽) -->
-      <button class="px start-btn" :class="{ off: !isHost }" :disabled="!isHost" @click="openPicker">
+      <button class="px start-btn" :class="{ suggest: !isHost }" @click="openPicker">
         <span class="play-ico">▶</span>
         <span class="start-text"><span class="start-title">{{ startLabel }}</span><span class="start-hint">{{ startHint }}</span></span>
       </button>
 
       <div class="footer-right">
-        <!-- 방 코드 (나가기 버튼 왼쪽) -->
-        <div class="code-box">
-          <span class="px code-cap">ROOM CODE</span>
-          <div class="code-line">
-            <span class="px code-val">{{ roomCode }}</span>
-            <button class="copy" @click="copyCode">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="9" y="9" width="11" height="11" /><path d="M5 15V5a2 2 0 012-2h10" /></svg>
-            </button>
-          </div>
-        </div>
         <button class="px leave" @click="leave">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4M9 16l4-4-4-4M13 12H3" /></svg>
           LEAVE
@@ -363,8 +379,6 @@ const startHint = computed(() =>
 .room-ribbon .px-kicker { padding: 5px 9px; font-size: 8px; }
 .room-ribbon .px-kicker i { width: 7px; height: 7px; border-radius: 50%; background: var(--c-coral); animation: px-blink 1s steps(2) infinite; }
 .room-ribbon b { font-size: 12px; }
-.room-ribbon > span:not(.px-kicker) { color: var(--c-muted); font-size: 9px; }
-.ribbon-code { margin-left: auto; padding: 7px 10px; border: 2px solid var(--c-ink); border-radius: 9px; background: #fff; font-size: 8px; font-weight: 700; }
 
 /* 본문 */
 .room-main {
@@ -413,15 +427,14 @@ const startHint = computed(() =>
   border-radius: 14px 14px 10px 14px;
   box-shadow: var(--shadow-sm); text-align: left;
 }
-.start-btn.off { background: #bcb3b6; }
-.start-btn:disabled { cursor: not-allowed; }
+.start-btn.suggest { background: var(--c-yellow); color: var(--c-ink-soft); }
 .play-ico { font-size: 18px; }
 .start-text { line-height: 1.4; }
 .start-title { display: block; font-size: 11px; }
 .start-hint { display: block; font-size: 7px; opacity: 0.85; }
 
 /* 방 코드 (하단 바, 나가기 버튼 왼쪽) */
-.code-box { border: var(--border-thick); background: #fff; padding: 0 14px; height: 52px; display: flex; align-items: center; gap: 8px; border-radius: 14px 14px 10px 14px; box-shadow: var(--shadow-sm); }
+.code-box { margin-left: auto; border: 2px solid var(--c-ink); background: #fff; padding: 0 12px; height: 38px; display: flex; align-items: center; gap: 8px; border-radius: 11px; box-shadow: var(--shadow-sm); }
 .code-cap { font-size: 7px; color: #a99f86; }
 .code-line { display: flex; align-items: center; gap: 8px; }
 .code-val { font-size: 12px; color: #f0a815; }

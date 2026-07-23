@@ -134,6 +134,12 @@ export interface LiveRoomSummary {
   hasPassword: boolean
 }
 
+/** GET /v1/live-rooms?page= 응답 — 페이지당 6개 고정, page는 1부터 시작 */
+export interface LiveRoomListResponse {
+  rooms: LiveRoomSummary[]
+  hasNext: boolean
+}
+
 /**
  * 상세/입장 응답의 참가자 (LiveRoomDetailResponse.MemberView).
  * 기존 Participant의 카메라·마이크·연결상태는 시그널링 계층으로 이동 예정(아직 미구현).
