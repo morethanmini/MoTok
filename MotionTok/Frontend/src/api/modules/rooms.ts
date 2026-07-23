@@ -36,6 +36,9 @@ export const roomsApi = {
   joinByInviteCode: (inviteCode: string) =>
     httpEnvelope.post<LiveRoomDetail>(`${BASE}/join-by-invite-code`, { inviteCode }),
 
+  /** POST /v1/live-rooms/quick-start — 빠른 시작(랜덤 매칭, -27). 조건 맞는 방을 서버가 골라 입장시킨다. */
+  quickStart: () => httpEnvelope.post<LiveRoomDetail>(`${BASE}/quick-start`),
+
   /** DELETE /v1/live-rooms/{roomId}/members/me — 방 나가기(멱등). 마지막 인원이면 방 즉시 삭제. */
   leave: (roomId: string) => httpEnvelope.delete<void>(`${BASE}/${roomId}/members/me`),
 }

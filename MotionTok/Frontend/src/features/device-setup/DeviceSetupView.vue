@@ -3,6 +3,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
+import { roomsApi } from '@/api'
 import { useCamera } from '@/composables/useCamera'
 import PixelButton from '@/components/common/PixelButton.vue'
 import BrandLogo from '@/components/common/BrandLogo.vue'
@@ -34,7 +35,18 @@ function enter() {
   })
 }
 
-const cancel = () => router.push({ name: RouteName.Lobby })
+// 로비에서 이미 join된 상태로 여기 들어오므로, 취소 시 백엔드에도 퇴장을 알려야 인원수가 줄어든다.
+async function cancel() {
+  const roomId = route.query.room as string | undefined
+  if (roomId) {
+    try {
+      await roomsApi.leave(roomId)
+    } catch {
+      // 이미 방이 없어졌거나 네트워크 오류여도 화면 이동은 계속 진행
+    }
+  }
+  router.push({ name: RouteName.Lobby })
+}
 // 내 아바타(인벤토리·화면 꾸미기) 전체 편집으로 이동
 const goInventory = () => router.push({ name: RouteName.Inventory })
 </script>
