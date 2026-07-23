@@ -83,13 +83,18 @@ function guardMember(action: () => void) {
   else action()
 }
 
-// ⚡ 빠른 시작 — 퀵매치 API는 제거됨. 입장 가능한 공개방 중 첫 번째로 입장, 없으면 방 만들기.
+// ⚡ 빠른 시작 (POST /v1/live-rooms/quick-start) — 서버가 조건에 맞는 방을 랜덤으로 골라 입장.
+// 조건에 맞는 방이 없으면 404(QUICK_START_NO_ROOM) → 방 만들기로 유도.
 const quickStart = () =>
-  guardMember(() => {
-    const target = rooms.value.find((r) => !r.disabled && r.roomId)
-    if (target) return enterPublic(target)
-    flash('지금은 입장 가능한 방이 없어요. 새 방을 만들어 보세요')
-    showCreate.value = true
+  guardMember(async () => {
+    try {
+      const res = await roomsApi.quickStart()
+      goDevice('게임 선택 중', res.roomId)
+    } catch (e) {
+      if (e instanceof ApiError && e.code !== 'QUICK_START_NO_ROOM') return flash(e.message)
+      flash('지금은 입장 가능한 방이 없어요. 새 방을 만들어 보세요')
+      showCreate.value = true
+    }
   })
 const openCreate = () => guardMember(() => (showCreate.value = true))
 const openJoin = () => guardMember(() => (showJoin.value = true))
