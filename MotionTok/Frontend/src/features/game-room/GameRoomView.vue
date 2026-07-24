@@ -131,13 +131,13 @@ onMounted(async () => {
   } catch {
     /* 백엔드 미연동 — 기본 정원 유지 */
   }
-  // 로컬 캡처를 먼저 켜고, LiveKit에는 복제본 트랙을 발행한다(실패해도 방 접속은 진행).
-  // 입장 전 화면에서 카메라를 껐다면 캡처 자체를 시작하지 않는다 — 내 타일도 꺼진 상태로
-  // 보이고 장치 표시등도 켜지지 않는다. 방 안에서 카메라를 켜면 그때 캡처·발행을 시작한다.
-  const stream = initialCamOn.value ? await camera.start(CAMERA_CONSTRAINTS) : null
-  if (initialCamOn.value && !stream) flash('카메라를 켤 수 없어요(권한/장치 확인)')
+  // 로컬 캡처는 항상 켠다 — 모션 인식 게임의 입력원이라 카메라를 "꺼도" 게임 시작·참여가
+  // 가능해야 한다. "카메라 끄기"는 발행·표시만 끈다: 입장 전 화면에서 껐다면 발행하지 않아
+  // 내 타일과 다른 사람 화면 모두 꺼져 보이고, 방 안에서 카메라를 켜면 그때 발행한다.
+  const stream = await camera.start(CAMERA_CONSTRAINTS)
+  if (!stream) flash('카메라를 켤 수 없어요(권한/장치 확인)')
   const ok = await lk.connect(roomCode.value, {
-    cameraTrack: stream?.getVideoTracks()[0] ?? null,
+    cameraTrack: initialCamOn.value ? (stream?.getVideoTracks()[0] ?? null) : null,
     microphone: initialMicOn.value,
   })
   if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
