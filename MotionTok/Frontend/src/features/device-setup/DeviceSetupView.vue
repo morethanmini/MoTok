@@ -10,7 +10,7 @@ import BrandLogo from '@/components/common/BrandLogo.vue'
 
 const route = useRoute()
 const router = useRouter()
-const { stream, isOn, start } = useCamera()
+const { stream, isOn, camOn, micOn, start, toggleCam, toggleMic } = useCamera()
 
 const game = computed(() => (route.query.game as string) || '게임 선택 중')
 const room = computed(() => (route.query.room as string) || 'MP4X9K')
@@ -23,6 +23,9 @@ watch(stream, (s) => {
   if (videoEl.value) videoEl.value.srcObject = s
 })
 
+// 카메라를 꺼도 <video>는 계속 렌더링되어야 다시 켤 때 스트림이 자연스럽게 이어진다 — v-show로만 가린다.
+const showVideo = computed(() => isOn.value && camOn.value)
+
 async function allow() {
   await start({ video: { width: 640, height: 400 }, audio: true })
 }
@@ -34,7 +37,13 @@ function enter() {
   proceedingToRoom = true
   router.push({
     name: RouteName.GameRoom,
-    query: { game: game.value, room: room.value, host: '1' },
+    query: {
+      game: game.value,
+      room: room.value,
+      host: '1',
+      cam: camOn.value ? '1' : '0',
+      mic: micOn.value ? '1' : '0',
+    },
   })
 }
 
@@ -89,7 +98,7 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
         <span class="badge">{{ isOn ? 'CAMERA READY' : '권한 필요' }}</span>
         <div class="cam">
           <video
-            v-show="isOn"
+            v-show="showVideo"
             ref="videoEl"
             autoplay
             playsinline
@@ -100,6 +109,20 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
             <img src="/assets/intro/person.png" alt="카메라 준비" />
             <p>카메라·마이크 권한을 허용해 주세요</p>
           </div>
+          <div v-else-if="!camOn" class="cam-empty">
+            <img src="/assets/intro/person.png" alt="카메라 꺼짐" />
+            <p>카메라가 꺼져 있어요</p>
+          </div>
+        </div>
+        <div v-if="isOn" class="dev-toggles">
+          <button type="button" class="dev-toggle" :class="{ off: !camOn }" @click="toggleCam">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="2" y="6" width="14" height="12" /><path d="M16 10l6-4v12l-6-4" /></svg>
+            {{ camOn ? '카메라 켜짐' : '카메라 꺼짐' }}
+          </button>
+          <button type="button" class="dev-toggle" :class="{ off: !micOn }" @click="toggleMic">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="9" y="3" width="6" height="11" /><path d="M5 11a7 7 0 0014 0M12 18v3" /></svg>
+            {{ micOn ? '마이크 켜짐' : '마이크 꺼짐' }}
+          </button>
         </div>
         <div class="decor">{{ decor }}</div>
       </section>
@@ -216,6 +239,20 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
 .preview-art { position: absolute; z-index: 2; width: 105px; pointer-events: none; filter: drop-shadow(4px 4px 0 rgba(56,38,61,.18)); }
 .art-note { left: -24px; bottom: -12px; transform: rotate(16deg); }
 .art-star { right: -32px; bottom: -12px; transform: rotate(-13deg); }
+
+/* 입장 전 카메라·마이크 개별 온오프 */
+.dev-toggles { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; gap: 10px; }
+.dev-toggle {
+  display: flex; align-items: center; gap: 7px;
+  padding: 9px 13px;
+  border: 2px solid var(--c-ink);
+  border-radius: 11px;
+  background: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  box-shadow: var(--shadow-sm);
+}
+.dev-toggle.off { background: #fbdbe0; color: var(--c-coral); }
 
 .settings { padding: 24px; overflow: auto; background: rgba(255,255,255,.94); }
 .setting-no { display: inline-block; margin-bottom: 9px; color: var(--c-coral); font-size: 9px; font-weight: 700; }
