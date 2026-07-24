@@ -124,6 +124,19 @@ const draft = ref('')
 let bubbleId = 0
 const CHAT_MAX_LEN = 500
 
+// 채팅 전체보기 — 자동으로 사라지는 bubbles와 달리, 입장 이후 전체 이력을 그대로 보여준다.
+const chatExpanded = ref(false)
+const allBubbles = computed<ChatBubble[]>(() =>
+  roomChat.messages.value.map((m, i) => ({
+    id: i,
+    nickname: m.nickname,
+    text: m.text,
+    me: m.userId === myParticipantId.value,
+    kind: m.type,
+    gameName: m.gameName,
+  })),
+)
+
 watch(roomChat.messages, (all, prev) => {
   const startIdx = prev?.length ?? 0
   for (const m of all.slice(startIdx)) {
@@ -344,7 +357,16 @@ const startHint = computed(() =>
             </template>
           </div>
         </div>
-        <span class="chat-face">☺</span>
+        <button
+          class="chat-expand"
+          :class="{ active: chatExpanded }"
+          title="채팅 전체보기"
+          @click="chatExpanded = !chatExpanded"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square">
+            <line x1="4" y1="6" x2="20" y2="6" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="18" x2="20" y2="18" />
+          </svg>
+        </button>
         <input
           v-model="draft"
           placeholder="메시지 입력..."
@@ -355,6 +377,34 @@ const startHint = computed(() =>
         <button class="chat-send" @click="send">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
         </button>
+
+        <!-- 채팅 전체보기: 반투명 패널로 입장 이후 전체 대화 표시 -->
+        <template v-if="chatExpanded">
+          <div class="chat-full-backdrop" @click="chatExpanded = false" />
+          <div class="chat-full">
+            <div class="chat-full-head">
+              <span>채팅 전체보기</span>
+              <button class="chat-full-close" @click="chatExpanded = false">✕</button>
+            </div>
+            <div class="chat-full-body">
+              <div class="px chat-notice">입장 이후의 대화만 표시돼요</div>
+              <p v-if="!allBubbles.length" class="chat-full-empty">아직 대화가 없어요</p>
+              <div
+                v-for="b in allBubbles"
+                :key="b.id"
+                class="px bubble full"
+                :class="{ me: b.me, suggest: b.kind === 'GAME_SUGGEST' }"
+              >
+                <template v-if="b.kind === 'GAME_SUGGEST'">
+                  <span class="bubble-name">🎮 {{ b.nickname }}</span> {{ b.text }}
+                </template>
+                <template v-else>
+                  <span class="bubble-name" :class="{ me: b.me }">{{ b.nickname }}</span> {{ b.text }}
+                </template>
+              </div>
+            </div>
+          </div>
+        </template>
       </div>
 
       <!-- 게임 시작 (메시지창 오른쪽) -->
@@ -501,20 +551,44 @@ const startHint = computed(() =>
 .ctrl.on { background: #d9f2cf; color: #5cbf4a; }
 .ctrl.off { background: #fbdbe0; color: #e85d6e; }
 
-.chat-dock { position: relative; flex: none; width: 300px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; height: 52px; background: #fff; border: 3px solid var(--c-ink-soft); border-radius: 14px; box-shadow: var(--shadow-sm); }
-.chat-log { position: absolute; bottom: 62px; left: 0; width: 320px; max-height: 300px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+.chat-dock { position: relative; flex: none; width: 420px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; height: 52px; background: #fff; border: 3px solid var(--c-ink-soft); border-radius: 14px; box-shadow: var(--shadow-sm); }
+.chat-log { position: absolute; bottom: 62px; left: 0; width: 420px; max-height: 300px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
 .chat-notice { align-self: center; padding: 4px 10px; font-size: 7px; color: #a99f86; background: rgba(255, 253, 247, .9); border-radius: 999px; }
-.bubble { max-width: 300px; padding: 9px 12px; font-size: 9px; line-height: 1.7; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); }
+.bubble { max-width: 420px; padding: 9px 12px; font-size: 9px; line-height: 1.7; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); }
 .bubble.me { background: #fff4cc; }
 .bubble.suggest { background: var(--c-mint-soft); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .bubble-name { color: #5cbf4a; }
 .bubble-name.me { color: #f0a815; }
 .suggest-pick { border: 2px solid var(--c-ink-soft); border-radius: 8px; background: var(--c-yellow); padding: 5px 8px; font-size: 8px; font-weight: 700; }
-.chat-face { color: #a99f86; font-size: 16px; }
 .chat-dock input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 13px; }
 .chat-count { flex: none; font-size: 7px; color: #a99f86; }
 .chat-count.over { color: var(--c-coral); }
 .chat-send { flex: none; width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
+
+/* 채팅 전체보기 토글 버튼 */
+.chat-expand { flex: none; width: 32px; height: 32px; border: 2px solid var(--c-ink-soft); border-radius: 9px; background: #fff; color: #a99f86; display: flex; align-items: center; justify-content: center; }
+.chat-expand.active { background: var(--c-yellow); color: var(--c-ink-soft); }
+
+/* 채팅 전체보기 패널 — 입장 이후 전체 대화를 반투명하게 보여준다 */
+.chat-full-backdrop { position: fixed; inset: 0; z-index: 45; background: transparent; }
+.chat-full {
+  position: absolute; z-index: 46; bottom: 62px; left: 0;
+  width: 420px; max-height: min(65vh, 520px);
+  display: flex; flex-direction: column;
+  background: rgba(255, 253, 247, 0.82);
+  backdrop-filter: blur(6px);
+  border: 3px solid var(--c-ink-soft);
+  border-radius: 14px;
+  box-shadow: var(--shadow-md);
+  animation: px-bubble 0.15s steps(3);
+}
+.chat-full-head { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; font-size: 9px; font-weight: 700; color: var(--c-ink-soft); border-bottom: 2px solid rgba(56, 38, 61, .12); }
+.chat-full-close { width: 22px; height: 22px; border: 2px solid var(--c-ink-soft); border-radius: 7px; background: #fff; color: var(--c-ink-soft); font-size: 9px; display: flex; align-items: center; justify-content: center; }
+.chat-full-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; overflow-y: auto; }
+.chat-full-empty { align-self: center; margin: 20px 0; font-size: 9px; color: #a99f86; }
+.bubble.full { max-width: none; background: rgba(255, 255, 255, 0.9); }
+.bubble.full.me { background: rgba(255, 244, 204, 0.9); }
+.bubble.full.suggest { background: rgba(214, 244, 233, 0.9); }
 
 .footer-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .leave { display: flex; align-items: center; gap: 9px; padding: 0 18px; height: 52px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; background: var(--c-coral); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
