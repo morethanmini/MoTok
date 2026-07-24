@@ -22,13 +22,26 @@ const props = withDefaults(
 
 const occupied = computed(() => !!props.view)
 const hasVideo = computed(() => !!props.view?.cameraOn && !!props.view?.videoTrack)
+const hasGame = computed(() => !!props.view?.gameTrack)
+
+/** 게임 송출 중 이 타일에서 카메라를 보고 싶은지(뷰어별 토글). 기본은 게임 화면. */
+const showCam = ref(false)
+// 게임 송출이 새로 시작되면 기본값(게임 화면)으로 복귀
+watch(hasGame, (on) => {
+  if (on) showCam.value = false
+})
 
 const videoEl = ref<HTMLVideoElement>()
 const audioEl = ref<HTMLAudioElement>()
 
 // 트랙 인스턴스만 의존 대상으로 삼는다(뷰모델 객체는 이벤트마다 새로 생기므로 그대로 쓰면 재부착·깜빡임).
 // videoTrack/el 중 하나가 실제로 바뀔 때만 재부착.
-const videoTrack = computed(() => (hasVideo.value ? (props.view?.videoTrack ?? null) : null))
+// 게임 화면이 송출 중이면(토글로 카메라를 고르지 않은 한) 게임 트랙을, 아니면 카메라를 표시.
+const videoTrack = computed(() => {
+  if (hasGame.value && !showCam.value) return props.view?.gameTrack ?? null
+  return hasVideo.value ? (props.view?.videoTrack ?? null) : null
+})
+const showingVideo = computed(() => !!videoTrack.value)
 const audioTrack = computed(() => (props.playAudio ? (props.view?.audioTrack ?? null) : null))
 
 watch(
@@ -60,7 +73,7 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
     <!-- 참가자 있음 -->
     <template v-if="occupied">
       <video
-        v-show="hasVideo"
+        v-show="showingVideo"
         ref="videoEl"
         autoplay
         playsinline
@@ -69,7 +82,7 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
         :class="{ mirror }"
       />
       <audio v-if="playAudio" ref="audioEl" autoplay />
-      <div v-if="!hasVideo" class="cam-off">
+      <div v-if="!showingVideo" class="cam-off">
         <span class="avatar">{{ initial }}</span>
       </div>
 
@@ -84,6 +97,16 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
       </div>
 
       <span class="live">● 참가 중</span>
+
+      <!-- 게임 송출 중 게임 화면 ↔ 카메라 전환(뷰어별) — 아이콘은 전환될 대상을 보여준다 -->
+      <button
+        v-if="hasGame"
+        class="view-toggle"
+        :title="showCam ? '게임 화면 보기' : '카메라 보기'"
+        @click="showCam = !showCam"
+      >
+        {{ showCam ? '🎮' : '📷' }}
+      </button>
 
       <div v-if="host" class="crown">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="#2b2333" stroke-width="1.4">
@@ -174,6 +197,19 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
   border-radius: 6px;
 }
 .crown { position: absolute; top: 7px; right: 8px; color: #f5c518; pointer-events: none; }
+
+.view-toggle {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  padding: 5px 8px;
+  font-size: 12px;
+  line-height: 1;
+  background: rgba(255, 253, 247, 0.92);
+  border: 2px solid var(--c-ink-soft);
+  border-radius: 8px;
+  cursor: pointer;
+}
 
 .placeholder {
   position: absolute;

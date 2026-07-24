@@ -18,9 +18,9 @@ import {
   Room,
   RoomEvent,
   Track,
+  type LocalVideoTrack,
   type Participant,
   type Track as LkTrack,
-  type TrackPublication,
 } from 'livekit-client'
 import { sfuApi } from '@/api'
 
@@ -36,6 +36,8 @@ export interface ParticipantView {
   micOn: boolean
   videoTrack: LkTrack | null
   audioTrack: LkTrack | null
+  /** 게임 화면 송출 트랙(화면공유 소스) — 송출 중이 아니거나 가려져 있으면 null */
+  gameTrack: LkTrack | null
 }
 
 export function useLiveKitRoom() {
@@ -47,16 +49,11 @@ export function useLiveKitRoom() {
   const microphoneEnabled = ref(false)
   const error = ref<string | null>(null)
 
-  function pubFor(p: Participant, kind: Track.Kind): TrackPublication | undefined {
-    for (const pub of p.trackPublications.values()) {
-      if (pub.kind === kind) return pub
-    }
-    return undefined
-  }
-
   function toView(p: Participant, isLocal: boolean): ParticipantView {
-    const videoPub = pubFor(p, Track.Kind.Video)
-    const audioPub = pubFor(p, Track.Kind.Audio)
+    // 게임 화면(화면공유 소스) 트랙이 추가되면서 kind만으로는 카메라를 못 가리므로 source로 찾는다.
+    const videoPub = p.getTrackPublication(Track.Source.Camera)
+    const audioPub = p.getTrackPublication(Track.Source.Microphone)
+    const gamePub = p.getTrackPublication(Track.Source.ScreenShare)
     return {
       identity: p.identity,
       name: p.name || p.identity,
@@ -66,6 +63,7 @@ export function useLiveKitRoom() {
       micOn: !!audioPub && !audioPub.isMuted,
       videoTrack: videoPub?.track ?? null,
       audioTrack: audioPub?.track ?? null,
+      gameTrack: gamePub && !gamePub.isMuted ? (gamePub.track ?? null) : null,
     }
   }
 
@@ -145,12 +143,58 @@ export function useLiveKitRoom() {
     if (!room) return
     const r = room
     room = null
+    // 게임 화면을 송출 중이었다면 발행 해제·캡처 정리 후 끊는다
+    await unpublishGameScreen()
     r.removeAllListeners()
     await r.disconnect()
     participants.value = []
     state.value = ConnectionState.Disconnected
     cameraEnabled.value = false
     microphoneEnabled.value = false
+  }
+
+  // ── 게임 화면 송출 — 게임 캔버스를 화면공유 소스의 추가 트랙으로 발행한다(카메라와 동시 송출) ──
+  // 수신 측은 타일마다 게임 화면 ↔ 카메라를 골라 보고(ParticipantTile 토글), 표시되지 않는 쪽은
+  // adaptiveStream(수신)·dynacast(송신)가 자동으로 쉬게 하므로 부하는 실제로 보는 만큼만 든다.
+  let gameScreenTrack: LocalVideoTrack | null = null
+
+  /** 게임 캔버스 송출 시작(이미 송출 중이면 no-op). 미연결·캡처 실패면 false. */
+  async function publishGameScreen(canvas: HTMLCanvasElement): Promise<boolean> {
+    if (gameScreenTrack) return true
+    if (!room) return false
+    const track = canvas.captureStream().getVideoTracks()[0]
+    if (!track) return false
+    try {
+      const pub = await room.localParticipant.publishTrack(track, {
+        source: Track.Source.ScreenShare,
+        name: 'game-screen',
+      })
+      gameScreenTrack = pub.videoTrack ?? null
+      return !!gameScreenTrack
+    } catch {
+      track.stop()
+      return false
+    }
+  }
+
+  /** 카메라가 꺼진 동안 게임 화면도 가린다 — 새 프레임이 없는 정지 화면을 흘려보내지 않기 위해. */
+  async function setGameScreenMuted(muted: boolean) {
+    if (!gameScreenTrack || gameScreenTrack.isMuted === muted) return
+    if (muted) await gameScreenTrack.mute()
+    else await gameScreenTrack.unmute()
+  }
+
+  /** 게임 화면 송출 종료 — 발행 해제 + 캡처 트랙 정리. 게임 종료·방 퇴장 시 호출. */
+  async function unpublishGameScreen() {
+    if (!gameScreenTrack) return
+    const track = gameScreenTrack
+    gameScreenTrack = null
+    try {
+      await room?.localParticipant.unpublishTrack(track, true)
+    } catch {
+      // 이미 연결이 끊긴 경우 — 발행 해제는 의미 없고 캡처만 정리하면 된다
+    }
+    track.mediaStreamTrack.stop()
   }
 
   async function toggleCamera() {
@@ -177,5 +221,8 @@ export function useLiveKitRoom() {
     disconnect,
     toggleCamera,
     toggleMicrophone,
+    publishGameScreen,
+    setGameScreenMuted,
+    unpublishGameScreen,
   }
 }
