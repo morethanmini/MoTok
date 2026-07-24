@@ -11,6 +11,7 @@ import ssafy.a706.backend.game.dto.LeaderboardEntryResponse;
 import ssafy.a706.backend.game.dto.LeaderboardResponse;
 import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.entity.Leaderboard;
+import ssafy.a706.backend.game.model.LeaderboardMode;
 import ssafy.a706.backend.game.repository.GameRankRedisRepository;
 import ssafy.a706.backend.game.repository.GameRepository;
 import ssafy.a706.backend.game.repository.LeaderboardRepository;
@@ -67,20 +68,20 @@ public class GameQueryService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
     }
 
-    /** GET /games/{gameId}/leaderboard — 상위 N + 내 순위. */
+    /** GET /games/{gameId}/leaderboard — 모드(솔로/멀티)별 상위 N + 내 순위. */
     @Transactional(readOnly = true)
-    public LeaderboardResponse leaderboard(long gameId, int limit, AuthPrincipal principal) {
+    public LeaderboardResponse leaderboard(long gameId, LeaderboardMode mode, int limit, AuthPrincipal principal) {
         if (!gameRepository.existsById(gameId)) {
             throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
         }
         int capped = Math.max(1, Math.min(MAX_LIMIT, limit));
-        warmUpIfEmpty(gameId);
+        warmUpIfEmpty(gameId, mode);
 
-        Map<Long, Integer> top = rankRepository.topBestScores(gameId, capped + FETCH_BUFFER);
+        Map<Long, Integer> top = rankRepository.topBestScores(gameId, mode, capped + FETCH_BUFFER);
         Map<Long, User> users = userRepository.findAllById(top.keySet()).stream()
                 .collect(Collectors.toMap(User::getId, Function.identity()));
         Map<Long, Leaderboard> rows = leaderboardRepository
-                .findAllByGameIdAndUserIdIn(gameId, top.keySet()).stream()
+                .findAllByGameIdAndModeAndUserIdIn(gameId, mode, top.keySet()).stream()
                 .collect(Collectors.toMap(Leaderboard::getUserId, Function.identity()));
 
         List<LeaderboardEntryResponse> entries = new ArrayList<>();
@@ -97,14 +98,14 @@ public class GameQueryService {
                     entries.size() + 1, scored.getKey(), user.getNickname(),
                     scored.getValue(), row == null ? 0 : row.getPlayCount()));
         }
-        return new LeaderboardResponse(gameId, entries, myRank(gameId, principal, entries));
+        return new LeaderboardResponse(gameId, entries, myRank(gameId, mode, principal, entries));
     }
 
     /**
      * 내 순위 — 회원만. 노출 목록 안에 있으면 그 항목(재순번과 일치), 밖이면 ZREVRANK 원시 순위.
      * 게스트·비로그인·기록 없음이면 null.
      */
-    private LeaderboardEntryResponse myRank(long gameId, AuthPrincipal principal,
+    private LeaderboardEntryResponse myRank(long gameId, LeaderboardMode mode, AuthPrincipal principal,
                                             List<LeaderboardEntryResponse> entries) {
         if (!(principal instanceof MemberPrincipal member)) {
             return null;
@@ -114,11 +115,12 @@ public class GameQueryService {
                 return entry;
             }
         }
-        Long zeroBased = rankRepository.reverseRankOf(gameId, member.id()).orElse(null);
+        Long zeroBased = rankRepository.reverseRankOf(gameId, mode, member.id()).orElse(null);
         if (zeroBased == null) {
             return null;
         }
-        Leaderboard row = leaderboardRepository.findByGameIdAndUserId(gameId, member.id()).orElse(null);
+        Leaderboard row = leaderboardRepository
+                .findByGameIdAndUserIdAndMode(gameId, member.id(), mode).orElse(null);
         if (row == null) {
             return null;
         }
@@ -128,16 +130,16 @@ public class GameQueryService {
     }
 
     /** Redis 유실 복구(-96 비기능): ZSET이 비었는데 DB 기록이 있으면 leaderboards에서 재적재. */
-    private void warmUpIfEmpty(long gameId) {
-        if (rankRepository.size(gameId) > 0) {
+    private void warmUpIfEmpty(long gameId, LeaderboardMode mode) {
+        if (rankRepository.size(gameId, mode) > 0) {
             return;
         }
-        List<Leaderboard> rows = leaderboardRepository.findAllByGameId(gameId);
+        List<Leaderboard> rows = leaderboardRepository.findAllByGameIdAndMode(gameId, mode);
         if (rows.isEmpty()) {
             return;
         }
         Map<Long, Integer> scores = new HashMap<>();
         rows.forEach(row -> scores.put(row.getUserId(), row.getBestScore()));
-        rankRepository.updateRanks(gameId, scores);
+        rankRepository.updateRanks(gameId, mode, scores);
     }
 }

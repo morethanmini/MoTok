@@ -11,6 +11,7 @@ import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.game.dto.GameDetailResponse;
 import ssafy.a706.backend.game.dto.GameSummaryResponse;
 import ssafy.a706.backend.game.dto.LeaderboardResponse;
+import ssafy.a706.backend.game.model.LeaderboardMode;
 
 import java.util.List;
 
@@ -38,11 +39,12 @@ public class GameRestController {
         return gameQueryService.detail(gameId);
     }
 
-    /** GET /games/{gameId}/leaderboard — 게임별 랭킹 + 내 순위. */
+    /** GET /games/{gameId}/leaderboard — 게임·모드(솔로/멀티)별 랭킹 + 내 순위. */
     @GetMapping("/{gameId}/leaderboard")
     public LeaderboardResponse leaderboard(@PathVariable long gameId,
+                                           @RequestParam(defaultValue = "MULTI") LeaderboardMode mode,
                                            @RequestParam(defaultValue = "20") int limit,
                                            @AuthenticationPrincipal AuthPrincipal principal) {
-        return gameQueryService.leaderboard(gameId, limit, principal);
+        return gameQueryService.leaderboard(gameId, mode, limit, principal);
     }
 }
