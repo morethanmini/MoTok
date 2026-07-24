@@ -188,13 +188,21 @@ erDiagram
     datetime responded_at
   }
   REPORT {
-    bigint id PK
-    bigint reporter_id FK
-    bigint reported_id FK
-    varchar reason_type "선택형 사유 코드"
-    varchar reason_text "직접 입력, null 가능"
-    varchar status "RECEIVED | RESOLVED"
-    datetime created_at
+    bigint id PK "구현: chat_reports (-132)"
+    varchar room_id "휘발성 Redis 방이라 FK 아닌 값 스냅샷"
+    varchar chat_id "Redis Stream 엔트리 ID, uk(room_id+chat_id+reporter_user_id)"
+    bigint reporter_user_id "신고자 users.id, FK 제약 없이 값 저장"
+    varchar reporter_nickname "신고 시점 닉네임 스냅샷"
+    bigint reported_user_id "피신고자 users.id"
+    varchar reported_nickname "닉네임 스냅샷"
+    varchar reported_text "신고 대상 채팅 원문, 최대 500자"
+    datetime reported_at "대상 채팅 발신 시각"
+    text context_json "전후 10건 스냅샷, 시간순 JSON 배열, 대상 포함"
+    varchar reason "ABUSE | HATE | SEXUAL | SPAM | ETC"
+    varchar reason_detail "직접 입력, null 가능"
+    varchar status "RECEIVED | REVIEWING | RESOLVED | REJECTED"
+    datetime created_at "신고 일시"
+    datetime updated_at "처리 갱신 시각"
   }
   SANCTION {
     bigint id PK
@@ -319,6 +327,8 @@ erDiagram
   <div class="callout"><b>RDB에 없는 것(의도된 부재)</b> — 방/참가자/초대코드/진행 중 세션·점수판/실시간 랭킹 캐시 → <b>Redis</b>(키 설계 v0.1).
   게스트 프로필·기록 → <b>클라이언트 로컬</b>. Refresh Token·비밀번호 재설정 토큰 → <b>Redis</b>(TTL이 만료 정책 그 자체 —
   키 설계 문서에 <code>auth:refresh:{userId}</code>, <code>auth:pwreset:{token}</code> 추가 권장).</div>
+
+  <div class="callout"><b>구현 현황(2026-07-24 · -132 채팅 신고)</b> — 설계 <code>REPORT</code>가 <code>chat_reports</code>로 구현됨(대기실 채팅 신고 특화). 설계 대비 확장: ① 신고 대상이 유저가 아니라 <b>채팅 한 건</b>(room_id+chat_id, Redis Stream <code>room:{roomId}:chat</code> — 키맵 참조) ② 방·채팅이 휘발성이라 원문·닉네임·<b>전후 ±10 맥락(context_json, 시간순·대상 포함)</b>을 신고 시점에 통째로 스냅샷 ③ user FK 대신 값 저장(닉 변경·탈퇴 후에도 신고 시점 표시명 보존, 회원 전용 — 게스트는 다인 방 입장 불가) ④ status에 REVIEWING·REJECTED 추가(관리자 처리 -133). 관리자 API: <code>/api/v1/admin/chat-reports</code>(ADMIN role claim 인가). <code>SANCTION</code>(제재)은 여전히 설계 단계.</div>
 
   <div class="callout"><b>구현 현황(2026-07-24 · -117 게임 정산)</b> — <code>GAME</code>은 <code>games</code>로 구현(카탈로그 + <code>round_duration_sec</code>·<code>countdown_sec</code> 컬럼 추가: 게임별 서버 권위 타이머). <code>LEADERBOARD</code>는 <code>leaderboards</code>로 구현(집계, <code>uk(game_id, user_id)</code>) — 세계순위의 영속 원천. <b>최소 RDB 방침으로 <code>GAME_SESSION</code>·<code>GAME_SESSION_RESULT</code>는 1차 미영속</b>(개별 판 로그는 후속 -122): <code>GAME_END</code>는 Redis 세션에서 정산해 <b>집계만</b> 남긴다. 실시간 세계순위는 Redis <code>rank:{gameId}</code>, 유실 시 <code>leaderboards</code>로 warm-up. 회원만 적재(게스트 제외, D5).</div>
 

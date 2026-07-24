@@ -100,6 +100,9 @@
         <div class="kv"><div class="row"><code>room:invite:{code}</code>
           <div class="badges"><span class="badge b-type">String</span><span class="badge b-ttl">TTL 24h</span></div></div>
           <div class="desc">초대코드 → roomId 역조회 · <b>공개방·비공개방 공통 발급</b>(-25, <code>3bd67d9</code>) · 상세 조회 응답에도 노출돼 호스트가 나중에 다시 꺼내볼 수 있음</div></div>
+        <div class="kv"><div class="row"><code>room:{roomId}:chat</code>
+          <div class="badges"><span class="badge b-new">신규(-131)</span><span class="badge b-done">✅</span><span class="badge b-type">Stream</span><span class="badge b-ttl">TTL 24h</span></div></div>
+          <div class="desc">대기실 채팅 로그 1차 저장 — XADD가 발급하는 엔트리 ID가 곧 <b>chatId</b>(브로드캐스트 페이로드에 포함, 신고 대상 식별자). 필드: type(TALK|GAME_SUGGEST)·userId·nickname·text·sentAt(+제안 시 gameId·gameName). <b>MAXLEN ~500</b>(근사 trim, 도배 시 메모리 상한) · 방 폭파 시 <code>deleteRoom()</code>에서 <b>즉시 삭제</b>(방을 나가면 신고 불가가 정책). 신고(-132) 시 XRANGE/XREVRANGE로 대상 ±10 맥락을 읽어 MySQL <code>chat_reports</code>에 스냅샷 영속.</div></div>
         <div class="note"><b>2026-07-21 반영</b>: 팀장 지시로 인메모리 <code>room</code> 패키지(임대연) 전체 삭제(<code>b8c38ee</code>) — Redis 키를 전혀 갖지 않던 스텁이라 키 설계엔 영향 없음, 다만 이제 방 도메인은 <code>liveroom</code> 패키지 하나로 단일화됐다는 사실만 기록.</div>
         <div class="note"><b>2026-07-21 반영(-25)</b>: <code>generateUniqueInviteCode()</code> 호출을 방 생성 로직에서 visibility 조건 없이 항상 실행하도록 변경 — 공개방도 참여코드로 입장 가능. (초대 <b>링크</b>(공유 URL) 생성은 팀장 결정으로 스코프 제외, 코드 수동 입력만 지원)</div>
       </div>
@@ -213,6 +216,7 @@
   <div class="changelog">
     <h2>v0.2 → v0.3 변경 이력 (2026-07-21 커밋 이력 기준)</h2>
     <ul>
+      <li><b>(2026-07-24 반영, -131/-132)</b> ① 방 섹션에 <code>room:{roomId}:chat</code>(Stream · TTL 24h · MAXLEN ~500) 신규 — 대기실 채팅 1차 저장. "채팅 미영속" 전제가 변경됨(신고 증거 확보 목적). Stream 채택 이유: XADD 자동 발급 ID를 chatId로 쓰고 XRANGE/XREVRANGE로 신고 대상 전후 맥락을 바로 조회. 방 폭파 시 즉시 삭제, 신고 스냅샷은 MySQL <code>chat_reports</code>(ERD 참조)에 영속.</li>
       <li><b>(2026-07-24 as-built 반영)</b> ② 게임 세션 구현됨(<code>3cd4be8</code>, -115/-116) — 설계 <code>session:{sessionId}</code>(ZSET·submits·TTL 2h) 대신 <b><code>game:session:{roomId}</code></b>(Hash·<code>:scores</code> HSETNX·<code>:ended</code> SETNX 정산가드·TTL 30m)로 구현. ③ 랭킹·DB 정산(-117)은 여전히 미구현.</li>
       <li><code>rooms:public</code> → <code>rooms:index</code>로 정정, "공개방만" → "공개+비공개 방 전체"로 범위 수정 (코드: <code>LiveRoomRepository.ROOM_INDEX_KEY</code>)</li>
       <li>① 방 섹션에 "<code>liveroom</code> 패키지 단일화" 메모 추가 — 인메모리 <code>room</code>(임대연) 패키지 삭제(<code>b8c38ee</code>, 11:02) 반영</li>
