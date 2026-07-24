@@ -121,6 +121,20 @@ public class LiveRoomRepository {
         redisTemplate.<String, String>opsForHash().put(roomKey(roomId), "status", status);
     }
 
+    /**
+     * 방 정보 수정(S15P11A706-130). putAll로 덮어쓰되 TTL은 갱신하지 않는다 — 방은 최초 생성 시점부터
+     * 24h 카운트다운을 유지하고 수정은 여기에 영향을 주지 않는다(Redis는 기존 키에 필드만 쓸 때 TTL 미변경).
+     * clearPassword가 true(공개방 전환)면 password 필드를 HDEL로 제거한다 — putAll만으로는 필드 삭제가
+     * 안 돼 stale password가 남으면 hasPassword()가 계속 true가 되기 때문.
+     */
+    public void updateRoomInfo(String roomId, Map<String, String> fields, boolean clearPassword) {
+        String key = roomKey(roomId);
+        redisTemplate.<String, String>opsForHash().putAll(key, fields);
+        if (clearPassword) {
+            redisTemplate.opsForHash().delete(key, "password");
+        }
+    }
+
     /** 강퇴자를 재입장 차단 목록에 추가한다(S15P11A706-73). */
     public void addKicked(String roomId, String playerKey) {
         String key = kickedKey(roomId);
