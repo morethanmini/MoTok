@@ -14,8 +14,9 @@ import ssafy.a706.backend.signal.RoomMembershipReader;
 import java.time.Instant;
 
 /**
- * 대기실 텍스트 채팅 — 검증 후 방 전체 토픽으로 브로드캐스트한다.
- * 명세(AsyncAPI)상 채팅은 저장하지 않는다(Redis 키맵 v0.3 — 설계만, 미영속).
+ * 대기실 텍스트 채팅 — 검증 후 Redis Stream에 저장하고 방 전체 토픽으로 브로드캐스트한다.
+ * 저장(-131)은 채팅 신고(-132)의 전제 조건이다: Stream이 발급한 chatId가 신고 대상 식별자가 되고,
+ * 방 폭파 시 로그도 함께 삭제된다(즉시 삭제 — 방을 나가면 신고 불가가 정책).
  *
  * 시그널(/user/queue/* 1:1 전달)과 달리 채팅은 /topic 브로드캐스트라 구독자 전원에게 간다.
  * 방 상태 읽기는 signal 패키지의 RoomMembershipReader 포트를 재사용한다
@@ -35,6 +36,7 @@ public class ChatService {
 
     private final RoomMembershipReader membershipReader;
     private final SimpMessagingTemplate messagingTemplate;
+    private final ChatLogRepository chatLogRepository;
 
     /**
      * 일반 채팅(TALK). 검증 순서: 입력 형식 → 방 존재 → 발신자 참가.
@@ -47,9 +49,12 @@ public class ChatService {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
         requireMembership(roomId, sender);
-        // 발신자 신원·시각은 서버가 확정한다(클라이언트 입력 불신).
+        // 발신자 신원·시각은 서버가 확정한다(클라이언트 입력 불신). 저장 후 발급된 chatId를 함께 방송한다.
+        Instant sentAt = Instant.now();
+        String chatId = chatLogRepository.appendTalk(
+                roomId, sender.userId(), sender.displayName(), text, sentAt);
         broadcast(roomId, ChatMessageResponse.talk(
-                sender.userId(), sender.displayName(), text, Instant.now()));
+                chatId, sender.userId(), sender.displayName(), text, sentAt));
     }
 
     /**
@@ -67,8 +72,11 @@ public class ChatService {
         requireMembership(roomId, sender);
         // text는 구형/단순 클라이언트용 표시 폴백 — 커스텀 렌더링은 type·gameId·gameName으로.
         String text = String.format("'%s' 게임을 제안했습니다.", gameName);
+        Instant sentAt = Instant.now();
+        String chatId = chatLogRepository.appendGameSuggest(
+                roomId, sender.userId(), sender.displayName(), text, gameId, gameName, sentAt);
         broadcast(roomId, ChatMessageResponse.gameSuggest(
-                sender.userId(), sender.displayName(), text, gameId, gameName, Instant.now()));
+                chatId, sender.userId(), sender.displayName(), text, gameId, gameName, sentAt));
     }
 
     private void requireMembership(String roomId, AuthPrincipal sender) {
