@@ -215,6 +215,20 @@ const activeGame = ref<GameEntry | null>(null)
 const activeSession = ref<ActiveGameSession | null>(null)
 const gameResults = ref<GameResultEntry[] | null>(null)
 
+// ── 게임 화면 송출 — 게임 중에는 카메라와 함께 게임 캔버스를 화면공유 트랙으로 발행한다.
+// 다른 참가자는 타일마다 게임 화면 ↔ 카메라를 토글로 골라 본다(ParticipantTile).
+// 표시되지 않는 쪽은 adaptiveStream·dynacast가 자동으로 쉬게 하므로 부하는 보는 만큼만 든다.
+const gameComp = ref<{ canvas?: HTMLCanvasElement } | null>(null)
+
+// 캔버스가 준비되면 송출 시작. 카메라가 꺼진 동안은 게임 화면도 가린다(정지 화면 송출 방지).
+watch(
+  [() => gameComp.value?.canvas ?? null, () => lkLocal.value?.cameraOn ?? false],
+  async ([canvas, camOn]) => {
+    if (!activeGame.value || !canvas) return
+    if (await lk.publishGameScreen(canvas)) await lk.setGameScreenMuted(!camOn)
+  },
+)
+
 // 실시간 스코어보드(S15P11A706-82) — PROGRESS/PLAYER_FINISHED 수신으로 갱신
 interface LiveScoreRow {
   nickname: string
@@ -337,6 +351,7 @@ function onGameFinished(r: { constellation: string; score: number; starsHit: num
 }
 
 function closeGame() {
+  void lk.unpublishGameScreen()
   activeGame.value = null
   activeSession.value = null
   gameResults.value = null
@@ -422,9 +437,11 @@ const startHint = computed(() =>
             </svg>
             <button class="px cam-on-btn" @click="toggleCam">CAM ON</button>
           </div>
-          <!-- 진행 중인 게임 — 비디오는 밑에서 계속 재생(LiveKit 발행 유지), 게임 캔버스가 덮는다 -->
+          <!-- 진행 중인 게임 — 게임 캔버스가 셀프 타일을 덮고, 캔버스는 화면공유 트랙으로도
+               발행돼 다른 참가자가 타일 토글로 게임 화면을 볼 수 있다(종료 시 발행 해제) -->
           <FingerStarGame
             v-if="activeGame?.id === 'finger'"
+            ref="gameComp"
             :video="selfVideoEl ?? null"
             :session="activeSession"
             :results="gameResults"
@@ -768,6 +785,7 @@ const startHint = computed(() =>
 .leave { display: flex; align-items: center; gap: 9px; padding: 0 18px; height: 52px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; background: var(--c-coral); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
 
 .room-toast { position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 60; padding: 13px 20px; background: #fffdf3; border: 3px solid #f0a815; color: #f0a815; font-size: 9px; line-height: 1.7; box-shadow: 5px 5px 0 rgba(43, 35, 51, 0.25); }
+
 .toast-enter-active { animation: px-pop 0.18s steps(3); }
 .toast-leave-active { transition: opacity 0.2s; }
 .toast-leave-to { opacity: 0; }
