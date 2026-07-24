@@ -40,6 +40,9 @@ const myParticipantId = computed(() => readAccessClaims()?.sub ?? null)
 const roomCode = computed(() => (route.query.room as string) || 'MP-4X9K')
 const roomGame = computed(() => (route.query.game as string) || 'DANCE BATTLE')
 const isHost = computed(() => route.query.host === '1')
+// 입장 전 카메라/마이크 온오프 화면(DeviceSetupView)에서 고른 초기 상태 — 쿼리에 없으면(직접 URL 진입 등) 기본 켜짐.
+const initialCamOn = computed(() => route.query.cam !== '0')
+const initialMicOn = computed(() => route.query.mic !== '0')
 
 // ── 방 정원/방장/이름 (상세 조회) ─────────────
 const capacity = ref(8)
@@ -70,7 +73,7 @@ const otherSlots = computed<Slot[]>(() => {
 const othersColumns = computed(() => (otherSlots.value.length <= 2 ? 1 : 2))
 
 // ── 자기 타일 상태 (연결 시 LiveKit, 미연결 시 로컬 프리뷰) ──
-const demoMic = ref(true)
+const demoMic = ref(initialMicOn.value)
 const selfCamOn = computed(() => (connected.value ? !!lkLocal.value?.cameraOn : camera.isOn.value))
 const selfMicOn = computed(() => (connected.value ? !!lkLocal.value?.micOn : demoMic.value))
 const selfIsHost = computed(
@@ -118,7 +121,7 @@ onMounted(async () => {
   } catch {
     /* 백엔드 미연동 — 기본 정원 유지 */
   }
-  const ok = await lk.connect(roomCode.value)
+  const ok = await lk.connect(roomCode.value, { camera: initialCamOn.value, microphone: initialMicOn.value })
   if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
 
   // 채팅은 이력이 없어서(비영속) 구독이 늦은 만큼 그대로 유실 — 입장 직후 바로 연결.
