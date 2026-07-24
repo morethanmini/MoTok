@@ -106,31 +106,31 @@
     </div>
 
     <div class="card">
-      <div class="card-h h-session">② 게임 세션<span class="tag">📋 미구현</span></div>
+      <div class="card-h h-session">② 게임 세션<span class="tag">✅ 구현됨 (-115/-116) · 설계와 키 상이</span></div>
       <div class="card-body">
-        <div class="kv"><div class="row"><code>room:{roomId}:session</code>
-          <div class="badges"><span class="badge b-type">String</span><span class="badge b-ttl">TTL 2h</span></div></div>
-          <div class="desc">방 → 현재 진행 중 세션 ID 연결</div></div>
-        <div class="kv"><div class="row"><code>session:{sessionId}</code>
-          <div class="badges"><span class="badge b-type">Hash</span><span class="badge b-ttl">TTL 2h</span></div></div>
-          <div class="desc">세션 상태 · endsAt(서버 확정 마감 시각)</div></div>
-        <div class="kv"><div class="row"><code>session:{sessionId}:scores</code>
-          <div class="badges"><span class="badge b-type">ZSET</span><span class="badge b-ttl">TTL 2h</span></div></div>
-          <div class="desc">실시간 점수판 · 봇·회원 동일 규격 공존(설계 단계)</div></div>
-        <div class="kv"><div class="row"><code>session:{sessionId}:submits:{playerKey}</code>
-          <div class="badges"><span class="badge b-type">카운터</span><span class="badge b-ttl">TTL 2h</span></div></div>
-          <div class="desc">판정 제출 횟수(설계 단계)</div></div>
-        <div class="note">코드 스캔 결과 <code>session</code> 관련 패키지·클래스 0개 — v0.2 설계 그대로, 아직 착수 전.</div>
+        <div class="kv"><div class="row"><code>game:session:{roomId}</code>
+          <div class="badges"><span class="badge b-done">✅</span><span class="badge b-type">Hash</span><span class="badge b-ttl">TTL 30m</span></div></div>
+          <div class="desc"><b>정정(구 <code>session:{sessionId}</code>)</b>: 방 하나에 동시 세션 1개라 <b>roomId로 키를 잡음</b>. 필드 sessionId·gameId·constellationKey·startAt·endAt(서버 권위 epoch millis)·status(PLAYING|ENDED). 구 <code>room:{id}:session</code> 연결 String은 미채택 — 방 잠금은 <code>room:{roomId}</code> Hash의 status(PLAYING/WAITING) 필드로 처리.</div></div>
+        <div class="kv"><div class="row"><code>game:session:{roomId}:scores</code>
+          <div class="badges"><span class="badge b-done">✅</span><span class="badge b-type">Hash</span><span class="badge b-ttl">TTL 30m</span></div></div>
+          <div class="desc"><b>정정(구 ZSET)</b>: 최종 제출 점수판. field=참가자 userId, value=URL-encoded(nickname·score·starsHit·finishedAt). <b>HSETNX로 최초 1회만 수리</b>(재제출·중복 프레임 무시). 실시간 ZSET 아님 — 순위는 정산 시 서버가 점수 내림차순(동점=먼저 제출)으로 계산.</div></div>
+        <div class="kv"><div class="row"><code>game:session:{roomId}:ended:{sessionId}</code>
+          <div class="badges"><span class="badge b-new">as-built 신규</span><span class="badge b-type">String NX</span><span class="badge b-ttl">TTL 30m</span></div></div>
+          <div class="desc"><b>정산 1회 실행 가드(SETNX)</b> — 타이머(시간 종료)와 전원 완주 조기정산이 경합해도 한쪽만 정산. 설계엔 없던 멱등 키.</div></div>
+        <div class="kv removed"><div class="row"><code>session:{id}:submits:{playerKey}</code>
+          <div class="badges"><span class="badge b-type">카운터</span></div></div>
+          <div class="desc">[미채택] 제출 횟수 상한 대신 <b>HSETNX 최초 1회 제출</b> + 점수 범위 클램프(0~100)로 치팅 방어. 카운터 안 씀.</div></div>
+        <div class="note"><b>2026-07-24 as-built 반영</b>: <code>game/</code> 패키지 구현(커밋 <code>3cd4be8</code>, -115/-116). 설계 <code>session:{sessionId}</code>(sessionId 키·ZSET·submits·TTL 2h) 대신 <b>roomId 키·Hash·SETNX 가드·TTL 30m</b>으로 구현. 타이머 권위는 인메모리 <code>ThreadPoolTaskScheduler</code>(pool 2, 단일 인스턴스 전제 — simple broker와 동일). ⚠ 아직 finger-star(게임1) 특화이며, DB 전적·랭킹 영속(③, -117)은 미구현.</div>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-h h-rank">③ 랭킹 — 유일한 영구 키(예외)<span class="tag">📋 미구현</span></div>
+      <div class="card-h h-rank">③ 랭킹 — 유일한 영구 키(예외)<span class="tag">✅ 구현됨 (-117)</span></div>
       <div class="card-body">
         <div class="kv"><div class="row"><code>rank:{gameId}</code>
-          <div class="badges"><span class="badge b-type">ZSET</span><span class="badge b-ttl">TTL 없음</span></div></div>
-          <div class="desc">게임별 랭킹(회원만) · ZADD GT · 유실 시 MySQL LEADERBOARD로 warm-up 복구(설계 단계)</div></div>
-        <div class="note">랭킹 관련 코드 0개 — 변경 없음.</div>
+          <div class="badges"><span class="badge b-done">✅</span><span class="badge b-type">ZSET</span><span class="badge b-ttl">TTL 없음</span></div></div>
+          <div class="desc">게임별 세계순위(회원만, member=userId·score=best_score) · 정산 시 ZADD · 유실 시 MySQL <code>leaderboards</code>로 warm-up</div></div>
+        <div class="note"><b>2026-07-24 구현(-117)</b>: <code>GAME_END</code> 후 <b>write-behind 정산</b>으로 회원 결과를 MySQL <code>leaderboards</code>(집계: best_score·play_count, uk(game_id,user_id))에 적재하고 <code>rank:{gameId}</code> ZSET을 갱신한다(권위 best_score라 GT 불필요). <b>최소 RDB</b>: 개별 판(GAME_SESSION/RESULT)은 두지 않음 — 전적·세계순위엔 집계로 충분(ERD §03-1). 지갑(POINT_HISTORY) 반영은 후속.</div>
       </div>
     </div>
 
@@ -213,6 +213,7 @@
   <div class="changelog">
     <h2>v0.2 → v0.3 변경 이력 (2026-07-21 커밋 이력 기준)</h2>
     <ul>
+      <li><b>(2026-07-24 as-built 반영)</b> ② 게임 세션 구현됨(<code>3cd4be8</code>, -115/-116) — 설계 <code>session:{sessionId}</code>(ZSET·submits·TTL 2h) 대신 <b><code>game:session:{roomId}</code></b>(Hash·<code>:scores</code> HSETNX·<code>:ended</code> SETNX 정산가드·TTL 30m)로 구현. ③ 랭킹·DB 정산(-117)은 여전히 미구현.</li>
       <li><code>rooms:public</code> → <code>rooms:index</code>로 정정, "공개방만" → "공개+비공개 방 전체"로 범위 수정 (코드: <code>LiveRoomRepository.ROOM_INDEX_KEY</code>)</li>
       <li>① 방 섹션에 "<code>liveroom</code> 패키지 단일화" 메모 추가 — 인메모리 <code>room</code>(임대연) 패키지 삭제(<code>b8c38ee</code>, 11:02) 반영</li>
       <li>⑤ 인증 토큰 섹션에 누락돼 있던 이메일 인증 키 4종(<code>auth:email:code/verified/cooldown/sent</code>) 신규 추가 — <code>EmailVerificationService</code> 실구현 기준</li>
