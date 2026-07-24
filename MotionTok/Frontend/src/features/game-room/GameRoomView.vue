@@ -5,7 +5,7 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch 
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, readAccessClaims, type ChatMessage } from '@/api'
+import { roomsApi, reportsApi, ApiError, readAccessClaims, type ChatMessage } from '@/api'
 import type { GameEvent, GameResultEntry } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { useCamera } from '@/composables/useCamera'
@@ -16,6 +16,7 @@ import { useToast } from '@/composables/useToast'
 import { GAME_CATALOG, type GameEntry } from './data'
 import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
+import ReportIcon from './components/ReportIcon.vue'
 // MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
 const FingerStarGame = defineAsyncComponent(
   () => import('@/features/games/finger-star/FingerStarGame.vue'),
@@ -42,11 +43,18 @@ const myParticipantId = computed(() => readAccessClaims()?.sub ?? null)
 const roomCode = computed(() => (route.query.room as string) || 'MP-4X9K')
 const roomGame = computed(() => (route.query.game as string) || 'DANCE BATTLE')
 const isHost = computed(() => route.query.host === '1')
+// 입장 전 카메라/마이크 온오프 화면(DeviceSetupView)에서 고른 초기 상태 — 쿼리에 없으면(직접 URL 진입 등) 기본 켜짐.
+const initialCamOn = computed(() => route.query.cam !== '0')
+const initialMicOn = computed(() => route.query.mic !== '0')
 
 // ── 방 정원/방장/이름 (상세 조회) ─────────────
 const capacity = ref(8)
 const hostId = ref<string | null>(null)
 const roomTitle = ref<string | null>(null)
+// 화면에 노출/복사되는 "ROOM CODE"는 접속용 roomId가 아니라 초대코드(inviteCode)여야 한다 —
+// /join-by-invite-code는 이 값으로 조회하지 roomId로는 찾지 못한다. 상세 조회 전까지는 roomId로 폴백.
+const inviteCode = ref<string | null>(null)
+const shareCode = computed(() => inviteCode.value ?? roomCode.value)
 
 // ── 실시간 참가자 → 슬롯 매핑 ────────────────
 const connected = computed(() => lk.state.value === ConnectionState.Connected)
@@ -68,7 +76,7 @@ const otherSlots = computed<Slot[]>(() => {
 const othersColumns = computed(() => (otherSlots.value.length <= 2 ? 1 : 2))
 
 // ── 자기 타일 상태 — 프리뷰·게임 참여 가능 여부는 로컬 캡처 기준, "보이는지"는 발행 상태 기준 ──
-const demoMic = ref(true)
+const demoMic = ref(initialMicOn.value)
 /** 로컬 캡처 동작 중(프리뷰 표시·게임 참여 가능) */
 const captureOn = computed(() => camera.isOn.value)
 /** 다른 사람에게 카메라가 보이는지(발행 상태). 미연결 데모에선 캡처와 동일. */
@@ -108,14 +116,18 @@ onMounted(async () => {
     capacity.value = d.maxPlayers
     hostId.value = d.hostUserId
     roomTitle.value = d.title
+    inviteCode.value = d.inviteCode
   } catch {
     /* 백엔드 미연동 — 기본 정원 유지 */
   }
-  // 로컬 캡처를 먼저 켜고, LiveKit에는 복제본 트랙을 발행한다(실패해도 방 접속은 진행)
+  // 로컬 캡처를 먼저 켜고, LiveKit에는 복제본 트랙을 발행한다(실패해도 방 접속은 진행).
+  // 입장 전 화면에서 카메라를 껐다면 캡처만 켜고 발행은 하지 않는다 — 프리뷰·게임 입력은
+  // 살아 있고 다른 사람에게만 꺼져 보인다(방 안에서 카메라 버튼으로 켜면 그때 발행).
   const stream = await camera.start(CAMERA_CONSTRAINTS)
   if (!stream) flash('카메라를 켤 수 없어요(권한/장치 확인)')
   const ok = await lk.connect(roomCode.value, {
-    cameraTrack: stream?.getVideoTracks()[0] ?? null,
+    cameraTrack: initialCamOn.value ? (stream?.getVideoTracks()[0] ?? null) : null,
+    microphone: initialMicOn.value,
   })
   if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
 
@@ -128,17 +140,24 @@ onBeforeUnmount(() => {
 
 // ── 채팅 ────────────────────────────────────
 // 표시용 말풍선 — 서버에서 수신한 메시지만 여기 담긴다(발신 시 로컬 append 금지: 자기 메시지도 topic으로 에코됨).
-interface ChatBubble { id: number; nickname: string; text: string; me: boolean; kind: ChatMessage['type']; gameName: string | null }
+interface ChatBubble { id: number; userId: string; nickname: string; text: string; me: boolean; kind: ChatMessage['type']; gameName: string | null; fading?: boolean }
 const bubbles = ref<ChatBubble[]>([])
 const draft = ref('')
 let bubbleId = 0
 const CHAT_MAX_LEN = 500
+const CHAT_LOG_MAX = 6
+const BUBBLE_LIFETIME_MS = 5200
+const BUBBLE_FADE_MS = 400
+
+// 채팅 독 위 떠있는 로그 — 스크롤 없이 최근 6개만 보여주고 그 이전 건 그냥 사라진다.
+const visibleBubbles = computed(() => bubbles.value.slice(-CHAT_LOG_MAX))
 
 // 채팅 전체보기 — 자동으로 사라지는 bubbles와 달리, 입장 이후 전체 이력을 그대로 보여준다.
 const chatExpanded = ref(false)
 const allBubbles = computed<ChatBubble[]>(() =>
   roomChat.messages.value.map((m, i) => ({
     id: i,
+    userId: m.userId,
     nickname: m.nickname,
     text: m.text,
     me: m.userId === myParticipantId.value,
@@ -153,6 +172,7 @@ watch(roomChat.messages, (all, prev) => {
     const id = ++bubbleId
     bubbles.value.push({
       id,
+      userId: m.userId,
       nickname: m.nickname,
       text: m.text,
       me: m.userId === myParticipantId.value,
@@ -160,8 +180,13 @@ watch(roomChat.messages, (all, prev) => {
       gameName: m.gameName,
     })
     // 게임 제안 카드는 계속 보이게 두고, 일반 채팅만 잠시 후 사라진다.
+    // (6개 초과로 밀려날 때는 그대로 바로 사라지고, 시간이 지나 사라질 때만 흐려지며 사라진다)
     if (m.type === 'TALK') {
-      setTimeout(() => (bubbles.value = bubbles.value.filter((b) => b.id !== id)), 5200)
+      setTimeout(() => {
+        const target = bubbles.value.find((b) => b.id === id)
+        if (target) target.fading = true
+      }, BUBBLE_LIFETIME_MS - BUBBLE_FADE_MS)
+      setTimeout(() => (bubbles.value = bubbles.value.filter((b) => b.id !== id)), BUBBLE_LIFETIME_MS)
     }
   }
 })
@@ -185,6 +210,101 @@ function send() {
 function sendOnEnter(e: KeyboardEvent) {
   if (e.isComposing || e.keyCode === 229) return
   send()
+}
+
+// ── 채팅 메시지 신고 ─────────────────────────
+interface ReportTarget { userId: string; nickname: string; text: string }
+const REPORT_REASONS = [
+  { code: 'ABUSE', label: '욕설, 비난' },
+  { code: 'SEXUAL', label: '음란적인 내용' },
+  { code: 'SPAM', label: '도배, 스팸' },
+] as const
+const REPORT_OTHER = 'OTHER'
+const reportTarget = ref<ReportTarget | null>(null)
+// 신고 사유는 여러 개 고를 수 있다 — 선택된 코드 집합.
+const reportReasons = ref<Set<string>>(new Set())
+const reportOtherText = ref('')
+const reportSubmitting = ref(false)
+
+function openReport(b: ChatBubble) {
+  reportTarget.value = { userId: b.userId, nickname: b.nickname, text: b.text }
+  reportReasons.value = new Set()
+  reportOtherText.value = ''
+}
+function closeReport() {
+  reportTarget.value = null
+}
+function toggleReportReason(code: string) {
+  const next = new Set(reportReasons.value)
+  if (next.has(code)) next.delete(code)
+  else next.add(code)
+  reportReasons.value = next
+}
+async function submitReport() {
+  if (!reportTarget.value || reportReasons.value.size === 0 || reportSubmitting.value) return
+  const hasOther = reportReasons.value.has(REPORT_OTHER)
+  if (hasOther && !reportOtherText.value.trim()) return
+  reportSubmitting.value = true
+  try {
+    await reportsApi.report({
+      reportedUserId: Number(reportTarget.value.userId),
+      reasonType: [...reportReasons.value].join(','),
+      reasonText: hasOther ? reportOtherText.value.trim() : null,
+    })
+    flash('신고가 접수됐어요')
+    reportTarget.value = null
+  } catch (e) {
+    flash(e instanceof ApiError ? e.message : '신고 접수에 실패했어요')
+  } finally {
+    reportSubmitting.value = false
+  }
+}
+
+// ── 유저 신고 (방 코드 왼쪽 버튼 — 현재 접속한 참가자 중에서 고르거나, 목록에 없으면 닉네임 직접 입력) ──
+const USER_REPORT_OTHER = 'OTHER'
+const userReportOpen = ref(false)
+// 참가자를 고르면 identity, 목록에 없는 다른 유저를 고르면 USER_REPORT_OTHER
+const userReportSelection = ref('')
+const userReportNickname = ref('')
+const userReportText = ref('')
+
+const canSubmitUserReport = computed(() => {
+  if (!userReportSelection.value || !userReportText.value.trim()) return false
+  if (userReportSelection.value === USER_REPORT_OTHER && !userReportNickname.value.trim()) return false
+  return true
+})
+
+function openUserReport() {
+  userReportOpen.value = true
+  userReportSelection.value = ''
+  userReportNickname.value = ''
+  userReportText.value = ''
+}
+function closeUserReport() {
+  userReportOpen.value = false
+}
+async function submitUserReport() {
+  if (!canSubmitUserReport.value || reportSubmitting.value) return
+  const content = userReportText.value.trim()
+  const target = remotes.value.find((p) => p.identity === userReportSelection.value)
+  // 목록의 참가자는 identity(userId)를 알지만, 직접 입력한 닉네임은 신고 대상 ID를 알 수 없어(닉네임→ID 조회 API 미제공)
+  // reasonText에 닉네임을 함께 담아 보낸다.
+  const nickname = target ? target.name : userReportNickname.value.trim()
+  const reportedUserId = target ? Number(target.identity) : 0
+  reportSubmitting.value = true
+  try {
+    await reportsApi.report({
+      reportedUserId,
+      reasonType: REPORT_OTHER,
+      reasonText: `[닉네임: ${nickname}] ${content}`,
+    })
+    flash('신고가 접수됐어요')
+    userReportOpen.value = false
+  } catch (e) {
+    flash(e instanceof ApiError ? e.message : '신고 접수에 실패했어요')
+  } finally {
+    reportSubmitting.value = false
+  }
 }
 
 // 방장이 제안받은 게임을 그대로 선택 — 기존 방장 START 흐름과 동일 처리(실제 게임 빌드 전이라 준비 중 안내).
@@ -391,7 +511,7 @@ function closeGame() {
 }
 
 function copyCode() {
-  navigator.clipboard?.writeText(roomCode.value)
+  navigator.clipboard?.writeText(shareCode.value)
   flash('룸 코드를 복사했어요')
 }
 // 헤더 링크·뒤로가기 등으로 방을 벗어나려 하면 확인 모달. "나가기" 같은 의도된 이동은 통과.
@@ -445,11 +565,16 @@ const startHint = computed(() =>
       <span class="px-kicker"><i /> {{ roomTitle ?? 'LIVE PARTY ROOM' }}</span>
       <b>{{ roomGame }}</b>
 
+      <!-- 유저 신고 (방 코드 왼쪽) -->
+      <button class="ribbon-report" title="유저 신고" @click="openUserReport">
+        <ReportIcon :width="16" :height="20" />
+      </button>
+
       <!-- 방 코드 (하단 바에서 이동) -->
       <div class="code-box">
         <span class="px code-cap">ROOM CODE</span>
         <div class="code-line">
-          <span class="px code-val">{{ roomCode }}</span>
+          <span class="px code-val">{{ shareCode }}</span>
           <button class="copy" @click="copyCode">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="9" y="9" width="11" height="11" /><path d="M5 15V5a2 2 0 012-2h10" /></svg>
           </button>
@@ -542,22 +667,26 @@ const startHint = computed(() =>
       <!-- 채팅 독 -->
       <div class="chat-dock">
         <div class="chat-log">
-          <div class="px chat-notice">입장 이후의 대화만 표시돼요</div>
-          <div
-            v-for="b in bubbles"
-            :key="b.id"
-            class="px bubble"
-            :class="{ me: b.me, suggest: b.kind === 'GAME_SUGGEST' }"
-          >
-            <template v-if="b.kind === 'GAME_SUGGEST'">
-              <span class="bubble-name">🎮 {{ b.nickname }}</span> {{ b.text }}
-              <button v-if="isHost" class="px suggest-pick" @click="selectSuggested(b.gameName)">
-                이 게임으로 선택
+          <div class="chat-log-list">
+            <div
+              v-for="b in visibleBubbles"
+              :key="b.id"
+              class="px bubble"
+              :class="{ me: b.me, suggest: b.kind === 'GAME_SUGGEST', fading: b.fading }"
+            >
+              <button v-if="!b.me" class="bubble-report" title="신고" @click="openReport(b)">
+                <ReportIcon />
               </button>
-            </template>
-            <template v-else>
-              <span class="bubble-name" :class="{ me: b.me }">{{ b.nickname }}</span> {{ b.text }}
-            </template>
+              <template v-if="b.kind === 'GAME_SUGGEST'">
+                <span class="bubble-name">🎮 {{ b.nickname }}</span> {{ b.text }}
+                <button v-if="isHost" class="px suggest-pick" @click="selectSuggested(b.gameName)">
+                  이 게임으로 선택
+                </button>
+              </template>
+              <template v-else>
+                <span class="bubble-name" :class="{ me: b.me }">{{ b.nickname }}</span> {{ b.text }}
+              </template>
+            </div>
           </div>
         </div>
         <button
@@ -590,7 +719,6 @@ const startHint = computed(() =>
               <button class="chat-full-close" @click="chatExpanded = false">✕</button>
             </div>
             <div class="chat-full-body">
-              <div class="px chat-notice">입장 이후의 대화만 표시돼요</div>
               <p v-if="!allBubbles.length" class="chat-full-empty">아직 대화가 없어요</p>
               <div
                 v-for="b in allBubbles"
@@ -598,6 +726,9 @@ const startHint = computed(() =>
                 class="px bubble full"
                 :class="{ me: b.me, suggest: b.kind === 'GAME_SUGGEST' }"
               >
+                <button v-if="!b.me" class="bubble-report" title="신고" @click="openReport(b)">
+                  <ReportIcon />
+                </button>
                 <template v-if="b.kind === 'GAME_SUGGEST'">
                   <span class="bubble-name">🎮 {{ b.nickname }}</span> {{ b.text }}
                 </template>
@@ -643,6 +774,95 @@ const startHint = computed(() =>
       <div class="leave-actions">
         <PixelButton block @click="answerLeave(false)">취소</PixelButton>
         <PixelButton variant="primary" block @click="answerLeave(true)">나가기</PixelButton>
+      </div>
+    </PixelModal>
+
+    <!-- 채팅 메시지 신고 -->
+    <PixelModal v-if="reportTarget" @close="closeReport">
+      <h3 class="report-title">🚩 메시지 신고</h3>
+      <div class="report-target">
+        <span class="report-target-name">{{ reportTarget.nickname }}</span>
+        <p class="report-target-text">{{ reportTarget.text }}</p>
+      </div>
+      <p class="report-label">신고 사유를 선택해 주세요 (복수 선택 가능)</p>
+      <ul class="report-reasons">
+        <li v-for="r in REPORT_REASONS" :key="r.code">
+          <label class="report-option">
+            <input type="checkbox" :checked="reportReasons.has(r.code)" @change="toggleReportReason(r.code)" />
+            {{ r.label }}
+          </label>
+        </li>
+        <li>
+          <label class="report-option">
+            <input type="checkbox" :checked="reportReasons.has(REPORT_OTHER)" @change="toggleReportReason(REPORT_OTHER)" />
+            기타(입력)
+          </label>
+          <input
+            v-if="reportReasons.has(REPORT_OTHER)"
+            v-model="reportOtherText"
+            class="report-other-input"
+            placeholder="신고 사유를 입력해 주세요"
+            maxlength="200"
+          />
+        </li>
+      </ul>
+      <div class="leave-actions">
+        <PixelButton block @click="closeReport">취소</PixelButton>
+        <PixelButton
+          variant="primary"
+          block
+          :disabled="reportReasons.size === 0 || (reportReasons.has(REPORT_OTHER) && !reportOtherText.trim()) || reportSubmitting"
+          @click="submitReport"
+        >
+          신고하기
+        </PixelButton>
+      </div>
+    </PixelModal>
+
+    <!-- 유저 신고 (방 코드 왼쪽 버튼) -->
+    <PixelModal v-if="userReportOpen" @close="closeUserReport">
+      <h3 class="report-title">🚩 유저 신고</h3>
+      <p class="report-field-label">신고할 유저를 선택해 주세요</p>
+      <ul class="report-reasons">
+        <li v-for="p in remotes" :key="p.identity">
+          <label class="report-option">
+            <input type="radio" name="user-report-target" :value="p.identity" v-model="userReportSelection" />
+            {{ p.name }}
+          </label>
+        </li>
+        <li v-if="!remotes.length" class="report-user-empty">현재 접속한 다른 참가자가 없어요</li>
+        <li>
+          <label class="report-option">
+            <input type="radio" name="user-report-target" :value="USER_REPORT_OTHER" v-model="userReportSelection" />
+            다른 유저(닉네임 직접 입력)
+          </label>
+          <input
+            v-if="userReportSelection === USER_REPORT_OTHER"
+            v-model="userReportNickname"
+            class="report-other-input"
+            placeholder="닉네임을 입력해 주세요"
+            maxlength="30"
+          />
+        </li>
+      </ul>
+      <p class="report-field-label">신고 내용</p>
+      <textarea
+        v-model="userReportText"
+        class="report-textarea"
+        placeholder="신고 사유를 자세히 입력해 주세요"
+        maxlength="500"
+        rows="4"
+      />
+      <div class="leave-actions">
+        <PixelButton block @click="closeUserReport">취소</PixelButton>
+        <PixelButton
+          variant="primary"
+          block
+          :disabled="!canSubmitUserReport || reportSubmitting"
+          @click="submitUserReport"
+        >
+          신고하기
+        </PixelButton>
       </div>
     </PixelModal>
   </div>
@@ -759,7 +979,14 @@ const startHint = computed(() =>
 .start-hint { display: block; font-size: 7px; opacity: 0.85; }
 
 /* 방 코드 (하단 바, 나가기 버튼 왼쪽) */
-.code-box { margin-left: auto; border: 2px solid var(--c-ink); background: #fff; padding: 0 12px; height: 38px; display: flex; align-items: center; gap: 8px; border-radius: 11px; box-shadow: var(--shadow-sm); }
+.ribbon-report {
+  margin-left: auto; flex: none; width: 34px; height: 34px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid var(--c-ink); border-radius: 10px;
+  background: #fff; box-shadow: var(--shadow-sm);
+}
+.ribbon-report:hover { background: #ffe9ea; }
+.code-box { border: 2px solid var(--c-ink); background: #fff; padding: 0 12px; height: 38px; display: flex; align-items: center; gap: 8px; border-radius: 11px; box-shadow: var(--shadow-sm); }
 .code-cap { font-size: 7px; color: #a99f86; }
 .code-line { display: flex; align-items: center; gap: 8px; }
 .code-val { font-size: 12px; color: #f0a815; }
@@ -779,21 +1006,59 @@ const startHint = computed(() =>
 .ctrl.off { background: #fbdbe0; color: #e85d6e; }
 
 .chat-dock { position: relative; flex: none; width: 420px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; height: 52px; background: #fff; border: 3px solid var(--c-ink-soft); border-radius: 14px; box-shadow: var(--shadow-sm); }
-.chat-log { position: absolute; bottom: 62px; left: 0; width: 420px; max-height: 300px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
-.chat-notice { align-self: center; padding: 4px 10px; font-size: 7px; color: #a99f86; background: rgba(255, 253, 247, .9); border-radius: 999px; }
-.bubble { max-width: 420px; padding: 9px 12px; font-size: 9px; line-height: 1.7; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); }
+.chat-log {
+  position: absolute; bottom: 62px; left: 0; width: 420px;
+  display: flex; flex-direction: column; gap: 8px;
+  overflow: visible;
+}
+.chat-log-list { display: flex; flex-direction: column; gap: 8px; }
+.bubble { position: relative; max-width: 420px; padding: 9px 22px 9px 12px; font-size: 9px; line-height: 1.7; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); word-break: break-word; overflow-wrap: anywhere; transition: opacity 0.4s ease; }
+/* 6개 초과로 밀려날 땐 그대로 바로 사라지고, 시간이 지나 사라질 때만(.fading) 흐려지며 사라진다 */
+.bubble.fading { opacity: 0; }
 .bubble.me { background: #fff4cc; }
 .bubble.suggest { background: var(--c-mint-soft); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
-.bubble-name { color: #5cbf4a; }
-.bubble-name.me { color: #f0a815; }
+.bubble-name { display: block; margin-bottom: 3px; font-size: 10px; font-weight: 800; color: #2f9e3d; }
+.bubble-name.me { color: #c97e00; }
 .suggest-pick { border: 2px solid var(--c-ink-soft); border-radius: 8px; background: var(--c-yellow); padding: 5px 8px; font-size: 8px; font-weight: 700; }
-.chat-dock input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 13px; }
+
+/* 메시지 신고 버튼 — 말풍선 안쪽 우상단, 테두리 없이 아이콘만 */
+.bubble-report {
+  position: absolute; top: 4px; right: 4px; z-index: 1;
+  width: 9px; height: 11px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: transparent;
+}
+.bubble-report:hover { opacity: 0.75; }
+
+/* 신고 모달 */
+.report-title { margin: 0 0 12px; font-size: 15px; }
+.report-target { margin-bottom: 14px; padding: 10px 12px; border: 2px solid #eaddea; border-radius: 11px; background: #fdfaf3; }
+.report-target-name { font-size: 10px; font-weight: 800; color: #2f9e3d; }
+.report-target-text { margin: 5px 0 0; font-size: 11px; color: var(--c-ink-soft); line-height: 1.6; word-break: break-word; overflow-wrap: anywhere; }
+.report-label { margin: 0 0 8px; font-size: 10px; color: var(--c-muted); }
+.report-reasons { list-style: none; margin: 0 0 18px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.report-option { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--c-ink-soft); cursor: pointer; }
+.report-user-empty { font-size: 10.5px; color: #a99f86; }
+.report-other-input {
+  width: 100%; margin-top: 8px; padding: 8px 10px;
+  border: 2px solid var(--c-ink-soft); border-radius: 9px;
+  font-size: 11px; color: var(--c-ink-soft);
+}
+.report-field-label { margin: 14px 0 0; font-size: 10px; color: var(--c-muted); }
+.report-field-label:first-of-type { margin-top: 0; }
+.report-textarea {
+  width: 100%; margin: 8px 0 18px; padding: 8px 10px;
+  border: 2px solid var(--c-ink-soft); border-radius: 9px;
+  font-size: 11px; color: var(--c-ink-soft);
+  font-family: inherit; resize: vertical;
+}
+.chat-dock input { position: relative; z-index: 47; flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 13px; }
 .chat-count { flex: none; font-size: 7px; color: #a99f86; }
 .chat-count.over { color: var(--c-coral); }
-.chat-send { flex: none; width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
+.chat-send { position: relative; z-index: 47; flex: none; width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
 
-/* 채팅 전체보기 토글 버튼 */
-.chat-expand { flex: none; width: 32px; height: 32px; border: 2px solid var(--c-ink-soft); border-radius: 9px; background: #fff; color: #a99f86; display: flex; align-items: center; justify-content: center; }
+/* 채팅 전체보기 토글 버튼 — 전체보기 패널이 열려도(배경 오버레이 z-index:45보다 위) 계속 클릭 가능해야 한다 */
+.chat-expand { position: relative; z-index: 47; flex: none; width: 32px; height: 32px; border: 2px solid var(--c-ink-soft); border-radius: 9px; background: #fff; color: #a99f86; display: flex; align-items: center; justify-content: center; }
 .chat-expand.active { background: var(--c-yellow); color: var(--c-ink-soft); }
 
 /* 채팅 전체보기 패널 — 입장 이후 전체 대화를 반투명하게 보여준다 */
@@ -811,7 +1076,13 @@ const startHint = computed(() =>
 }
 .chat-full-head { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; font-size: 9px; font-weight: 700; color: var(--c-ink-soft); border-bottom: 2px solid rgba(56, 38, 61, .12); }
 .chat-full-close { width: 22px; height: 22px; border: 2px solid var(--c-ink-soft); border-radius: 7px; background: #fff; color: var(--c-ink-soft); font-size: 9px; display: flex; align-items: center; justify-content: center; }
-.chat-full-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; overflow-y: auto; }
+.chat-full-body {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.chat-full-body::-webkit-scrollbar { display: none; }
 .chat-full-empty { align-self: center; margin: 20px 0; font-size: 9px; color: #a99f86; }
 .bubble.full { max-width: none; background: rgba(255, 255, 255, 0.9); }
 .bubble.full.me { background: rgba(255, 244, 204, 0.9); }

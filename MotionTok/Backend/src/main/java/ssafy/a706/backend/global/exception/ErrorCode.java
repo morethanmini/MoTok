@@ -59,6 +59,7 @@ public enum ErrorCode {
     ROOM_CANNOT_KICK_SELF(HttpStatus.BAD_REQUEST, "ROOM_CANNOT_KICK_SELF", "자기 자신은 강퇴할 수 없습니다."),
     ROOM_KICKED(HttpStatus.FORBIDDEN, "ROOM_KICKED", "강퇴된 방에는 재입장할 수 없습니다."),
     ROOM_GAME_IN_PROGRESS(HttpStatus.CONFLICT, "ROOM_GAME_IN_PROGRESS", "게임이 진행 중인 방에는 입장할 수 없습니다."),
+    ROOM_MAX_PLAYERS_BELOW_CURRENT(HttpStatus.CONFLICT, "ROOM_MAX_PLAYERS_BELOW_CURRENT", "최대 인원은 현재 참가자 수보다 작게 설정할 수 없습니다."),
     QUICK_START_NO_ROOM(HttpStatus.NOT_FOUND, "QUICK_START_NO_ROOM", "입장 가능한 방이 없습니다."),
 
     // game / session
@@ -73,6 +74,11 @@ public enum ErrorCode {
 
     // sfu
     SFU_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "SFU_NOT_IN_ROOM", "방 참가자만 화상 접속 토큰을 발급받을 수 있습니다."),
+
+    // shop
+    ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "ITEM_NOT_FOUND", "존재하지 않는 아이템입니다."),
+    ITEM_ALREADY_OWNED(HttpStatus.CONFLICT, "ITEM_ALREADY_OWNED", "이미 보유한 아이템입니다."),
+    INSUFFICIENT_POINT(HttpStatus.CONFLICT, "INSUFFICIENT_POINT", "포인트가 부족합니다."),
 
     // chat
     CHAT_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "CHAT_NOT_IN_ROOM", "방 참가자만 채팅을 보낼 수 있습니다.");
