@@ -79,17 +79,16 @@ const othersColumns = computed(() => (otherSlots.value.length <= 2 ? 1 : 2))
 const demoMic = ref(initialMicOn.value)
 /** 로컬 캡처 동작 중(프리뷰 표시·게임 참여 가능) */
 const captureOn = computed(() => camera.isOn.value)
-/** 다른 사람에게 카메라가 보이는지(발행 상태). 미연결 데모에선 캡처와 동일. */
+/** 카메라 켜짐(발행 상태) — 내 타일 프리뷰 표시 여부도 이 값 기준. 미연결 데모에선 캡처와 동일. */
 const selfCamOn = computed(() => (connected.value ? lk.cameraEnabled.value : camera.isOn.value))
-/** 캡처는 살아 있지만 발행만 꺼서 다른 사람에게 안 보이는 상태 */
-const camHidden = computed(() => connected.value && captureOn.value && !selfCamOn.value)
 const selfMicOn = computed(() => (connected.value ? !!lkLocal.value?.micOn : demoMic.value))
 const selfIsHost = computed(
   () => isHost.value || (!!lkLocal.value && lkLocal.value.identity === hostId.value),
 )
 
 const selfVideoEl = ref<HTMLVideoElement>()
-// 프리뷰·모션 인식은 항상 로컬 캡처 스트림을 쓴다 — 발행 상태(카메라 끄기)와 무관하게 프레임이 흐른다.
+// 모션 인식 입력은 항상 로컬 캡처 스트림을 쓴다 — 카메라를 꺼도(발행 mute) 스트림 연결은
+// 유지되어 게임 입력이 계속 흐른다. 프리뷰 표시 여부만 selfCamOn(발행 상태)으로 가린다.
 watch(
   [() => camera.stream.value, selfVideoEl],
   ([stream, el], _prev, onCleanup) => {
@@ -121,12 +120,12 @@ onMounted(async () => {
     /* 백엔드 미연동 — 기본 정원 유지 */
   }
   // 로컬 캡처를 먼저 켜고, LiveKit에는 복제본 트랙을 발행한다(실패해도 방 접속은 진행).
-  // 입장 전 화면에서 카메라를 껐다면 캡처만 켜고 발행은 하지 않는다 — 프리뷰·게임 입력은
-  // 살아 있고 다른 사람에게만 꺼져 보인다(방 안에서 카메라 버튼으로 켜면 그때 발행).
-  const stream = await camera.start(CAMERA_CONSTRAINTS)
-  if (!stream) flash('카메라를 켤 수 없어요(권한/장치 확인)')
+  // 입장 전 화면에서 카메라를 껐다면 캡처 자체를 시작하지 않는다 — 내 타일도 꺼진 상태로
+  // 보이고 장치 표시등도 켜지지 않는다. 방 안에서 카메라를 켜면 그때 캡처·발행을 시작한다.
+  const stream = initialCamOn.value ? await camera.start(CAMERA_CONSTRAINTS) : null
+  if (initialCamOn.value && !stream) flash('카메라를 켤 수 없어요(권한/장치 확인)')
   const ok = await lk.connect(roomCode.value, {
-    cameraTrack: initialCamOn.value ? (stream?.getVideoTracks()[0] ?? null) : null,
+    cameraTrack: stream?.getVideoTracks()[0] ?? null,
     microphone: initialMicOn.value,
   })
   if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
@@ -587,10 +586,8 @@ const startHint = computed(() =>
       <div class="cam-stage">
         <!-- 내 캠 — 항상 가장 크게 -->
         <div class="self-tile self-spot">
-          <video v-show="captureOn" ref="selfVideoEl" autoplay playsinline muted class="self-video" />
-          <!-- 캡처는 유지한 채 발행만 끈 상태 — 내 화면에만 보이고 다른 사람에게는 꺼져 보인다 -->
-          <div v-if="camHidden" class="px cam-hidden">🙈 다른 사람에게는 꺼져 보여요</div>
-          <div v-if="!captureOn" class="cam-off">
+          <video v-show="selfCamOn" ref="selfVideoEl" autoplay playsinline muted class="self-video" />
+          <div v-if="!selfCamOn" class="cam-off">
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">
               <path d="M2 6h11v12H2zM16 10l6-4v12l-6-4" /><line x1="2" y1="2" x2="22" y2="22" />
             </svg>
@@ -948,8 +945,6 @@ const startHint = computed(() =>
 .self-video { width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); background: #eee6cf; }
 .cam-off { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; background: #f3ead2; color: #a99f86; }
 .cam-off { background: linear-gradient(135deg, var(--c-mint-soft), #fff0c4); }
-/* 발행만 끈 상태 배지 — 게임 중에는 게임 캔버스가 타일을 덮으므로 자연히 가려진다 */
-.cam-hidden { position: absolute; bottom: 8px; left: 8px; padding: 6px 9px; background: rgba(43, 35, 51, 0.78); color: #ffd23f; font-size: 8px; border-radius: 8px; }
 .cam-on-btn { padding: 10px 16px; border: 3px solid var(--c-ink-soft); border-radius: 11px; background: var(--c-mint); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
 .self-label { position: absolute; top: 8px; left: 8px; display: flex; align-items: center; gap: 7px; padding: 6px 9px; background: #fffdf3; border: 2px solid var(--c-ink-soft); font-size: 9px; }
 
