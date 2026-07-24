@@ -11,6 +11,7 @@ import type { ActiveGameSession } from '@/features/games/session'
 import { useCamera } from '@/composables/useCamera'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
 import { useRoomChat } from '@/composables/useRoomChat'
+import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
 import { GAME_CATALOG, type GameEntry } from './data'
@@ -106,12 +107,23 @@ const speakerOn = ref(true)
 const screenOn = ref(false)
 const picker = ref(false)
 
+// 탭 닫기·주소창 이탈 시 keepalive 퇴장 통보 + bfcache 복원 시 로비로(뒤로가기 복귀 차단)
+useRoomUnloadLeave(() => route.query.room as string | undefined)
+
 onMounted(async () => {
   bgm.setVolume(0.2)
 
   // 정원/방장 조회(실패해도 진행) → LiveKit 접속(방 멤버만 토큰 발급됨)
   try {
     const d = await roomsApi.detail(roomCode.value)
+    // 문서 이탈(탭 닫기·주소창 이동)로 이미 퇴장한 뒤 뒤로가기·직접 URL로 돌아온 경우 —
+    // 방 멤버가 아니므로 게임룸을 그리지 않고 로비로 보낸다.
+    const myId = myParticipantId.value
+    if (myId && !d.members.some((m) => m.userId === myId)) {
+      leavingIntentionally = true
+      void router.replace({ name: RouteName.Lobby })
+      return
+    }
     capacity.value = d.maxPlayers
     hostId.value = d.hostUserId
     roomTitle.value = d.title
