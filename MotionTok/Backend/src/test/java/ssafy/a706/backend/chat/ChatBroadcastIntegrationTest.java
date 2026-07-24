@@ -57,6 +57,9 @@ class ChatBroadcastIntegrationTest {
     @Autowired
     private StringRedisTemplate redisTemplate;
 
+    @Autowired
+    private ChatLogRepository chatLogRepository;
+
     private String roomId;
     private final List<StompSession> sessions = new ArrayList<>();
 
@@ -83,7 +86,7 @@ class ChatBroadcastIntegrationTest {
             if (s.isConnected()) s.disconnect();
         });
         sessions.clear();
-        redisTemplate.delete(List.of("room:" + roomId, "room:" + roomId + ":members"));
+        redisTemplate.delete(List.of("room:" + roomId, "room:" + roomId + ":members", "room:" + roomId + ":chat"));
     }
 
     @Test
@@ -99,6 +102,7 @@ class ChatBroadcastIntegrationTest {
 
         ChatMessageResponse received = receiverInbox.poll(5, TimeUnit.SECONDS);
         assertThat(received).isNotNull();
+        assertThat(received.chatId()).isNotBlank();
         assertThat(received.type()).isEqualTo(ChatMessageResponse.MessageType.TALK);
         assertThat(received.userId()).isEqualTo(SENDER_ID);
         assertThat(received.nickname()).isEqualTo("보낸이");
@@ -108,6 +112,12 @@ class ChatBroadcastIntegrationTest {
         ChatMessageResponse echoed = senderInbox.poll(5, TimeUnit.SECONDS);
         assertThat(echoed).isNotNull();
         assertThat(echoed.text()).isEqualTo("안녕하세요!");
+
+        // -131: 브로드캐스트된 chatId로 Redis Stream에서 같은 내용이 조회돼야 한다(신고의 전제).
+        ChatLogEntry stored = chatLogRepository.findById(roomId, received.chatId()).orElseThrow();
+        assertThat(stored.userId()).isEqualTo(SENDER_ID);
+        assertThat(stored.text()).isEqualTo("안녕하세요!");
+        assertThat(stored.type()).isEqualTo("TALK");
     }
 
     @Test
@@ -151,6 +161,7 @@ class ChatBroadcastIntegrationTest {
 
         ChatMessageResponse received = receiverInbox.poll(5, TimeUnit.SECONDS);
         assertThat(received).isNotNull();
+        assertThat(received.chatId()).isNotBlank();
         assertThat(received.type()).isEqualTo(ChatMessageResponse.MessageType.GAME_SUGGEST);
         assertThat(received.userId()).isEqualTo(SENDER_ID);
         assertThat(received.nickname()).isEqualTo("보낸이");
