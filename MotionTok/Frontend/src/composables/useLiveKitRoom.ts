@@ -4,6 +4,10 @@
  * 흐름: sfuApi.videoToken(roomId)로 접속 정보를 받아 Room.connect → 로컬 카메라/마이크 발행 →
  * 원격 참가자 트랙을 구독해 reactive `participants`로 노출한다. 언마운트/재접속 시 자동 정리.
  *
+ * 카메라는 뷰가 가진 로컬 캡처 트랙(getUserMedia)의 복제본을 발행한다 — "카메라 끄기"는
+ * 발행 트랙 mute + 업스트림 중단이라 다른 사람에게만 꺼져 보이고, 원본 캡처는 계속 살아 있어
+ * 프리뷰·모션 인식 게임 입력이 유지된다(꺼도 게임 참여 가능).
+ *
  * 뷰에서의 사용 (예):
  *   const lk = useLiveKitRoom()
  *   await lk.connect(roomId)
@@ -104,9 +108,9 @@ export function useLiveKitRoom() {
   /** 방 접속: 토큰 발급 → connect → 카메라/마이크 발행. 실패 시 error 세팅 후 정리. */
   async function connect(
     roomId: string,
-    opts: { camera?: boolean; microphone?: boolean } = {},
+    opts: { cameraTrack?: MediaStreamTrack | null; microphone?: boolean } = {},
   ): Promise<boolean> {
-    const { camera = true, microphone = true } = opts
+    const { cameraTrack = null, microphone = true } = opts
     await disconnect()
     error.value = null
     try {
@@ -116,12 +120,8 @@ export function useLiveKitRoom() {
       bindEvents(r)
       await r.connect(url, token)
       // 미디어 발행은 best-effort — 권한 거부/장치 없음이 방 연결 자체를 끊지 않도록 개별 처리.
-      if (camera) {
-        try {
-          await r.localParticipant.setCameraEnabled(true)
-        } catch {
-          error.value = '카메라를 켤 수 없어요(권한/장치 확인)'
-        }
+      if (cameraTrack && !(await publishCameraTrack(cameraTrack))) {
+        error.value = '카메라를 켤 수 없어요(권한/장치 확인)'
       }
       if (microphone) {
         try {
@@ -143,7 +143,8 @@ export function useLiveKitRoom() {
     if (!room) return
     const r = room
     room = null
-    // 게임 화면을 송출 중이었다면 발행 해제·캡처 정리 후 끊는다
+    // 발행 중이던 카메라 복제본·게임 화면을 정리한 후 끊는다
+    await unpublishCameraTrack()
     await unpublishGameScreen()
     r.removeAllListeners()
     await r.disconnect()
@@ -151,6 +152,41 @@ export function useLiveKitRoom() {
     state.value = ConnectionState.Disconnected
     cameraEnabled.value = false
     microphoneEnabled.value = false
+  }
+
+  // ── 카메라 발행 — 뷰의 로컬 캡처 트랙 복제본을 발행한다. "끄기"는 발행 mute라서 다른
+  // 사람에게만 꺼져 보이고, 원본 캡처(프리뷰·모션 인식 게임 입력)는 계속 살아 있다. ──
+  let cameraTrackPub: LocalVideoTrack | null = null
+
+  /** 로컬 캡처 트랙의 복제본을 카메라 소스로 발행한다(이미 발행 중이면 no-op). */
+  async function publishCameraTrack(source: MediaStreamTrack): Promise<boolean> {
+    if (cameraTrackPub) return true
+    if (!room) return false
+    const clone = source.clone()
+    try {
+      const pub = await room.localParticipant.publishTrack(clone, {
+        source: Track.Source.Camera,
+      })
+      cameraTrackPub = pub.videoTrack ?? null
+      refresh()
+      return !!cameraTrackPub
+    } catch {
+      clone.stop()
+      return false
+    }
+  }
+
+  /** 카메라 발행 정리 — 복제본만 멈추고 원본 캡처는 건드리지 않는다. */
+  async function unpublishCameraTrack() {
+    if (!cameraTrackPub) return
+    const track = cameraTrackPub
+    cameraTrackPub = null
+    try {
+      await room?.localParticipant.unpublishTrack(track, true)
+    } catch {
+      // 이미 연결이 끊긴 경우 — 복제본만 정리하면 된다
+    }
+    track.mediaStreamTrack.stop()
   }
 
   // ── 게임 화면 송출 — 게임 캔버스를 화면공유 소스의 추가 트랙으로 발행한다(카메라와 동시 송출) ──
@@ -177,7 +213,7 @@ export function useLiveKitRoom() {
     }
   }
 
-  /** 카메라가 꺼진 동안 게임 화면도 가린다 — 새 프레임이 없는 정지 화면을 흘려보내지 않기 위해. */
+  /** 로컬 캡처가 멈춘 동안 게임 화면을 가린다 — 새 프레임이 없는 정지 화면을 흘려보내지 않기 위해. */
   async function setGameScreenMuted(muted: boolean) {
     if (!gameScreenTrack || gameScreenTrack.isMuted === muted) return
     if (muted) await gameScreenTrack.mute()
@@ -197,10 +233,23 @@ export function useLiveKitRoom() {
     track.mediaStreamTrack.stop()
   }
 
-  async function toggleCamera() {
-    if (!room) return
-    await room.localParticipant.setCameraEnabled(!cameraEnabled.value)
+  /**
+   * 카메라 표시 토글 — 발행 트랙만 mute(+업스트림 중단)/unmute한다. 발행 트랙은 원본 캡처의
+   * 복제본이라 프리뷰·게임 입력은 영향 없다. 발행된 카메라가 없으면 false(호출 측에서
+   * publishCameraTrack으로 발행).
+   */
+  async function toggleCamera(): Promise<boolean> {
+    if (!cameraTrackPub) return false
+    if (cameraTrackPub.isMuted) {
+      await cameraTrackPub.resumeUpstream()
+      await cameraTrackPub.unmute()
+    } else {
+      // mute만으로는 비활성(검은) 프레임이 계속 인코딩·전송되므로 업스트림 자체를 멈춘다
+      await cameraTrackPub.mute()
+      await cameraTrackPub.pauseUpstream()
+    }
     refresh()
+    return true
   }
 
   async function toggleMicrophone() {
@@ -219,6 +268,7 @@ export function useLiveKitRoom() {
     error: readonly(error),
     connect,
     disconnect,
+    publishCameraTrack,
     toggleCamera,
     toggleMicrophone,
     publishGameScreen,

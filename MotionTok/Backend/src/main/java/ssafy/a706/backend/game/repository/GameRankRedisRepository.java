@@ -2,9 +2,13 @@ package ssafy.a706.backend.game.repository;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Repository;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 /**
  * 게임별 라이브 랭킹 Redis 접근(S15P11A706-117 · 키맵 ③).
@@ -27,6 +31,35 @@ public class GameRankRedisRepository {
         String key = rankKey(gameId);
         bestScores.forEach((userId, best) ->
                 redisTemplate.opsForZSet().add(key, String.valueOf(userId), best));
+    }
+
+    /** 상위 N — best_score 내림차순, 삽입 순서를 보존한 (userId → best_score) 맵(-96). */
+    public Map<Long, Integer> topBestScores(long gameId, int limit) {
+        Map<Long, Integer> out = new LinkedHashMap<>();
+        Set<ZSetOperations.TypedTuple<String>> tuples = redisTemplate.opsForZSet()
+                .reverseRangeWithScores(rankKey(gameId), 0, limit - 1L);
+        if (tuples == null) {
+            return out;
+        }
+        for (ZSetOperations.TypedTuple<String> tuple : tuples) {
+            if (tuple.getValue() == null || tuple.getScore() == null) {
+                continue;
+            }
+            out.put(Long.parseLong(tuple.getValue()), tuple.getScore().intValue());
+        }
+        return out;
+    }
+
+    /** 0-기반 역순위(ZREVRANK). 랭킹에 없으면 empty. */
+    public Optional<Long> reverseRankOf(long gameId, long userId) {
+        return Optional.ofNullable(
+                redisTemplate.opsForZSet().reverseRank(rankKey(gameId), String.valueOf(userId)));
+    }
+
+    /** 랭킹에 적재된 인원 수 — 0이면 유실로 보고 DB warm-up 대상. */
+    public long size(long gameId) {
+        Long count = redisTemplate.opsForZSet().zCard(rankKey(gameId));
+        return count == null ? 0 : count;
     }
 
     private String rankKey(long gameId) {
