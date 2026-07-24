@@ -113,6 +113,16 @@ export async function refreshAccessTokenIfNeeded(): Promise<void> {
   await ensureFreshAccessToken()
 }
 
+/**
+ * 만료와 무관하게 액세스 토큰을 즉시 회전시킨다(게스트는 refresh가 없어 그냥 지나간다).
+ * 서버는 방 참가자·채팅 표시명을 액세스 토큰의 name 클레임에서 읽으므로,
+ * 닉네임처럼 클레임에 박히는 값이 바뀌면 변경 직후 새 토큰을 받아야 한다.
+ */
+export async function forceRefreshAccessToken(): Promise<void> {
+  if (!getRefreshToken()) return
+  await runRefresh()
+}
+
 async function request<T>(
   method: string,
   path: string,

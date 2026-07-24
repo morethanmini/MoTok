@@ -36,6 +36,18 @@ export function requireMember(to: RouteLocationNormalized) {
 }
 
 /**
+ * 관리자 전용 라우트(meta.requiresAdmin) 가드. requiresMember를 통과한 뒤 역할까지 좁힌다.
+ * 판단 근거는 세션 복원 시 서버가 내려준 프로필(GET /users/me)의 role — 토큰에는 role이 없다.
+ * 화면 노출용 판정일 뿐, 실제 관리자 API 권한은 서버가 검증한다(SecurityConfig: /api/admin/** hasRole('ADMIN')).
+ */
+function requireAdmin(to: RouteLocationNormalized) {
+  if (!to.meta.requiresAdmin) return true
+  const session = useSessionStore()
+  if (session.profile?.role === 'ADMIN') return true
+  return { name: RouteName.Lobby } // 권한 없는 회원 — 기본 화면으로 돌려보낸다
+}
+
+/**
  * 세션만 있으면 되는 라우트(meta.requiresAuth) 가드.
  * 기기 설정 → 대기실 → 결과는 회원 멀티플레이와 게스트 1인 플레이가 함께 쓰는 구간이라
  * 회원으로 좁히지 않고 '유효한 세션'만 요구한다. 반대로 로비·상점처럼 회원만의 화면은 requiresMember다.
@@ -65,6 +77,8 @@ router.beforeEach(async (to) => {
 
   const memberCheck = requireMember(to)
   if (memberCheck !== true) return memberCheck
+  const adminCheck = requireAdmin(to)
+  if (adminCheck !== true) return adminCheck
   return requireAuth(to)
 })
 
