@@ -45,6 +45,10 @@ const isHost = computed(() => route.query.host === '1')
 const capacity = ref(8)
 const hostId = ref<string | null>(null)
 const roomTitle = ref<string | null>(null)
+// 화면에 노출/복사되는 "ROOM CODE"는 접속용 roomId가 아니라 초대코드(inviteCode)여야 한다 —
+// /join-by-invite-code는 이 값으로 조회하지 roomId로는 찾지 못한다. 상세 조회 전까지는 roomId로 폴백.
+const inviteCode = ref<string | null>(null)
+const shareCode = computed(() => inviteCode.value ?? roomCode.value)
 
 // ── 실시간 참가자 → 슬롯 매핑 ────────────────
 const connected = computed(() => lk.state.value === ConnectionState.Connected)
@@ -110,6 +114,7 @@ onMounted(async () => {
     capacity.value = d.maxPlayers
     hostId.value = d.hostUserId
     roomTitle.value = d.title
+    inviteCode.value = d.inviteCode
   } catch {
     /* 백엔드 미연동 — 기본 정원 유지 */
   }
@@ -468,7 +473,7 @@ function closeGame() {
 }
 
 function copyCode() {
-  navigator.clipboard?.writeText(roomCode.value)
+  navigator.clipboard?.writeText(shareCode.value)
   flash('룸 코드를 복사했어요')
 }
 // 헤더 링크·뒤로가기 등으로 방을 벗어나려 하면 확인 모달. "나가기" 같은 의도된 이동은 통과.
@@ -531,7 +536,7 @@ const startHint = computed(() =>
       <div class="code-box">
         <span class="px code-cap">ROOM CODE</span>
         <div class="code-line">
-          <span class="px code-val">{{ roomCode }}</span>
+          <span class="px code-val">{{ shareCode }}</span>
           <button class="copy" @click="copyCode">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="9" y="9" width="11" height="11" /><path d="M5 15V5a2 2 0 012-2h10" /></svg>
           </button>
