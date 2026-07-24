@@ -17,6 +17,8 @@ import ssafy.a706.backend.liveroom.controller.dto.LiveRoomListResponse;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomMemberKickedEvent;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomMemberLeftEvent;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomSummaryResponse;
+import ssafy.a706.backend.liveroom.controller.dto.LiveRoomUpdatedEvent;
+import ssafy.a706.backend.liveroom.controller.dto.UpdateLiveRoomRequest;
 import ssafy.a706.backend.liveroom.model.KickReason;
 import ssafy.a706.backend.liveroom.model.LiveRoom;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
@@ -233,6 +235,43 @@ public class LiveRoomService {
         if (remaining.isEmpty()) {
             repository.deleteRoom(roomId);
         }
+    }
+
+    /**
+     * 방장이 대기실에서 방 정보(제목·공개여부·최대인원·비밀번호)를 수정한다(S15P11A706-130).
+     * WAITING 상태에서만 허용하고, 전체 필드를 재전송받아 create와 동일한 검증({@link #validatePasswordRule})을 재사용한다.
+     * TTL은 갱신하지 않아 방은 최초 생성 시점부터 24h 카운트다운을 유지한다.
+     * ponytail: maxPlayers 축소 검증은 read-then-write라 검증~쓰기 사이 join이 끼면 순간 정원 초과가 가능하다 —
+     * 기존 join/quickStart의 ROOM_FULL과 동일한 check-then-act 수준이고, 방당 동시 쓰기 상한이 낮아(방장 1명+정원 ≤8)
+     * 현행 유지한다. 처리량이 커지면 Redis Lua로 원자화.
+     */
+    public LiveRoomDetailResponse update(AuthPrincipal principal, String roomId, UpdateLiveRoomRequest req) {
+        LiveRoom room = loadRoom(roomId);
+        if (!room.hostUserId().equals(principal.userId())) {
+            throw new BusinessException(ErrorCode.NOT_ROOM_HOST);
+        }
+        if (!"WAITING".equals(room.status())) {
+            throw new BusinessException(ErrorCode.ROOM_GAME_IN_PROGRESS);
+        }
+        validatePasswordRule(req.visibility(), req.password());
+        if (req.maxPlayers() < room.participantCount()) {
+            throw new BusinessException(ErrorCode.ROOM_MAX_PLAYERS_BELOW_CURRENT);
+        }
+
+        Map<String, String> fields = new LinkedHashMap<>();
+        fields.put("title", req.title());
+        fields.put("visibility", req.visibility().name());
+        fields.put("maxPlayers", String.valueOf(req.maxPlayers()));
+        if (req.visibility() == LiveRoomVisibility.PRIVATE) {
+            fields.put("password", req.password());
+        }
+        repository.updateRoomInfo(roomId, fields, req.visibility() == LiveRoomVisibility.PUBLIC);
+
+        messagingTemplate.convertAndSend(
+                String.format(MEMBERS_TOPIC, roomId),
+                new LiveRoomUpdatedEvent(req.title(), req.visibility().name(), req.maxPlayers()));
+
+        return LiveRoomDetailResponse.from(loadRoom(roomId));
     }
 
     private LiveRoomDetailResponse joinRoom(AuthPrincipal principal, LiveRoom room) {

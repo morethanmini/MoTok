@@ -90,6 +90,8 @@ public class SecurityConfig {
                                     "/api/v1/live-rooms/*/members/*/kick").hasRole("USER")
                             // 회원 전용 — 게스트 토큰(ROLE_GUEST)의 /users/me 접근을 403으로 차단한다
                             .requestMatchers("/api/users/**").hasRole("USER")
+                            // 회원 전용 — 상점(-56)은 게스트가 RDB에 영속되지 않아(D5) 대상이 아니다
+                            .requestMatchers("/api/shop/**").hasRole("USER")
                             // 관리자 리소스 — 아직 어떤 토큰에도 ADMIN 권한을 싣지 않으므로 사실상 전면 차단(기본 잠금).
                             // 관리자 기능 구현 시 권한 발급(JwtAuthenticationFilter 매핑)부터 설계할 것.
                             .requestMatchers("/api/admin/**").hasRole("ADMIN")
