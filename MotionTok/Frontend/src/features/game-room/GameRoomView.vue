@@ -29,9 +29,12 @@ const router = useRouter()
 const bgm = useBgm()
 const { message: toast, flash } = useToast(2600)
 
-// LiveKit 실시간 방 + 로컬 카메라 프리뷰 폴백(백엔드 미연동 시)
+// LiveKit 실시간 방 + 로컬 카메라 캡처. 프리뷰·모션 인식 게임 입력은 항상 로컬 캡처 스트림을
+// 쓰고, LiveKit에는 복제본을 발행한다 — "카메라 끄기"는 발행만 끊어서 다른 사람에게만 꺼져
+// 보이고 캡처는 유지되므로, 꺼도 게임 시작·참여가 가능하다.
 const lk = useLiveKitRoom()
 const camera = useCamera()
+const CAMERA_CONSTRAINTS = { video: { width: 640, height: 400 }, audio: false } as const
 // 대기실 채팅 + 게임 제안 (STOMP, 명세 §7)
 const roomChat = useRoomChat()
 const myParticipantId = computed(() => readAccessClaims()?.sub ?? null)
@@ -64,33 +67,29 @@ const otherSlots = computed<Slot[]>(() => {
 // 1~2명: 1열(위아래로 쌓임). 3명 이상: 2열.
 const othersColumns = computed(() => (otherSlots.value.length <= 2 ? 1 : 2))
 
-// ── 자기 타일 상태 (연결 시 LiveKit, 미연결 시 로컬 프리뷰) ──
+// ── 자기 타일 상태 — 프리뷰·게임 참여 가능 여부는 로컬 캡처 기준, "보이는지"는 발행 상태 기준 ──
 const demoMic = ref(true)
-const selfCamOn = computed(() => (connected.value ? !!lkLocal.value?.cameraOn : camera.isOn.value))
+/** 로컬 캡처 동작 중(프리뷰 표시·게임 참여 가능) */
+const captureOn = computed(() => camera.isOn.value)
+/** 다른 사람에게 카메라가 보이는지(발행 상태). 미연결 데모에선 캡처와 동일. */
+const selfCamOn = computed(() => (connected.value ? lk.cameraEnabled.value : camera.isOn.value))
+/** 캡처는 살아 있지만 발행만 꺼서 다른 사람에게 안 보이는 상태 */
+const camHidden = computed(() => connected.value && captureOn.value && !selfCamOn.value)
 const selfMicOn = computed(() => (connected.value ? !!lkLocal.value?.micOn : demoMic.value))
 const selfIsHost = computed(
   () => isHost.value || (!!lkLocal.value && lkLocal.value.identity === hostId.value),
 )
 
 const selfVideoEl = ref<HTMLVideoElement>()
-// LiveKit 로컬 트랙(안정적 참조)만 의존. 트랙/스트림/엘리먼트가 실제 바뀔 때만 재부착(발화 이벤트로 인한 깜빡임 방지).
-const selfTrack = computed(() => (lkLocal.value?.cameraOn ? (lkLocal.value.videoTrack ?? null) : null))
+// 프리뷰·모션 인식은 항상 로컬 캡처 스트림을 쓴다 — 발행 상태(카메라 끄기)와 무관하게 프레임이 흐른다.
 watch(
-  [selfTrack, () => camera.stream.value, selfVideoEl],
-  ([track, stream, el], _prev, onCleanup) => {
-    if (!el) return
-    if (track) {
-      track.attach(el)
-      onCleanup(() => track.detach(el))
-      return
-    }
-    // 폴백: LiveKit 미연결 시 로컬 getUserMedia 프리뷰
-    if (stream) {
-      el.srcObject = stream
-      onCleanup(() => {
-        el.srcObject = null
-      })
-    }
+  [() => camera.stream.value, selfVideoEl],
+  ([stream, el], _prev, onCleanup) => {
+    if (!el || !stream) return
+    el.srcObject = stream
+    onCleanup(() => {
+      el.srcObject = null
+    })
   },
   { immediate: true },
 )
@@ -112,7 +111,12 @@ onMounted(async () => {
   } catch {
     /* 백엔드 미연동 — 기본 정원 유지 */
   }
-  const ok = await lk.connect(roomCode.value)
+  // 로컬 캡처를 먼저 켜고, LiveKit에는 복제본 트랙을 발행한다(실패해도 방 접속은 진행)
+  const stream = await camera.start(CAMERA_CONSTRAINTS)
+  if (!stream) flash('카메라를 켤 수 없어요(권한/장치 확인)')
+  const ok = await lk.connect(roomCode.value, {
+    cameraTrack: stream?.getVideoTracks()[0] ?? null,
+  })
   if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
 
   // 채팅은 이력이 없어서(비영속) 구독이 늦은 만큼 그대로 유실 — 입장 직후 바로 연결.
@@ -182,17 +186,29 @@ function selectSuggested(gameName: string | null) {
 }
 
 // ── 카메라 / 마이크 컨트롤 ───────────────────
-// 연결 시 LiveKit 발행 토글, 미연결 시 로컬 프리뷰 토글.
+// 카메라 토글 = 발행만 켜고 끔(다른 사람에게 보일지). 캡처는 유지되므로 꺼도 게임 참여 가능.
 async function toggleCam() {
-  if (connected.value) {
-    await lk.toggleCamera()
+  // 캡처 자체가 없으면(권한 거부·데모에서 끔) 캡처부터 시작
+  if (!camera.isOn.value) {
+    const s = await camera.start(CAMERA_CONSTRAINTS)
+    if (!s) {
+      flash('카메라 권한을 허용해 주세요')
+      return
+    }
+    const track = s.getVideoTracks()[0]
+    if (connected.value && track) await lk.publishCameraTrack(track)
     return
   }
-  if (camera.isOn.value) camera.stop()
-  else {
-    const s = await camera.start({ video: { width: 640, height: 400 }, audio: false })
-    if (!s) flash('카메라 권한을 허용해 주세요')
+  if (connected.value) {
+    // 발행된 카메라가 없으면(입장 시 발행 실패) 지금 발행한다
+    if (!(await lk.toggleCamera())) {
+      const track = camera.stream.value?.getVideoTracks()[0]
+      if (track) await lk.publishCameraTrack(track)
+    }
+    return
   }
+  // 미연결 데모 — 발행 개념이 없으니 캡처를 통째로 끈다
+  camera.stop()
 }
 async function toggleMic() {
   if (connected.value) {
@@ -220,12 +236,20 @@ const gameResults = ref<GameResultEntry[] | null>(null)
 // 표시되지 않는 쪽은 adaptiveStream·dynacast가 자동으로 쉬게 하므로 부하는 보는 만큼만 든다.
 const gameComp = ref<{ canvas?: HTMLCanvasElement } | null>(null)
 
-// 캔버스가 준비되면 송출 시작. 카메라가 꺼진 동안은 게임 화면도 가린다(정지 화면 송출 방지).
+// 캔버스가 준비되면 송출 시작. 게임 캔버스에는 카메라 원본이 그려지지 않으므로(밤하늘+손 포인트)
+// 카메라를 숨긴 상태여도 계속 송출하고, 캡처가 끊겨 새 프레임이 없을 때만 가린다(정지 화면 방지).
+// 라운드가 끝나면(GAME_END 수신) 결과 화면을 닫지 않아도 송출을 내린다 — gameTrack이 사라지면서
+// 모든 참가자 타일이 카메라로 복귀하고 게임/카메라 토글도 함께 사라진다. 다음 GAME_START에서
+// gameResults가 초기화되면 같은 watch가 재발행한다.
 watch(
-  [() => gameComp.value?.canvas ?? null, () => lkLocal.value?.cameraOn ?? false],
-  async ([canvas, camOn]) => {
+  [() => gameComp.value?.canvas ?? null, captureOn, gameResults],
+  async ([canvas, capOn, results]) => {
     if (!activeGame.value || !canvas) return
-    if (await lk.publishGameScreen(canvas)) await lk.setGameScreenMuted(!camOn)
+    if (results) {
+      await lk.unpublishGameScreen()
+      return
+    }
+    if (await lk.publishGameScreen(canvas)) await lk.setGameScreenMuted(!capOn)
   },
 )
 
@@ -269,7 +293,7 @@ function applyGameEvent(e: GameEvent) {
     }
     activeGame.value = entry
     picker.value = false
-    if (!selfCamOn.value) flash('카메라를 켜면 게임에 참여할 수 있어요')
+    if (!captureOn.value) flash('카메라를 켜면 게임에 참여할 수 있어요')
     return
   }
   // 이하 이벤트는 현재 세션 것만 반영(닫은 뒤 늦게 도착한 프레임 방어)
@@ -308,7 +332,7 @@ function launch(g: GameEntry) {
   picker.value = false
   // 방장 + 서버 연결 + 플레이 가능 → 서버에 시작 요청. GAME_START가 방 전체에 돌아와 마운트된다.
   if (g.playable && roomChat.connected.value && selfIsHost.value) {
-    if (!selfCamOn.value) {
+    if (!captureOn.value) {
       flash('카메라를 켜고 시작해 주세요')
       return
     }
@@ -317,7 +341,7 @@ function launch(g: GameEntry) {
   }
   // 서버 미연동 데모 — 로컬 솔로 플레이 폴백
   if (g.playable && !roomChat.connected.value) {
-    if (!selfCamOn.value) {
+    if (!captureOn.value) {
       flash('카메라를 켜야 게임을 플레이할 수 있어요')
       return
     }
@@ -430,8 +454,10 @@ const startHint = computed(() =>
       <div class="cam-stage">
         <!-- 내 캠 — 항상 가장 크게 -->
         <div class="self-tile self-spot">
-          <video v-show="selfCamOn" ref="selfVideoEl" autoplay playsinline muted class="self-video" />
-          <div v-if="!selfCamOn" class="cam-off">
+          <video v-show="captureOn" ref="selfVideoEl" autoplay playsinline muted class="self-video" />
+          <!-- 캡처는 유지한 채 발행만 끈 상태 — 내 화면에만 보이고 다른 사람에게는 꺼져 보인다 -->
+          <div v-if="camHidden" class="px cam-hidden">🙈 다른 사람에게는 꺼져 보여요</div>
+          <div v-if="!captureOn" class="cam-off">
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">
               <path d="M2 6h11v12H2zM16 10l6-4v12l-6-4" /><line x1="2" y1="2" x2="22" y2="22" />
             </svg>
@@ -694,6 +720,8 @@ const startHint = computed(() =>
 .self-video { width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); background: #eee6cf; }
 .cam-off { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; background: #f3ead2; color: #a99f86; }
 .cam-off { background: linear-gradient(135deg, var(--c-mint-soft), #fff0c4); }
+/* 발행만 끈 상태 배지 — 게임 중에는 게임 캔버스가 타일을 덮으므로 자연히 가려진다 */
+.cam-hidden { position: absolute; bottom: 8px; left: 8px; padding: 6px 9px; background: rgba(43, 35, 51, 0.78); color: #ffd23f; font-size: 8px; border-radius: 8px; }
 .cam-on-btn { padding: 10px 16px; border: 3px solid var(--c-ink-soft); border-radius: 11px; background: var(--c-mint); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
 .self-label { position: absolute; top: 8px; left: 8px; display: flex; align-items: center; gap: 7px; padding: 6px 9px; background: #fffdf3; border: 2px solid var(--c-ink-soft); font-size: 9px; }
 
