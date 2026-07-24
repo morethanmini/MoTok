@@ -86,7 +86,8 @@ public enum ErrorCode {
     CHAT_MESSAGE_NOT_FOUND(HttpStatus.NOT_FOUND, "CHAT_MESSAGE_NOT_FOUND", "존재하지 않거나 만료된 채팅입니다."),
     CHAT_REPORT_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "CHAT_REPORT_NOT_IN_ROOM", "방 참가자만 신고할 수 있습니다."),
     CHAT_REPORT_SELF(HttpStatus.BAD_REQUEST, "CHAT_REPORT_SELF", "자신의 채팅은 신고할 수 없습니다."),
-    CHAT_REPORT_DUPLICATE(HttpStatus.CONFLICT, "CHAT_REPORT_DUPLICATE", "이미 신고한 채팅입니다.");
+    CHAT_REPORT_DUPLICATE(HttpStatus.CONFLICT, "CHAT_REPORT_DUPLICATE", "이미 신고한 채팅입니다."),
+    CHAT_REPORT_NOT_FOUND(HttpStatus.NOT_FOUND, "CHAT_REPORT_NOT_FOUND", "존재하지 않는 신고입니다.");
 
     private final HttpStatus status;
     private final String code;

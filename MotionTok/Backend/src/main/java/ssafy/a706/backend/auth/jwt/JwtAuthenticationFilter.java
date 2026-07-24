@@ -13,6 +13,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 import ssafy.a706.backend.auth.principal.GuestPrincipal;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
+import ssafy.a706.backend.user.enums.UserRole;
 
 import java.io.IOException;
 import java.util.List;
@@ -59,7 +60,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     List.of(new SimpleGrantedAuthority("ROLE_GUEST")));
         }
         return new UsernamePasswordAuthenticationToken(
-                new MemberPrincipal(Long.valueOf(subject), name), null,
-                List.of(new SimpleGrantedAuthority("ROLE_USER")));
+                new MemberPrincipal(Long.valueOf(subject), name), null, memberAuthorities(claims));
+    }
+
+    /**
+     * role claim이 ADMIN이면 ROLE_ADMIN + ROLE_USER를 함께 부여한다(관리자도 일반 회원 기능 사용).
+     * claim이 없거나(구 토큰) USER면 기존과 동일하게 ROLE_USER만 — 하위호환 유지.
+     */
+    private List<SimpleGrantedAuthority> memberAuthorities(Claims claims) {
+        if (UserRole.ADMIN.name().equals(tokenProvider.getRole(claims))) {
+            return List.of(new SimpleGrantedAuthority("ROLE_ADMIN"), new SimpleGrantedAuthority("ROLE_USER"));
+        }
+        return List.of(new SimpleGrantedAuthority("ROLE_USER"));
     }
 }

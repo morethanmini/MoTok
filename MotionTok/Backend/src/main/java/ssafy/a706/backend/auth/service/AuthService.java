@@ -203,7 +203,8 @@ public class AuthService {
     }
 
     private TokenResponse issueTokens(User user) {
-        String accessToken = tokenProvider.createAccessToken(user.getId(), user.getNickname());
+        String accessToken = tokenProvider.createAccessToken(
+                user.getId(), user.getNickname(), user.getRole().name());
         String refreshToken = tokenProvider.createRefreshToken(user.getId());
         refreshTokenStore.save(user.getId(), refreshToken,
                 Duration.ofMillis(tokenProvider.getRefreshExpirationMs()));
