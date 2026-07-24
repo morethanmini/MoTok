@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
+import ssafy.a706.backend.game.dto.GameDetailResponse;
 import ssafy.a706.backend.game.dto.GameSummaryResponse;
 import ssafy.a706.backend.game.dto.LeaderboardEntryResponse;
 import ssafy.a706.backend.game.dto.LeaderboardResponse;
@@ -55,6 +56,15 @@ public class GameQueryService {
                 .filter(Game::isActive)
                 .map(game -> GameSummaryResponse.of(game, playerCount))
                 .toList();
+    }
+
+    /** GET /games/{gameId} — 게임 상세(규칙·조작 안내, -75). 없는 게임·비활성 게임은 404. */
+    @Transactional(readOnly = true)
+    public GameDetailResponse detail(long gameId) {
+        return gameRepository.findById(gameId)
+                .filter(Game::isActive)
+                .map(GameDetailResponse::of)
+                .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
     }
 
     /** GET /games/{gameId}/leaderboard — 상위 N + 내 순위. */

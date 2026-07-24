@@ -59,10 +59,18 @@ public class Game {
     @Column(name = "thumbnail_url")
     private String thumbnailUrl;
 
+    /** 게임 상세 안내 — 규칙 설명(-75, GET /games/{gameId}). */
+    @Column(columnDefinition = "TEXT")
+    private String rules;
+
+    /** 게임 상세 안내 — 모션 조작 방법(-75). */
+    @Column(columnDefinition = "TEXT")
+    private String controls;
+
     @Builder
     public Game(Long id, String name, String mode, int minPlayers, int maxPlayers,
                 int roundDurationSec, int countdownSec, boolean supportsBot, boolean active,
-                String category, String thumbnailUrl) {
+                String category, String thumbnailUrl, String rules, String controls) {
         this.id = id;
         this.name = name;
         this.mode = mode;
@@ -74,5 +82,13 @@ public class Game {
         this.active = active;
         this.category = category;
         this.thumbnailUrl = thumbnailUrl;
+        this.rules = rules;
+        this.controls = controls;
+    }
+
+    /** 상세 안내(규칙·조작법) 갱신 — 시더 백필용. */
+    public void updateGuide(String rules, String controls) {
+        this.rules = rules;
+        this.controls = controls;
     }
 }

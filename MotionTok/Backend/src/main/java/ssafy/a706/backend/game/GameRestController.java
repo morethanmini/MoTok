@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
+import ssafy.a706.backend.game.dto.GameDetailResponse;
 import ssafy.a706.backend.game.dto.GameSummaryResponse;
 import ssafy.a706.backend.game.dto.LeaderboardResponse;
 
@@ -29,6 +30,12 @@ public class GameRestController {
     @GetMapping
     public List<GameSummaryResponse> list(@RequestParam(required = false) Integer playerCount) {
         return gameQueryService.list(playerCount);
+    }
+
+    /** GET /games/{gameId} — 게임 상세(규칙·조작 안내, -75). */
+    @GetMapping("/{gameId}")
+    public GameDetailResponse detail(@PathVariable long gameId) {
+        return gameQueryService.detail(gameId);
     }
 
     /** GET /games/{gameId}/leaderboard — 게임별 랭킹 + 내 순위. */
