@@ -8,7 +8,8 @@
  * 제거된 엔드포인트: quick-match, 초대(invitation) 조회/발송. 초대코드는 create/detail 응답의
  * inviteCode 필드로 대체된다.
  */
-import { httpEnvelope } from '../http'
+import { API_BASE, httpEnvelope } from '../http'
+import { getAccessToken } from '../token'
 import type {
   CreateLiveRoomRequest,
   CreateLiveRoomResponse,
@@ -41,4 +42,20 @@ export const roomsApi = {
 
   /** DELETE /v1/live-rooms/{roomId}/members/me — 방 나가기(멱등). 마지막 인원이면 방 즉시 삭제. */
   leave: (roomId: string) => httpEnvelope.delete<void>(`${BASE}/${roomId}/members/me`),
+
+  /**
+   * 문서 언로드(탭 닫기·주소창 이탈·새로고침) 전용 퇴장 통보.
+   * 문서가 내려가는 중이라 응답을 기다릴 수 없어 keepalive로 쏜다 — sendBeacon은 POST만
+   * 가능해서 fetch keepalive를 쓴다. leave가 멱등이라 SPA 경로와 중복 발사돼도 안전하다.
+   */
+  leaveOnUnload: (roomId: string) => {
+    const token = getAccessToken()
+    void fetch(`${API_BASE}${BASE}/${roomId}/members/me`, {
+      method: 'DELETE',
+      keepalive: true,
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    }).catch(() => {
+      // 언로드 중 실패는 복구 불가 — 조용히 무시
+    })
+  },
 }

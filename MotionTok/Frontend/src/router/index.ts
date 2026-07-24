@@ -3,6 +3,7 @@ import { routes } from './routes'
 import { RouteName } from './routeNames'
 import { readAccessClaims } from '@/api/token'
 import { askLogin } from '@/composables/useLoginRequired'
+import { denyAccess } from '@/composables/useAccessDenied'
 import { useSessionStore } from '@/stores/session'
 
 const router = createRouter({
@@ -40,10 +41,13 @@ export function requireMember(to: RouteLocationNormalized) {
  * 판단 근거는 세션 복원 시 서버가 내려준 프로필(GET /users/me)의 role — 토큰에는 role이 없다.
  * 화면 노출용 판정일 뿐, 실제 관리자 API 권한은 서버가 검증한다(SecurityConfig: /api/admin/** hasRole('ADMIN')).
  */
-function requireAdmin(to: RouteLocationNormalized) {
+export function requireAdmin(to: RouteLocationNormalized) {
   if (!to.meta.requiresAdmin) return true
   const session = useSessionStore()
   if (session.profile?.role === 'ADMIN') return true
+
+  // 조용히 돌려보내면 "왜 로비로 왔지?"가 되므로, 권한이 없다는 안내를 띄우고 보낸다.
+  denyAccess('관리자만 접근할 수 있는 페이지예요.')
   return { name: RouteName.Lobby } // 권한 없는 회원 — 기본 화면으로 돌려보낸다
 }
 
