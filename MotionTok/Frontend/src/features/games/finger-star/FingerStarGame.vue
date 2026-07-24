@@ -68,6 +68,8 @@ const HAND_CONN: [number, number][] = [
 
 const hand = useHandLandmarker()
 const canvasRef = ref<HTMLCanvasElement>()
+/** 부모(게임룸)가 게임 화면을 captureStream으로 송출할 수 있게 캔버스를 노출 */
+defineExpose({ canvas: canvasRef })
 
 // ── 게임 상태 ─────────────────────────────────
 const phase = ref<'ready' | 'countdown' | 'playing' | 'result'>('ready')
