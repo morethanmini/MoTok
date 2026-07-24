@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-import { http } from '../api/http'
+import { http, forceRefreshAccessToken } from '../api/http'
 import { onSessionExpired } from '../api/authEvents'
 import { clearTokens, getAccessToken, setTokens } from '../api/token'
 
@@ -110,6 +110,27 @@ describe('액세스 토큰 자동 갱신', () => {
 
     const refreshCalls = fetchMock.mock.calls.filter((c) => String(c[0]).includes('/auth/token/refresh'))
     expect(refreshCalls).toHaveLength(1)
+  })
+
+  // 닉네임 변경처럼 토큰 name 클레임이 바뀌는 경우 — 만료가 멀어도 즉시 회전해야
+  // 서버(방 참가·채팅 표시명)가 옛 클레임(pending_*)을 계속 읽지 않는다.
+  it('강제 갱신은 만료가 멀어도 즉시 토큰을 회전시킨다', async () => {
+    setTokens(fakeJwt(3600), 'refresh-v1')
+    const rotated = fakeJwt(3600)
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, refreshPayload(rotated)))
+
+    await forceRefreshAccessToken()
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/auth/token/refresh')
+    expect(getAccessToken()).toBe(rotated)
+  })
+
+  it('강제 갱신도 게스트(refresh 토큰 없음)는 그냥 지나간다', async () => {
+    setTokens(fakeJwt(3600, 'guest'), undefined, false)
+
+    await forceRefreshAccessToken()
+
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('게스트(refresh 토큰 없음)는 갱신을 시도하지 않는다', async () => {
