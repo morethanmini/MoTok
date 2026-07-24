@@ -12,6 +12,7 @@ import ssafy.a706.backend.game.dto.GameSummaryResponse;
 import ssafy.a706.backend.game.dto.LeaderboardResponse;
 import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.entity.Leaderboard;
+import ssafy.a706.backend.game.model.LeaderboardMode;
 import ssafy.a706.backend.game.repository.GameRankRedisRepository;
 import ssafy.a706.backend.game.repository.GameRepository;
 import ssafy.a706.backend.game.repository.LeaderboardRepository;
@@ -44,6 +45,7 @@ import static org.mockito.Mockito.when;
 class GameQueryServiceTest {
 
     private static final long GAME_ID = 1L;
+    private static final LeaderboardMode MODE = LeaderboardMode.MULTI;
 
     @Mock GameRepository gameRepository;
     @Mock LeaderboardRepository leaderboardRepository;
@@ -59,7 +61,7 @@ class GameQueryServiceTest {
     }
 
     private Leaderboard row(long userId, int score, int plays) {
-        Leaderboard row = new Leaderboard(GAME_ID, userId);
+        Leaderboard row = new Leaderboard(GAME_ID, userId, MODE);
         for (int i = 0; i < plays; i++) {
             row.record(score);
         }
@@ -74,7 +76,7 @@ class GameQueryServiceTest {
     void 게임이_없으면_GAME_NOT_FOUND() {
         when(gameRepository.existsById(GAME_ID)).thenReturn(false);
 
-        assertThatThrownBy(() -> service.leaderboard(GAME_ID, 20, null))
+        assertThatThrownBy(() -> service.leaderboard(GAME_ID, MODE, 20, null))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.GAME_NOT_FOUND);
@@ -83,34 +85,34 @@ class GameQueryServiceTest {
     @Test
     void 랭킹_ZSET이_비어_있으면_leaderboards에서_warm_up_후_조회한다() {
         givenGameExists();
-        when(rankRepository.size(GAME_ID)).thenReturn(0L);
-        when(leaderboardRepository.findAllByGameId(GAME_ID)).thenReturn(List.of(row(10L, 90, 1)));
-        when(rankRepository.topBestScores(eq(GAME_ID), anyInt()))
+        when(rankRepository.size(GAME_ID, MODE)).thenReturn(0L);
+        when(leaderboardRepository.findAllByGameIdAndMode(GAME_ID, MODE)).thenReturn(List.of(row(10L, 90, 1)));
+        when(rankRepository.topBestScores(eq(GAME_ID), eq(MODE), anyInt()))
                 .thenReturn(new LinkedHashMap<>(Map.of(10L, 90)));
         when(userRepository.findAllById(any())).thenReturn(List.of(user(10L, "별잡이")));
-        when(leaderboardRepository.findAllByGameIdAndUserIdIn(eq(GAME_ID), any()))
+        when(leaderboardRepository.findAllByGameIdAndModeAndUserIdIn(eq(GAME_ID), eq(MODE), any()))
                 .thenReturn(List.of(row(10L, 90, 1)));
 
-        LeaderboardResponse response = service.leaderboard(GAME_ID, 20, null);
+        LeaderboardResponse response = service.leaderboard(GAME_ID, MODE, 20, null);
 
-        verify(rankRepository).updateRanks(GAME_ID, Map.of(10L, 90));
+        verify(rankRepository).updateRanks(GAME_ID, MODE, Map.of(10L, 90));
         assertThat(response.entries()).hasSize(1);
     }
 
     @Test
     void 상위권을_순위와_닉네임_플레이수와_함께_돌려준다() {
         givenGameExists();
-        when(rankRepository.size(GAME_ID)).thenReturn(2L);
+        when(rankRepository.size(GAME_ID, MODE)).thenReturn(2L);
         LinkedHashMap<Long, Integer> top = new LinkedHashMap<>();
         top.put(10L, 95);
         top.put(11L, 80);
-        when(rankRepository.topBestScores(eq(GAME_ID), anyInt())).thenReturn(top);
+        when(rankRepository.topBestScores(eq(GAME_ID), eq(MODE), anyInt())).thenReturn(top);
         when(userRepository.findAllById(any()))
                 .thenReturn(List.of(user(10L, "별잡이"), user(11L, "민지")));
-        when(leaderboardRepository.findAllByGameIdAndUserIdIn(eq(GAME_ID), any()))
+        when(leaderboardRepository.findAllByGameIdAndModeAndUserIdIn(eq(GAME_ID), eq(MODE), any()))
                 .thenReturn(List.of(row(10L, 95, 3), row(11L, 80, 2)));
 
-        LeaderboardResponse response = service.leaderboard(GAME_ID, 20, null);
+        LeaderboardResponse response = service.leaderboard(GAME_ID, MODE, 20, null);
 
         assertThat(response.gameId()).isEqualTo(GAME_ID);
         assertThat(response.entries()).hasSize(2);
@@ -120,26 +122,26 @@ class GameQueryServiceTest {
         assertThat(response.entries().get(0).playCount()).isEqualTo(3);
         assertThat(response.entries().get(1).rank()).isEqualTo(2);
         assertThat(response.myRank()).isNull(); // 비로그인
-        verify(leaderboardRepository, never()).findAllByGameId(anyLong()); // warm-up 불필요
+        verify(leaderboardRepository, never()).findAllByGameIdAndMode(anyLong(), any()); // warm-up 불필요
     }
 
     @Test
     void 탈퇴_회원은_노출에서_제외하고_순위를_다시_매긴다() {
         givenGameExists();
-        when(rankRepository.size(GAME_ID)).thenReturn(3L);
+        when(rankRepository.size(GAME_ID, MODE)).thenReturn(3L);
         LinkedHashMap<Long, Integer> top = new LinkedHashMap<>();
         top.put(10L, 95);
         top.put(11L, 80); // 탈퇴 회원
         top.put(12L, 70);
-        when(rankRepository.topBestScores(eq(GAME_ID), anyInt())).thenReturn(top);
+        when(rankRepository.topBestScores(eq(GAME_ID), eq(MODE), anyInt())).thenReturn(top);
         User withdrawn = user(11L, "탈퇴자");
         withdrawn.softDelete();
         when(userRepository.findAllById(any()))
                 .thenReturn(List.of(user(10L, "별잡이"), withdrawn, user(12L, "Alex")));
-        when(leaderboardRepository.findAllByGameIdAndUserIdIn(eq(GAME_ID), any()))
+        when(leaderboardRepository.findAllByGameIdAndModeAndUserIdIn(eq(GAME_ID), eq(MODE), any()))
                 .thenReturn(List.of(row(10L, 95, 1), row(11L, 80, 1), row(12L, 70, 1)));
 
-        LeaderboardResponse response = service.leaderboard(GAME_ID, 20, null);
+        LeaderboardResponse response = service.leaderboard(GAME_ID, MODE, 20, null);
 
         assertThat(response.entries()).hasSize(2);
         assertThat(response.entries().get(0).userId()).isEqualTo(10L);
@@ -150,15 +152,15 @@ class GameQueryServiceTest {
     @Test
     void 회원이_노출_목록_안에_있으면_myRank는_그_항목과_일치한다() {
         givenGameExists();
-        when(rankRepository.size(GAME_ID)).thenReturn(1L);
-        when(rankRepository.topBestScores(eq(GAME_ID), anyInt()))
+        when(rankRepository.size(GAME_ID, MODE)).thenReturn(1L);
+        when(rankRepository.topBestScores(eq(GAME_ID), eq(MODE), anyInt()))
                 .thenReturn(new LinkedHashMap<>(Map.of(10L, 95)));
         when(userRepository.findAllById(any())).thenReturn(List.of(user(10L, "별잡이")));
-        when(leaderboardRepository.findAllByGameIdAndUserIdIn(eq(GAME_ID), any()))
+        when(leaderboardRepository.findAllByGameIdAndModeAndUserIdIn(eq(GAME_ID), eq(MODE), any()))
                 .thenReturn(List.of(row(10L, 95, 3)));
 
         LeaderboardResponse response =
-                service.leaderboard(GAME_ID, 20, new MemberPrincipal(10L, "별잡이"));
+                service.leaderboard(GAME_ID, MODE, 20, new MemberPrincipal(10L, "별잡이"));
 
         assertThat(response.myRank()).isEqualTo(response.entries().get(0));
     }
@@ -166,18 +168,18 @@ class GameQueryServiceTest {
     @Test
     void 회원이_상위권_밖이면_ZREVRANK_원시_순위로_myRank를_채운다() {
         givenGameExists();
-        when(rankRepository.size(GAME_ID)).thenReturn(50L);
-        when(rankRepository.topBestScores(eq(GAME_ID), anyInt()))
+        when(rankRepository.size(GAME_ID, MODE)).thenReturn(50L);
+        when(rankRepository.topBestScores(eq(GAME_ID), eq(MODE), anyInt()))
                 .thenReturn(new LinkedHashMap<>(Map.of(10L, 95)));
         when(userRepository.findAllById(any())).thenReturn(List.of(user(10L, "별잡이")));
-        when(leaderboardRepository.findAllByGameIdAndUserIdIn(eq(GAME_ID), any()))
+        when(leaderboardRepository.findAllByGameIdAndModeAndUserIdIn(eq(GAME_ID), eq(MODE), any()))
                 .thenReturn(List.of(row(10L, 95, 1)));
-        when(rankRepository.reverseRankOf(GAME_ID, 99L)).thenReturn(Optional.of(7L));
-        when(leaderboardRepository.findByGameIdAndUserId(GAME_ID, 99L))
+        when(rankRepository.reverseRankOf(GAME_ID, MODE, 99L)).thenReturn(Optional.of(7L));
+        when(leaderboardRepository.findByGameIdAndUserIdAndMode(GAME_ID, 99L, MODE))
                 .thenReturn(Optional.of(row(99L, 40, 5)));
 
         LeaderboardResponse response =
-                service.leaderboard(GAME_ID, 1, new MemberPrincipal(99L, "나"));
+                service.leaderboard(GAME_ID, MODE, 1, new MemberPrincipal(99L, "나"));
 
         assertThat(response.myRank()).isNotNull();
         assertThat(response.myRank().rank()).isEqualTo(8); // 0-기반 7 → 1-기반 8
@@ -188,18 +190,18 @@ class GameQueryServiceTest {
     @Test
     void 게스트나_기록_없는_회원은_myRank가_null이다() {
         givenGameExists();
-        when(rankRepository.size(GAME_ID)).thenReturn(1L);
-        when(rankRepository.topBestScores(eq(GAME_ID), anyInt()))
+        when(rankRepository.size(GAME_ID, MODE)).thenReturn(1L);
+        when(rankRepository.topBestScores(eq(GAME_ID), eq(MODE), anyInt()))
                 .thenReturn(new LinkedHashMap<>(Map.of(10L, 95)));
         when(userRepository.findAllById(any())).thenReturn(List.of(user(10L, "별잡이")));
-        when(leaderboardRepository.findAllByGameIdAndUserIdIn(eq(GAME_ID), any()))
+        when(leaderboardRepository.findAllByGameIdAndModeAndUserIdIn(eq(GAME_ID), eq(MODE), any()))
                 .thenReturn(List.of(row(10L, 95, 1)));
 
         AuthPrincipal guest = mock(AuthPrincipal.class);
-        assertThat(service.leaderboard(GAME_ID, 20, guest).myRank()).isNull();
+        assertThat(service.leaderboard(GAME_ID, MODE, 20, guest).myRank()).isNull();
 
-        when(rankRepository.reverseRankOf(GAME_ID, 99L)).thenReturn(Optional.empty());
-        assertThat(service.leaderboard(GAME_ID, 20, new MemberPrincipal(99L, "신규"))
+        when(rankRepository.reverseRankOf(GAME_ID, MODE, 99L)).thenReturn(Optional.empty());
+        assertThat(service.leaderboard(GAME_ID, MODE, 20, new MemberPrincipal(99L, "신규"))
                 .myRank()).isNull();
     }
 
