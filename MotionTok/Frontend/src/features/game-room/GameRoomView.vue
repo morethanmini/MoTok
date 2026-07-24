@@ -1005,13 +1005,13 @@ const startHint = computed(() =>
   font-size: 11px; color: var(--c-ink-soft);
   font-family: inherit; resize: vertical;
 }
-.chat-dock input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 13px; }
+.chat-dock input { position: relative; z-index: 47; flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 13px; }
 .chat-count { flex: none; font-size: 7px; color: #a99f86; }
 .chat-count.over { color: var(--c-coral); }
-.chat-send { flex: none; width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
+.chat-send { position: relative; z-index: 47; flex: none; width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
 
-/* 채팅 전체보기 토글 버튼 */
-.chat-expand { flex: none; width: 32px; height: 32px; border: 2px solid var(--c-ink-soft); border-radius: 9px; background: #fff; color: #a99f86; display: flex; align-items: center; justify-content: center; }
+/* 채팅 전체보기 토글 버튼 — 전체보기 패널이 열려도(배경 오버레이 z-index:45보다 위) 계속 클릭 가능해야 한다 */
+.chat-expand { position: relative; z-index: 47; flex: none; width: 32px; height: 32px; border: 2px solid var(--c-ink-soft); border-radius: 9px; background: #fff; color: #a99f86; display: flex; align-items: center; justify-content: center; }
 .chat-expand.active { background: var(--c-yellow); color: var(--c-ink-soft); }
 
 /* 채팅 전체보기 패널 — 입장 이후 전체 대화를 반투명하게 보여준다 */
