@@ -1,10 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import type { RouteLocationNormalized } from 'vue-router'
+import { createPinia, setActivePinia } from 'pinia'
 
-import { requireMember } from '../router'
+import { requireMember, requireAdmin } from '../router'
 import { RouteName } from '../router/routeNames'
 import { setTokens, clearTokens } from '../api/token'
 import { useLoginRequired } from '../composables/useLoginRequired'
+import { useAccessDenied } from '../composables/useAccessDenied'
+import { useSessionStore } from '../stores/session'
+import type { UserProfile } from '../api/types'
 
 /** type/exp 클레임만 담은 가짜 JWT — 프론트는 서명을 검증하지 않으므로 헤더·서명은 더미로 둔다. */
 function fakeJwt(type: 'member' | 'guest', expiresInSec = 600) {
@@ -56,5 +60,41 @@ describe('회원 전용 라우트 가드', () => {
 
   it('회원 전용이 아닌 라우트는 토큰 없이도 통과한다', () => {
     expect(requireMember(publicPage)).toBe(true)
+  })
+})
+
+const adminOnly = { meta: { requiresMember: true, requiresAdmin: true } } as unknown as RouteLocationNormalized
+
+function profileWithRole(role: UserProfile['role']): UserProfile {
+  return { id: 1, email: null, nickname: '테스터', role, pointBalance: 0, createdAt: '2026-01-01' }
+}
+
+const { message: deniedMessage, close: closeDenied } = useAccessDenied()
+
+describe('관리자 전용 라우트 가드', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    closeDenied()
+  })
+
+  it('일반 회원은 로비로 돌려보내고 권한 없음 안내를 띄운다', () => {
+    useSessionStore().profile = profileWithRole('USER')
+    expect(requireAdmin(adminOnly)).toEqual({ name: RouteName.Lobby })
+    expect(deniedMessage.value).not.toBe('')
+  })
+
+  it('프로필이 없으면(복원 실패 등) 막는다', () => {
+    expect(requireAdmin(adminOnly)).toEqual({ name: RouteName.Lobby })
+    expect(deniedMessage.value).not.toBe('')
+  })
+
+  it('관리자는 통과한다', () => {
+    useSessionStore().profile = profileWithRole('ADMIN')
+    expect(requireAdmin(adminOnly)).toBe(true)
+    expect(deniedMessage.value).toBe('')
+  })
+
+  it('관리자 전용이 아닌 라우트는 역할과 무관하게 통과한다', () => {
+    expect(requireAdmin(publicPage)).toBe(true)
   })
 })
