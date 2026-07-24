@@ -42,6 +42,14 @@ spring:
 server:
   port: 8080
 
+# Swagger(springdoc) — 기본 잠금. 운영(CI/CD)에 API 문서가 노출되지 않도록 끄고,
+# 로컬 개발에서만 SWAGGER_ENABLED=true로 켠다(SecurityConfig의 permitAll도 같은 플래그로 함께 열린다).
+springdoc:
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:false}
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:false}
+
 # RTC 접속 방식 전역 스위치 (-123): livekit | openvidu | mesh
 # 통합 rtc-access 응답의 mode가 이 값으로 결정된다. 레거시 video-token은 항상 LiveKit 고정.
 rtc:
