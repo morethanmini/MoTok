@@ -36,6 +36,20 @@ export function requireMember(to: RouteLocationNormalized) {
 }
 
 /**
+ * 관리자 전용 라우트(meta.requiresAdmin) 가드 (v0.2.16, S15P11A706-133).
+ * 판단 근거는 토큰의 role claim — 백엔드가 users.role을 AccessToken에 싣는다(구 토큰은 재로그인 필요).
+ * 클라이언트 판정은 화면 노출용이고, 실제 권한은 서버가 다시 검증한다
+ * (SecurityConfig: /api/v1/admin/** hasRole('ADMIN')).
+ */
+export function requireAdmin(to: RouteLocationNormalized) {
+  if (!to.meta.requiresAdmin) return true
+  if (readAccessClaims()?.role === 'ADMIN') return true
+
+  askLogin('관리자만 이용할 수 있는 페이지예요.')
+  return { name: RouteName.Start }
+}
+
+/**
  * 세션만 있으면 되는 라우트(meta.requiresAuth) 가드.
  * 기기 설정 → 대기실 → 결과는 회원 멀티플레이와 게스트 1인 플레이가 함께 쓰는 구간이라
  * 회원으로 좁히지 않고 '유효한 세션'만 요구한다. 반대로 로비·상점처럼 회원만의 화면은 requiresMember다.
@@ -65,6 +79,8 @@ router.beforeEach(async (to) => {
 
   const memberCheck = requireMember(to)
   if (memberCheck !== true) return memberCheck
+  const adminCheck = requireAdmin(to)
+  if (adminCheck !== true) return adminCheck
   return requireAuth(to)
 })
 
