@@ -1,18 +1,25 @@
 <script setup lang="ts">
 /** 게임룸 — 화상 파티룸(LiveKit SFU). 방 정원만큼 슬롯을 만들고, 참가자는 실시간 타일로,
  *  빈 자리는 "대기 중"으로 표시한다. 무대/채팅/게임 선택은 데모. */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi } from '@/api'
+import { roomsApi, readAccessClaims, type ChatMessage } from '@/api'
+import type { GameEvent, GameResultEntry } from '@/api/types'
+import type { ActiveGameSession } from '@/features/games/session'
 import { useCamera } from '@/composables/useCamera'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
+import { useRoomChat } from '@/composables/useRoomChat'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
-import type { GameEntry } from './data'
+import { GAME_CATALOG, type GameEntry } from './data'
 import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
+// MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
+const FingerStarGame = defineAsyncComponent(
+  () => import('@/features/games/finger-star/FingerStarGame.vue'),
+)
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -25,6 +32,9 @@ const { message: toast, flash } = useToast(2600)
 // LiveKit 실시간 방 + 로컬 카메라 프리뷰 폴백(백엔드 미연동 시)
 const lk = useLiveKitRoom()
 const camera = useCamera()
+// 대기실 채팅 + 게임 제안 (STOMP, 명세 §7)
+const roomChat = useRoomChat()
+const myParticipantId = computed(() => readAccessClaims()?.sub ?? null)
 
 const roomCode = computed(() => (route.query.room as string) || 'MP-4X9K')
 const roomGame = computed(() => (route.query.game as string) || 'DANCE BATTLE')
@@ -90,11 +100,8 @@ const speakerOn = ref(true)
 const screenOn = ref(false)
 const picker = ref(false)
 
-let greetTimer: ReturnType<typeof setTimeout>
-
 onMounted(async () => {
   bgm.setVolume(0.2)
-  greetTimer = setTimeout(() => pushChat('곧 시작할게요! 준비됐죠? 🎮', false, 'Alex'), 1500)
 
   // 정원/방장 조회(실패해도 진행) → LiveKit 접속(방 멤버만 토큰 발급됨)
   try {
@@ -107,27 +114,58 @@ onMounted(async () => {
   }
   const ok = await lk.connect(roomCode.value)
   if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
+
+  // 채팅은 이력이 없어서(비영속) 구독이 늦은 만큼 그대로 유실 — 입장 직후 바로 연결.
+  void roomChat.connect(roomCode.value)
 })
 onBeforeUnmount(() => {
-  clearTimeout(greetTimer)
+  roomChat.disconnect()
 })
 
 // ── 채팅 ────────────────────────────────────
-interface ChatMsg { id: number; name: string; text: string; me: boolean }
-const chat = ref<ChatMsg[]>([])
+// 표시용 말풍선 — 서버에서 수신한 메시지만 여기 담긴다(발신 시 로컬 append 금지: 자기 메시지도 topic으로 에코됨).
+interface ChatBubble { id: number; nickname: string; text: string; me: boolean; kind: ChatMessage['type']; gameName: string | null }
+const bubbles = ref<ChatBubble[]>([])
 const draft = ref('')
-let msgId = 0
+let bubbleId = 0
+const CHAT_MAX_LEN = 500
 
-function pushChat(text: string, me = true, name = 'You') {
-  const id = ++msgId
-  chat.value.push({ id, name, text, me })
-  setTimeout(() => (chat.value = chat.value.filter((m) => m.id !== id)), 5200)
-}
+watch(roomChat.messages, (all, prev) => {
+  const startIdx = prev?.length ?? 0
+  for (const m of all.slice(startIdx)) {
+    const id = ++bubbleId
+    bubbles.value.push({
+      id,
+      nickname: m.nickname,
+      text: m.text,
+      me: m.userId === myParticipantId.value,
+      kind: m.type,
+      gameName: m.gameName,
+    })
+    // 게임 제안 카드는 계속 보이게 두고, 일반 채팅만 잠시 후 사라진다.
+    if (m.type === 'TALK') {
+      setTimeout(() => (bubbles.value = bubbles.value.filter((b) => b.id !== id)), 5200)
+    }
+  }
+})
+watch(
+  () => roomChat.lastError.value,
+  (e) => {
+    if (e) flash(e.message)
+  },
+)
+
 function send() {
   const t = draft.value.trim()
-  if (!t) return
-  pushChat(t, true, 'You')
+  if (!t || t.length > CHAT_MAX_LEN) return
+  roomChat.sendChat(t)
   draft.value = ''
+}
+
+// 방장이 제안받은 게임을 그대로 선택 — 기존 방장 START 흐름과 동일 처리(실제 게임 빌드 전이라 준비 중 안내).
+function selectSuggested(gameName: string | null) {
+  if (!gameName) return
+  flash(`${gameName} 는 준비 중이에요`)
 }
 
 // ── 카메라 / 마이크 컨트롤 ───────────────────
@@ -152,29 +190,144 @@ async function toggleMic() {
 }
 
 // ── 게임 선택 (방장: 바로 시작 / 참가자: 제안) ─
-const myName = computed(() => lkLocal.value?.name || '나')
-// 제안 도배 방지 — 참가자 1인당 쿨다운 안에는 새 제안을 막는다.
-const SUGGEST_COOLDOWN_MS = 20_000
-let lastSuggestAt = 0
+// 서버엔 제안 발신 rate-limit이 없어 연타하면 방 전체에 도배되므로, 버튼에 짧은 쿨다운을 둔다.
+const SUGGEST_COOLDOWN_MS = 3000
+const suggestCooldown = ref(false)
+
+// ── 게임 세션 (STOMP, S15P11A706-115/116) ────
+// GAME_START 수신 시 전원의 셀프 타일 위에 게임이 마운트된다. 타이머 권위는 서버 —
+// startAt/endAt(서버 epoch millis)과 serverNow 기반 시계 오프셋을 게임 컴포넌트에 내려준다.
+// STOMP 미연결(백엔드 미연동 데모)일 때는 로컬 솔로 플레이로 폴백.
+const activeGame = ref<GameEntry | null>(null)
+const activeSession = ref<ActiveGameSession | null>(null)
+const gameResults = ref<GameResultEntry[] | null>(null)
+
+// 실시간 스코어보드(S15P11A706-82) — PROGRESS/PLAYER_FINISHED 수신으로 갱신
+interface LiveScoreRow {
+  nickname: string
+  starsLit: number
+  holdProgress: number
+  finished: boolean
+  score: number | null
+}
+const liveScores = ref<Record<string, LiveScoreRow>>({})
+const scoreboardRows = computed(() => {
+  const rows = Object.entries(liveScores.value).map(([userId, r]) => ({ userId, ...r }))
+  rows.sort(
+    (a, b) =>
+      Number(b.finished) - Number(a.finished) ||
+      (b.score ?? 0) - (a.score ?? 0) ||
+      b.starsLit - a.starsLit,
+  )
+  return rows
+})
+
+watch(roomChat.gameEvents, (all, prev) => {
+  for (const e of all.slice(prev?.length ?? 0)) {
+    applyGameEvent(e)
+  }
+})
+function applyGameEvent(e: GameEvent) {
+  if (e.type === 'GAME_START') {
+    const entry = GAME_CATALOG.find((g) => g.gameId === e.gameId)
+    if (!entry) return
+    gameResults.value = null
+    liveScores.value = {}
+    activeSession.value = {
+      sessionId: e.sessionId,
+      constellationKey: e.constellationKey,
+      startAt: e.startAt,
+      endAt: e.endAt,
+      clockOffset: e.serverNow - Date.now(),
+    }
+    activeGame.value = entry
+    picker.value = false
+    if (!selfCamOn.value) flash('카메라를 켜면 게임에 참여할 수 있어요')
+    return
+  }
+  // 이하 이벤트는 현재 세션 것만 반영(닫은 뒤 늦게 도착한 프레임 방어)
+  if (activeSession.value?.sessionId !== e.sessionId) return
+  if (e.type === 'PROGRESS') {
+    const row = liveScores.value[e.userId]
+    if (row?.finished) return // 완주 확정 후의 늦은 진행 프레임은 무시
+    liveScores.value[e.userId] = {
+      nickname: e.nickname,
+      starsLit: e.starsLit,
+      holdProgress: e.holdProgress,
+      finished: false,
+      score: null,
+    }
+    return
+  }
+  if (e.type === 'PLAYER_FINISHED') {
+    liveScores.value[e.userId] = {
+      nickname: e.nickname,
+      starsLit: e.starsHit,
+      holdProgress: 1,
+      finished: true,
+      score: e.score,
+    }
+    return
+  }
+  if (e.type === 'GAME_END') {
+    gameResults.value = e.results
+  }
+}
 
 function openPicker() {
   picker.value = true
 }
 function launch(g: GameEntry) {
   picker.value = false
-  if (isHost.value) {
+  // 방장 + 서버 연결 + 플레이 가능 → 서버에 시작 요청. GAME_START가 방 전체에 돌아와 마운트된다.
+  if (g.playable && roomChat.connected.value && selfIsHost.value) {
+    if (!selfCamOn.value) {
+      flash('카메라를 켜고 시작해 주세요')
+      return
+    }
+    roomChat.startGame(g.gameId)
+    return
+  }
+  // 서버 미연동 데모 — 로컬 솔로 플레이 폴백
+  if (g.playable && !roomChat.connected.value) {
+    if (!selfCamOn.value) {
+      flash('카메라를 켜야 게임을 플레이할 수 있어요')
+      return
+    }
+    activeGame.value = g
+    return
+  }
+  if (selfIsHost.value) {
     // 실제 게임 빌드가 아직 없음 → 준비 중 안내. (연동 시 여기서 게임 URL/캔버스 로드)
     flash(`${g.name} 는 준비 중이에요`)
     return
   }
-  const now = Date.now()
-  if (now - lastSuggestAt < SUGGEST_COOLDOWN_MS) {
-    const waitSec = Math.ceil((SUGGEST_COOLDOWN_MS - (now - lastSuggestAt)) / 1000)
-    flash(`제안은 너무 자주 보낼 수 없어요 · ${waitSec}초 후 다시 시도해주세요`)
+  if (suggestCooldown.value) return
+  roomChat.suggestGame(g.gameId, g.name)
+  suggestCooldown.value = true
+  setTimeout(() => (suggestCooldown.value = false), SUGGEST_COOLDOWN_MS)
+}
+
+/** 게임 컴포넌트의 진행 상황(컴포넌트에서 300ms 스로틀) → 서버 중계 */
+function onGameProgress(starsLit: number, holdProgress: number) {
+  if (activeSession.value && !gameResults.value) roomChat.sendGameProgress(starsLit, holdProgress)
+}
+
+function onGameFinished(r: { constellation: string; score: number; starsHit: number; starsTotal: number }) {
+  if (activeSession.value) {
+    // 서버가 최초 1회만 수리하고 PLAYER_FINISHED → (전원 완주 시) GAME_END를 배포한다.
+    roomChat.sendGameFinish(r.score, r.starsHit)
     return
   }
-  lastSuggestAt = now
-  flash(`${myName.value}님이 ${g.name} 게임을 제안합니다!`)
+  // 솔로 폴백 — 결과를 토스트로만 알린다.
+  flash(`✨ ${r.score}점 · 별 ${r.starsHit}/${r.starsTotal}`)
+}
+
+function closeGame() {
+  activeGame.value = null
+  activeSession.value = null
+  gameResults.value = null
+  liveScores.value = {}
 }
 
 function copyCode() {
@@ -256,6 +409,17 @@ const startHint = computed(() =>
             </svg>
             <button class="px cam-on-btn" @click="toggleCam">CAM ON</button>
           </div>
+          <!-- 진행 중인 게임 — 비디오는 밑에서 계속 재생(LiveKit 발행 유지), 게임 캔버스가 덮는다 -->
+          <FingerStarGame
+            v-if="activeGame?.id === 'finger'"
+            :video="selfVideoEl ?? null"
+            :session="activeSession"
+            :results="gameResults"
+            :my-user-id="myParticipantId"
+            @close="closeGame"
+            @progress="onGameProgress"
+            @finished="onGameFinished"
+          />
           <div class="self-label">
             <span class="c-g">{{ selfIsHost ? 'YOU · HOST' : 'YOU' }}</span>
             <span :style="{ color: selfMicOn ? '#5cbf4a' : '#e85d6e' }">
@@ -273,6 +437,21 @@ const startHint = computed(() =>
             :host="slot.host"
             play-audio
           />
+        </div>
+
+        <!-- 실시간 스코어보드 (게임 중, S15P11A706-82) -->
+        <div v-if="activeSession && !gameResults" class="px game-scoreboard">
+          <div class="gs-title">⭐ LIVE SCORE</div>
+          <div
+            v-for="row in scoreboardRows"
+            :key="row.userId"
+            class="gs-row"
+            :class="{ me: row.userId === myParticipantId }"
+          >
+            <span class="gs-name">{{ row.nickname }}</span>
+            <span class="gs-val">{{ row.finished ? `${row.score}점 ✓` : `⭐ ${row.starsLit}` }}</span>
+          </div>
+          <div v-if="scoreboardRows.length === 0" class="gs-empty">진행 상황 수신 대기 중…</div>
         </div>
       </div>
 
@@ -299,24 +478,44 @@ const startHint = computed(() =>
       <!-- 채팅 독 -->
       <div class="chat-dock">
         <div class="chat-log">
+          <div class="px chat-notice">입장 이후의 대화만 표시돼요</div>
           <div
-            v-for="c in chat"
-            :key="c.id"
+            v-for="b in bubbles"
+            :key="b.id"
             class="px bubble"
-            :class="{ me: c.me }"
+            :class="{ me: b.me, suggest: b.kind === 'GAME_SUGGEST' }"
           >
-            <span class="bubble-name" :class="{ me: c.me }">{{ c.name }}</span> {{ c.text }}
+            <template v-if="b.kind === 'GAME_SUGGEST'">
+              <span class="bubble-name">🎮 {{ b.nickname }}</span> {{ b.text }}
+              <button v-if="isHost" class="px suggest-pick" @click="selectSuggested(b.gameName)">
+                이 게임으로 선택
+              </button>
+            </template>
+            <template v-else>
+              <span class="bubble-name" :class="{ me: b.me }">{{ b.nickname }}</span> {{ b.text }}
+            </template>
           </div>
         </div>
         <span class="chat-face">☺</span>
-        <input v-model="draft" placeholder="메시지 입력..." @keydown.enter="send" />
+        <input
+          v-model="draft"
+          placeholder="메시지 입력..."
+          maxlength="500"
+          @keydown.enter="send"
+        />
+        <span class="chat-count" :class="{ over: draft.length > 500 }">{{ draft.length }}/500</span>
         <button class="chat-send" @click="send">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
         </button>
       </div>
 
       <!-- 게임 시작 (메시지창 오른쪽) -->
-      <button class="px start-btn" :class="{ suggest: !isHost }" @click="openPicker">
+      <button
+        class="px start-btn"
+        :class="{ suggest: !isHost }"
+        :disabled="!isHost && suggestCooldown"
+        @click="openPicker"
+      >
         <span class="play-ico">▶</span>
         <span class="start-text"><span class="start-title">{{ startLabel }}</span><span class="start-hint">{{ startHint }}</span></span>
       </button>
@@ -391,7 +590,29 @@ const startHint = computed(() =>
 
 /* 캠 영역 — 내 캠(왼쪽, 크게) + 나머지 참가자(오른쪽, 인원수에 맞춰 그리드). 화면 안에 스크롤 없이 모두 들어가고,
    카메라 비율은 유지하되 박스를 꽉 채우지는 않는다(letterbox는 object-fit: contain으로 처리). */
-.cam-stage { flex: 1; min-height: 0; display: flex; flex-direction: row; gap: 14px; }
+.cam-stage { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: row; gap: 14px; }
+
+/* 게임 중 실시간 스코어보드 — 참가자 트레이 위 오버레이 */
+.game-scoreboard {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  min-width: 170px;
+  max-height: 60%;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: rgba(255, 253, 247, 0.96);
+  border: 3px solid var(--c-ink-soft);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+}
+.gs-title { font-size: 8px; color: #f0a815; margin-bottom: 8px; }
+.gs-row { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; font-size: 8px; color: var(--c-ink-soft); }
+.gs-row.me .gs-name { color: #f0a815; }
+.gs-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 110px; }
+.gs-val { color: #5cbf4a; white-space: nowrap; }
+.gs-empty { font-size: 7px; color: #a99f86; }
 
 /* 자기 타일 — 항상 가장 크게 */
 .self-tile.self-spot {
@@ -428,6 +649,7 @@ const startHint = computed(() =>
   box-shadow: var(--shadow-sm); text-align: left;
 }
 .start-btn.suggest { background: var(--c-yellow); color: var(--c-ink-soft); }
+.start-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .play-ico { font-size: 18px; }
 .start-text { line-height: 1.4; }
 .start-title { display: block; font-size: 11px; }
@@ -454,14 +676,19 @@ const startHint = computed(() =>
 .ctrl.off { background: #fbdbe0; color: #e85d6e; }
 
 .chat-dock { position: relative; flex: none; width: 300px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; height: 52px; background: #fff; border: 3px solid var(--c-ink-soft); border-radius: 14px; box-shadow: var(--shadow-sm); }
-.chat-log { position: absolute; bottom: 62px; left: 0; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
-.bubble { max-width: 360px; padding: 9px 12px; font-size: 9px; line-height: 1.7; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); }
+.chat-log { position: absolute; bottom: 62px; left: 0; width: 320px; max-height: 300px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+.chat-notice { align-self: center; padding: 4px 10px; font-size: 7px; color: #a99f86; background: rgba(255, 253, 247, .9); border-radius: 999px; }
+.bubble { max-width: 300px; padding: 9px 12px; font-size: 9px; line-height: 1.7; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); }
 .bubble.me { background: #fff4cc; }
+.bubble.suggest { background: var(--c-mint-soft); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .bubble-name { color: #5cbf4a; }
 .bubble-name.me { color: #f0a815; }
+.suggest-pick { border: 2px solid var(--c-ink-soft); border-radius: 8px; background: var(--c-yellow); padding: 5px 8px; font-size: 8px; font-weight: 700; }
 .chat-face { color: #a99f86; font-size: 16px; }
-.chat-dock input { flex: 1; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 13px; }
-.chat-send { width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
+.chat-dock input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 13px; }
+.chat-count { flex: none; font-size: 7px; color: #a99f86; }
+.chat-count.over { color: var(--c-coral); }
+.chat-send { flex: none; width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
 
 .footer-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .leave { display: flex; align-items: center; gap: 9px; padding: 0 18px; height: 52px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; background: var(--c-coral); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
