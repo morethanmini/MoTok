@@ -1,14 +1,20 @@
 <script setup lang="ts">
-/** 게임 목록/카탈로그 + 상세(규칙·조작) 모달 (API §5 /games, /games/{id}). */
+/** 게임 목록/카탈로그 + 상세(규칙·조작) 모달 + 싱글 플레이 진입 (API §5 /games, /games/{id}). */
 import { computed, ref } from 'vue'
-import { gamesApi, ApiError, type Game, type GameDetail } from '@/api'
+import { useRouter } from 'vue-router'
+import { RouteName } from '@/router/routeNames'
+import { gamesApi, roomsApi, ApiError, type Game, type GameDetail } from '@/api'
 import { useAsyncData } from '@/composables/useAsyncData'
 import { useSessionStore } from '@/stores/session'
+import { useToast } from '@/composables/useToast'
 import AppPage from '@/components/common/AppPage.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
+import PixelToast from '@/components/common/PixelToast.vue'
 
+const router = useRouter()
 const session = useSessionStore()
+const { message: toast, flash } = useToast()
 
 const EMOJI: Record<string, string> = {
   '핑거 스타': '✨', '리듬 펀치': '🥊', '모션 피싱': '🎣',
@@ -38,20 +44,60 @@ const visibleGames = computed(() =>
 
 const detail = ref<GameDetail | null>(null)
 const detailOpen = ref(false)
+const selected = ref<Game | null>(null)
 
 async function openDetail(g: Game) {
+  selected.value = g
   detailOpen.value = true
   detail.value = { id: g.id, name: g.name, rules: '규칙을 불러오는 중…', controls: '' }
   try {
     detail.value = await gamesApi.detail(g.id)
-  } catch (e) {
+  } catch {
+    // 상세 조회 실패(네트워크 오류 등) — 서버 에러 문구를 규칙 자리에 그대로 내보내지 않고 로컬 소개로 폴백
     detail.value = {
       id: g.id,
       name: g.name,
-      rules: e instanceof ApiError ? e.message : `${g.description} (상세는 백엔드 연동 예정)`,
+      rules: g.description || '카메라 앞에서 즐기는 모션 게임이에요.',
       controls: '카메라 앞에서 손·몸을 움직여 플레이합니다.',
     }
   }
+}
+
+// ── 플레이 — 카탈로그에서 바로 싱글 플레이 시작 ─────────────────
+// 게스트는 시작 시 서버가 만들어 준 1인방으로 입장하고, 회원은 비공개 방을 만들어 혼자 입장한다.
+// (maxPlayers 최소값이 2라 2로 두지만, 임의 비밀번호 비공개방이라 초대코드를 공유하지 않는 한 혼자 플레이)
+const starting = ref(false)
+
+async function play() {
+  const g = selected.value
+  if (!g?.playable || starting.value) return
+  if (session.isGuest) {
+    if (!session.guestRoomId) {
+      flash('게스트 세션 정보가 없어요. 처음 화면에서 다시 시작해 주세요.')
+      return
+    }
+    goDevice(g, session.guestRoomId)
+    return
+  }
+  starting.value = true
+  try {
+    const res = await roomsApi.create({
+      title: `${session.profile?.nickname ?? '나'}의 싱글 플레이`.slice(0, 30),
+      visibility: 'PRIVATE',
+      maxPlayers: 2,
+      password: String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0'),
+    })
+    goDevice(g, res.roomId)
+  } catch (e) {
+    flash(e instanceof ApiError ? e.message : '방을 만들지 못했어요. 잠시 후 다시 시도해 주세요.')
+  } finally {
+    starting.value = false
+  }
+}
+
+function goDevice(g: Game, roomId: string) {
+  detailOpen.value = false
+  router.push({ name: RouteName.DeviceSetup, query: { game: g.name, room: roomId } })
 }
 </script>
 
@@ -102,8 +148,21 @@ async function openDetail(g: Game) {
         <p class="sec-label">조작 방법</p>
         <p class="sec">{{ detail.controls }}</p>
       </template>
-      <PixelButton variant="primary" block @click="detailOpen = false">닫기</PixelButton>
+      <div class="modal-actions">
+        <PixelButton block @click="detailOpen = false">닫기</PixelButton>
+        <PixelButton
+          v-if="selected?.playable"
+          variant="mint"
+          block
+          :disabled="starting"
+          @click="play"
+        >
+          ▶ 플레이
+        </PixelButton>
+      </div>
     </PixelModal>
+
+    <PixelToast :message="toast" />
   </AppPage>
 </template>
 
@@ -154,4 +213,5 @@ async function openDetail(g: Game) {
 h3 { margin: 0 0 12px; }
 .sec-label { margin: 12px 0 4px; font-size: 9px; font-weight: 700; color: var(--c-blue); }
 .sec { margin: 0 0 8px; font-size: 11px; line-height: 1.6; color: #55495a; }
+.modal-actions { display: flex; gap: 9px; margin-top: 16px; }
 </style>
