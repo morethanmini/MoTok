@@ -37,6 +37,10 @@ public class SecurityConfig {
     @Value("${app.cors.allowed-origins}")
     private String allowedOrigins;
 
+    /** Swagger 공개 여부 — springdoc 활성화 플래그(SWAGGER_ENABLED)와 같은 값으로 묶는다. 기본 false(운영 잠금). */
+    @Value("${springdoc.swagger-ui.enabled:false}")
+    private boolean swaggerEnabled;
+
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
@@ -50,35 +54,48 @@ public class SecurityConfig {
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/ws/**").permitAll()
-                        .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/users").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/users/check-id").permitAll()
-                        // 로비(방 목록)는 로그인 이후 플로우 — 게스트(ROLE_GUEST)는 1인방만 쓰므로 목록을 열지 않는다.
-                        // (개별 방 조회·입장·화상 접속은 게스트 1인방에도 필요해 인증만 요구한다)
-                        .requestMatchers(HttpMethod.GET, "/api/v1/live-rooms").hasRole("USER")
-                        .requestMatchers(HttpMethod.GET, "/api/v1/games/*/leaderboard").permitAll()
-                        // 명세서 🔓 공개 — 가입·로그인·게스트·중복확인·이메일 인증·토큰 갱신
-                        .requestMatchers(HttpMethod.GET, "/api/auth/availability/**").permitAll()
-                        .requestMatchers(HttpMethod.POST,
-                                "/api/auth/email/verify-request",
-                                "/api/auth/email/verify",
-                                "/api/auth/signup",
-                                "/api/auth/login",
-                                "/api/auth/social/**",
-                                "/api/auth/guest",
-                                "/api/auth/find-id",
-                                "/api/auth/password/reset-request",
-                                "/api/auth/password/reset",
-                                "/api/auth/token/refresh").permitAll()
-                        // 공개 조회. /api/v1/*는 명세 이전 경로로, 게임 도메인 마이그레이션 전까지 함께 허용한다.
-                        .requestMatchers(HttpMethod.GET, "/api/games/*/leaderboard", "/api/v1/games/*/leaderboard").permitAll()
-                        // 회원 전용 — 게스트 토큰(ROLE_GUEST)의 /users/me 접근을 403으로 차단한다
-                        .requestMatchers("/api/users/**").hasRole("USER")
-                        // 로그아웃은 인증 필요(명세 401)
-                        .anyRequest().authenticated())
+                .authorizeHttpRequests(auth -> {
+                    // Swagger — 기본 잠금. springdoc 자체가 SWAGGER_ENABLED(기본 false)로 꺼져 있고,
+                    // 우발적 활성화에 대비해 인가 계층도 같은 플래그가 켜졌을 때만 연다(운영 CI/CD 노출 금지).
+                    if (swaggerEnabled) {
+                        auth.requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll();
+                    }
+                    auth
+                            // WS 핸드셰이크는 Authorization 헤더를 못 실어 STOMP CONNECT에서 검증한다(StompAuthChannelInterceptor)
+                            .requestMatchers("/ws/**").permitAll()
+                            // 명세서 🔓 공개 — 가입·로그인·게스트·중복확인·이메일 인증·토큰 갱신
+                            .requestMatchers(HttpMethod.GET, "/api/auth/availability/**").permitAll()
+                            .requestMatchers(HttpMethod.POST,
+                                    "/api/auth/email/verify-request",
+                                    "/api/auth/email/verify",
+                                    "/api/auth/signup",
+                                    "/api/auth/login",
+                                    "/api/auth/social/**",
+                                    "/api/auth/guest",
+                                    "/api/auth/find-id",
+                                    "/api/auth/password/reset-request",
+                                    "/api/auth/password/reset",
+                                    "/api/auth/token/refresh").permitAll()
+                            // 공개 조회 — 게임 카탈로그·리더보드(비로그인·게스트는 myRank만 빠진다)
+                            .requestMatchers(HttpMethod.GET, "/api/games", "/api/games/*/leaderboard").permitAll()
+                            // 회원 전용 로비·멀티방 플로우 — 게스트는 1인방만 쓴다(-109).
+                            // 목록·생성·빠른시작·초대코드/직접 입장·강퇴는 전부 멀티 플로우라 ROLE_USER로 좁힌다.
+                            // (개별 방 조회·나가기·화상 접속은 게스트 1인방에도 필요해 아래 anyRequest 인증으로 통과)
+                            .requestMatchers(HttpMethod.GET, "/api/v1/live-rooms").hasRole("USER")
+                            .requestMatchers(HttpMethod.POST,
+                                    "/api/v1/live-rooms",
+                                    "/api/v1/live-rooms/quick-start",
+                                    "/api/v1/live-rooms/join-by-invite-code",
+                                    "/api/v1/live-rooms/*/join",
+                                    "/api/v1/live-rooms/*/members/*/kick").hasRole("USER")
+                            // 회원 전용 — 게스트 토큰(ROLE_GUEST)의 /users/me 접근을 403으로 차단한다
+                            .requestMatchers("/api/users/**").hasRole("USER")
+                            // 관리자 리소스 — 아직 어떤 토큰에도 ADMIN 권한을 싣지 않으므로 사실상 전면 차단(기본 잠금).
+                            // 관리자 기능 구현 시 권한 발급(JwtAuthenticationFilter 매핑)부터 설계할 것.
+                            .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                            // 나머지(개별 방 조회·나가기·화상 토큰·ICE·로그아웃 등)는 회원+게스트 공통 — 유효한 JWT 필수
+                            .anyRequest().authenticated();
+                })
                 .exceptionHandling(eh -> eh
                         .authenticationEntryPoint((req, res, ex) ->
                                 writeError(res, ErrorCode.UNAUTHORIZED, req.getRequestURI()))
