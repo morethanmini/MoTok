@@ -16,6 +16,7 @@ import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomRequest;
 import ssafy.a706.backend.liveroom.controller.dto.KickMemberRequest;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomDetailResponse;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomListResponse;
+import ssafy.a706.backend.liveroom.controller.dto.UpdateLiveRoomRequest;
 
 /**
  * S15P11A706-24: 방 생성(공개방·비밀방, 인원 설정). Redis 기반 방 저장소를 사용한다.
@@ -44,6 +45,14 @@ public class LiveRoomController {
     @GetMapping("/{roomId}")
     public ApiResponse<LiveRoomDetailResponse> get(@PathVariable String roomId) {
         return ApiResponse.ok(liveRoomService.get(roomId));
+    }
+
+    @PatchMapping("/{roomId}")
+    public ApiResponse<LiveRoomDetailResponse> update(
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @PathVariable String roomId,
+            @Valid @RequestBody UpdateLiveRoomRequest req) {
+        return ApiResponse.ok("방 정보 수정 완료", liveRoomService.update(principal, roomId, req));
     }
 
     @PostMapping("/{roomId}/join")

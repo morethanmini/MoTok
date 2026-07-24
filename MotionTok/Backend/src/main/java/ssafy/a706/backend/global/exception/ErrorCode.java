@@ -59,6 +59,7 @@ public enum ErrorCode {
     ROOM_CANNOT_KICK_SELF(HttpStatus.BAD_REQUEST, "ROOM_CANNOT_KICK_SELF", "자기 자신은 강퇴할 수 없습니다."),
     ROOM_KICKED(HttpStatus.FORBIDDEN, "ROOM_KICKED", "강퇴된 방에는 재입장할 수 없습니다."),
     ROOM_GAME_IN_PROGRESS(HttpStatus.CONFLICT, "ROOM_GAME_IN_PROGRESS", "게임이 진행 중인 방에는 입장할 수 없습니다."),
+    ROOM_MAX_PLAYERS_BELOW_CURRENT(HttpStatus.CONFLICT, "ROOM_MAX_PLAYERS_BELOW_CURRENT", "최대 인원은 현재 참가자 수보다 작게 설정할 수 없습니다."),
     QUICK_START_NO_ROOM(HttpStatus.NOT_FOUND, "QUICK_START_NO_ROOM", "입장 가능한 방이 없습니다."),
 
     // game / session
