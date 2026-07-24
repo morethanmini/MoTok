@@ -232,6 +232,8 @@ export interface GameDetail {
   rules: string
   controls: string
 }
+/** 리더보드 구분 — 솔로 세션(참가 1명) 기록과 멀티 세션 기록을 나눠 조회한다 */
+export type LeaderboardMode = 'SOLO' | 'MULTI'
 export interface LeaderboardEntry {
   rank: number
   userId: number
