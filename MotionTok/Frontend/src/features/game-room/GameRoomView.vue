@@ -179,6 +179,14 @@ function send() {
   draft.value = ''
 }
 
+/** Enter 전송 — 한글 IME 조합을 커밋하는 Enter는 무시한다.
+ *  macOS IME는 조합을 열어둔 채 유지해서 조합 중 Enter 시 keydown이 두 번 오고
+ *  (커밋용 isComposing/229 + 실제 Enter) 그대로 두면 채팅이 두 번 전송된다. */
+function sendOnEnter(e: KeyboardEvent) {
+  if (e.isComposing || e.keyCode === 229) return
+  send()
+}
+
 // 방장이 제안받은 게임을 그대로 선택 — 기존 방장 START 흐름과 동일 처리(실제 게임 빌드 전이라 준비 중 안내).
 function selectSuggested(gameName: string | null) {
   if (!gameName) return
@@ -566,7 +574,7 @@ const startHint = computed(() =>
           v-model="draft"
           placeholder="메시지 입력..."
           maxlength="500"
-          @keydown.enter="send"
+          @keydown.enter="sendOnEnter"
         />
         <span class="chat-count" :class="{ over: draft.length > 500 }">{{ draft.length }}/500</span>
         <button class="chat-send" @click="send">
