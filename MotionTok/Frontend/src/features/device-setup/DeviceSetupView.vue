@@ -5,6 +5,7 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { roomsApi } from '@/api'
 import { useCamera } from '@/composables/useCamera'
+import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
 import PixelButton from '@/components/common/PixelButton.vue'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 
@@ -46,6 +47,9 @@ function enter() {
     },
   })
 }
+
+// 탭 닫기·주소창 이탈도 여기선 join된 상태의 이탈이다 — keepalive 퇴장 통보 + bfcache 복원 시 로비로
+useRoomUnloadLeave(() => route.query.room as string | undefined)
 
 // 로비에서 이미 join된 상태로 여기 들어오므로, 취소·로고 클릭·뒤로가기 등 어떤 경로로
 // 이 화면을 벗어나도 백엔드에 퇴장을 알려야 인원수가 줄어든다.
