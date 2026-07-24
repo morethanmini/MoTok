@@ -9,10 +9,17 @@ import ssafy.a706.backend.chat.ChatLogEntry;
 import ssafy.a706.backend.chat.ChatLogRepository;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import ssafy.a706.backend.report.dto.ChatContextEntry;
 import ssafy.a706.backend.report.dto.ChatReportCreateRequest;
 import ssafy.a706.backend.report.dto.ChatReportCreateResponse;
+import ssafy.a706.backend.report.dto.ChatReportDetailResponse;
+import ssafy.a706.backend.report.dto.ChatReportListResponse;
+import ssafy.a706.backend.report.enums.ReportStatus;
 import ssafy.a706.backend.signal.RoomMembershipReader;
+import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
@@ -105,5 +112,39 @@ public class ChatReportService {
         } catch (NumberFormatException e) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
+    }
+
+    // ---- 관리자(-133) — 인가는 SecurityConfig(/api/v1/admin/** hasRole ADMIN)가 필터 단에서 처리 ----
+
+    /** 목록 — 최신 신고부터. status가 null이면 전체. */
+    @Transactional(readOnly = true)
+    public ChatReportListResponse list(ReportStatus status, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id"));
+        return ChatReportListResponse.from(status == null
+                ? chatReportRepository.findAll(pageable)
+                : chatReportRepository.findByStatus(status, pageable));
+    }
+
+    /** 상세 — 저장된 스냅샷(JSON)을 파싱해 시간순 배열로 돌려준다(채팅창 복원용). */
+    @Transactional(readOnly = true)
+    public ChatReportDetailResponse detail(Long reportId) {
+        ChatReport report = findReport(reportId);
+        List<ChatContextEntry> context = objectMapper.readValue(
+                report.getContextJson(), new TypeReference<List<ChatContextEntry>>() {});
+        return ChatReportDetailResponse.of(report, context);
+    }
+
+    /** 처리 상태 전이 — RECEIVED(초기 상태)로 되돌리는 요청은 거부한다. */
+    @Transactional
+    public void updateStatus(Long reportId, ReportStatus status) {
+        if (status == ReportStatus.RECEIVED) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        findReport(reportId).updateStatus(status);
+    }
+
+    private ChatReport findReport(Long reportId) {
+        return chatReportRepository.findById(reportId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.CHAT_REPORT_NOT_FOUND));
     }
 }

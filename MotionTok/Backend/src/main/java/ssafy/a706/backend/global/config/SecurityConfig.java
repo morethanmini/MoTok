@@ -79,6 +79,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/users/**").hasRole("USER")
                         // 회원 전용 — 상점(-56)은 게스트가 RDB에 영속되지 않아(D5) 대상이 아니다
                         .requestMatchers("/api/shop/**").hasRole("USER")
+                        // 관리자 전용(-133) — role claim이 ADMIN인 토큰만(JwtAuthenticationFilter가 ROLE_ADMIN 부여)
+                        .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                         // 로그아웃은 인증 필요(명세 401)
                         .anyRequest().authenticated())
                 .exceptionHandling(eh -> eh
