@@ -24,24 +24,87 @@ export type { HandLandmarkerResult }
 const WASM_PATH = '/mediapipe/wasm'
 const MODEL_PATH = '/mediapipe/models/hand_landmarker.task'
 
+/** 로딩 진행률 콜백 — fraction은 0~1. */
+export type LoadProgress = (fraction: number) => void
+
+/**
+ * 모델 다운로드(7.5MB)가 로딩 시간의 대부분이라 로딩바의 0~90%를 여기에 배정하고,
+ * 나머지 90~100%는 wasm 로드 + GPU 초기화(진행률을 잴 수 없는 구간)에 남겨 둔다.
+ */
+const MODEL_WEIGHT = 0.9
+
 let landmarkerPromise: Promise<HandLandmarker> | null = null
 
+/** 모델 .task 파일을 스트리밍으로 받아 실제 바이트 진행률을 콜백으로 흘려보낸다. */
+async function fetchModelBuffer(onProgress?: LoadProgress): Promise<Uint8Array> {
+  const res = await fetch(MODEL_PATH)
+  if (!res.ok) throw new Error(`model fetch failed: ${res.status}`)
+
+  const total = Number(res.headers.get('Content-Length')) || 0
+  // 스트림·Content-Length를 못 쓰는 환경은 통짜로 받고 진행률만 건너뛴다.
+  if (!res.body || !total) {
+    const buf = new Uint8Array(await res.arrayBuffer())
+    onProgress?.(MODEL_WEIGHT)
+    return buf
+  }
+
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let received = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    received += value.length
+    onProgress?.(Math.min(received / total, 1) * MODEL_WEIGHT)
+  }
+
+  const out = new Uint8Array(received)
+  let offset = 0
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.length
+  }
+  return out
+}
+
 /** 싱글턴 로더 — 실패하면 다음 호출에서 재시도할 수 있게 프라미스를 비운다. */
-function loadLandmarker(): Promise<HandLandmarker> {
+function loadLandmarker(onProgress?: LoadProgress): Promise<HandLandmarker> {
   if (!landmarkerPromise) {
     landmarkerPromise = (async () => {
+      // 모델은 우리가 직접 받아 진행률을 재고(버퍼로 주입 → MediaPipe가 재다운로드하지 않음),
+      // wasm 로드·GPU 초기화가 끝나면 100%로 마무리한다.
+      const modelBuffer = await fetchModelBuffer(onProgress)
       const fileset = await FilesetResolver.forVisionTasks(WASM_PATH)
-      return HandLandmarker.createFromOptions(fileset, {
-        baseOptions: { modelAssetPath: MODEL_PATH, delegate: 'GPU' },
+      const landmarker = await HandLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetBuffer: modelBuffer, delegate: 'GPU' },
         runningMode: 'VIDEO',
         numHands: 2,
       })
+      onProgress?.(1)
+      return landmarker
     })()
     landmarkerPromise.catch(() => {
       landmarkerPromise = null
     })
+  } else {
+    // 이미 로드됐거나 다른 소비자가 로딩 중 — 완료되는 순간 100%로 신호만 준다.
+    landmarkerPromise.then(() => onProgress?.(1)).catch(() => {})
   }
   return landmarkerPromise
+}
+
+/**
+ * 게임 밖(로비 스플래시 등)에서 모델을 미리 받아 두는 진입점.
+ * 성공 여부만 돌려주고, 실패해도 던지지 않는다 — 호출부가 로딩을 막지 않고 넘어갈 수 있게.
+ */
+export async function preloadHandLandmarker(onProgress?: LoadProgress): Promise<boolean> {
+  try {
+    await loadLandmarker(onProgress)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function useHandLandmarker() {

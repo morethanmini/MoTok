@@ -1,20 +1,40 @@
 <script setup lang="ts">
 /**
  * 로비 진입 스플래시(로딩) 오버레이.
- * 로딩바가 채워지면 입장 버튼 활성화 → 클릭 시 enter (이 사용자 제스처로 BGM 재생 시작).
+ * 여기서 손 인식 모델(MediaPipe)을 미리 받아 세션 싱글턴에 채워 둔다 — 첫 게임 진입이 즉시 시작된다.
+ * 로딩바는 실제 다운로드 진행률을 따라가고, 100%에 닿으면 버튼 없이 스스로 로비로 진입한다.
+ * (BGM은 useBgm이 첫 사용자 상호작용에서 자동 재생하므로 입장 버튼 제스처가 더는 필요 없다.)
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import PixelButton from '@/components/common/PixelButton.vue'
+import { preloadHandLandmarker } from '@/composables/useHandLandmarker'
 
 const emit = defineEmits<{ enter: [] }>()
 
-const loading = ref(true)
-let timer: ReturnType<typeof setTimeout>
+/** 0~100. 실제 모델 다운로드 진행률 + wasm/GPU 초기화 꼬리를 합친 값. */
+const progress = ref(0)
+const done = ref(false)
+let entered = false
+let holdTimer: ReturnType<typeof setTimeout>
 
-onMounted(() => {
-  timer = setTimeout(() => (loading.value = false), 900)
+function finish() {
+  if (entered) return
+  entered = true
+  progress.value = 100
+  done.value = true
+  // 바가 100%에 닿은 걸 잠깐 보여 준 뒤 로비로 넘어간다.
+  holdTimer = setTimeout(() => emit('enter'), 320)
+}
+
+onMounted(async () => {
+  // 로딩은 앞으로만 흐르게 한다(네트워크 재측정으로 바가 뒤로 튀지 않도록).
+  await preloadHandLandmarker((f) => {
+    progress.value = Math.max(progress.value, Math.round(f * 100))
+  })
+  // 성공이든 실패든 로비로 보낸다 — 로비 자체는 모델이 필요 없고, 모델 오류는 게임 화면이 따로 안내한다.
+  finish()
 })
-onBeforeUnmount(() => clearTimeout(timer))
+
+onBeforeUnmount(() => clearTimeout(holdTimer))
 </script>
 
 <template>
@@ -22,16 +42,12 @@ onBeforeUnmount(() => clearTimeout(timer))
     <div class="splash-bg" />
     <div class="splash-panel">
       <div class="splash-title"><i /> 미니게임 놀이터에 연결 중</div>
-      <div class="loading-track"><div class="loading-fill" /></div>
-      <small>{{ loading ? '별과 게임을 불러오고 있어요…' : '준비 완료! 친구들이 기다리고 있어요.' }}</small>
-      <PixelButton
-        class="enter-btn"
-        variant="yellow"
-        :disabled="loading"
-        @click="emit('enter')"
-      >
-        {{ loading ? 'LOADING…' : '▶ 메인 로비 입장' }}
-      </PixelButton>
+      <div class="loading-track">
+        <div class="loading-fill" :style="{ width: `${Math.max(progress, 6)}%` }" />
+      </div>
+      <small>
+        {{ done ? '준비 완료! 로비로 이동할게요…' : `별과 게임을 불러오고 있어요… ${progress}%` }}
+      </small>
     </div>
   </div>
 </template>
@@ -76,9 +92,8 @@ onBeforeUnmount(() => clearTimeout(timer))
   background: var(--c-paper);
   box-shadow: var(--shadow-lg);
   display: grid;
-  grid-template-columns: 1fr 210px;
+  grid-template-columns: 1fr;
   grid-template-rows: auto auto auto;
-  column-gap: 17px;
   align-items: center;
   animation: panel-rise 0.3s steps(4) both;
 }
@@ -113,7 +128,7 @@ onBeforeUnmount(() => clearTimeout(timer))
   height: 100%;
   border-radius: 3px;
   background: repeating-linear-gradient(90deg, var(--c-mint) 0 18px, #73d8bd 18px 22px);
-  animation: loadbar 0.85s steps(7) forwards;
+  transition: width 0.2s ease-out;
 }
 .splash small {
   display: block;
@@ -123,27 +138,17 @@ onBeforeUnmount(() => clearTimeout(timer))
   grid-row: 3;
   align-self: end;
 }
-.enter-btn {
-  grid-column: 2;
-  grid-row: 1 / 4;
-  width: 100%;
-  height: 48px;
-}
 
 @keyframes splash-pan {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-4px); }
-}
-@keyframes loadbar {
-  from { width: 8%; }
-  to { width: 100%; }
 }
 @keyframes panel-rise {
   from { opacity: 0; transform: translateY(26px); }
   to { opacity: 1; transform: translateY(0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .splash-bg, .loading-fill { animation: none; }
-  .loading-fill { width: 100%; }
+  .splash-bg { animation: none; }
+  .loading-fill { transition: none; }
 }
 </style>
