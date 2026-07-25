@@ -24,7 +24,7 @@ export const adminApi = {
 }
 
 /**
- * 관리자 채팅 신고 (v0.2.16, S15P11A706-133 — 백엔드 구현 완료).
+ * 관리자 채팅 신고 (v0.2.17, S15P11A706-133 — 백엔드 구현 완료).
  * /api/v1/admin/** + ApiResponse 래핑 → httpEnvelope. AccessToken role claim이 ADMIN이어야 한다
  * (role claim 도입 전 구 토큰은 재로그인 필요).
  */

@@ -10,6 +10,7 @@ import { RouteName } from '@/router/routeNames'
 import { useSessionStore } from '@/stores/session'
 import { onSessionExpired } from '@/api/authEvents'
 import { useLoginRequired } from '@/composables/useLoginRequired'
+import { useAccessDenied } from '@/composables/useAccessDenied'
 import { useGuestSignupPrompt } from '@/composables/useGuestSignupPrompt'
 import LoginRequiredModal from '@/components/common/LoginRequiredModal.vue'
 import GuestSignupPromptModal from '@/components/common/GuestSignupPromptModal.vue'
@@ -19,6 +20,7 @@ import PixelButton from '@/components/common/PixelButton.vue'
 const router = useRouter()
 const session = useSessionStore()
 const { message: loginRequired, close: closeLoginRequired } = useLoginRequired()
+const { message: accessDenied, close: closeAccessDenied } = useAccessDenied()
 const { open: guestPrompt, close: closeGuestPrompt } = useGuestSignupPrompt()
 
 function goLogin() {
@@ -71,6 +73,15 @@ function guestPromptTo(mode: 'login' | 'signup') {
     @login="guestPromptTo('login')"
   />
 
+  <PixelModal v-if="accessDenied" @close="closeAccessDenied">
+    <div class="denied">
+      <div class="icon">🚫</div>
+      <h3>접근 권한이 없어요</h3>
+      <p>{{ accessDenied }}</p>
+      <PixelButton variant="primary" block @click="closeAccessDenied">확인</PixelButton>
+    </div>
+  </PixelModal>
+
   <PixelModal v-if="sessionExpired" @close="confirmSessionExpired">
     <div class="expired">
       <div class="icon">⏰</div>
@@ -82,8 +93,8 @@ function guestPromptTo(mode: 'login' | 'signup') {
 </template>
 
 <style scoped>
-.expired { text-align: center; }
-.expired .icon { font-size: 40px; }
-.expired h3 { margin: 10px 0 8px; font-size: 16px; }
-.expired p { margin: 0 0 20px; font-size: 12px; color: var(--c-muted); line-height: 1.7; }
+.expired, .denied { text-align: center; }
+.expired .icon, .denied .icon { font-size: 40px; }
+.expired h3, .denied h3 { margin: 10px 0 8px; font-size: 16px; }
+.expired p, .denied p { margin: 0 0 20px; font-size: 12px; color: var(--c-muted); line-height: 1.7; }
 </style>

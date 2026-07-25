@@ -5,7 +5,7 @@
  *   const me = await usersApi.getMe()
  *   try { ... } catch (e) { if (e instanceof ApiError) ... }
  */
-export { http, httpEnvelope, ApiError, API_BASE } from './http'
+export { http, httpEnvelope, ApiError, API_BASE, forceRefreshAccessToken } from './http'
 export type { ApiEnvelope } from './http'
 export * from './token'
 export * from './types'

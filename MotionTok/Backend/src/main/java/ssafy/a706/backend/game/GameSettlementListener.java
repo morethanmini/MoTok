@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
+import ssafy.a706.backend.game.model.LeaderboardMode;
 import ssafy.a706.backend.game.repository.GameRankRedisRepository;
 
 import java.util.Map;
@@ -29,9 +30,11 @@ public class GameSettlementListener {
     @EventListener
     public void onSettled(GameSettledEvent event) {
         try {
-            Map<Long, Integer> bestByUser = settlementService.settleToDb(event.gameId(), event.results());
-            rankRepository.updateRanks(event.gameId(), bestByUser);
-            log.info("game settled: game={} members={}", event.gameId(), bestByUser.size());
+            // 결과 목록 = 종료 시점 세션 참가 전원(게스트 포함) — 1명 이하면 솔로 세션 기록(-96 확장)
+            LeaderboardMode mode = LeaderboardMode.ofPlayerCount(event.results().size());
+            Map<Long, Integer> bestByUser = settlementService.settleToDb(event.gameId(), mode, event.results());
+            rankRepository.updateRanks(event.gameId(), mode, bestByUser);
+            log.info("game settled: game={} mode={} members={}", event.gameId(), mode, bestByUser.size());
         } catch (Exception e) {
             // write-behind — 정산 실패를 실시간 경로로 전파하지 않는다. (후속: 재시도 큐 검토)
             log.error("game settlement failed: game={}", event.gameId(), e);

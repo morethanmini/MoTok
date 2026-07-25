@@ -58,7 +58,7 @@ export interface AccessClaims {
   /** 회원 PK 또는 guest-xxxx */
   sub: string
   type: 'member' | 'guest'
-  /** users.role — v0.2.16(-133)부터 회원 토큰에 실림. 구 토큰·게스트는 없음(undefined) */
+  /** users.role — v0.2.17(-133)부터 회원 토큰에 실림. 구 토큰·게스트는 없음(undefined) */
   role?: 'USER' | 'ADMIN'
   /** 만료 시각(초) */
   exp: number

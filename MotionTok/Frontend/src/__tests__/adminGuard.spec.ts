@@ -4,7 +4,7 @@ import type { RouteLocationNormalized } from 'vue-router'
 import { requireAdmin } from '../router'
 import { RouteName } from '../router/routeNames'
 import { setTokens, clearTokens, readAccessClaims } from '../api/token'
-import { useLoginRequired } from '../composables/useLoginRequired'
+import { useAccessDenied } from '../composables/useAccessDenied'
 
 /** role 클레임까지 담은 가짜 JWT — 프론트는 서명을 검증하지 않는다(routerGuard.spec와 동일 방식). */
 function fakeJwt(type: 'member' | 'guest', role?: 'USER' | 'ADMIN', expiresInSec = 600) {
@@ -16,12 +16,12 @@ function fakeJwt(type: 'member' | 'guest', role?: 'USER' | 'ADMIN', expiresInSec
 const adminOnly = { meta: { requiresAdmin: true } } as unknown as RouteLocationNormalized
 const publicPage = { meta: {} } as unknown as RouteLocationNormalized
 
-const { close } = useLoginRequired()
+const { message: deniedMessage, close: closeDenied } = useAccessDenied()
 
 describe('관리자 라우트 가드 (S15P11A706-133)', () => {
   beforeEach(() => {
     clearTokens()
-    close()
+    closeDenied()
   })
 
   it('role 클레임을 토큰에서 읽는다', () => {
@@ -32,20 +32,23 @@ describe('관리자 라우트 가드 (S15P11A706-133)', () => {
   it('ADMIN role이면 통과한다', () => {
     setTokens(fakeJwt('member', 'ADMIN'))
     expect(requireAdmin(adminOnly)).toBe(true)
+    expect(deniedMessage.value).toBe('')
   })
 
-  it('일반 회원(USER)은 시작 화면으로 돌려보낸다', () => {
+  it('일반 회원(USER)은 로비로 돌려보내고 권한 없음 안내를 띄운다', () => {
     setTokens(fakeJwt('member', 'USER'))
-    expect(requireAdmin(adminOnly)).toEqual({ name: RouteName.Start })
+    expect(requireAdmin(adminOnly)).toEqual({ name: RouteName.Lobby })
+    expect(deniedMessage.value).not.toBe('')
   })
 
   it('role 클레임이 없는 구 토큰은 막는다 (재로그인 필요)', () => {
     setTokens(fakeJwt('member'))
-    expect(requireAdmin(adminOnly)).toEqual({ name: RouteName.Start })
+    expect(requireAdmin(adminOnly)).toEqual({ name: RouteName.Lobby })
+    expect(deniedMessage.value).not.toBe('')
   })
 
   it('토큰이 없어도 막는다', () => {
-    expect(requireAdmin(adminOnly)).toEqual({ name: RouteName.Start })
+    expect(requireAdmin(adminOnly)).toEqual({ name: RouteName.Lobby })
   })
 
   it('관리자 전용이 아닌 라우트는 그대로 통과한다', () => {
