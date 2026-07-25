@@ -415,8 +415,7 @@ onMounted(async () => {
       router.replace({ name: RouteName.NicknameSetup })
       return
     }
-    // 방금 로딩바를 보여줬으니 로비 진입 스플래시는 건너뛴다 → '로딩바 한 번 → 로비'.
-    sessionStorage.setItem('motok.splashSeen', '1')
+    // 로그인 경로(소셜/일반)와 무관하게 로비 진입 스플래시에서 손 인식 모델을 받도록 스킵하지 않는다.
     router.replace({ name: RouteName.Lobby })
   } catch (e) {
     submitError.value = messageFor(e, { AUTH_SOCIAL_LOGIN_FAILED: '소셜 로그인에 실패했어요.' })
