@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 메인 로비 — 공개방 목록, 친구, 빠른 메뉴, 방 만들기/코드 참가, 스플래시, BGM. */
+/** 메인 로비 — 방 목록(공개방·비밀방), 친구, 빠른 메뉴, 방 만들기/코드 참가, 스플래시, BGM. */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
@@ -46,6 +46,7 @@ function toRoom(s: LiveRoomSummary): Room {
     state: s.status === 'WAITING' ? '대기 중' : '게임 중',
     visibility: s.visibility === 'PUBLIC' ? '공개' : '비공개',
     disabled: s.status === 'IN_GAME' || s.participantCount >= s.maxPlayers,
+    hasPassword: s.hasPassword,
   }
 }
 // 방 목록 (GET /v1/live-rooms?page=, 페이지당 6개 · 최신순) — 실패 시 목업 폴백
@@ -119,11 +120,19 @@ const quickStart = () =>
 const openCreate = () => guardMember(() => (showCreate.value = true))
 const openJoin = () => guardMember(() => (showJoin.value = true))
 
-// 공개방 입장 (POST /v1/live-rooms/{roomId}/join)
-function enterPublic(room: Room) {
+// 방 입장 (POST /v1/live-rooms/{roomId}/join)
+// 비밀방(hasPassword)은 비밀번호 모달을 먼저 띄운다 — 목록에 비밀방도 노출되므로(2026-07-25 회의)
+// 로비에서 바로 입장을 시도하면 서버가 ROOM_PASSWORD_REQUIRED로 거절한다.
+// 초대코드 입장(joinRoom)은 비밀번호를 받지 않는다(확정안 ③).
+function enterRoom(room: Room) {
   guardMember(async () => {
     if (room.disabled) return
     if (!room.roomId) return goDevice(room.game, 'MP4X9K') // 목업 폴백
+    if (room.hasPassword) {
+      pwTarget.value = room
+      pwError.value = ''
+      return
+    }
     try {
       const res = await roomsApi.join(room.roomId)
       goDevice(room.game, res.roomId)
@@ -132,6 +141,29 @@ function enterPublic(room: Room) {
       goDevice(room.game, room.roomId)
     }
   })
+}
+
+// 비밀방 비밀번호 입력 — 틀리면 모달을 닫지 않고 에러만 보여줘 재입력할 수 있게 한다.
+const pwTarget = ref<Room | null>(null)
+const pwError = ref('')
+const pwBusy = ref(false)
+async function submitRoomPassword(password: string) {
+  const room = pwTarget.value
+  if (!room?.roomId || pwBusy.value) return
+  if (password.length < 6) {
+    pwError.value = '비밀번호 6자리를 입력해 주세요'
+    return
+  }
+  pwBusy.value = true
+  try {
+    const res = await roomsApi.join(room.roomId, password)
+    pwTarget.value = null
+    goDevice(room.game, res.roomId)
+  } catch (e) {
+    pwError.value = e instanceof ApiError ? e.message : '입장에 실패했어요'
+  } finally {
+    pwBusy.value = false
+  }
 }
 
 // 코드 참가 (POST /v1/live-rooms/join-by-invite-code)
@@ -162,6 +194,9 @@ async function createRoom(payload: NewRoom) {
       title: payload.title.trim(),
       visibility: payload.visibility === '비밀' ? 'PRIVATE' : 'PUBLIC',
       maxPlayers: Number(payload.max),
+      // 모달이 넘겨준 비밀번호를 그대로 전달 — 공개방이면 undefined라 요청에서 빠진다
+      // (서버는 PUBLIC + password 조합을 거부한다).
+      password: payload.password,
     })
     goDevice('게임 선택 중', res.roomId)
   } catch (e) {
@@ -195,7 +230,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
         <section class="lobby-hero">
           <div>
             <h1>같이 놀 방을 찾아볼까요?</h1>
-            <p>대기 중인 공개방에 입장하거나 직접 새 방을 만들 수 있어요.</p>
+            <p>대기 중인 방에 입장하거나 직접 새 방을 만들 수 있어요. 🔒 방은 비밀번호가 필요해요.</p>
           </div>
           <div class="hero-actions">
             <PixelButton variant="primary" @click="quickStart">⚡ 빠른 참가</PixelButton>
@@ -208,7 +243,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
         </div>
 
         <div class="section-head">
-          <h2>공개방</h2>
+          <h2>방 목록</h2>
           <p>{{ roomResult }}</p>
           <label class="room-search">
             ⌕ <input v-model="query" placeholder="방 제목 검색" />
@@ -223,7 +258,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
               v-for="(room, i) in filteredRooms"
               :key="i"
               :room="room"
-              @enter="enterPublic(room)"
+              @enter="enterRoom(room)"
             />
             <div v-if="filteredRooms.length === 0" class="empty">
               검색 결과가 없어요. 다른 방 제목을 입력해보세요.
@@ -263,6 +298,20 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 
     <!-- 모달 -->
     <JoinRoomModal v-if="showJoin" @close="showJoin = false" @join="joinRoom" />
+
+    <!-- 비밀방 입장 비밀번호 (-68) — 같은 모달을 문구·입력 규칙만 바꿔 재사용 -->
+    <JoinRoomModal
+      v-if="pwTarget"
+      heading="비밀방 입장"
+      :desc="`'${pwTarget.title}' 방의 비밀번호 6자리를 입력해 주세요.`"
+      placeholder="숫자 6자리"
+      submit-label="입장"
+      numeric
+      :error-text="pwError"
+      :busy="pwBusy"
+      @close="pwTarget = null"
+      @join="submitRoomPassword"
+    />
     <CreateRoomModal v-if="showCreate" @close="showCreate = false" @create="createRoom" />
 
     <PixelToast :message="toast" />
