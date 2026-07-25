@@ -1,5 +1,10 @@
 <script setup lang="ts">
-/** 새 방 만들기 모달. 제목/공개설정/최대인원 입력 후 create. */
+/**
+ * 방 정보 입력 모달. 제목/공개설정/최대인원(+비밀방 비번)을 받아 create로 emit한다.
+ * 방 생성(-24)이 기본 모드이고, props로 현재값·문구·정원 하한을 주면 방 정보 수정(-130)
+ * 모달로도 그대로 쓴다 — 입력 필드가 생성과 완전히 동일해서(명세 §4 "생성과 동일 규격")
+ * 별도 컴포넌트를 만들지 않았다.
+ */
 import { nextTick, ref } from 'vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -11,20 +16,40 @@ export interface NewRoom {
   password?: string
 }
 
+const props = withDefaults(
+  defineProps<{
+    /** 현재값 프리필 — 수정 모드에서만 넘긴다. 생성 모드는 생략(빈 폼). */
+    initial?: NewRoom
+    heading?: string
+    desc?: string
+    submitLabel?: string
+    /** 최대 인원 하한. 수정 모드에선 현재 참가자 수 — 그 아래로는 못 줄인다(서버도 409로 거부). */
+    minPlayers?: number
+  }>(),
+  {
+    initial: undefined,
+    heading: '새 게임방 만들기',
+    desc: '친구들과 사용할 방 정보를 설정해 주세요.',
+    submitLabel: '방 만들기',
+    minPlayers: 2,
+  },
+)
+
 const emit = defineEmits<{ close: []; create: [payload: NewRoom] }>()
 
-const title = ref('')
-const visibility = ref('공개')
-const password = ref('')
+const title = ref(props.initial?.title ?? '')
+const visibility = ref(props.initial?.visibility ?? '공개')
+// 수정 모드에선 방장 전용 조회(GET /{roomId}/password)로 받은 기존 비번을 되채운다.
+// 생성 모드는 initial이 없어 빈 값으로 시작한다.
+const password = ref(props.initial?.password ?? '')
 function onPasswordInput(e: Event) {
   const input = e.target as HTMLInputElement
   password.value = input.value.replace(/[^0-9]/g, '').slice(0, 6)
 }
 
-// 최대 인원 — 2~8명, -/+ 스테퍼. 범위를 벗어나면 흔들림 효과로 알려준다.
-const MIN_MAX = 2
+// 최대 인원 — minPlayers~8명, -/+ 스테퍼. 범위를 벗어나면 흔들림 효과로 알려준다.
 const MAX_MAX = 8
-const max = ref(8)
+const max = ref(Number(props.initial?.max ?? MAX_MAX))
 const maxShake = ref(false)
 let maxShakeTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -40,7 +65,7 @@ function shakeMax() {
 }
 
 function decMax() {
-  if (max.value <= MIN_MAX) return shakeMax()
+  if (max.value <= props.minPlayers) return shakeMax()
   max.value -= 1
 }
 function incMax() {
@@ -51,8 +76,8 @@ function incMax() {
 
 <template>
   <PixelModal @close="emit('close')">
-    <h3>새 게임방 만들기</h3>
-    <p>친구들과 사용할 방 정보를 설정해 주세요.</p>
+    <h3>{{ heading }}</h3>
+    <p>{{ desc }}</p>
     <div class="form-grid">
       <label>
         방 제목
@@ -70,7 +95,7 @@ function incMax() {
         </div>
       </label>
       <label>
-        최대 인원 <span class="hint">(2~8명)</span>
+        최대 인원 <span class="hint">({{ minPlayers }}~8명)</span>
         <div class="stepper" :class="{ shake: maxShake }">
           <button type="button" @click="decMax">−</button>
           <span>{{ max }}명</span>
@@ -96,7 +121,7 @@ function incMax() {
         block
         @click="emit('create', { title, visibility, max: String(max), password: visibility === '비밀' ? password : undefined })"
       >
-        방 만들기
+        {{ submitLabel }}
       </PixelButton>
     </div>
   </PixelModal>

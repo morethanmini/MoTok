@@ -13,6 +13,8 @@ export interface Room {
   disabled: boolean
   /** API 연동 시의 방 식별자 (목업에는 없음) */
   roomId?: string
+  /** 비밀방 여부 — 입장 시 비밀번호 입력이 필요한지 판단(-68). 목업에는 없음 */
+  hasPassword?: boolean
 }
 
 export interface Friend {
