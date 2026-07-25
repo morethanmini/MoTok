@@ -334,10 +334,13 @@ export interface SfuTokenResponse {
   expiresIn: number
 }
 
-// ── 대기실 채팅 (STOMP, 명세 §7) ──────────────
+// ── 대기실 채팅 (STOMP, 명세 §7 · v0.2.17) ──────────────
 // 수신: SUBSCRIBE /topic/rooms/{roomId}/chat. 발신: SEND /app/rooms/{roomId}/chat · /app/rooms/{roomId}/game-suggest.
-// 비영속 — 서버는 저장하지 않으며, 자기 메시지도 이 토픽으로 에코되어 돌아온다(로컬에 미리 추가 금지).
+// v0.2.17부터 서버가 Redis Stream에 저장하고 chatId를 함께 방송한다(신고 -132의 대상 식별자).
+// 이력 조회 API는 없음 — 자기 메시지도 이 토픽으로 에코되어 돌아온다(로컬에 미리 추가 금지).
 interface ChatMessageBase {
+  /** 서버(Redis Stream) 발급 메시지 고유 ID — 채팅 신고 시 그대로 전달 */
+  chatId: string
   /** 참가자 식별자 — 회원: userId(숫자 문자열), 게스트: "guest-xxxx" */
   userId: string
   nickname: string
@@ -348,6 +351,67 @@ interface ChatMessageBase {
 export type ChatMessage =
   | (ChatMessageBase & { type: 'TALK'; gameId: null; gameName: null })
   | (ChatMessageBase & { type: 'GAME_SUGGEST'; gameId: number; gameName: string })
+
+// ── 채팅 신고 (REST, v0.2.17 · S15P11A706-132/-133) ──────────────
+// 원문·작성자는 보내지 않는다 — 서버가 Redis에서 직접 읽어 전후 ±10 맥락과 함께 DB에 스냅샷(조작 신고 차단).
+export type ChatReportReason = 'ABUSE' | 'HATE' | 'SEXUAL' | 'SPAM' | 'ETC'
+export type ChatReportStatus = 'RECEIVED' | 'REVIEWING' | 'RESOLVED' | 'REJECTED'
+
+export interface ChatReportCreateRequest {
+  roomId: string
+  chatId: string
+  reason: ChatReportReason
+  /** 자유 서술(선택, 최대 200자) — ETC일 때 입력 권장 */
+  detail?: string
+}
+export interface ChatReportCreateResponse {
+  reportId: number
+}
+
+/** 신고 스냅샷 원소 — 시간순 배열, chatId가 신고 대상과 일치하는 원소를 하이라이트 */
+export interface ChatContextEntry {
+  chatId: string
+  type: 'TALK' | 'GAME_SUGGEST'
+  userId: string
+  nickname: string
+  text: string
+  sentAt: string
+}
+
+export interface ChatReportSummary {
+  id: number
+  roomId: string
+  reporterNickname: string
+  reportedNickname: string
+  reason: ChatReportReason
+  status: ChatReportStatus
+  reportedText: string
+  createdAt: string
+}
+export interface ChatReportListResponse {
+  reports: ChatReportSummary[]
+  page: number
+  size: number
+  totalElements: number
+  totalPages: number
+}
+export interface ChatReportDetail {
+  id: number
+  roomId: string
+  chatId: string
+  reporterUserId: number
+  reporterNickname: string
+  reportedUserId: number
+  reportedNickname: string
+  reportedText: string
+  reportedAt: string
+  reason: ChatReportReason
+  reasonDetail: string | null
+  status: ChatReportStatus
+  context: ChatContextEntry[]
+  createdAt: string
+  updatedAt: string
+}
 
 /** /user/queue/errors 수신 페이로드 — 시그널·채팅·게임 공용 큐, path로 구분 */
 export interface StompErrorPayload {

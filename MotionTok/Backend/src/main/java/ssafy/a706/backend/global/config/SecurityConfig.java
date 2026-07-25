@@ -92,9 +92,8 @@ public class SecurityConfig {
                             .requestMatchers("/api/users/**").hasRole("USER")
                             // 회원 전용 — 상점(-56)은 게스트가 RDB에 영속되지 않아(D5) 대상이 아니다
                             .requestMatchers("/api/shop/**").hasRole("USER")
-                            // 관리자 리소스 — 아직 어떤 토큰에도 ADMIN 권한을 싣지 않으므로 사실상 전면 차단(기본 잠금).
-                            // 관리자 기능 구현 시 권한 발급(JwtAuthenticationFilter 매핑)부터 설계할 것.
-                            .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                            // 관리자 전용(-133) — role claim이 ADMIN인 토큰만(JwtAuthenticationFilter가 ROLE_ADMIN 부여)
+                            .requestMatchers("/api/admin/**", "/api/v1/admin/**").hasRole("ADMIN")
                             // 나머지(개별 방 조회·나가기·화상 토큰·ICE·로그아웃 등)는 회원+게스트 공통 — 유효한 JWT 필수
                             .anyRequest().authenticated();
                 })

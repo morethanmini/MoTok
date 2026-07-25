@@ -5,7 +5,7 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch 
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, reportsApi, ApiError, readAccessClaims, type ChatMessage } from '@/api'
+import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason } from '@/api'
 import type { GameEvent, GameResultEntry } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { useCamera } from '@/composables/useCamera'
@@ -15,6 +15,7 @@ import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
 import { GAME_CATALOG, type GameEntry } from './data'
+import { CHAT_REPORT_REASONS, CHAT_REPORT_DETAIL_MAX, canSubmitChatReport, chatReportErrorMessage } from './chatReport'
 import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
 import ReportIcon from './components/ReportIcon.vue'
@@ -151,7 +152,7 @@ onBeforeUnmount(() => {
 
 // ── 채팅 ────────────────────────────────────
 // 표시용 말풍선 — 서버에서 수신한 메시지만 여기 담긴다(발신 시 로컬 append 금지: 자기 메시지도 topic으로 에코됨).
-interface ChatBubble { id: number; userId: string; nickname: string; text: string; me: boolean; kind: ChatMessage['type']; gameName: string | null; fading?: boolean }
+interface ChatBubble { id: number; chatId: string; userId: string; nickname: string; text: string; me: boolean; kind: ChatMessage['type']; gameName: string | null; fading?: boolean }
 const bubbles = ref<ChatBubble[]>([])
 const draft = ref('')
 let bubbleId = 0
@@ -168,6 +169,7 @@ const chatExpanded = ref(false)
 const allBubbles = computed<ChatBubble[]>(() =>
   roomChat.messages.value.map((m, i) => ({
     id: i,
+    chatId: m.chatId,
     userId: m.userId,
     nickname: m.nickname,
     text: m.text,
@@ -183,6 +185,7 @@ watch(roomChat.messages, (all, prev) => {
     const id = ++bubbleId
     bubbles.value.push({
       id,
+      chatId: m.chatId,
       userId: m.userId,
       nickname: m.nickname,
       text: m.text,
@@ -223,49 +226,39 @@ function sendOnEnter(e: KeyboardEvent) {
   send()
 }
 
-// ── 채팅 메시지 신고 ─────────────────────────
-interface ReportTarget { userId: string; nickname: string; text: string }
-const REPORT_REASONS = [
-  { code: 'ABUSE', label: '욕설, 비난' },
-  { code: 'SEXUAL', label: '음란적인 내용' },
-  { code: 'SPAM', label: '도배, 스팸' },
-] as const
-const REPORT_OTHER = 'OTHER'
+// ── 채팅 메시지 신고 (v0.2.17, -132) ─────────────────────────
+// 원문·작성자는 보내지 않는다 — 서버가 chatId로 Redis에서 직접 읽어 전후 맥락과 함께 영속(조작 신고 차단).
+// 회원 전용(게스트는 버튼 자체를 숨김) · 내 메시지 불가 · 방을 나가면(폭파 포함) 신고 불가.
+interface ReportTarget { chatId: string; nickname: string; text: string }
+const isMember = computed(() => readAccessClaims()?.type === 'member')
 const reportTarget = ref<ReportTarget | null>(null)
-// 신고 사유는 여러 개 고를 수 있다 — 선택된 코드 집합.
-const reportReasons = ref<Set<string>>(new Set())
-const reportOtherText = ref('')
+const reportReason = ref<ChatReportReason | null>(null)
+const reportDetail = ref('')
 const reportSubmitting = ref(false)
+const canSubmitReport = computed(() => canSubmitChatReport(reportReason.value, reportDetail.value))
 
 function openReport(b: ChatBubble) {
-  reportTarget.value = { userId: b.userId, nickname: b.nickname, text: b.text }
-  reportReasons.value = new Set()
-  reportOtherText.value = ''
+  reportTarget.value = { chatId: b.chatId, nickname: b.nickname, text: b.text }
+  reportReason.value = null
+  reportDetail.value = ''
 }
 function closeReport() {
   reportTarget.value = null
 }
-function toggleReportReason(code: string) {
-  const next = new Set(reportReasons.value)
-  if (next.has(code)) next.delete(code)
-  else next.add(code)
-  reportReasons.value = next
-}
 async function submitReport() {
-  if (!reportTarget.value || reportReasons.value.size === 0 || reportSubmitting.value) return
-  const hasOther = reportReasons.value.has(REPORT_OTHER)
-  if (hasOther && !reportOtherText.value.trim()) return
+  if (!reportTarget.value || !reportReason.value || !canSubmitReport.value || reportSubmitting.value) return
   reportSubmitting.value = true
   try {
-    await reportsApi.report({
-      reportedUserId: Number(reportTarget.value.userId),
-      reasonType: [...reportReasons.value].join(','),
-      reasonText: hasOther ? reportOtherText.value.trim() : null,
+    await chatReportsApi.create({
+      roomId: roomCode.value,
+      chatId: reportTarget.value.chatId,
+      reason: reportReason.value,
+      detail: reportDetail.value.trim() || undefined,
     })
     flash('신고가 접수됐어요')
     reportTarget.value = null
   } catch (e) {
-    flash(e instanceof ApiError ? e.message : '신고 접수에 실패했어요')
+    flash(e instanceof ApiError ? chatReportErrorMessage(e.code, e.message) : '신고 접수에 실패했어요')
   } finally {
     reportSubmitting.value = false
   }
@@ -306,7 +299,7 @@ async function submitUserReport() {
   try {
     await reportsApi.report({
       reportedUserId,
-      reasonType: REPORT_OTHER,
+      reasonType: USER_REPORT_OTHER,
       reasonText: `[닉네임: ${nickname}] ${content}`,
     })
     flash('신고가 접수됐어요')
@@ -683,7 +676,7 @@ const startHint = computed(() =>
               class="px bubble"
               :class="{ me: b.me, suggest: b.kind === 'GAME_SUGGEST', fading: b.fading }"
             >
-              <button v-if="!b.me" class="bubble-report" title="신고" @click="openReport(b)">
+              <button v-if="!b.me && isMember" class="bubble-report" title="신고" @click="openReport(b)">
                 <ReportIcon />
               </button>
               <template v-if="b.kind === 'GAME_SUGGEST'">
@@ -735,7 +728,7 @@ const startHint = computed(() =>
                 class="px bubble full"
                 :class="{ me: b.me, suggest: b.kind === 'GAME_SUGGEST' }"
               >
-                <button v-if="!b.me" class="bubble-report" title="신고" @click="openReport(b)">
+                <button v-if="!b.me && isMember" class="bubble-report" title="신고" @click="openReport(b)">
                   <ReportIcon />
                 </button>
                 <template v-if="b.kind === 'GAME_SUGGEST'">
@@ -793,34 +786,35 @@ const startHint = computed(() =>
         <span class="report-target-name">{{ reportTarget.nickname }}</span>
         <p class="report-target-text">{{ reportTarget.text }}</p>
       </div>
-      <p class="report-label">신고 사유를 선택해 주세요 (복수 선택 가능)</p>
+      <p class="report-label">신고 사유를 선택해 주세요</p>
       <ul class="report-reasons">
-        <li v-for="r in REPORT_REASONS" :key="r.code">
+        <li v-for="r in CHAT_REPORT_REASONS" :key="r.code">
           <label class="report-option">
-            <input type="checkbox" :checked="reportReasons.has(r.code)" @change="toggleReportReason(r.code)" />
+            <input type="radio" name="chat-report-reason" :value="r.code" v-model="reportReason" />
             {{ r.label }}
           </label>
-        </li>
-        <li>
-          <label class="report-option">
-            <input type="checkbox" :checked="reportReasons.has(REPORT_OTHER)" @change="toggleReportReason(REPORT_OTHER)" />
-            기타(입력)
-          </label>
           <input
-            v-if="reportReasons.has(REPORT_OTHER)"
-            v-model="reportOtherText"
+            v-if="r.code === 'ETC' && reportReason === 'ETC'"
+            v-model="reportDetail"
             class="report-other-input"
             placeholder="신고 사유를 입력해 주세요"
-            maxlength="200"
+            :maxlength="CHAT_REPORT_DETAIL_MAX"
           />
         </li>
       </ul>
+      <input
+        v-if="reportReason && reportReason !== 'ETC'"
+        v-model="reportDetail"
+        class="report-other-input"
+        placeholder="상세 내용 (선택)"
+        :maxlength="CHAT_REPORT_DETAIL_MAX"
+      />
       <div class="leave-actions">
         <PixelButton block @click="closeReport">취소</PixelButton>
         <PixelButton
           variant="primary"
           block
-          :disabled="reportReasons.size === 0 || (reportReasons.has(REPORT_OTHER) && !reportOtherText.trim()) || reportSubmitting"
+          :disabled="!canSubmitReport || reportSubmitting"
           @click="submitReport"
         >
           신고하기
