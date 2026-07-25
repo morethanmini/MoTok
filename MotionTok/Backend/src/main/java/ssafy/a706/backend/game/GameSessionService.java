@@ -53,8 +53,14 @@ public class GameSessionService {
 
     private static final String GAME_TOPIC = "/topic/rooms/%s/game";
 
-    /** 별자리 과제 후보(핑거 스타 콘텐츠) — 게임1 전용. 공통 서버 밖(게임 모듈)으로 분리 대상. */
-    private static final Set<String> CONSTELLATION_KEYS = Set.of("cassiopeia", "orion", "gemini");
+    /**
+     * 별자리 과제 후보(핑거 스타 콘텐츠) — 게임1 전용. 공통 서버 밖(게임 모듈)으로 분리 대상.
+     * FE constellations.ts와 동기화 필수 — 별자리 추가·삭제 시 양쪽을 함께 갱신한다.
+     */
+    private static final Set<String> CONSTELLATION_KEYS = Set.of(
+            "cassiopeia", "orion", "gemini",
+            "big-dipper", "corona-borealis", "cepheus", "auriga", "lyra",
+            "leo", "bootes", "scorpius", "taurus");
 
     /** endAt 경과 후 정산까지의 유예 — 마지막 순간 finish 프레임의 전송 지연 흡수. */
     private static final long END_GRACE_MILLIS = 1_500;

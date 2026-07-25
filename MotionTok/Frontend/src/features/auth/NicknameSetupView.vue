@@ -9,7 +9,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
-import { usersApi, authApi, ApiError } from '@/api'
+import { usersApi, authApi, ApiError, forceRefreshAccessToken } from '@/api'
 import { useSessionStore } from '@/stores/session'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -72,6 +72,9 @@ async function submit() {
   try {
     // 서버가 여기서 다시 중복 검사를 하고(409), 성공하면 nicknamePending도 함께 해제된다.
     session.profile = await usersApi.updateProfile(nickname.value.trim())
+    // 지금 액세스 토큰의 name 클레임에는 임시 닉네임(pending_*)이 남아 있다.
+    // 방 참가·채팅 표시명은 서버가 이 클레임에서 읽으므로, 새 닉네임이 실린 토큰으로 회전시킨다.
+    await forceRefreshAccessToken()
     router.replace({ name: RouteName.Lobby })
   } catch (e) {
     error.value =

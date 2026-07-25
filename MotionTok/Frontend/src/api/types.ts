@@ -232,6 +232,8 @@ export interface GameDetail {
   rules: string
   controls: string
 }
+/** 리더보드 구분 — 솔로 세션(참가 1명) 기록과 멀티 세션 기록을 나눠 조회한다 */
+export type LeaderboardMode = 'SOLO' | 'MULTI'
 export interface LeaderboardEntry {
   rank: number
   userId: number
@@ -332,9 +334,9 @@ export interface SfuTokenResponse {
   expiresIn: number
 }
 
-// ── 대기실 채팅 (STOMP, 명세 §7 · v0.2.16) ──────────────
+// ── 대기실 채팅 (STOMP, 명세 §7 · v0.2.17) ──────────────
 // 수신: SUBSCRIBE /topic/rooms/{roomId}/chat. 발신: SEND /app/rooms/{roomId}/chat · /app/rooms/{roomId}/game-suggest.
-// v0.2.16부터 서버가 Redis Stream에 저장하고 chatId를 함께 방송한다(신고 -132의 대상 식별자).
+// v0.2.17부터 서버가 Redis Stream에 저장하고 chatId를 함께 방송한다(신고 -132의 대상 식별자).
 // 이력 조회 API는 없음 — 자기 메시지도 이 토픽으로 에코되어 돌아온다(로컬에 미리 추가 금지).
 interface ChatMessageBase {
   /** 서버(Redis Stream) 발급 메시지 고유 ID — 채팅 신고 시 그대로 전달 */
@@ -350,7 +352,7 @@ export type ChatMessage =
   | (ChatMessageBase & { type: 'TALK'; gameId: null; gameName: null })
   | (ChatMessageBase & { type: 'GAME_SUGGEST'; gameId: number; gameName: string })
 
-// ── 채팅 신고 (REST, v0.2.16 · S15P11A706-132/-133) ──────────────
+// ── 채팅 신고 (REST, v0.2.17 · S15P11A706-132/-133) ──────────────
 // 원문·작성자는 보내지 않는다 — 서버가 Redis에서 직접 읽어 전후 ±10 맥락과 함께 DB에 스냅샷(조작 신고 차단).
 export type ChatReportReason = 'ABUSE' | 'HATE' | 'SEXUAL' | 'SPAM' | 'ETC'
 export type ChatReportStatus = 'RECEIVED' | 'REVIEWING' | 'RESOLVED' | 'REJECTED'

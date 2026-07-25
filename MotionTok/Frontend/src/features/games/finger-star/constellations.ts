@@ -2,10 +2,17 @@
  * 핑거 스타 별자리 정의.
  * 실제 주요 별의 적경(RA)/적위(Dec) 상대 비율을 0~1 정규화한 좌표.
  * 배열 순서 = 안내선이 이어지는 순서 = 손가락이 배정되는 별 번호.
+ *
+ * 신규 항목은 scripts/generate-constellations.mjs로 생성·검증한다
+ * (좌표 산출 규칙·기하 검증 기준은 스크립트 헤더 참조).
+ * 난이도는 솔로 도전 모드의 라운드 커브에 쓰인다 — 명세의 난이도 어휘를 재사용.
  */
+export type Difficulty = 'EASY' | 'NORMAL' | 'HARD'
+
 export interface Constellation {
   key: string
   name: string
+  difficulty: Difficulty
   /** [x, y] 0~1 정규화 좌표 (y는 아래 방향) */
   pts: [number, number][]
 }
@@ -14,6 +21,7 @@ export const CONSTELLATIONS: Constellation[] = [
   {
     key: 'cassiopeia',
     name: '카시오페아자리',
+    difficulty: 'EASY',
     pts: [
       [0.0, 0.536], // Caph (β)
       [0.298, 0.636], // Schedar (α)
@@ -25,6 +33,7 @@ export const CONSTELLATIONS: Constellation[] = [
   {
     key: 'orion',
     name: '오리온자리',
+    difficulty: 'HARD',
     pts: [
       [0.376, 0.183], // Bellatrix (γ) — 왼쪽 어깨
       [0.504, 0.0], // Meissa (λ) — 머리
@@ -39,6 +48,7 @@ export const CONSTELLATIONS: Constellation[] = [
   {
     key: 'gemini',
     name: '쌍둥이자리',
+    difficulty: 'NORMAL',
     pts: [
       [0.253, 0.843], // Alhena (γ)
       [0.721, 0.596], // Wasat (δ)
@@ -47,6 +57,122 @@ export const CONSTELLATIONS: Constellation[] = [
       [0.321, 0.456], // Mebsuta (ε)
       [0.089, 0.572], // Tejat (μ)
       [0.0, 0.572], // Propus (η)
+    ],
+  },
+  {
+    key: 'big-dipper',
+    name: '북두칠성',
+    difficulty: 'NORMAL',
+    pts: [
+      [0.012, 0.234], // Dubhe (α UMa) — 국자 입구 위
+      [0.0, 0.464], // Merak (β UMa) — 국자 입구 아래
+      [0.314, 0.579], // Phecda (γ UMa) — 국자 바닥
+      [0.444, 0.436], // Megrez (δ UMa) — 국자 손잡이 접점
+      [0.677, 0.482], // Alioth (ε UMa) — 손잡이
+      [0.858, 0.526], // Mizar (ζ UMa) — 손잡이
+      [1.0, 0.766], // Alkaid (η UMa) — 손잡이 끝
+    ],
+  },
+  {
+    key: 'corona-borealis',
+    name: '북쪽왕관자리',
+    difficulty: 'EASY',
+    pts: [
+      [0.0, 0.346], // Nusakan (β CrB)
+      [0.204, 0.668], // Alphecca (α CrB) — 가장 밝은 별
+      [0.443, 0.723], // Gamma CrB (γ)
+      [0.646, 0.754], // Delta CrB (δ)
+      [0.886, 0.645], // Epsilon CrB (ε)
+      [1.0, 0.246], // Iota CrB (ι)
+    ],
+  },
+  {
+    key: 'cepheus',
+    name: '세페우스자리',
+    difficulty: 'EASY',
+    pts: [
+      [0.147, 0.774], // Alderamin (α Cep) — 집 왼쪽 아래
+      [0.197, 0.364], // Alfirk (β Cep) — 집 왼쪽 위
+      [0.853, 0.0], // Errai (γ Cep) — 지붕 꼭대기
+      [0.604, 0.588], // Iota Cep (ι) — 집 오른쪽 위
+      [0.409, 1.0], // Zeta Cep (ζ) — 집 오른쪽 아래
+    ],
+  },
+  {
+    key: 'auriga',
+    name: '마차부자리',
+    difficulty: 'EASY',
+    pts: [
+      [0.368, 0.0], // Capella (α Aur) — 가장 밝은 별
+      [0.853, 0.06], // Menkalinan (β Aur)
+      [0.855, 0.505], // Theta Aur (θ)
+      [0.477, 1.0], // Elnath (β Tau, 공유 별)
+      [0.145, 0.738], // Hassaleh (ι Aur)
+    ],
+  },
+  {
+    key: 'lyra',
+    name: '거문고자리',
+    difficulty: 'EASY',
+    pts: [
+      [0.135, 0.0], // Vega (α Lyr) — 직녀성
+      [0.394, 0.192], // Zeta Lyr (ζ)
+      [0.718, 0.309], // Delta Lyr (δ)
+      [0.865, 1.0], // Sulafat (γ Lyr)
+      [0.572, 0.89], // Sheliak (β Lyr)
+    ],
+  },
+  {
+    key: 'leo',
+    name: '사자자리',
+    difficulty: 'NORMAL',
+    pts: [
+      [0.591, 1.0], // Regulus (α Leo) — 낫 손잡이 끝
+      [0.574, 0.659], // Eta Leo (η)
+      [0.785, 0.439], // Algieba (γ Leo)
+      [0.73, 0.184], // Adhafera (ζ Leo)
+      [0.33, 0.0], // Rasalas (μ Leo)
+      [0.215, 0.16], // Epsilon Leo (ε) — 낫 날 끝
+    ],
+  },
+  {
+    key: 'bootes',
+    name: '목동자리',
+    difficulty: 'NORMAL',
+    pts: [
+      [0.199, 1.0], // Arcturus (α Boo) — 연 아래 꼭짓점
+      [0.494, 0.628], // Izar (ε Boo)
+      [0.801, 0.334], // Delta Boo (δ)
+      [0.664, 0.0], // Nekkar (β Boo) — 연 꼭대기
+      [0.365, 0.098], // Gamma Boo (γ)
+      [0.362, 0.472], // Rho Boo (ρ)
+    ],
+  },
+  {
+    key: 'scorpius',
+    name: '전갈자리',
+    difficulty: 'HARD',
+    pts: [
+      [0.096, 0.0], // Acrab (β Sco) — 집게 머리
+      [0.048, 0.121], // Dschubba (δ Sco)
+      [0.319, 0.285], // Antares (α Sco) — 심장, 가장 밝은 별
+      [0.379, 0.363], // Tau Sco (τ)
+      [0.512, 0.624], // Epsilon Sco (ε)
+      [0.952, 1.0], // Sargas (θ Sco) — 꼬리 굽이
+      [0.917, 0.746], // Shaula (λ Sco) — 독침
+    ],
+  },
+  {
+    key: 'taurus',
+    name: '황소자리',
+    difficulty: 'HARD',
+    pts: [
+      [0.854, 0.146], // Elnath (β Tau) — 북쪽 뿔 끝
+      [0.113, 0.66], // Ain (ε Tau) — 히아데스 위
+      [0.0, 0.854], // Gamma Tau (γ) — V자 꼭짓점
+      [0.114, 0.841], // Theta² Tau (θ²)
+      [0.207, 0.806], // Aldebaran (α Tau) — 황소의 눈
+      [1.0, 0.553], // Zeta Tau (ζ) — 남쪽 뿔 끝
     ],
   },
 ]

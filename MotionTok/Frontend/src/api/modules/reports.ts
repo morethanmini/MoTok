@@ -8,7 +8,7 @@ export const reportsApi = {
 }
 
 /**
- * 채팅 신고 (v0.2.16, S15P11A706-132). /api/v1 + ApiResponse 래핑 리소스라 httpEnvelope 사용.
+ * 채팅 신고 (v0.2.17, S15P11A706-132). /api/v1 + ApiResponse 래핑 리소스라 httpEnvelope 사용.
  * 회원 전용(게스트 403) · 방 참가자만 · 방 폭파 후에는 로그가 즉시 삭제되어 신고 불가.
  */
 export const chatReportsApi = {

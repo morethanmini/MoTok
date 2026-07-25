@@ -58,3 +58,6 @@ describe('회원 전용 라우트 가드', () => {
     expect(requireMember(publicPage)).toBe(true)
   })
 })
+
+// 관리자 전용 라우트 가드 테스트는 adminGuard.spec.ts로 일원화 —
+// 판정 근거가 프로필 role → 토큰 role claim(-133)으로 바뀌면서 차단 UX(denyAccess·Lobby) 검증도 그쪽에 있다.

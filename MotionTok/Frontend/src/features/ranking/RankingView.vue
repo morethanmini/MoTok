@@ -1,12 +1,13 @@
 <script setup lang="ts">
-/** 랭킹 — 게임 선택 + 리더보드 + 내 순위 (API §5 /games/{id}/leaderboard). */
-import { onMounted, ref, watch } from 'vue'
+/** 랭킹 — 게임 선택 + 싱글/멀티 구분 + 리더보드(페이지네이션) + 내 순위 (API §5 /games/{id}/leaderboard). */
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   gamesApi,
   usersApi,
   ApiError,
   type Game,
   type LeaderboardEntry,
+  type LeaderboardMode,
   type LeaderboardResponse,
   type PublicUserProfile,
 } from '@/api'
@@ -38,17 +39,35 @@ const selected = ref<number>(1)
 const board = ref<LeaderboardResponse>(MOCK_BOARD)
 const error = ref<string | null>(null)
 
+// 싱글(솔로 세션)/멀티(2인 이상 세션) 랭킹 구분 — 기록 자체가 mode별로 분리 적재된다
+const MODES = [
+  { value: 'MULTI', label: '멀티' },
+  { value: 'SOLO', label: '싱글' },
+] as const
+const mode = ref<LeaderboardMode>('MULTI')
+
+// 상위 100명을 한 번에 받아 10명 단위로 페이지네이션한다
+const FETCH_LIMIT = 100
+const PAGE_SIZE = 10
+const page = ref(1)
+
 async function loadBoard() {
   error.value = null
   try {
-    board.value = await gamesApi.leaderboard(selected.value)
+    board.value = await gamesApi.leaderboard(selected.value, mode.value, FETCH_LIMIT)
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '리더보드 로드 실패 (백엔드 미연동)'
     board.value = { ...MOCK_BOARD, gameId: selected.value }
   }
+  page.value = 1
 }
 onMounted(loadBoard)
-watch(selected, loadBoard)
+watch([selected, mode], loadBoard)
+
+const totalPages = computed(() => Math.max(1, Math.ceil(board.value.entries.length / PAGE_SIZE)))
+const pagedEntries = computed(() =>
+  board.value.entries.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE),
+)
 
 // ── 다른 사용자 프로필 조회 (-96) ────────────────────────────
 // 공개 프로필도 회원 전용이라(SecurityConfig /api/users/**) 게스트·비로그인은 로그인 안내로 유도한다.
@@ -106,6 +125,17 @@ function closeProfile() {
       >
         {{ g.name }}
       </button>
+      <div class="mode-toggle">
+        <button
+          v-for="m in MODES"
+          :key="m.value"
+          class="mode-btn"
+          :class="{ on: mode === m.value }"
+          @click="mode = m.value"
+        >
+          {{ m.label }}
+        </button>
+      </div>
     </div>
 
     <PixelCard>
@@ -115,7 +145,7 @@ function closeProfile() {
         </thead>
         <tbody>
           <tr
-            v-for="e in board.entries"
+            v-for="e in pagedEntries"
             :key="e.userId"
             class="row"
             :class="{ me: board.myRank && e.userId === board.myRank.userId, top: e.rank <= 3 }"
@@ -128,6 +158,16 @@ function closeProfile() {
           </tr>
         </tbody>
       </table>
+
+      <p v-if="!board.entries.length" class="empty">
+        아직 기록이 없어요 — 첫 기록의 주인공이 되어보세요!
+      </p>
+
+      <div v-if="totalPages > 1" class="pager">
+        <button class="pager-btn" :disabled="page === 1" @click="page--">◀</button>
+        <span class="pager-info">{{ page }} / {{ totalPages }}</span>
+        <button class="pager-btn" :disabled="page === totalPages" @click="page++">▶</button>
+      </div>
 
       <div v-if="board.myRank" class="myrank">
         내 순위 <b>#{{ board.myRank.rank }}</b> · {{ board.myRank.bestScore.toLocaleString() }}점
@@ -150,9 +190,14 @@ function closeProfile() {
 .rank-hero { height: 142px; margin-bottom: 18px; padding: 15px 24px; display: flex; align-items: center; gap: 20px; overflow: hidden; border: var(--border); border-radius: 21px; background: linear-gradient(110deg, #fff0b9, #ffd9c9); box-shadow: var(--shadow-lg); }
 .rank-hero img { width: 116px; filter: drop-shadow(5px 5px 0 rgba(56,38,61,.16)); } .rank-hero h2 { margin: 10px 0 5px; font-size: 18px; } .rank-hero p { margin: 0; color: var(--c-muted); font-size: 9px; }
 .rank-hero > strong { margin-left: auto; text-align: center; color: var(--c-blue); font-size: 28px; text-shadow: 2px 2px 0 #fff; } .rank-hero > strong small { display: block; margin-top: 4px; color: var(--c-ink); font-size: 7px; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 18px; }
 .chip { border: 2px solid var(--c-ink); background: #fff; border-radius: 999px; padding: 8px 14px; font-size: 11px; box-shadow: 2px 2px 0 #d8c9d8; }
 .chip.on { background: var(--c-yellow); box-shadow: var(--shadow-sm); font-weight: 700; }
+
+/* 싱글/멀티 세그먼트 토글 — 게임 칩 오른쪽 끝 */
+.mode-toggle { margin-left: auto; display: flex; border: 2px solid var(--c-ink); border-radius: 999px; overflow: hidden; background: #fff; box-shadow: 2px 2px 0 #d8c9d8; }
+.mode-btn { border: 0; background: transparent; padding: 8px 16px; font-size: 11px; }
+.mode-btn.on { background: var(--c-mint); color: #fff; font-weight: 700; }
 
 .board { width: 100%; border-collapse: collapse; font-size: 12px; }
 .board th, .board td { padding: 11px 8px; text-align: left; border-bottom: 2px dashed #eaddea; }
@@ -163,6 +208,14 @@ function closeProfile() {
 .board tr.row { cursor: pointer; }
 .board tr.row:hover { background: var(--c-mint-soft); }
 .board .name { border: 0; background: transparent; padding: 0; font: inherit; text-decoration: underline; }
+.empty { margin: 20px 0; text-align: center; font-size: 11px; color: var(--c-muted); }
+
+/* 10명 단위 페이지네이션 */
+.pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 12px; }
+.pager-btn { width: 30px; height: 30px; border: 2px solid var(--c-ink); border-radius: 9px; background: #fff; font-size: 10px; box-shadow: 2px 2px 0 #d8c9d8; }
+.pager-btn:disabled { opacity: 0.4; cursor: default; box-shadow: none; }
+.pager-info { font-size: 10px; color: var(--c-muted); }
+
 .myrank { margin-top: 14px; padding: 11px 14px; border: 2px solid var(--c-ink); border-radius: 12px; background: var(--c-mint-soft); font-size: 11px; }
 .myrank b { color: var(--c-blue); font-size: 14px; }
 .err { margin-top: 12px; font-size: 10px; color: var(--c-muted); }

@@ -3,6 +3,7 @@ import { routes } from './routes'
 import { RouteName } from './routeNames'
 import { readAccessClaims } from '@/api/token'
 import { askLogin } from '@/composables/useLoginRequired'
+import { denyAccess } from '@/composables/useAccessDenied'
 import { useSessionStore } from '@/stores/session'
 
 const router = createRouter({
@@ -36,17 +37,17 @@ export function requireMember(to: RouteLocationNormalized) {
 }
 
 /**
- * 관리자 전용 라우트(meta.requiresAdmin) 가드 (v0.2.16, S15P11A706-133).
+ * 관리자 전용 라우트(meta.requiresAdmin) 가드 (v0.2.17, S15P11A706-133). requiresMember를 통과한 뒤 역할까지 좁힌다.
  * 판단 근거는 토큰의 role claim — 백엔드가 users.role을 AccessToken에 싣는다(구 토큰은 재로그인 필요).
- * 클라이언트 판정은 화면 노출용이고, 실제 권한은 서버가 다시 검증한다
- * (SecurityConfig: /api/v1/admin/** hasRole('ADMIN')).
+ * 서버 인가(SecurityConfig: /api/v1/admin/** hasRole('ADMIN'))도 같은 claim을 보므로 화면 노출과 API 권한이 어긋나지 않는다.
  */
 export function requireAdmin(to: RouteLocationNormalized) {
   if (!to.meta.requiresAdmin) return true
   if (readAccessClaims()?.role === 'ADMIN') return true
 
-  askLogin('관리자만 이용할 수 있는 페이지예요.')
-  return { name: RouteName.Start }
+  // 조용히 돌려보내면 "왜 로비로 왔지?"가 되므로, 권한이 없다는 안내를 띄우고 보낸다.
+  denyAccess('관리자만 접근할 수 있는 페이지예요.')
+  return { name: RouteName.Lobby } // 권한 없는 회원 — 기본 화면으로 돌려보낸다
 }
 
 /**

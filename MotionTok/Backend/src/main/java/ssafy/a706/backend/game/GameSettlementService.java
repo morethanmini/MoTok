@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ssafy.a706.backend.game.dto.GameResultEntry;
 import ssafy.a706.backend.game.entity.Leaderboard;
+import ssafy.a706.backend.game.model.LeaderboardMode;
 import ssafy.a706.backend.game.repository.LeaderboardRepository;
 
 import java.util.HashMap;
@@ -28,18 +29,19 @@ public class GameSettlementService {
 
     /**
      * 회원 결과를 leaderboards에 upsert하고 (userId → 최고점) 맵을 돌려준다(Redis 랭킹 반영용).
-     * (game_id, user_id) 유니크라 기존 기록을 찾아 best_score(GREATEST)·play_count를 갱신한다.
+     * 솔로/멀티 기록은 mode로 분리 적재하며(-96 확장), (game_id, user_id, mode) 유니크라
+     * 이 조합으로 기존 기록을 찾아 best_score(GREATEST)·play_count를 갱신한다.
      */
     @Transactional
-    public Map<Long, Integer> settleToDb(long gameId, List<GameResultEntry> results) {
+    public Map<Long, Integer> settleToDb(long gameId, LeaderboardMode mode, List<GameResultEntry> results) {
         Map<Long, Integer> bestByUser = new HashMap<>();
         for (GameResultEntry result : results) {
             Long userId = memberId(result.userId());
             if (userId == null) {
                 continue; // 게스트 — 영속 제외(D5)
             }
-            Leaderboard leaderboard = leaderboardRepository.findByGameIdAndUserId(gameId, userId)
-                    .orElseGet(() -> new Leaderboard(gameId, userId));
+            Leaderboard leaderboard = leaderboardRepository.findByGameIdAndUserIdAndMode(gameId, userId, mode)
+                    .orElseGet(() -> new Leaderboard(gameId, userId, mode));
             leaderboard.record(result.score());
             leaderboardRepository.save(leaderboard);
             bestByUser.put(userId, leaderboard.getBestScore());

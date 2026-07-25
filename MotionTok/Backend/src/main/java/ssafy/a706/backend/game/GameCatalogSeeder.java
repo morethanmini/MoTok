@@ -18,11 +18,19 @@ import ssafy.a706.backend.game.repository.GameRepository;
 @RequiredArgsConstructor
 public class GameCatalogSeeder implements ApplicationRunner {
 
+    private static final String FINGER_STAR_RULES =
+            "두 손 열 손가락을 별 위치에 맞게 벌려 별자리 모양을 만드는 게임이에요. "
+                    + "어떤 손가락이든 별 위에 가 있으면 그 별이 켜지고, 모든 별을 동시에 켠 채 유지하면 완성! "
+                    + "목표 모양과 비슷할수록 높은 점수를 받아요.";
+    private static final String FINGER_STAR_CONTROLS =
+            "카메라에 두 손이 잘 보이도록 자리를 잡고, 열 손가락 끝을 움직여 화면 속 별 위에 올려놓아요.";
+
     private final GameRepository gameRepository;
 
     @Override
     public void run(ApplicationArguments args) {
-        if (!gameRepository.existsById(1L)) {
+        Game existing = gameRepository.findById(1L).orElse(null);
+        if (existing == null) {
             gameRepository.save(Game.builder()
                     .id(1L)
                     .name("핑거 스타")
@@ -34,8 +42,15 @@ public class GameCatalogSeeder implements ApplicationRunner {
                     .supportsBot(false)
                     .active(true)
                     .category("MOTION")
+                    .rules(FINGER_STAR_RULES)
+                    .controls(FINGER_STAR_CONTROLS)
                     .build());
             log.info("game catalog seeded: id=1 핑거 스타");
+        } else if (existing.getRules() == null) {
+            // 상세 안내 컬럼(-75) 추가 전에 시드된 행 — 규칙·조작법만 백필한다(멱등).
+            existing.updateGuide(FINGER_STAR_RULES, FINGER_STAR_CONTROLS);
+            gameRepository.save(existing);
+            log.info("game catalog backfilled: id=1 rules/controls");
         }
     }
 }

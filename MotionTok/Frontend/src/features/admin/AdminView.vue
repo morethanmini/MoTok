@@ -56,7 +56,7 @@ const SANCTION_LABEL: Record<SanctionType, string> = {
   WARNING: '경고', SUSPENSION: '일시정지', PERMANENT_BAN: '영구정지',
 }
 
-// ── 채팅 신고 (v0.2.16, S15P11A706-133 — 백엔드 구현 완료, mock 없음) ──
+// ── 채팅 신고 (v0.2.17, S15P11A706-133 — 백엔드 구현 완료, mock 없음) ──
 const REASON_LABEL: Record<ChatReportReason, string> = {
   ABUSE: '욕설·비방', HATE: '혐오·차별', SEXUAL: '음란·성희롱', SPAM: '도배·광고', ETC: '기타',
 }
@@ -166,7 +166,7 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
       <button :class="{ on: tab === 'songs' }" @click="tab = 'songs'">곡 등록</button>
     </div>
 
-    <!-- 채팅 신고 (v0.2.16, -133) -->
+    <!-- 채팅 신고 (v0.2.17, -133) -->
     <PixelCard v-if="tab === 'chat-reports'" title="채팅 신고 접수함">
       <div class="cr-filter">
         <label>
