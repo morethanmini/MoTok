@@ -37,14 +37,13 @@ export function requireMember(to: RouteLocationNormalized) {
 }
 
 /**
- * 관리자 전용 라우트(meta.requiresAdmin) 가드. requiresMember를 통과한 뒤 역할까지 좁힌다.
- * 판단 근거는 세션 복원 시 서버가 내려준 프로필(GET /users/me)의 role — 토큰에는 role이 없다.
- * 화면 노출용 판정일 뿐, 실제 관리자 API 권한은 서버가 검증한다(SecurityConfig: /api/admin/** hasRole('ADMIN')).
+ * 관리자 전용 라우트(meta.requiresAdmin) 가드 (v0.2.17, S15P11A706-133). requiresMember를 통과한 뒤 역할까지 좁힌다.
+ * 판단 근거는 토큰의 role claim — 백엔드가 users.role을 AccessToken에 싣는다(구 토큰은 재로그인 필요).
+ * 서버 인가(SecurityConfig: /api/v1/admin/** hasRole('ADMIN'))도 같은 claim을 보므로 화면 노출과 API 권한이 어긋나지 않는다.
  */
 export function requireAdmin(to: RouteLocationNormalized) {
   if (!to.meta.requiresAdmin) return true
-  const session = useSessionStore()
-  if (session.profile?.role === 'ADMIN') return true
+  if (readAccessClaims()?.role === 'ADMIN') return true
 
   // 조용히 돌려보내면 "왜 로비로 왔지?"가 되므로, 권한이 없다는 안내를 띄우고 보낸다.
   denyAccess('관리자만 접근할 수 있는 페이지예요.')

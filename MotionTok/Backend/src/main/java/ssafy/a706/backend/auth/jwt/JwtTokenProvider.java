@@ -28,6 +28,7 @@ public class JwtTokenProvider {
     public static final String TYPE_REFRESH = "refresh";
     private static final String CLAIM_TYPE = "type";
     private static final String CLAIM_NAME = "name";
+    private static final String CLAIM_ROLE = "role";
 
     private final SecretKey key;
 
@@ -48,8 +49,21 @@ public class JwtTokenProvider {
         this.guestExpirationMs = guestExpirationMs;
     }
 
-    public String createAccessToken(Long userId, String nickname) {
-        return create(String.valueOf(userId), TYPE_MEMBER, nickname, accessExpirationMs);
+    /**
+     * role은 users.role(USER/ADMIN)을 claim으로 실어 관리자 인가(-133)를 DB 재조회 없이 판별한다.
+     * 구 토큰(claim 없음)은 getRole()이 null → 필터가 USER로 폴백하므로 하위호환 문제 없음.
+     */
+    public String createAccessToken(Long userId, String nickname, String role) {
+        Date now = new Date();
+        return Jwts.builder()
+                .subject(String.valueOf(userId))
+                .claim(CLAIM_TYPE, TYPE_MEMBER)
+                .claim(CLAIM_NAME, nickname)
+                .claim(CLAIM_ROLE, role)
+                .issuedAt(now)
+                .expiration(new Date(now.getTime() + accessExpirationMs))
+                .signWith(key, Jwts.SIG.HS256)
+                .compact();
     }
 
     /**
@@ -103,6 +117,11 @@ public class JwtTokenProvider {
 
     public String getName(Claims claims) {
         return claims.get(CLAIM_NAME, String.class);
+    }
+
+    /** role claim(USER/ADMIN). role claim 도입 이전 토큰은 null. */
+    public String getRole(Claims claims) {
+        return claims.get(CLAIM_ROLE, String.class);
     }
 
     /** Access 토큰 만료(초) — TokenResponse.expiresIn 용도. */

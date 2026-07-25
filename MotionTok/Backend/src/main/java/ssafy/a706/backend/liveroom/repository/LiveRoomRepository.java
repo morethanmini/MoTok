@@ -146,11 +146,16 @@ public class LiveRoomRepository {
         return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(kickedKey(roomId), playerKey));
     }
 
-    /** 마지막 참가자 퇴장 시 방 즉시 종료(S15P11A706-72). room 해시 · members 해시 · kicked 목록 · rooms:index 항목을 모두 제거한다. */
+    /**
+     * 마지막 참가자 퇴장 시 방 즉시 종료(S15P11A706-72).
+     * room 해시 · members 해시 · kicked 목록 · 채팅 로그(-131) · rooms:index 항목을 모두 제거한다.
+     * 채팅 로그도 즉시 삭제한다 — 방이 사라지면 신고(-132)도 불가가 정책(키맵 v0.4).
+     */
     public void deleteRoom(String roomId) {
         redisTemplate.delete(roomKey(roomId));
         redisTemplate.delete(membersKey(roomId));
         redisTemplate.delete(kickedKey(roomId));
+        redisTemplate.delete(chatLogKey(roomId));
         removeFromIndex(roomId);
     }
 
@@ -205,5 +210,10 @@ public class LiveRoomRepository {
 
     private String kickedKey(String roomId) {
         return "room:" + roomId + ":kicked";
+    }
+
+    /** 채팅 로그 키 — 쓰기·조회는 chat.ChatLogRepository 소유, 여기서는 방 폭파 시 삭제만 한다. */
+    private String chatLogKey(String roomId) {
+        return "room:" + roomId + ":chat";
     }
 }
