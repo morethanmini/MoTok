@@ -207,6 +207,28 @@ export interface CreateLiveRoomResponse {
   inviteCode: string | null
 }
 
+/**
+ * PATCH /v1/live-rooms/{id} 요청 (UpdateLiveRoomRequest, -130).
+ * 명세 §4 "CreateLiveRoomRequest와 동일 규격" — 부분수정이 아니라 전체 상태 재전송이므로
+ * 제목만 바꿔도 4필드를 다 보낸다. PRIVATE이면 password 필수(서버가 비번을 반환하지 않아 재입력).
+ */
+export type UpdateLiveRoomRequest = CreateLiveRoomRequest
+
+/** GET /v1/live-rooms/{id}/password 응답 (LiveRoomPasswordResponse, -130). 공개방은 null */
+export interface LiveRoomPasswordResponse {
+  password: string | null
+}
+
+/**
+ * /topic/rooms/{roomId}/members 로 오는 방 정보 수정 알림 (LiveRoomUpdatedEvent, -130).
+ * 방 전원에게 쏘는 채널이라 password는 실려오지 않는다.
+ */
+export interface LiveRoomUpdatedEvent {
+  title: string
+  visibility: Visibility
+  maxPlayers: number
+}
+
 /** POST /v1/live-rooms/{id}/join 요청 (JoinLiveRoomRequest). 비공개방(hasPassword)이면 password 필요 */
 export interface JoinLiveRoomRequest {
   password?: string
