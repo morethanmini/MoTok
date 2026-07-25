@@ -18,6 +18,7 @@ import FriendItem from './components/FriendItem.vue'
 import LobbySplash from './components/LobbySplash.vue'
 import JoinRoomModal from './components/JoinRoomModal.vue'
 import CreateRoomModal, { type NewRoom } from './components/CreateRoomModal.vue'
+import { containsProfanity } from '@/utils/profanity'
 
 const router = useRouter()
 const session = useSessionStore()
@@ -188,6 +189,10 @@ async function createRoom(payload: NewRoom) {
   if (creating.value) return // 요청 중 중복 제출 방지
   if (!payload.title.trim()) {
     flash('방 제목을 입력해 주세요')
+    return
+  }
+  if (containsProfanity(payload.title)) {
+    flash('방 제목에 사용할 수 없는 단어가 있어요')
     return
   }
   creating.value = true
