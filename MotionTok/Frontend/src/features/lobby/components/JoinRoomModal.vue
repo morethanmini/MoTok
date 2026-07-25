@@ -34,11 +34,12 @@ const emit = defineEmits<{ close: []; join: [code: string] }>()
 
 const code = ref('')
 const onInput = (e: Event) => {
-  const raw = (e.target as HTMLInputElement).value
+  const input = e.target as HTMLInputElement
   code.value = props.numeric
-    ? raw.replace(/[^0-9]/g, '').slice(0, 6)
-    : raw.toUpperCase().replace(/[^A-Z0-9]/g, '')
-}
+    ? input.value.replace(/[^0-9]/g, '').slice(0, 6)
+    : input.value.toUpperCase().replace(/[^A-Z0-9]/g, '')
+  input.value = code.value
+  }
 </script>
 
 <template>
