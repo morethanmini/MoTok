@@ -45,6 +45,7 @@ const password = ref(props.initial?.password ?? '')
 function onPasswordInput(e: Event) {
   const input = e.target as HTMLInputElement
   password.value = input.value.replace(/[^0-9]/g, '').slice(0, 6)
+  input.value = password.value
 }
 
 // 최대 인원 — minPlayers~8명, -/+ 스테퍼. 범위를 벗어나면 흔들림 효과로 알려준다.
