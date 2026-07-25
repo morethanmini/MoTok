@@ -25,6 +25,8 @@ const props = withDefaults(
     submitLabel?: string
     /** 최대 인원 하한. 수정 모드에선 현재 참가자 수 — 그 아래로는 못 줄인다(서버도 409로 거부). */
     minPlayers?: number
+    /** 생성/수정 요청 진행 중 — 제출 버튼을 잠가 중복 요청을 막는다. */
+    busy?: boolean
   }>(),
   {
     initial: undefined,
@@ -32,6 +34,7 @@ const props = withDefaults(
     desc: '친구들과 사용할 방 정보를 설정해 주세요.',
     submitLabel: '방 만들기',
     minPlayers: 2,
+    busy: false,
   },
 )
 
@@ -120,6 +123,7 @@ function incMax() {
       <PixelButton
         variant="primary"
         block
+        :disabled="busy"
         @click="emit('create', { title, visibility, max: String(max), password: visibility === '비밀' ? password : undefined })"
       >
         {{ submitLabel }}

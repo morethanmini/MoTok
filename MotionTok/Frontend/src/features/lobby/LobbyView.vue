@@ -183,12 +183,14 @@ async function joinRoom(code: string) {
 }
 
 // 방 만들기 (POST /v1/live-rooms)
+const creating = ref(false)
 async function createRoom(payload: NewRoom) {
+  if (creating.value) return // 요청 중 중복 제출 방지
   if (!payload.title.trim()) {
     flash('방 제목을 입력해 주세요')
     return
   }
-  showCreate.value = false
+  creating.value = true
   try {
     const res = await roomsApi.create({
       title: payload.title.trim(),
@@ -198,10 +200,13 @@ async function createRoom(payload: NewRoom) {
       // (서버는 PUBLIC + password 조합을 거부한다).
       password: payload.password,
     })
+    showCreate.value = false // 성공했을 때만 닫는다 — 실패 시엔 모달을 남겨 재시도할 수 있게
     goDevice('게임 선택 중', res.roomId)
   } catch (e) {
     if (e instanceof ApiError) return flash(e.message)
     goDevice('게임 선택 중', 'MP' + Math.random().toString(36).slice(2, 6).toUpperCase())
+  } finally {
+    creating.value = false
   }
 }
 
@@ -312,7 +317,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
       @close="pwTarget = null"
       @join="submitRoomPassword"
     />
-    <CreateRoomModal v-if="showCreate" @close="showCreate = false" @create="createRoom" />
+    <CreateRoomModal v-if="showCreate" :busy="creating" @close="showCreate = false" @create="createRoom" />
 
     <PixelToast :message="toast" />
 
