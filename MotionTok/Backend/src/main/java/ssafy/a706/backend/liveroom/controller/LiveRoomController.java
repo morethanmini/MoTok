@@ -16,6 +16,7 @@ import ssafy.a706.backend.liveroom.controller.dto.JoinLiveRoomRequest;
 import ssafy.a706.backend.liveroom.controller.dto.KickMemberRequest;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomDetailResponse;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomListResponse;
+import ssafy.a706.backend.liveroom.controller.dto.LiveRoomPasswordResponse;
 import ssafy.a706.backend.liveroom.controller.dto.UpdateLiveRoomRequest;
 
 /**
@@ -45,6 +46,14 @@ public class LiveRoomController {
     @GetMapping("/{roomId}")
     public ApiResponse<LiveRoomDetailResponse> get(@PathVariable String roomId) {
         return ApiResponse.ok(liveRoomService.get(roomId));
+    }
+
+    /** 방 설정 수정 폼의 비밀번호 프리필용 — 방장 전용(S15P11A706-130). 공개방은 null. */
+    @GetMapping("/{roomId}/password")
+    public ApiResponse<LiveRoomPasswordResponse> getPassword(
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @PathVariable String roomId) {
+        return ApiResponse.ok(liveRoomService.getPassword(principal, roomId));
     }
 
     @PatchMapping("/{roomId}")

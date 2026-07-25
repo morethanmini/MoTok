@@ -16,6 +16,7 @@ import ssafy.a706.backend.liveroom.controller.dto.LiveRoomHostChangedEvent;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomListResponse;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomMemberKickedEvent;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomMemberLeftEvent;
+import ssafy.a706.backend.liveroom.controller.dto.LiveRoomPasswordResponse;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomSummaryResponse;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomUpdatedEvent;
 import ssafy.a706.backend.liveroom.controller.dto.UpdateLiveRoomRequest;
@@ -125,6 +126,19 @@ public class LiveRoomService {
     public LiveRoomDetailResponse get(String roomId) {
         LiveRoom room = loadRoom(roomId);
         return LiveRoomDetailResponse.from(room);
+    }
+
+    /**
+     * 방장이 방 설정 수정 폼을 열 때 기존 비밀번호를 되채우기 위해 조회한다(S15P11A706-130).
+     * 방장만 허용 — 참가자에게 비밀번호를 노출하면 강퇴 후 재입장 차단(-73)이 무의미해진다.
+     * 공개방이면 null.
+     */
+    public LiveRoomPasswordResponse getPassword(AuthPrincipal principal, String roomId) {
+        LiveRoom room = loadRoom(roomId);
+        if (!room.hostUserId().equals(principal.userId())) {
+            throw new BusinessException(ErrorCode.NOT_ROOM_HOST);
+        }
+        return new LiveRoomPasswordResponse(room.password());
     }
 
     public LiveRoomDetailResponse join(AuthPrincipal principal, String roomId, JoinLiveRoomRequest req) {

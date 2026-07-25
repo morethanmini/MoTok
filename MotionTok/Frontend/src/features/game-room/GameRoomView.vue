@@ -6,7 +6,7 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
 import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason } from '@/api'
-import type { GameEvent, GameResultEntry } from '@/api/types'
+import type { GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { useCamera } from '@/composables/useCamera'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
@@ -19,6 +19,8 @@ import { CHAT_REPORT_REASONS, CHAT_REPORT_DETAIL_MAX, canSubmitChatReport, chatR
 import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
 import ReportIcon from './components/ReportIcon.vue'
+// 방 정보 수정 모달(-130) — 입력 필드가 방 생성과 동일 규격(명세 §4)이라 로비 모달을 그대로 재사용한다.
+import CreateRoomModal, { type NewRoom } from '@/features/lobby/components/CreateRoomModal.vue'
 // MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
 const FingerStarGame = defineAsyncComponent(
   () => import('@/features/games/finger-star/FingerStarGame.vue'),
@@ -57,6 +59,26 @@ const roomTitle = ref<string | null>(null)
 // /join-by-invite-code는 이 값으로 조회하지 roomId로는 찾지 못한다. 상세 조회 전까지는 roomId로 폴백.
 const inviteCode = ref<string | null>(null)
 const shareCode = computed(() => inviteCode.value ?? roomCode.value)
+// 방 설정 수정(-130) 프리필용 — 공개여부와 현재 인원은 상세 조회로만 알 수 있다.
+const roomVisibility = ref<Visibility>('PUBLIC')
+const participantCount = ref(1)
+
+/**
+ * 방 설정(-130) 노출 판정. 기존 isHost(route.query.host)는 DeviceSetupView가 참가자에게도
+ * '1'을 붙여서 방장 판별에 쓸 수 없고, selfIsHost는 LiveKit 연결에 의존한다 —
+ * 상세 조회의 hostUserId와 내 토큰 sub를 직접 비교하는 게 유일하게 정확하다.
+ */
+const amRoomHost = computed(() => !!hostId.value && myParticipantId.value === hostId.value)
+
+/** 상세/수정 응답을 화면 상태에 반영. 두 경로가 같은 LiveRoomDetail을 돌려주므로 한 곳에 모았다. */
+function applyDetail(d: LiveRoomDetail) {
+  capacity.value = d.maxPlayers
+  hostId.value = d.hostUserId
+  roomTitle.value = d.title
+  inviteCode.value = d.inviteCode
+  roomVisibility.value = d.visibility
+  participantCount.value = d.participantCount
+}
 
 // ── 실시간 참가자 → 슬롯 매핑 ────────────────
 const connected = computed(() => lk.state.value === ConnectionState.Connected)
@@ -125,10 +147,7 @@ onMounted(async () => {
       void router.replace({ name: RouteName.Lobby })
       return
     }
-    capacity.value = d.maxPlayers
-    hostId.value = d.hostUserId
-    roomTitle.value = d.title
-    inviteCode.value = d.inviteCode
+    applyDetail(d)
   } catch {
     /* 백엔드 미연동 — 기본 정원 유지 */
   }
@@ -518,6 +537,79 @@ function copyCode() {
   navigator.clipboard?.writeText(shareCode.value)
   flash('룸 코드를 복사했어요')
 }
+
+// ── 방 정보 수정 (-130, 방장·대기실 전용) ──────
+const settingsOpen = ref(false)
+const settingsInitial = ref<NewRoom | null>(null)
+const settingsSubmitting = ref(false)
+
+/**
+ * 열 때 상세를 다시 조회한다 — 프리필값과 정원 하한(현재 인원)을 최신으로 맞추려고.
+ * 비밀번호는 상세 응답에 없어서(참가자 전원에게 내려가는 응답이라 일부러 제외) 방장 전용
+ * 엔드포인트로 따로 받아 프리필한다.
+ */
+async function openSettings() {
+  let password: string | undefined
+  try {
+    applyDetail(await roomsApi.detail(roomCode.value))
+    if (roomVisibility.value === 'PRIVATE') {
+      password = (await roomsApi.password(roomCode.value)).password ?? undefined
+    }
+  } catch {
+    // 조회 실패 시엔 화면에 들고 있던 값으로 연다(제출은 서버가 다시 검증한다)
+  }
+  settingsInitial.value = {
+    title: roomTitle.value ?? '',
+    visibility: roomVisibility.value === 'PRIVATE' ? '비밀' : '공개',
+    max: String(capacity.value),
+    password,
+  }
+  settingsOpen.value = true
+}
+
+async function submitSettings(payload: NewRoom) {
+  if (settingsSubmitting.value) return
+  settingsSubmitting.value = true
+  try {
+    // 전체 상태 재전송(명세 §4) — 제목만 바꿔도 4필드를 다 보낸다.
+    applyDetail(
+      await roomsApi.update(roomCode.value, {
+        title: payload.title,
+        visibility: payload.visibility === '비밀' ? 'PRIVATE' : 'PUBLIC',
+        maxPlayers: Number(payload.max),
+        password: payload.visibility === '비밀' ? payload.password : undefined,
+      }),
+    )
+    settingsOpen.value = false
+    flash('방 정보를 수정했어요')
+  } catch (e) {
+    // ROOM_GAME_IN_PROGRESS는 입장(-70)과 공용 코드라 서버 메시지가 "입장할 수 없습니다"다 —
+    // 수정 맥락에 맞지 않으니 이 코드만 문구를 갈아끼운다.
+    if (e instanceof ApiError) {
+      flash(
+        e.code === 'ROOM_GAME_IN_PROGRESS'
+          ? '게임 중에는 방 정보를 수정할 수 없어요'
+          : e.message,
+      )
+    } else {
+      flash('방 정보 수정에 실패했어요')
+    }
+  } finally {
+    settingsSubmitting.value = false
+  }
+}
+
+// 다른 참가자(방장 포함)가 방 정보를 바꾸면 STOMP로 즉시 반영 — 정원이 바뀌면 슬롯 수와
+// 게임 선택 가능 여부(-24)도 함께 재평가된다.
+watch(
+  () => roomChat.roomUpdated.value,
+  (e) => {
+    if (!e) return
+    roomTitle.value = e.title
+    capacity.value = e.maxPlayers
+    roomVisibility.value = e.visibility
+  },
+)
 // 헤더 링크·뒤로가기 등으로 방을 벗어나려 하면 확인 모달. "나가기" 같은 의도된 이동은 통과.
 let leavingIntentionally = false
 const showLeaveConfirm = ref(false)
@@ -572,6 +664,16 @@ const startHint = computed(() =>
       <!-- 유저 신고 (방 코드 왼쪽) -->
       <button class="ribbon-report" title="유저 신고" @click="openUserReport">
         <ReportIcon :width="16" :height="20" />
+      </button>
+
+      <!-- 방 설정 (-130) — 방장만, 대기실에서만. 게임 중엔 서버도 거부하므로 버튼을 숨긴다. -->
+      <button
+        v-if="amRoomHost && !activeGame"
+        class="ribbon-settings"
+        title="방 설정"
+        @click="openSettings"
+      >
+        ⚙
       </button>
 
       <!-- 방 코드 (하단 바에서 이동) -->
@@ -769,6 +871,18 @@ const startHint = computed(() =>
     <Transition name="toast">
       <div v-if="toast" class="px room-toast">{{ toast }}</div>
     </Transition>
+
+    <!-- 방 설정 수정 (-130) — 정원 하한은 현재 참가자 수(그 아래로 줄이면 서버가 409) -->
+    <CreateRoomModal
+      v-if="settingsOpen && settingsInitial"
+      :initial="settingsInitial"
+      :min-players="Math.max(2, participantCount)"
+      heading="방 설정 수정"
+      desc="대기실에서만 바꿀 수 있어요. 변경은 참가자 전원에게 바로 반영돼요."
+      submit-label="저장"
+      @close="settingsOpen = false"
+      @create="submitSettings"
+    />
 
     <PixelModal v-if="showLeaveConfirm" @close="answerLeave(false)">
       <h3 class="leave-title">🚪 게임을 떠나시겠어요?</h3>
@@ -987,6 +1101,14 @@ const startHint = computed(() =>
   background: #fff; box-shadow: var(--shadow-sm);
 }
 .ribbon-report:hover { background: #ffe9ea; }
+/* 방 설정(-130) — 신고 버튼과 같은 규격. margin-left:auto는 신고 버튼이 이미 갖고 있어 생략. */
+.ribbon-settings {
+  flex: none; width: 34px; height: 34px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid var(--c-ink); border-radius: 10px;
+  background: #fff; box-shadow: var(--shadow-sm); font-size: 15px; line-height: 1;
+}
+.ribbon-settings:hover { background: var(--c-mint-soft); }
 .code-box { border: 2px solid var(--c-ink); background: #fff; padding: 0 12px; height: 38px; display: flex; align-items: center; gap: 8px; border-radius: 11px; box-shadow: var(--shadow-sm); }
 .code-cap { font-size: 7px; color: #a99f86; }
 .code-line { display: flex; align-items: center; gap: 8px; }

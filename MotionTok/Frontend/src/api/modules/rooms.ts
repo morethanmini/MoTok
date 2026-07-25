@@ -15,6 +15,8 @@ import type {
   CreateLiveRoomResponse,
   LiveRoomDetail,
   LiveRoomListResponse,
+  LiveRoomPasswordResponse,
+  UpdateLiveRoomRequest,
 } from '../types'
 
 const BASE = '/v1/live-rooms'
@@ -28,6 +30,21 @@ export const roomsApi = {
 
   /** GET /v1/live-rooms/{roomId} — 방 상세 */
   detail: (roomId: string) => httpEnvelope.get<LiveRoomDetail>(`${BASE}/${roomId}`),
+
+  /**
+   * GET /v1/live-rooms/{roomId}/password — 방 설정 폼 비밀번호 프리필용(방장 전용, -130).
+   * 공개방이면 password는 null. 방장 아니면 403(ROOM_NOT_HOST).
+   */
+  password: (roomId: string) =>
+    httpEnvelope.get<LiveRoomPasswordResponse>(`${BASE}/${roomId}/password`),
+
+  /**
+   * PATCH /v1/live-rooms/{roomId} — 방 정보 수정(방장·대기실 전용, -130).
+   * 전체 상태 재전송이라 4필드를 모두 보낸다. 게임 중이면 409(ROOM_GAME_IN_PROGRESS),
+   * 방장 아니면 403(ROOM_NOT_HOST), 정원을 현재 인원 아래로 줄이면 409.
+   */
+  update: (roomId: string, body: UpdateLiveRoomRequest) =>
+    httpEnvelope.patch<LiveRoomDetail>(`${BASE}/${roomId}`, body),
 
   /** POST /v1/live-rooms/{roomId}/join — roomId로 직접 입장(비공개방이면 password 필요) */
   join: (roomId: string, password?: string) =>

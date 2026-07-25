@@ -19,7 +19,7 @@ import { onScopeDispose, readonly, ref, shallowRef } from 'vue'
 import { Client, type StompSubscription } from '@stomp/stompjs'
 import { API_BASE } from '@/api/http'
 import { getAccessToken } from '@/api/token'
-import type { ChatMessage, GameEvent, StompErrorPayload } from '@/api/types'
+import type { ChatMessage, GameEvent, LiveRoomUpdatedEvent, StompErrorPayload } from '@/api/types'
 
 /** API_BASE('http(s)://host/api')에서 STOMP 브로커 URL('ws(s)://host/ws')을 유도한다. */
 function resolveBrokerUrl(): string {
@@ -34,12 +34,15 @@ export function useRoomChat() {
   let chatSub: StompSubscription | null = null
   let gameSub: StompSubscription | null = null
   let errorSub: StompSubscription | null = null
+  let membersSub: StompSubscription | null = null
   let currentRoomId: string | null = null
 
   const connected = ref(false)
   const messages = shallowRef<ChatMessage[]>([])
   const gameEvents = shallowRef<GameEvent[]>([])
   const lastError = ref<StompErrorPayload | null>(null)
+  /** 방 정보 수정 알림(-130). 최신 1건만 들고 있으면 되므로 배열이 아니다. */
+  const roomUpdated = ref<LiveRoomUpdatedEvent | null>(null)
 
   function handleChatFrame(body: string) {
     try {
@@ -54,6 +57,23 @@ export function useRoomChat() {
     try {
       const event = JSON.parse(body) as GameEvent
       gameEvents.value = [...gameEvents.value, event]
+    } catch {
+      // 무시
+    }
+  }
+
+  /**
+   * /topic/rooms/{roomId}/members 수신. 이 토픽은 퇴장(-71)·방장변경(-72)·강퇴(-73)·
+   * 방 정보 수정(-130) 이벤트가 섞여 오는데 판별용 type 필드가 없다 — 이미 배포된 다른
+   * 이벤트 계약을 건드리지 않으려고 필드 모양으로 가른다. title+maxPlayers를 함께 갖는 건
+   * LiveRoomUpdatedEvent뿐이다(나머지는 userId/displayName 계열).
+   */
+  function handleMembersFrame(body: string) {
+    try {
+      const msg = JSON.parse(body) as Partial<LiveRoomUpdatedEvent>
+      if (typeof msg.title === 'string' && typeof msg.maxPlayers === 'number') {
+        roomUpdated.value = msg as LiveRoomUpdatedEvent
+      }
     } catch {
       // 무시
     }
@@ -81,6 +101,7 @@ export function useRoomChat() {
     messages.value = []
     gameEvents.value = []
     lastError.value = null
+    roomUpdated.value = null
 
     return new Promise((resolve) => {
       const c = new Client({
@@ -97,6 +118,7 @@ export function useRoomChat() {
           chatSub = c.subscribe(`/topic/rooms/${roomId}/chat`, (frame) => handleChatFrame(frame.body))
           gameSub = c.subscribe(`/topic/rooms/${roomId}/game`, (frame) => handleGameFrame(frame.body))
           errorSub = c.subscribe('/user/queue/errors', (frame) => handleErrorFrame(frame.body))
+          membersSub = c.subscribe(`/topic/rooms/${roomId}/members`, (frame) => handleMembersFrame(frame.body))
           resolve()
         },
         onStompError: () => {
@@ -117,9 +139,11 @@ export function useRoomChat() {
     chatSub?.unsubscribe()
     gameSub?.unsubscribe()
     errorSub?.unsubscribe()
+    membersSub?.unsubscribe()
     chatSub = null
     gameSub = null
     errorSub = null
+    membersSub = null
     currentRoomId = null
     connected.value = false
     void client?.deactivate()
@@ -177,6 +201,7 @@ export function useRoomChat() {
     messages,
     gameEvents,
     lastError,
+    roomUpdated,
     connect,
     disconnect,
     sendChat,
