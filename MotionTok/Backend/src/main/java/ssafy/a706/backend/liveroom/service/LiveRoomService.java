@@ -36,7 +36,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class LiveRoomService {
 
-    private static final int PUBLIC_LIST_LIMIT = 50;
+    /** 인덱스 스캔 상한(방 목록·빠른 시작 공통). 공개/비밀 구분과 무관한 순수 스캔 캡이다. */
+    private static final int LIST_SCAN_LIMIT = 50;
 
     private static final int PAGE_SIZE = 6;
 
@@ -100,21 +101,22 @@ public class LiveRoomService {
 
     /**
      * 로비 방 목록(S15P11A706-124). 페이지당 {@link #PAGE_SIZE}개, 최신 생성 방이 최상단.
-     * ponytail: 기존 스캔 상한({@link #PUBLIC_LIST_LIMIT}) 안에서만 페이지네이션 — 공개방 수가
+     *
+     * <p>공개방·비밀방을 모두 노출한다(2026-07-25 팀 회의 확정). 비밀방은 응답의
+     * {@code hasPassword=true}로 구분되고, 입장 시 클라이언트가 비밀번호를 받아
+     * {@link #join}으로 넘긴다 — 목록 자체는 비밀번호를 담지 않는다.
+     *
+     * ponytail: 기존 스캔 상한({@link #LIST_SCAN_LIMIT}) 안에서만 페이지네이션 — 방 수가
      * 그 캡을 넘어서면 뒷 페이지가 실제보다 적게 잡힐 수 있음, 그때 커서 기반으로 전환.
      */
     public LiveRoomListResponse list(int page) {
         int safePage = Math.max(page, 1);
         List<LiveRoomSummaryResponse> all = new ArrayList<>();
-        for (String roomId : repository.listRoomIdsNewestFirst(PUBLIC_LIST_LIMIT)) {
+        for (String roomId : repository.listRoomIdsNewestFirst(LIST_SCAN_LIMIT)) {
             repository.findRoomFields(roomId)
                     .map(fields -> toLiveRoom(roomId, fields, repository.findMembers(roomId)))
                     .ifPresentOrElse(
-                            room -> {
-                                if (room.visibility() == LiveRoomVisibility.PUBLIC) {
-                                    all.add(LiveRoomSummaryResponse.from(room));
-                                }
-                            },
+                            room -> all.add(LiveRoomSummaryResponse.from(room)),
                             () -> repository.removeFromIndex(roomId) // 죽은 방 lazy 청소
                     );
         }
@@ -168,9 +170,17 @@ public class LiveRoomService {
     public LiveRoomDetailResponse quickStart(AuthPrincipal principal) {
         String key = playerKey(principal);
         List<LiveRoom> candidates = new ArrayList<>();
-        for (String roomId : repository.listRoomIdsNewestFirst(PUBLIC_LIST_LIMIT)) {
+        for (String roomId : repository.listRoomIdsNewestFirst(LIST_SCAN_LIMIT)) {
             repository.findRoomFields(roomId)
                     .map(fields -> toLiveRoom(roomId, fields, repository.findMembers(roomId)))
+                    // 공개방만 후보로 둔다 — quickStart는 joinRoom()을 직접 호출해 비밀번호를
+                    // 검증하지 않으므로(검증은 join()에만 있다), 이 필터를 지우면 비밀번호 없이
+                    // 비밀방에 들어가진다. 비밀방까지 포함해야 한다면 "방 선정"과 "입장"을
+                    // 2단계 API로 분리해야 한다. (2026-07-25 회의: 빠른 참가는 공개방 only)
+                    //
+                    // ponytail: 스캔 상한(LIST_SCAN_LIMIT)은 공개·비밀을 함께 세므로, 비밀방이
+                    // 최신 50개를 대부분 차지하면 그 뒤의 공개방을 못 보고 QUICK_START_NO_ROOM이
+                    // 날 수 있다. 비밀방 비중이 커지면 인덱스를 공개/비밀로 분리하거나 상한을 올린다.
                     .filter(room -> room.visibility() == LiveRoomVisibility.PUBLIC)
                     .filter(room -> "WAITING".equals(room.status()))
                     .filter(room -> room.participantCount() < room.maxPlayers())
