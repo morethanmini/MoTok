@@ -16,11 +16,24 @@ const DEFAULT_INTERVAL_MS = 20_000
 /** focus와 visibilitychange가 거의 동시에 오는 경우가 있어, 짧은 간격의 중복 호출을 접는다. */
 const MIN_GAP_MS = 2_000
 
-export function useAutoReload(reload: () => unknown, intervalMs = DEFAULT_INTERVAL_MS) {
+export interface AutoReloadOptions {
+  intervalMs?: number
+  /**
+   * true를 돌려주면 그 회차를 건너뛴다.
+   *
+   * 모달이 열려 있을 때 뒤 목록이 바뀌면 사용자가 방금 본 것과 다른 항목을 누르게 된다 —
+   * 특히 방 목록은 최신순이라 새 방 하나가 생기면 아래로 한 칸씩 밀린다. 상호작용 중에는 멈추는 게 맞다.
+   */
+  shouldSkip?: () => boolean
+}
+
+export function useAutoReload(reload: () => unknown, options: AutoReloadOptions = {}) {
+  const { intervalMs = DEFAULT_INTERVAL_MS, shouldSkip } = options
   let timer: ReturnType<typeof setInterval> | undefined
   let lastAt = 0
 
   function run() {
+    if (shouldSkip?.()) return
     const now = Date.now()
     if (now - lastAt < MIN_GAP_MS) return
     lastAt = now

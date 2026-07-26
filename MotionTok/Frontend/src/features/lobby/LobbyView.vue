@@ -6,6 +6,7 @@ import { RouteName } from '@/router/routeNames'
 import { roomsApi, friendsApi, ApiError, type LiveRoomSummary, type Friend as ApiFriend } from '@/api'
 import { useSessionStore } from '@/stores/session'
 import { useAsyncData } from '@/composables/useAsyncData'
+import { useAutoReload } from '@/composables/useAutoReload'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
 import type { Friend, Room } from './data'
@@ -56,7 +57,7 @@ function toFriend(f: ApiFriend): Friend {
 }
 
 const NO_FRIENDS: Friend[] = []
-const { data: friends } = useAsyncData(
+const { data: friends, reload: reloadFriends } = useAsyncData(
   async () => (await friendsApi.list()).map(toFriend),
   NO_FRIENDS,
 )
@@ -177,6 +178,21 @@ function enterRoom(room: Room) {
 const pwTarget = ref<Room | null>(null)
 const pwError = ref('')
 const pwBusy = ref(false)
+/**
+ * 로비 자동 갱신 — 방 목록과 친구 목록은 남이 바꾸는 데이터라 가만히 두면 낡는다.
+ * 방이 새로 생기거나 정원이 차는 것, 친구가 접속하는 것을 새로고침 없이 따라간다.
+ *
+ * 모달이 열려 있거나 스플래시 중에는 건너뛴다 — 목록이 밀려서 방금 본 것과 다른 방을 누르게 되면
+ * 그게 더 나쁜 경험이다. 지금 보고 있는 페이지를 그대로 다시 불러오므로 페이지네이션도 유지된다.
+ */
+useAutoReload(() => Promise.all([reloadRooms(), reloadFriends()]), {
+  // 친구 화면(20초)보다 짧게 — 방은 만들어지고 정원이 차는 속도가 빨라서 낡은 목록이 더 잘 티가 난다.
+  // 대기 중으로 보이는 방에 들어갔더니 이미 꽉 찬 상황을 줄이는 게 목적이다.
+  intervalMs: 12_000,
+  shouldSkip: () =>
+    showSplash.value || showJoin.value || showCreate.value || pwTarget.value !== null,
+})
+
 async function submitRoomPassword(password: string) {
   const room = pwTarget.value
   if (!room?.roomId || pwBusy.value) return
