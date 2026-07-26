@@ -88,7 +88,15 @@ public enum ErrorCode {
     CHAT_REPORT_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "CHAT_REPORT_NOT_IN_ROOM", "방 참가자만 신고할 수 있습니다."),
     CHAT_REPORT_SELF(HttpStatus.BAD_REQUEST, "CHAT_REPORT_SELF", "자신의 채팅은 신고할 수 없습니다."),
     CHAT_REPORT_DUPLICATE(HttpStatus.CONFLICT, "CHAT_REPORT_DUPLICATE", "이미 신고한 채팅입니다."),
-    CHAT_REPORT_NOT_FOUND(HttpStatus.NOT_FOUND, "CHAT_REPORT_NOT_FOUND", "존재하지 않는 신고입니다.");
+    CHAT_REPORT_NOT_FOUND(HttpStatus.NOT_FOUND, "CHAT_REPORT_NOT_FOUND", "존재하지 않는 신고입니다."),
+
+    // friend (-57) — 닉네임으로 상대를 못 찾는 경우는 USER_NOT_FOUND를 재사용한다
+    FRIEND_SELF_REQUEST(HttpStatus.BAD_REQUEST, "FRIEND_SELF_REQUEST", "자신에게는 친구 요청을 보낼 수 없습니다."),
+    FRIEND_ALREADY(HttpStatus.CONFLICT, "FRIEND_ALREADY", "이미 친구입니다."),
+    FRIEND_REQUEST_DUPLICATE(HttpStatus.CONFLICT, "FRIEND_REQUEST_DUPLICATE", "이미 보낸 친구 요청이 있습니다."),
+    FRIEND_REQUEST_NOT_FOUND(HttpStatus.NOT_FOUND, "FRIEND_REQUEST_NOT_FOUND", "존재하지 않는 친구 요청입니다."),
+    FRIEND_REQUEST_FORBIDDEN(HttpStatus.FORBIDDEN, "FRIEND_REQUEST_FORBIDDEN", "이 친구 요청을 처리할 권한이 없습니다."),
+    FRIEND_NOT_FOUND(HttpStatus.NOT_FOUND, "FRIEND_NOT_FOUND", "친구가 아닙니다.");
 
     private final HttpStatus status;
     private final String code;
