@@ -20,6 +20,7 @@ import ssafy.a706.backend.auth.principal.GuestPrincipal;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
+import ssafy.a706.backend.presence.service.PresenceService;
 import ssafy.a706.backend.user.entity.User;
 import ssafy.a706.backend.user.repository.UserRepository;
 import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
@@ -43,6 +44,7 @@ public class AuthService {
     private final OauthClientResolver oauthClientResolver;
     private final OauthLinkService oauthLinkService;
     private final LiveRoomService liveRoomService;
+    private final PresenceService presenceService;
     private final RejoinPolicy rejoinPolicy;
 
     public AvailabilityResponse checkEmail(String email) {
@@ -188,9 +190,13 @@ public class AuthService {
         return issueTokens(user);
     }
 
-    /** 로그아웃 — Redis에서 Refresh 토큰을 지우는 것이 곧 서버측 무효화다. */
+    /**
+     * 로그아웃 — Redis에서 Refresh 토큰을 지우는 것이 곧 서버측 무효화다.
+     * 접속 상태도 함께 지운다: TTL(60s)을 기다리면 이미 나간 사용자가 친구 목록에 온라인으로 남는다.
+     */
     public void logout(Long userId) {
         refreshTokenStore.delete(userId);
+        presenceService.clear(userId);
     }
 
     /** 게스트 시작 (명세 POST /auth/guest) — 임시 닉네임 부여 + 게스트 1인방 자동 생성(공개 목록 미노출). */

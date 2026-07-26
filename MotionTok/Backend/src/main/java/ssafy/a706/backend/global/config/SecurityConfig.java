@@ -94,6 +94,8 @@ public class SecurityConfig {
                             .requestMatchers("/api/shop/**").hasRole("USER")
                             // 회원 전용 — 친구(-57)도 같은 이유. 게스트 토큰이 오면 MemberPrincipal이 null이 되므로 필터에서 끊는다
                             .requestMatchers("/api/friends/**").hasRole("USER")
+                            // 회원 전용 — 접속 상태는 친구에게 보여주기 위한 것이라 친구를 가질 수 없는 게스트는 대상이 아니다
+                            .requestMatchers("/api/presence/**").hasRole("USER")
                             // 관리자 전용(-133) — role claim이 ADMIN인 토큰만(JwtAuthenticationFilter가 ROLE_ADMIN 부여)
                             .requestMatchers("/api/admin/**", "/api/v1/admin/**").hasRole("ADMIN")
                             // 나머지(개별 방 조회·나가기·화상 토큰·ICE·로그아웃 등)는 회원+게스트 공통 — 유효한 JWT 필수
