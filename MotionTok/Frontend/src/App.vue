@@ -12,6 +12,7 @@ import { onSessionExpired } from '@/api/authEvents'
 import { useLoginRequired } from '@/composables/useLoginRequired'
 import { useAccessDenied } from '@/composables/useAccessDenied'
 import { useGuestSignupPrompt } from '@/composables/useGuestSignupPrompt'
+import { usePresenceHeartbeat } from '@/composables/usePresenceHeartbeat'
 import LoginRequiredModal from '@/components/common/LoginRequiredModal.vue'
 import GuestSignupPromptModal from '@/components/common/GuestSignupPromptModal.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
@@ -22,6 +23,9 @@ const session = useSessionStore()
 const { message: loginRequired, close: closeLoginRequired } = useLoginRequired()
 const { message: accessDenied, close: closeAccessDenied } = useAccessDenied()
 const { open: guestPrompt, close: closeGuestPrompt } = useGuestSignupPrompt()
+
+// 접속 상태 하트비트 — 화면과 무관하게 앱 수명 동안 돌아야 하므로 여기서 한 번만 켠다(-57).
+usePresenceHeartbeat()
 
 function goLogin() {
   closeLoginRequired()
