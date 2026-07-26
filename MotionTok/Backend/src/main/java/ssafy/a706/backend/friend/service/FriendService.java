@@ -13,6 +13,9 @@ import ssafy.a706.backend.friend.model.RequestAction;
 import ssafy.a706.backend.friend.repository.FriendshipRepository;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.presence.model.PresenceSnapshot;
+import ssafy.a706.backend.presence.model.PresenceState;
+import ssafy.a706.backend.presence.service.PresenceService;
 import ssafy.a706.backend.user.entity.User;
 import ssafy.a706.backend.user.enums.UserStatus;
 import ssafy.a706.backend.user.repository.UserRepository;
@@ -46,8 +49,13 @@ public class FriendService {
 
     private final FriendshipRepository friendshipRepository;
     private final UserRepository userRepository;
+    private final PresenceService presenceService;
 
-    /** GET /friends — 방향과 무관하게 ACCEPTED인 상대들. 닉네임은 한 번에 조회해 N+1을 피한다. */
+    /**
+     * GET /friends — 방향과 무관하게 ACCEPTED인 상대들.
+     * 닉네임(RDB)과 접속 상태(Redis)를 각각 한 번에 조회해 N+1을 피한다.
+     * 접속 중인 친구를 위로 올린다 — 함께 놀 수 있는 사람을 찾는 화면이라 오프라인은 아래가 자연스럽다.
+     */
     public List<FriendResponse> listFriends(Long userId) {
         List<Friendship> accepted =
                 friendshipRepository.findAllByUserIdAndStatus(userId, FriendshipStatus.ACCEPTED);
@@ -56,10 +64,24 @@ public class FriendService {
                 .map(f -> f.counterpartOf(userId))
                 .collect(Collectors.toSet());
 
-        return visibleUsersById(counterpartIds).values().stream()
-                .map(u -> FriendResponse.offline(u.getId(), u.getNickname()))
-                .sorted(Comparator.comparing(FriendResponse::nickname))
+        Map<Long, User> users = visibleUsersById(counterpartIds);
+        Map<Long, PresenceSnapshot> presences = presenceService.findAll(users.keySet());
+
+        // 정렬은 매핑 전 스냅샷(enum)으로 판단한다 — 응답 문자열("OFFLINE")과 비교하면
+        // PresenceState 이름이 바뀔 때 컴파일은 통과하고 정렬만 조용히 망가진다.
+        return users.values().stream()
+                .sorted(Comparator
+                        .comparing((User u) -> presenceOf(presences, u) == PresenceState.OFFLINE)
+                        .thenComparing(User::getNickname))
+                .map(u -> FriendResponse.of(
+                        u.getId(),
+                        u.getNickname(),
+                        presences.getOrDefault(u.getId(), PresenceSnapshot.OFFLINE)))
                 .toList();
+    }
+
+    private static PresenceState presenceOf(Map<Long, PresenceSnapshot> presences, User user) {
+        return presences.getOrDefault(user.getId(), PresenceSnapshot.OFFLINE).state();
     }
 
     /**
@@ -83,7 +105,8 @@ public class FriendService {
                         f,
                         users.get(f.getRequesterId()).getNickname(),
                         users.get(f.getAddresseeId()).getNickname()))
-                .sorted(Comparator.comparing(FriendRequestItemResponse::createdAt).reversed())
+                .sorted(Comparator.comparing(FriendRequestItemResponse::createdAt,
+                        Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
     }
 

@@ -13,16 +13,20 @@ import ssafy.a706.backend.friend.repository.FriendshipRepository;
 import ssafy.a706.backend.friend.service.FriendService;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.presence.model.PresenceSnapshot;
+import ssafy.a706.backend.presence.service.PresenceService;
 import ssafy.a706.backend.user.entity.User;
 import ssafy.a706.backend.user.repository.UserRepository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyIterable;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
@@ -43,7 +47,9 @@ class FriendServiceTest {
 
     private final FriendshipRepository friendshipRepository = mock(FriendshipRepository.class);
     private final UserRepository userRepository = mock(UserRepository.class);
-    private final FriendService service = new FriendService(friendshipRepository, userRepository);
+    private final PresenceService presenceService = mock(PresenceService.class);
+    private final FriendService service =
+            new FriendService(friendshipRepository, userRepository, presenceService);
 
     private static User user(long id, String nickname) {
         User u = User.builder().email(nickname + "@t.dev").nickname(nickname).build();
@@ -189,20 +195,51 @@ class FriendServiceTest {
     }
 
     @Test
-    @DisplayName("친구 목록의 presence는 프레즌스 미구현 동안 OFFLINE으로 내려간다")
-    void presenceIsOfflineUntilImplemented() {
+    @DisplayName("프레즌스에 없는 친구는 OFFLINE으로 내려간다 — 키 부재가 곧 오프라인")
+    void missingPresenceMeansOffline() {
         given(friendshipRepository.findAllByUserIdAndStatus(ME, FriendshipStatus.ACCEPTED))
                 .willReturn(List.of(accepted(10L, ME, OTHER)));
         given(userRepository.findAllById(anyIterable())).willReturn(List.of(user(OTHER, "친구")));
+        given(presenceService.findAll(anyCollection())).willReturn(Map.of());
 
-        List<FriendResponse> friends = service.listFriends(ME);
-
-        assertThat(friends).singleElement()
+        assertThat(service.listFriends(ME)).singleElement()
                 .satisfies(f -> {
                     assertThat(f.userId()).isEqualTo(OTHER);
-                    assertThat(f.nickname()).isEqualTo("친구");
                     assertThat(f.presence()).isEqualTo("OFFLINE");
                     assertThat(f.currentRoomId()).isNull();
                 });
+    }
+
+    @Test
+    @DisplayName("방에 있는 친구는 IN_ROOM + currentRoomId로 내려간다 — 친구방 입장(-98)이 이 값을 쓴다")
+    void inRoomFriendCarriesRoomId() {
+        given(friendshipRepository.findAllByUserIdAndStatus(ME, FriendshipStatus.ACCEPTED))
+                .willReturn(List.of(accepted(10L, ME, OTHER)));
+        given(userRepository.findAllById(anyIterable())).willReturn(List.of(user(OTHER, "친구")));
+        given(presenceService.findAll(anyCollection()))
+                .willReturn(Map.of(OTHER, PresenceSnapshot.online("MP4X9K")));
+
+        assertThat(service.listFriends(ME)).singleElement()
+                .satisfies(f -> {
+                    assertThat(f.presence()).isEqualTo("IN_ROOM");
+                    assertThat(f.currentRoomId()).isEqualTo("MP4X9K");
+                });
+    }
+
+    @Test
+    @DisplayName("접속 중인 친구가 오프라인 친구보다 위에 온다")
+    void onlineFriendsSortFirst() {
+        long online = 3L;
+        given(friendshipRepository.findAllByUserIdAndStatus(ME, FriendshipStatus.ACCEPTED))
+                .willReturn(List.of(accepted(10L, ME, OTHER), accepted(11L, ME, online)));
+        // 닉네임만 보면 '가나다'(오프라인)가 '하하하'(온라인)보다 앞선다 — 프레즌스가 정렬을 이긴다.
+        given(userRepository.findAllById(anyIterable()))
+                .willReturn(List.of(user(OTHER, "가나다"), user(online, "하하하")));
+        given(presenceService.findAll(anyCollection()))
+                .willReturn(Map.of(online, PresenceSnapshot.online(null)));
+
+        assertThat(service.listFriends(ME))
+                .extracting(FriendResponse::nickname)
+                .containsExactly("하하하", "가나다");
     }
 }
