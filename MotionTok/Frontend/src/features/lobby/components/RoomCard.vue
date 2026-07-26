@@ -13,7 +13,9 @@ defineEmits<{ enter: [] }>()
       <div class="room-copy">
         <strong>
           {{ room.title }}
-          <i class="lock" :title="room.visibility">{{ room.visibility === '비공개' ? '🔒' : '🔓' }}</i>
+          <!-- 비밀방에만 표시. 🔒과 🔓는 둘 다 자물쇠라 이 크기에서 구분이 안 돼서
+               공개방은 아무것도 그리지 않는다 — 없는 표시는 잘못 읽힐 수가 없다. -->
+          <i v-if="room.visibility === '비공개'" class="lock" title="비밀방 · 입장 시 비밀번호 필요">🔒</i>
         </strong>
         <div class="room-state" :class="{ playing: room.disabled }">● {{ room.state }}</div>
       </div>
