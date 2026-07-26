@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import ssafy.a706.backend.friend.controller.dto.CreateFriendRequest;
 import ssafy.a706.backend.friend.controller.dto.FriendRequestItemResponse;
 import ssafy.a706.backend.friend.controller.dto.FriendResponse;
+import ssafy.a706.backend.friend.controller.dto.FriendRoomResponse;
 import ssafy.a706.backend.friend.model.Friendship;
 import ssafy.a706.backend.friend.model.FriendshipStatus;
 import ssafy.a706.backend.friend.model.RequestAction;
@@ -171,6 +172,26 @@ public class FriendService {
             throw new BusinessException(ErrorCode.FRIEND_REQUEST_FORBIDDEN);
         }
         friendshipRepository.delete(request);
+    }
+
+    /**
+     * GET /friends/{friendId}/room — 친구가 지금 있는 방(-98).
+     *
+     * <p>친구 목록에도 currentRoomId가 실려 오지만 그 목록은 폴링이라 최대 20초 낡을 수 있다.
+     * 입장을 누르는 순간 다시 확인해야 "방금 나간 방"에 들어가려는 시도를 막을 수 있다.</p>
+     *
+     * <p>실제 입장은 이 응답의 roomId로 기존 {@code POST /v1/live-rooms/{roomId}/join}을 호출한다 —
+     * 비밀방 비밀번호·정원 초과·게임 진행 중 판정이 모두 거기 이미 있어서 새로 만들 필요가 없다.
+     * 초대받아 들어가는 경로(-100)와 달리 <b>친구를 따라가는 건 상대 동의가 없으므로 비밀번호를 요구한다.</b></p>
+     */
+    public FriendRoomResponse findFriendRoom(Long userId, Long friendId) {
+        boolean areFriends = friendshipRepository.findAllBetween(userId, friendId).stream()
+                .anyMatch(f -> f.getStatus() == FriendshipStatus.ACCEPTED);
+        if (!areFriends) {
+            throw new BusinessException(ErrorCode.FRIEND_NOT_FOUND);
+        }
+        // 방에 없으면 roomId가 null인 200 — 친구는 존재하므로 404가 아니다.
+        return new FriendRoomResponse(presenceService.find(friendId).roomId());
     }
 
     /** DELETE /friends/{friendId} — 친구 관계 해제. 방향 무관하게 ACCEPTED 행을 지운다. */

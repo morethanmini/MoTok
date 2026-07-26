@@ -18,6 +18,7 @@ import ssafy.a706.backend.auth.principal.MemberPrincipal;
 import ssafy.a706.backend.friend.controller.dto.CreateFriendRequest;
 import ssafy.a706.backend.friend.controller.dto.FriendRequestItemResponse;
 import ssafy.a706.backend.friend.controller.dto.FriendResponse;
+import ssafy.a706.backend.friend.controller.dto.FriendRoomResponse;
 import ssafy.a706.backend.friend.controller.dto.RespondFriendRequest;
 import ssafy.a706.backend.friend.service.FriendService;
 
@@ -39,7 +40,7 @@ public class FriendController {
 
     private final FriendService friendService;
 
-    /** GET /friends — 친구 목록. presence는 프레즌스 키 구현 전까지 OFFLINE 고정. */
+    /** GET /friends — 친구 목록. presence·currentRoomId는 Redis presence:{userId}에서 온다. 접속 중인 친구가 위로 온다. */
     @GetMapping
     public List<FriendResponse> list(@AuthenticationPrincipal MemberPrincipal principal) {
         return friendService.listFriends(principal.id());
@@ -75,6 +76,16 @@ public class FriendController {
     public void cancel(@AuthenticationPrincipal MemberPrincipal principal,
                        @PathVariable Long requestId) {
         friendService.cancel(principal.id(), requestId);
+    }
+
+    /**
+     * GET /friends/{friendId}/room — 친구가 있는 방 조회(-98).
+     * 방에 없으면 roomId가 null로 내려간다. 경로 세그먼트 수가 달라 /requests와 충돌하지 않는다.
+     */
+    @GetMapping("/{friendId}/room")
+    public FriendRoomResponse room(@AuthenticationPrincipal MemberPrincipal principal,
+                                   @PathVariable Long friendId) {
+        return friendService.findFriendRoom(principal.id(), friendId);
     }
 
     /** DELETE /friends/{friendId} — 친구 삭제. */
