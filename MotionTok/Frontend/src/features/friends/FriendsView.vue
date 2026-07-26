@@ -61,7 +61,8 @@ function reloadAll() {
 }
 
 // 상대가 내 요청을 수락·거절하면 서버에서는 사라지지만 내 화면은 그대로다. 푸시 통로가 없어 주기적으로 확인한다.
-const { reloadNow } = useAutoReload(reloadAll)
+// 친구 추가 모달을 띄운 동안은 멈춘다 — 닉네임을 입력하는 중에 뒤 목록이 바뀔 이유가 없다.
+const { reloadNow } = useAutoReload(reloadAll, { shouldSkip: () => showAddModal.value })
 
 async function sendRequest() {
   if (!target.value.trim()) return flash('닉네임을 입력해 주세요')

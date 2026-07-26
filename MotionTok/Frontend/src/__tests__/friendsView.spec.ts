@@ -125,6 +125,34 @@ describe('FriendsView 탭', () => {
     expect(wrapper.get('.requests-list li').text()).toContain('수아')
   })
 
+  it('창 포커스가 돌아오면 다시 불러온다 — 상대가 처리한 결과를 새로고침 없이 반영', async () => {
+    const wrapper = await mountView()
+    const before = requests.mock.calls.length
+
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+
+    expect(requests.mock.calls.length).toBeGreaterThan(before)
+    expect(wrapper.exists()).toBe(true)
+  })
+
+  it('친구 추가 모달이 열려 있으면 자동 재조회를 건너뛴다', async () => {
+    const wrapper = await mountView()
+    // ＋ 요청 버튼으로 모달을 띄운다
+    for (const btn of wrapper.findAll('button')) {
+      if (btn.text().includes('요청') && !btn.classes('tab-btn')) {
+        await btn.trigger('click')
+        break
+      }
+    }
+    const before = requests.mock.calls.length
+
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+
+    expect(requests.mock.calls.length).toBe(before)
+  })
+
   it('API가 실패하면 목업 대신 빈 목록을 보여준다', async () => {
     requests.mockImplementation(() => Promise.reject(new Error('no backend')))
     const wrapper = await mountView()
