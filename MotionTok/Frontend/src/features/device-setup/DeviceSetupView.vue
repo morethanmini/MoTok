@@ -41,7 +41,6 @@ function enter() {
     query: {
       game: game.value,
       room: room.value,
-      host: '1',
       cam: camOn.value ? '1' : '0',
       mic: micOn.value ? '1' : '0',
     },

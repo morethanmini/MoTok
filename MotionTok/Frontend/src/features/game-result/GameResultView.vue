@@ -33,9 +33,11 @@ const ranks: Rank[] = [
 ]
 
 function backToRoom() {
+  // host 쿼리는 넘기지 않는다 — 게임룸은 상세 조회의 hostUserId로 방장을 판별한다.
+  // 예전엔 여기서도 host=1을 붙여서 참가자가 대기실로 돌아오면 방장 UI를 갖게 됐다.
   router.push({
     name: RouteName.GameRoom,
-    query: { game: game.value, room: room.value, host: '1' },
+    query: { game: game.value, room: room.value },
   })
 }
 </script>
