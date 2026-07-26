@@ -41,10 +41,10 @@ const FACE_BGS = ['#ffe2e3', '#d8f4ec', '#fff0b9', '#dce7ff', '#e6e0f0', '#f0e6d
 function toFriend(f: ApiFriend): Friend {
   const slot = Number(f.userId) % FACES.length
   return {
+    userId: f.userId,
     name: f.nickname,
     face: FACES[slot] ?? '🐰',
     bg: FACE_BGS[slot] ?? '#ffe2e3',
-    // presence는 프레즌스 키(-8) 구현 전까지 항상 OFFLINE이라 지금은 전원 오프라인으로 보인다.
     game:
       f.presence === 'IN_ROOM'
         ? '게임방에 참가중'
@@ -170,6 +170,55 @@ function enterRoom(room: Room) {
     } catch (e) {
       if (e instanceof ApiError) return flash(e.message)
       goDevice(room.game, room.roomId)
+    }
+  })
+}
+
+/**
+ * 친구 따라 참가 (-98) — GET /friends/{id}/room 으로 지금 있는 방을 확인한 뒤 기존 입장 흐름을 탄다.
+ *
+ * 사이드바 목록에도 currentRoomId가 실려 오지만 그건 12초마다 갱신되는 값이라, 누르는 순간 다시 묻는다.
+ * 그 사이 친구가 방을 나갔으면 없는 방에 들어가려다 실패하기 때문이다.
+ *
+ * 비밀방이면 비밀번호를 받는다 — 친구를 따라가는 건 상대 동의가 없는 행위다.
+ * (초대받아 들어가는 경로(-100)는 방 안 사람이 허락한 것이라 초대코드로 비번을 면제받는다.)
+ */
+function joinFriendRoom(f: Friend) {
+  guardMember(async () => {
+    let roomId: string | null
+    try {
+      roomId = (await friendsApi.room(f.userId)).roomId
+    } catch (e) {
+      return flash(e instanceof ApiError ? e.message : '친구 방을 확인하지 못했어요')
+    }
+    if (!roomId) {
+      flash(`${f.name}님이 방에서 나갔어요`)
+      void reloadFriends() // 목록이 낡아서 참가 버튼이 떠 있었던 것 — 바로 맞춰 준다
+      return
+    }
+    try {
+      const res = await roomsApi.join(roomId)
+      goDevice('친구의 게임', res.roomId)
+    } catch (e) {
+      if (!(e instanceof ApiError)) return flash('입장하지 못했어요')
+      if (e.code === 'ROOM_PASSWORD_REQUIRED') {
+        pwTarget.value = {
+          title: `${f.name}님의 방`,
+          game: '친구의 게임',
+          emoji: '🎮',
+          count: 0,
+          max: 0,
+          state: '대기 중',
+          visibility: '비공개',
+          disabled: false,
+          roomId,
+          hasPassword: true,
+        }
+        pwError.value = ''
+        return
+      }
+      // 정원 초과·게임 진행 중 등은 기존 join이 그대로 판정해 준다(ROOM_FULL / ROOM_GAME_IN_PROGRESS).
+      flash(e.message)
     }
   })
 }
@@ -339,7 +388,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
               v-for="(f, i) in friends"
               :key="i"
               :friend="f"
-              @invite="flash(`${f.name}에게 초대를 보냈어요`)"
+              @join="joinFriendRoom(f)"
             />
             <p v-if="friends.length === 0" class="friends-empty">
               아직 친구가 없어요.<br />친구 목록 관리에서 추가해 보세요!

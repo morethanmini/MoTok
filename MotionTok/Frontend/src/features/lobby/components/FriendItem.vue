@@ -1,9 +1,9 @@
 <script setup lang="ts">
-/** 접속 친구 한 명. 플레이 중이면 초대 버튼, 온라인이면 상태 점. */
+/** 접속 친구 한 명. 방에 있으면 따라 들어가는 '참가' 버튼, 온라인이면 상태 점. */
 import type { Friend } from '../data'
 
 defineProps<{ friend: Friend }>()
-defineEmits<{ invite: [] }>()
+defineEmits<{ join: [] }>()
 </script>
 
 <template>
@@ -13,7 +13,7 @@ defineEmits<{ invite: [] }>()
       <b>{{ friend.name }}</b>
       <small>{{ friend.game }}</small>
     </div>
-    <button v-if="friend.playing" class="invite" @click="$emit('invite')">참가</button>
+    <button v-if="friend.playing" class="invite" @click="$emit('join')">참가</button>
     <i class="status" :class="{ offline: !friend.online }" />
   </div>
 </template>
