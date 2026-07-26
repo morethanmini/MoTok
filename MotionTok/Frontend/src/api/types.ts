@@ -229,6 +229,18 @@ export interface LiveRoomUpdatedEvent {
   maxPlayers: number
 }
 
+/**
+ * /topic/rooms/{roomId}/members 로 오는 방장 변경 알림 (LiveRoomHostChangedEvent, -72).
+ * 방장이 나가면 서버가 남은 참가자 중 가장 먼저 들어온 사람에게 위임하고 이 이벤트를 쏜다.
+ *
+ * 이 토픽에는 판별용 type 필드가 없어 필드 모양으로 가른다 — hostUserId를 갖는 건 이 이벤트뿐이다
+ * (퇴장·강퇴는 userId/participantCount 계열, 방 정보 수정은 title/maxPlayers).
+ */
+export interface LiveRoomHostChangedEvent {
+  hostUserId: string
+  hostDisplayName: string
+}
+
 /** POST /v1/live-rooms/{id}/join 요청 (JoinLiveRoomRequest). 비공개방(hasPassword)이면 password 필요 */
 export interface JoinLiveRoomRequest {
   password?: string

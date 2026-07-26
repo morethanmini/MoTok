@@ -19,7 +19,13 @@ import { onScopeDispose, readonly, ref, shallowRef } from 'vue'
 import { Client, type StompSubscription } from '@stomp/stompjs'
 import { API_BASE } from '@/api/http'
 import { getAccessToken } from '@/api/token'
-import type { ChatMessage, GameEvent, LiveRoomUpdatedEvent, StompErrorPayload } from '@/api/types'
+import type {
+  ChatMessage,
+  GameEvent,
+  LiveRoomHostChangedEvent,
+  LiveRoomUpdatedEvent,
+  StompErrorPayload,
+} from '@/api/types'
 
 /** API_BASE('http(s)://host/api')에서 STOMP 브로커 URL('ws(s)://host/ws')을 유도한다. */
 function resolveBrokerUrl(): string {
@@ -43,6 +49,8 @@ export function useRoomChat() {
   const lastError = ref<StompErrorPayload | null>(null)
   /** 방 정보 수정 알림(-130). 최신 1건만 들고 있으면 되므로 배열이 아니다. */
   const roomUpdated = ref<LiveRoomUpdatedEvent | null>(null)
+  /** 방장 변경(-72). 이걸 반영하지 않으면 방장이 나가도 새 방장에게 시작 권한이 안 붙는다. */
+  const hostChanged = ref<LiveRoomHostChangedEvent | null>(null)
 
   function handleChatFrame(body: string) {
     try {
@@ -65,14 +73,22 @@ export function useRoomChat() {
   /**
    * /topic/rooms/{roomId}/members 수신. 이 토픽은 퇴장(-71)·방장변경(-72)·강퇴(-73)·
    * 방 정보 수정(-130) 이벤트가 섞여 오는데 판별용 type 필드가 없다 — 이미 배포된 다른
-   * 이벤트 계약을 건드리지 않으려고 필드 모양으로 가른다. title+maxPlayers를 함께 갖는 건
-   * LiveRoomUpdatedEvent뿐이다(나머지는 userId/displayName 계열).
+   * 이벤트 계약을 건드리지 않으려고 필드 모양으로 가른다.
+   *
+   * 각 이벤트를 가르는 고유 필드:
+   *  - title + maxPlayers  → LiveRoomUpdatedEvent (-130)
+   *  - hostUserId          → LiveRoomHostChangedEvent (-72)
+   *  - userId + participantCount → 퇴장(-71)·강퇴(-73)  ← 아직 화면에 반영하지 않음
+   *
+   * 봉투 규격(type/payload)이 정해지면(-115) 이 필드 추측을 걷어낼 수 있다.
    */
   function handleMembersFrame(body: string) {
     try {
-      const msg = JSON.parse(body) as Partial<LiveRoomUpdatedEvent>
+      const msg = JSON.parse(body) as Partial<LiveRoomUpdatedEvent & LiveRoomHostChangedEvent>
       if (typeof msg.title === 'string' && typeof msg.maxPlayers === 'number') {
         roomUpdated.value = msg as LiveRoomUpdatedEvent
+      } else if (typeof msg.hostUserId === 'string') {
+        hostChanged.value = msg as LiveRoomHostChangedEvent
       }
     } catch {
       // 무시
@@ -102,6 +118,7 @@ export function useRoomChat() {
     gameEvents.value = []
     lastError.value = null
     roomUpdated.value = null
+    hostChanged.value = null
 
     return new Promise((resolve) => {
       const c = new Client({
@@ -202,6 +219,7 @@ export function useRoomChat() {
     gameEvents,
     lastError,
     roomUpdated,
+    hostChanged,
     connect,
     disconnect,
     sendChat,
