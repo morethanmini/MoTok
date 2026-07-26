@@ -3,12 +3,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, ApiError, type LiveRoomSummary } from '@/api'
+import { roomsApi, friendsApi, ApiError, type LiveRoomSummary, type Friend as ApiFriend } from '@/api'
 import { useSessionStore } from '@/stores/session'
 import { useAsyncData } from '@/composables/useAsyncData'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
-import { MOCK_FRIENDS, MOCK_ROOMS, type Room } from './data'
+import type { Friend, Room } from './data'
 
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -32,7 +32,34 @@ const query = ref('')
 const showJoin = ref(false)
 const showCreate = ref(false)
 
-const friends = MOCK_FRIENDS
+// 사이드바 친구 목록 (GET /friends, -57). 얼굴·배경색은 API에 없는 값이라 userId로 팔레트를 골라
+// 같은 친구가 항상 같은 아바타로 보이게 한다(매 로드마다 바뀌면 목록이 낯설어진다).
+const FACES = ['🐰', '🐻', '🐱', '🦊', '🐨', '🐼', '🐯', '🐥']
+const FACE_BGS = ['#ffe2e3', '#d8f4ec', '#fff0b9', '#dce7ff', '#e6e0f0', '#f0e6df', '#ffe6cc', '#e0f0e6']
+
+function toFriend(f: ApiFriend): Friend {
+  const slot = Number(f.userId) % FACES.length
+  return {
+    name: f.nickname,
+    face: FACES[slot] ?? '🐰',
+    bg: FACE_BGS[slot] ?? '#ffe2e3',
+    // presence는 프레즌스 키(-8) 구현 전까지 항상 OFFLINE이라 지금은 전원 오프라인으로 보인다.
+    game:
+      f.presence === 'IN_ROOM'
+        ? '게임방에 참가중'
+        : f.presence === 'ONLINE'
+          ? '로비에서 둘러보는 중'
+          : '오프라인',
+    online: f.presence !== 'OFFLINE',
+    playing: f.presence === 'IN_ROOM',
+  }
+}
+
+const NO_FRIENDS: Friend[] = []
+const { data: friends } = useAsyncData(
+  async () => (await friendsApi.list()).map(toFriend),
+  NO_FRIENDS,
+)
 
 // API LiveRoomSummary → 로비 카드용 Room 매핑
 // 목록 응답엔 선택 게임 정보가 없음(selectedGameId 제거). currentPlayers → participantCount.
@@ -50,15 +77,17 @@ function toRoom(s: LiveRoomSummary): Room {
     hasPassword: s.hasPassword,
   }
 }
-// 방 목록 (GET /v1/live-rooms?page=, 페이지당 6개 · 최신순) — 실패 시 목업 폴백
+// 방 목록 (GET /v1/live-rooms?page=, 페이지당 6개 · 최신순)
+// 실패 시 목업 대신 빈 목록을 보여준다 — 가짜 방이 뜨면 입장을 시도하다 실패하고, API 장애를 알아챌 수도 없다.
 // hasNext는 응답이 알려주지만, 이전 페이지 여부는 백엔드가 안 알려줘서 page > 1로 프론트에서 직접 판단한다.
 const page = ref(1)
 const hasNext = ref(false)
+const NO_ROOMS: Room[] = []
 const { data: rooms, reload: reloadRooms } = useAsyncData(async () => {
   const res = await roomsApi.list(page.value)
   hasNext.value = res.hasNext
   return res.rooms.map(toRoom)
-}, MOCK_ROOMS)
+}, NO_ROOMS)
 
 const hasPrev = computed(() => page.value > 1)
 function nextPage() {
@@ -296,6 +325,9 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
               :friend="f"
               @invite="flash(`${f.name}에게 초대를 보냈어요`)"
             />
+            <p v-if="friends.length === 0" class="friends-empty">
+              아직 친구가 없어요.<br />친구 목록 관리에서 추가해 보세요!
+            </p>
           </div>
         </section>
 
@@ -479,6 +511,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   scrollbar-width: thin;
   scrollbar-color: var(--c-mint) #f3ecf3;
 }
+.friends-empty { margin: 18px 4px; font-size: 9px; line-height: 1.7; color: var(--c-muted); text-align: center; }
 .friends-list::-webkit-scrollbar { width: 10px; }
 .friends-list::-webkit-scrollbar-button,
 .friends-list::-webkit-scrollbar-button:start:decrement,
