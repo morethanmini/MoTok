@@ -1,7 +1,9 @@
 spring:
   # 로컬 개발용 .env 로드
   config:
-    import: optional:file:.env[.properties]
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:Backend/.env[.properties]
 
   application:
     name: backend
