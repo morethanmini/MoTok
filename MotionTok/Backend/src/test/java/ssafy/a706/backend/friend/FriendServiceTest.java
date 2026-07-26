@@ -6,6 +6,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 import ssafy.a706.backend.friend.controller.dto.CreateFriendRequest;
 import ssafy.a706.backend.friend.controller.dto.FriendResponse;
+import ssafy.a706.backend.friend.controller.dto.FriendRoomResponse;
 import ssafy.a706.backend.friend.model.Friendship;
 import ssafy.a706.backend.friend.model.FriendshipStatus;
 import ssafy.a706.backend.friend.model.RequestAction;
@@ -192,6 +193,52 @@ class FriendServiceTest {
 
         assertThat(friends).isEmpty();
         verify(friendshipRepository, never()).delete(any());
+    }
+
+    @Test
+    @DisplayName("친구방 조회 — 친구가 방에 있으면 roomId를 돌려준다")
+    void friendRoomReturnsRoomId() {
+        given(friendshipRepository.findAllBetween(ME, OTHER))
+                .willReturn(List.of(accepted(10L, ME, OTHER)));
+        given(presenceService.find(OTHER)).willReturn(PresenceSnapshot.online("MP4X9K"));
+
+        assertThat(service.findFriendRoom(ME, OTHER).roomId()).isEqualTo("MP4X9K");
+    }
+
+    @Test
+    @DisplayName("친구방 조회 — 방에 없으면 404가 아니라 roomId=null인 200이다")
+    void friendRoomIsNullWhenNotInRoom() {
+        given(friendshipRepository.findAllBetween(ME, OTHER))
+                .willReturn(List.of(accepted(10L, ME, OTHER)));
+        // 접속해 있지만 로비에 있는 경우
+        given(presenceService.find(OTHER)).willReturn(PresenceSnapshot.online(null));
+
+        FriendRoomResponse res = service.findFriendRoom(ME, OTHER);
+
+        assertThat(res.roomId()).isNull();
+    }
+
+    @Test
+    @DisplayName("친구방 조회 — 친구가 아니면 404. 남의 위치를 알아내는 통로가 되면 안 된다")
+    void friendRoomRejectsNonFriend() {
+        given(friendshipRepository.findAllBetween(ME, OTHER)).willReturn(List.of());
+
+        assertThatThrownBy(() -> service.findFriendRoom(ME, OTHER))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.FRIEND_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("친구방 조회 — PENDING 관계만 있으면 아직 친구가 아니라 404")
+    void friendRoomRejectsPendingOnly() {
+        given(friendshipRepository.findAllBetween(ME, OTHER))
+                .willReturn(List.of(pending(10L, ME, OTHER)));
+
+        assertThatThrownBy(() -> service.findFriendRoom(ME, OTHER))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.FRIEND_NOT_FOUND);
     }
 
     @Test
