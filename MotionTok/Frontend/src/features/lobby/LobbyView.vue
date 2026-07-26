@@ -3,12 +3,13 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, ApiError, type LiveRoomSummary } from '@/api'
+import { roomsApi, friendsApi, ApiError, type LiveRoomSummary, type Friend as ApiFriend } from '@/api'
 import { useSessionStore } from '@/stores/session'
 import { useAsyncData } from '@/composables/useAsyncData'
+import { useAutoReload } from '@/composables/useAutoReload'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
-import { MOCK_FRIENDS, MOCK_ROOMS, type Room } from './data'
+import type { Friend, Room } from './data'
 
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -32,7 +33,34 @@ const query = ref('')
 const showJoin = ref(false)
 const showCreate = ref(false)
 
-const friends = MOCK_FRIENDS
+// 사이드바 친구 목록 (GET /friends, -57). 얼굴·배경색은 API에 없는 값이라 userId로 팔레트를 골라
+// 같은 친구가 항상 같은 아바타로 보이게 한다(매 로드마다 바뀌면 목록이 낯설어진다).
+const FACES = ['🐰', '🐻', '🐱', '🦊', '🐨', '🐼', '🐯', '🐥']
+const FACE_BGS = ['#ffe2e3', '#d8f4ec', '#fff0b9', '#dce7ff', '#e6e0f0', '#f0e6df', '#ffe6cc', '#e0f0e6']
+
+function toFriend(f: ApiFriend): Friend {
+  const slot = Number(f.userId) % FACES.length
+  return {
+    userId: f.userId,
+    name: f.nickname,
+    face: FACES[slot] ?? '🐰',
+    bg: FACE_BGS[slot] ?? '#ffe2e3',
+    game:
+      f.presence === 'IN_ROOM'
+        ? '게임방에 참가중'
+        : f.presence === 'ONLINE'
+          ? '로비에서 둘러보는 중'
+          : '오프라인',
+    online: f.presence !== 'OFFLINE',
+    playing: f.presence === 'IN_ROOM',
+  }
+}
+
+const NO_FRIENDS: Friend[] = []
+const { data: friends, reload: reloadFriends } = useAsyncData(
+  async () => (await friendsApi.list()).map(toFriend),
+  NO_FRIENDS,
+)
 
 // API LiveRoomSummary → 로비 카드용 Room 매핑
 // 목록 응답엔 선택 게임 정보가 없음(selectedGameId 제거). currentPlayers → participantCount.
@@ -50,15 +78,17 @@ function toRoom(s: LiveRoomSummary): Room {
     hasPassword: s.hasPassword,
   }
 }
-// 방 목록 (GET /v1/live-rooms?page=, 페이지당 6개 · 최신순) — 실패 시 목업 폴백
+// 방 목록 (GET /v1/live-rooms?page=, 페이지당 6개 · 최신순)
+// 실패 시 목업 대신 빈 목록을 보여준다 — 가짜 방이 뜨면 입장을 시도하다 실패하고, API 장애를 알아챌 수도 없다.
 // hasNext는 응답이 알려주지만, 이전 페이지 여부는 백엔드가 안 알려줘서 page > 1로 프론트에서 직접 판단한다.
 const page = ref(1)
 const hasNext = ref(false)
+const NO_ROOMS: Room[] = []
 const { data: rooms, reload: reloadRooms } = useAsyncData(async () => {
   const res = await roomsApi.list(page.value)
   hasNext.value = res.hasNext
   return res.rooms.map(toRoom)
-}, MOCK_ROOMS)
+}, NO_ROOMS)
 
 const hasPrev = computed(() => page.value > 1)
 function nextPage() {
@@ -144,10 +174,74 @@ function enterRoom(room: Room) {
   })
 }
 
+/**
+ * 친구 따라 참가 (-98) — GET /friends/{id}/room 으로 지금 있는 방을 확인한 뒤 기존 입장 흐름을 탄다.
+ *
+ * 사이드바 목록에도 currentRoomId가 실려 오지만 그건 12초마다 갱신되는 값이라, 누르는 순간 다시 묻는다.
+ * 그 사이 친구가 방을 나갔으면 없는 방에 들어가려다 실패하기 때문이다.
+ *
+ * 비밀방이면 비밀번호를 받는다 — 친구를 따라가는 건 상대 동의가 없는 행위다.
+ * (초대받아 들어가는 경로(-100)는 방 안 사람이 허락한 것이라 초대코드로 비번을 면제받는다.)
+ */
+function joinFriendRoom(f: Friend) {
+  guardMember(async () => {
+    let roomId: string | null
+    try {
+      roomId = (await friendsApi.room(f.userId)).roomId
+    } catch (e) {
+      return flash(e instanceof ApiError ? e.message : '친구 방을 확인하지 못했어요')
+    }
+    if (!roomId) {
+      flash(`${f.name}님이 방에서 나갔어요`)
+      void reloadFriends() // 목록이 낡아서 참가 버튼이 떠 있었던 것 — 바로 맞춰 준다
+      return
+    }
+    try {
+      const res = await roomsApi.join(roomId)
+      goDevice('친구의 게임', res.roomId)
+    } catch (e) {
+      if (!(e instanceof ApiError)) return flash('입장하지 못했어요')
+      if (e.code === 'ROOM_PASSWORD_REQUIRED') {
+        pwTarget.value = {
+          title: `${f.name}님의 방`,
+          game: '친구의 게임',
+          emoji: '🎮',
+          count: 0,
+          max: 0,
+          state: '대기 중',
+          visibility: '비공개',
+          disabled: false,
+          roomId,
+          hasPassword: true,
+        }
+        pwError.value = ''
+        return
+      }
+      // 정원 초과·게임 진행 중 등은 기존 join이 그대로 판정해 준다(ROOM_FULL / ROOM_GAME_IN_PROGRESS).
+      flash(e.message)
+    }
+  })
+}
+
 // 비밀방 비밀번호 입력 — 틀리면 모달을 닫지 않고 에러만 보여줘 재입력할 수 있게 한다.
 const pwTarget = ref<Room | null>(null)
 const pwError = ref('')
 const pwBusy = ref(false)
+/**
+ * 로비 자동 갱신 — 방 목록과 친구 목록은 남이 바꾸는 데이터라 가만히 두면 낡는다.
+ * 방이 새로 생기거나 정원이 차는 것, 친구가 접속하는 것을 새로고침 없이 따라간다.
+ *
+ * 모달이 열려 있거나 스플래시 중에는 건너뛴다 — 목록이 밀려서 방금 본 것과 다른 방을 누르게 되면
+ * 그게 더 나쁜 경험이다. 지금 보고 있는 페이지를 그대로 다시 불러오므로 페이지네이션도 유지된다.
+ */
+useAutoReload(() => Promise.all([reloadRooms(), reloadFriends()]), {
+  // 친구 화면(20초)보다 짧게 — 방은 만들어지고 정원이 차는 속도가 빨라서 낡은 목록이 더 잘 티가 난다.
+  // 대기 중으로 보이는 방에 들어갔더니 이미 꽉 찬 상황을 줄이는 게 목적이다.
+  intervalMs: 12_000,
+  shouldSkip: () =>
+    showSplash.value || showJoin.value || showCreate.value || pwTarget.value !== null,
+})
+
 async function submitRoomPassword(password: string) {
   const room = pwTarget.value
   if (!room?.roomId || pwBusy.value) return
@@ -294,8 +388,11 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
               v-for="(f, i) in friends"
               :key="i"
               :friend="f"
-              @invite="flash(`${f.name}에게 초대를 보냈어요`)"
+              @join="joinFriendRoom(f)"
             />
+            <p v-if="friends.length === 0" class="friends-empty">
+              아직 친구가 없어요.<br />친구 목록 관리에서 추가해 보세요!
+            </p>
           </div>
         </section>
 
@@ -479,6 +576,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   scrollbar-width: thin;
   scrollbar-color: var(--c-mint) #f3ecf3;
 }
+.friends-empty { margin: 18px 4px; font-size: 9px; line-height: 1.7; color: var(--c-muted); text-align: center; }
 .friends-list::-webkit-scrollbar { width: 10px; }
 .friends-list::-webkit-scrollbar-button,
 .friends-list::-webkit-scrollbar-button:start:decrement,
