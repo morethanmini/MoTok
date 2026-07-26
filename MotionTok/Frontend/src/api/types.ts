@@ -515,3 +515,16 @@ export interface AuditLog {
   detail: string
   createdAt: string
 }
+
+// ── 접속 상태(프레즌스) ───────────────────────────
+/** POST /presence/heartbeat 요청 — 방 밖이면 roomId는 null. */
+export interface HeartbeatRequest {
+  roomId: string | null
+}
+/**
+ * POST /presence/heartbeat 응답. 다음 하트비트까지의 간격을 서버가 정해 준다 —
+ * 프론트가 자기 상수를 들고 있으면 서버 TTL만 바뀌었을 때 친구가 오프라인으로 깜빡인다.
+ */
+export interface HeartbeatResponse {
+  intervalSeconds: number
+}
