@@ -9,6 +9,7 @@ import {
   type Presence,
 } from '@/api'
 import { useAsyncData } from '@/composables/useAsyncData'
+import { useAutoReload } from '@/composables/useAutoReload'
 import AppPage from '@/components/common/AppPage.vue'
 import PixelCard from '@/components/common/PixelCard.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -18,16 +19,12 @@ import { useToast } from '@/composables/useToast'
 
 const { message: toast, flash } = useToast()
 
-const MOCK_FRIENDS: Friend[] = [
-  { userId: 2, nickname: '민지', presence: 'ONLINE', currentRoomId: null },
-  { userId: 3, nickname: '준호', presence: 'IN_ROOM', currentRoomId: 'MP4X9K' },
-  { userId: 4, nickname: 'Alex', presence: 'OFFLINE', currentRoomId: null },
-]
-const MOCK_REQS: FriendRequestItem[] = [
-  { requestId: 11, requesterNickname: '수아', addresseeNickname: 'P1', status: 'PENDING', createdAt: '2025-07-18T00:00:00Z' },
-]
+// 백엔드(-57)가 연동됐으므로 목업 폴백을 두지 않는다 — 가짜 친구가 보이면 API 실패를 알아챌 수 없다.
+// 로드 실패 시에는 빈 목록 + 각 탭의 "없어요" 안내가 그대로 노출된다.
+const NO_FRIENDS: Friend[] = []
+const NO_REQUESTS: FriendRequestItem[] = []
 
-// 받은 요청 목록에 "친구 요청"이라는 고정 문구 대신 실제 받은 일시를 보여준다.
+// 요청 목록에 "친구 요청"이라는 고정 문구 대신 실제 일시를 보여준다.
 function fmtRequestedAt(iso: string) {
   const d = new Date(iso)
   const date = `${d.getMonth() + 1}.${d.getDate()}`
@@ -38,43 +35,78 @@ function fmtRequestedAt(iso: string) {
 const presenceLabel: Record<Presence, string> = { ONLINE: '온라인', OFFLINE: '오프라인', IN_ROOM: '게임 중' }
 const presenceColor: Record<Presence, string> = { ONLINE: '#48c8a4', OFFLINE: '#b7abb8', IN_ROOM: '#ef6872' }
 
-const tab = ref<'friends' | 'requests'>('friends')
+const tab = ref<'friends' | 'received' | 'sent'>('friends')
 const target = ref('')
 const showAddModal = ref(false)
 // 삭제 버튼은 평소엔 숨겨두고 "친구 관리"를 눌렀을 때만 노출
 const manageMode = ref(false)
 
-const { data: friends } = useAsyncData(() => friendsApi.list(), MOCK_FRIENDS)
-const { data: requests } = useAsyncData(() => friendsApi.requests('received'), MOCK_REQS)
+const { data: friends, reload: reloadFriends } = useAsyncData(() => friendsApi.list(), NO_FRIENDS)
+const { data: requests, reload: reloadReceived } = useAsyncData(
+  () => friendsApi.requests('received'),
+  NO_REQUESTS,
+)
+const { data: sent, reload: reloadSent } = useAsyncData(
+  () => friendsApi.requests('sent'),
+  NO_REQUESTS,
+)
+
+/**
+ * 세 목록은 서로 얽혀 있어 하나만 갱신하면 화면이 어긋난다 — 수락 한 번에 받은 요청이 줄고,
+ * 친구가 늘고, (반대 방향 요청이 있었다면) 보낸 요청도 서버에서 사라진다.
+ * 그래서 로컬에서 한 건씩 도려내지 않고 통째로 다시 불러온다.
+ */
+function reloadAll() {
+  return Promise.all([reloadFriends(), reloadReceived(), reloadSent()])
+}
+
+// 상대가 내 요청을 수락·거절하면 서버에서는 사라지지만 내 화면은 그대로다. 푸시 통로가 없어 주기적으로 확인한다.
+const { reloadNow } = useAutoReload(reloadAll)
 
 async function sendRequest() {
   if (!target.value.trim()) return flash('닉네임을 입력해 주세요')
   try {
     await friendsApi.sendRequest(target.value.trim())
-    flash(`${target.value}님에게 친구 요청을 보냈어요`)
-    target.value = ''
-    showAddModal.value = false
   } catch (e) {
-    flash(e instanceof ApiError ? e.message : '요청 실패 (백엔드 미연동)')
+    flash(e instanceof ApiError ? e.message : '요청을 보내지 못했어요')
+    return
   }
+  flash(`${target.value}님에게 친구 요청을 보냈어요`)
+  target.value = ''
+  showAddModal.value = false
+  await reloadNow()
 }
 async function respond(req: FriendRequestItem, action: 'ACCEPT' | 'REJECT') {
   try {
     await friendsApi.respond(req.requestId, action)
   } catch (e) {
-    if (e instanceof ApiError) flash(e.message)
+    // 실패했으면 목록을 건드리지 않는다 — 서버에 남아 있는 요청을 화면에서만 지우면 다음 조회에 되살아난다.
+    flash(e instanceof ApiError ? e.message : '요청을 처리하지 못했어요')
+    return
   }
-  requests.value = requests.value.filter((r) => r.requestId !== req.requestId)
   flash(action === 'ACCEPT' ? '친구를 수락했어요' : '요청을 거절했어요')
+  await reloadNow()
+}
+async function cancelRequest(req: FriendRequestItem) {
+  try {
+    await friendsApi.cancelRequest(req.requestId)
+  } catch (e) {
+    flash(e instanceof ApiError ? e.message : '요청을 취소하지 못했어요')
+    return
+  }
+  flash(`${req.addresseeNickname}님에게 보낸 요청을 취소했어요`)
+  await reloadNow()
 }
 async function removeFriend(f: Friend) {
   if (!confirm(`${f.nickname}님을 친구에서 삭제할까요?`)) return
   try {
     await friendsApi.remove(f.userId)
   } catch (e) {
-    if (e instanceof ApiError) flash(e.message)
+    flash(e instanceof ApiError ? e.message : '친구를 삭제하지 못했어요')
+    return
   }
-  friends.value = friends.value.filter((x) => x.userId !== f.userId)
+  flash(`${f.nickname}님을 친구에서 삭제했어요`)
+  await reloadNow()
 }
 </script>
 
@@ -83,7 +115,8 @@ async function removeFriend(f: Friend) {
     <PixelCard>
       <div class="tabs">
         <button class="tab-btn" :class="{ on: tab === 'friends' }" @click="tab = 'friends'">친구 {{ friends.length }}</button>
-        <button class="tab-btn" :class="{ on: tab === 'requests' }" @click="tab = 'requests'">받은 요청 {{ requests.length }}</button>
+        <button class="tab-btn" :class="{ on: tab === 'received' }" @click="tab = 'received'">받은 요청 {{ requests.length }}</button>
+        <button class="tab-btn" :class="{ on: tab === 'sent' }" @click="tab = 'sent'">보낸 요청 {{ sent.length }}</button>
         <div class="right-actions">
           <PixelButton
             v-if="tab === 'friends'"
@@ -116,7 +149,7 @@ async function removeFriend(f: Friend) {
       </ul>
 
       <!-- 받은 요청 -->
-      <ul v-else class="list requests-list">
+      <ul v-else-if="tab === 'received'" class="list requests-list">
         <li v-for="r in requests" :key="r.requestId">
           <div class="req-avatar">{{ r.requesterNickname.charAt(0) }}</div>
           <div class="who"><b class="req-nick">{{ r.requesterNickname }}</b><small>{{ fmtRequestedAt(r.createdAt) }}</small></div>
@@ -126,6 +159,18 @@ async function removeFriend(f: Friend) {
           </div>
         </li>
         <li v-if="requests.length === 0" class="empty">받은 요청이 없어요</li>
+      </ul>
+
+      <!-- 보낸 요청 — 상대는 addressee이고, 취소만 할 수 있다(수락·거절은 받는 쪽 권한). -->
+      <ul v-else class="list requests-list">
+        <li v-for="r in sent" :key="r.requestId">
+          <div class="req-avatar">{{ r.addresseeNickname.charAt(0) }}</div>
+          <div class="who"><b class="req-nick">{{ r.addresseeNickname }}</b><small>{{ fmtRequestedAt(r.createdAt) }} · 대기 중</small></div>
+          <div class="req-actions">
+            <PixelButton variant="primary" @click="cancelRequest(r)">취소</PixelButton>
+          </div>
+        </li>
+        <li v-if="sent.length === 0" class="empty">보낸 요청이 없어요</li>
       </ul>
     </PixelCard>
     <PixelToast :message="toast" />
