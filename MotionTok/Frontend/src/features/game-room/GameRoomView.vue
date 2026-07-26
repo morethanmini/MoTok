@@ -19,6 +19,7 @@ import { CHAT_REPORT_REASONS, CHAT_REPORT_DETAIL_MAX, canSubmitChatReport, chatR
 import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
 import ReportIcon from './components/ReportIcon.vue'
+import HostWaitingOverlay from './components/HostWaitingOverlay.vue'
 // 방 정보 수정 모달(-130) — 입력 필드가 방 생성과 동일 규격(명세 §4)이라 로비 모달을 그대로 재사용한다.
 import CreateRoomModal, { type NewRoom } from '@/features/lobby/components/CreateRoomModal.vue'
 // MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
@@ -46,7 +47,6 @@ const myParticipantId = computed(() => readAccessClaims()?.sub ?? null)
 
 const roomCode = computed(() => (route.query.room as string) || 'MP-4X9K')
 const roomGame = computed(() => (route.query.game as string) || 'DANCE BATTLE')
-const isHost = computed(() => route.query.host === '1')
 // 입장 전 카메라/마이크 온오프 화면(DeviceSetupView)에서 고른 초기 상태 — 쿼리에 없으면(직접 URL 진입 등) 기본 켜짐.
 const initialCamOn = computed(() => route.query.cam !== '0')
 const initialMicOn = computed(() => route.query.mic !== '0')
@@ -55,6 +55,8 @@ const initialMicOn = computed(() => route.query.mic !== '0')
 const capacity = ref(8)
 const hostId = ref<string | null>(null)
 const roomTitle = ref<string | null>(null)
+/** 방장 표시명 — 상세 응답에 hostDisplayName이 없어 members에서 hostUserId로 찾는다. */
+const hostName = ref<string | null>(null)
 // 화면에 노출/복사되는 "ROOM CODE"는 접속용 roomId가 아니라 초대코드(inviteCode)여야 한다 —
 // /join-by-invite-code는 이 값으로 조회하지 roomId로는 찾지 못한다. 상세 조회 전까지는 roomId로 폴백.
 const inviteCode = ref<string | null>(null)
@@ -64,16 +66,23 @@ const roomVisibility = ref<Visibility>('PUBLIC')
 const participantCount = ref(1)
 
 /**
- * 방 설정(-130) 노출 판정. 기존 isHost(route.query.host)는 DeviceSetupView가 참가자에게도
- * '1'을 붙여서 방장 판별에 쓸 수 없고, selfIsHost는 LiveKit 연결에 의존한다 —
- * 상세 조회의 hostUserId와 내 토큰 sub를 직접 비교하는 게 유일하게 정확하다.
+ * 방장 판정 — <b>이 화면의 유일한 방장 판별 근거</b>다. 상세 조회의 hostUserId와 내 토큰 sub를 직접 비교한다.
+ *
+ * <p>과거에 쓰던 route.query.host는 쓸 수 없다: DeviceSetupView가 방을 만든 사람과 참가하는 사람에게
+ * 똑같이 host=1을 붙여서, 먼저 들어온 참가자가 START 버튼을 갖게 됐다. 그 쿼리는 제거했다.</p>
  */
 const amRoomHost = computed(() => !!hostId.value && myParticipantId.value === hostId.value)
+/**
+ * 상세 조회가 끝났는지. hostId를 받기 전에는 방장 여부를 알 수 없어 방장에게도 '제안'이 보이고,
+ * 그 짧은 창에 누르면 시작 대신 제안이 나간다 — 알기 전까지는 버튼을 잠근다.
+ */
+const detailLoaded = computed(() => hostId.value !== null)
 
 /** 상세/수정 응답을 화면 상태에 반영. 두 경로가 같은 LiveRoomDetail을 돌려주므로 한 곳에 모았다. */
 function applyDetail(d: LiveRoomDetail) {
   capacity.value = d.maxPlayers
   hostId.value = d.hostUserId
+  hostName.value = d.members.find((m) => m.userId === d.hostUserId)?.displayName ?? null
   roomTitle.value = d.title
   inviteCode.value = d.inviteCode
   roomVisibility.value = d.visibility
@@ -107,7 +116,28 @@ const captureOn = computed(() => camera.isOn.value)
 const selfCamOn = computed(() => (connected.value ? lk.cameraEnabled.value : camera.isOn.value))
 const selfMicOn = computed(() => (connected.value ? !!lkLocal.value?.micOn : demoMic.value))
 const selfIsHost = computed(
-  () => isHost.value || (!!lkLocal.value && lkLocal.value.identity === hostId.value),
+  () => amRoomHost.value || (!!lkLocal.value && lkLocal.value.identity === hostId.value),
+)
+
+/**
+ * 방장이 지금 이 방에 실제로 접속해 있는지. LiveKit identity가 hostUserId와 같은 값이라 바로 비교한다
+ * (LivekitTokenSigner가 subject(principal.userId())로 발급 — 토큰 sub·hostUserId·identity가 모두 동일 규격).
+ *
+ * 방 멤버 목록으로는 알 수 없다 — 방을 만든 시점에 이미 멤버로 등록되므로 기기 점검 화면에 있어도 멤버다.
+ */
+const hostInRoom = computed(
+  () => !!hostId.value && lk.participants.value.some((p) => p.identity === hostId.value),
+)
+
+/**
+ * 방장 입장 대기 오버레이 노출 여부.
+ *
+ * connected를 조건에 넣는 이유 — 접속 중에는 참가자 목록이 비어 있어서 방장이 이미 있는 방에서도
+ * 잠깐 "대기 중"이 뜬다. 접속이 끝난 뒤에 판단해야 깜빡이지 않는다.
+ * 방장 자신에게는 띄우지 않는다(자기를 기다릴 수 없다).
+ */
+const showHostWaiting = computed(
+  () => detailLoaded.value && connected.value && !amRoomHost.value && !hostInRoom.value,
 )
 
 const selfVideoEl = ref<HTMLVideoElement>()
@@ -148,8 +178,15 @@ onMounted(async () => {
       return
     }
     applyDetail(d)
-  } catch {
-    /* 백엔드 미연동 — 기본 정원 유지 */
+  } catch (e) {
+    // 예전에는 조용히 넘겼지만(백엔드 미연동 시절), 이제 이 응답이 방장 판별의 유일한 근거다.
+    // 실패하면 아무도 방장로 보이지 않으므로 반드시 드러내야 한다.
+    console.error('[game-room] 방 상세 조회 실패 — 방장 판별 불가', e)
+    flash(
+      e instanceof ApiError
+        ? `방 정보를 불러오지 못했어요 (${e.code})`
+        : '방 정보를 불러오지 못했어요',
+    )
   }
   // 로컬 캡처는 항상 켠다 — 모션 인식 게임의 입력원이라 카메라를 "꺼도" 게임 시작·참여가
   // 가능해야 한다. "카메라 끄기"는 발행·표시만 끈다: 입장 전 화면에서 껐다면 발행하지 않아
@@ -610,6 +647,28 @@ watch(
     roomVisibility.value = e.visibility
   },
 )
+
+/**
+ * 방장 위임(-72) 반영. 방장이 나가면 서버가 남은 참가자 중 가장 먼저 들어온 사람에게 넘기고
+ * LiveRoomHostChangedEvent를 쏜다. 이걸 반영하지 않으면 서버 hostUserId는 바뀌었는데 화면은
+ * 입장 시 조회한 값을 계속 들고 있어 <b>아무에게도 시작 권한이 안 보인다</b>(새로고침해야 정상화).
+ *
+ * 방장이 바뀌는 건 조용히 지나가면 안 되는 변화라 안내도 띄운다 — 특히 내가 방장이 된 경우.
+ */
+watch(
+  () => roomChat.hostChanged.value,
+  (e) => {
+    if (!e) return
+    hostId.value = e.hostUserId
+    hostName.value = e.hostDisplayName
+    // 결과만 알리면 "왜 갑자기?"가 되므로 원인(방장 퇴장)을 함께 붙인다.
+    flash(
+      e.hostUserId === myParticipantId.value
+        ? '방장이 나가서 내가 새 방장이 되었어요'
+        : `방장이 나가서 ${e.hostDisplayName}님이 새 방장이 되었어요`,
+    )
+  },
+)
 // 헤더 링크·뒤로가기 등으로 방을 벗어나려 하면 확인 모달. "나가기" 같은 의도된 이동은 통과.
 let leavingIntentionally = false
 const showLeaveConfirm = ref(false)
@@ -646,9 +705,13 @@ async function leave() {
   router.push({ name: RouteName.Lobby })
 }
 
-const startLabel = computed(() => (isHost.value ? 'START' : '제안'))
+const startLabel = computed(() => (amRoomHost.value ? 'START' : '제안'))
 const startHint = computed(() =>
-  isHost.value ? '게임을 선택하고 시작!' : '하고 싶은 게임을 제안해보세요',
+  !detailLoaded.value
+    ? '방 정보를 불러오는 중…'
+    : amRoomHost.value
+      ? '게임을 선택하고 시작!'
+      : '하고 싶은 게임을 제안해보세요',
 )
 </script>
 
@@ -674,6 +737,18 @@ const startHint = computed(() =>
         @click="openSettings"
       >
         ⚙
+      </button>
+
+      <!-- 게임 시작 — 바 정중앙. 힌트 문구는 54px 바에 두 줄이 안 들어가 title 툴팁으로 옮겼다. -->
+      <button
+        class="px start-btn"
+        :class="{ suggest: !amRoomHost }"
+        :disabled="!detailLoaded || (!amRoomHost && suggestCooldown)"
+        :title="startHint"
+        @click="openPicker"
+      >
+        <span class="play-ico">▶</span>
+        <span class="start-title">{{ startLabel }}</span>
       </button>
 
       <!-- 방 코드 (하단 바에서 이동) -->
@@ -783,7 +858,7 @@ const startHint = computed(() =>
               </button>
               <template v-if="b.kind === 'GAME_SUGGEST'">
                 <span class="bubble-name">🎮 {{ b.nickname }}</span> {{ b.text }}
-                <button v-if="isHost" class="px suggest-pick" @click="selectSuggested(b.gameName)">
+                <button v-if="amRoomHost" class="px suggest-pick" @click="selectSuggested(b.gameName)">
                   이 게임으로 선택
                 </button>
               </template>
@@ -844,17 +919,6 @@ const startHint = computed(() =>
           </div>
         </template>
       </div>
-
-      <!-- 게임 시작 (메시지창 오른쪽) -->
-      <button
-        class="px start-btn"
-        :class="{ suggest: !isHost }"
-        :disabled="!isHost && suggestCooldown"
-        @click="openPicker"
-      >
-        <span class="play-ico">▶</span>
-        <span class="start-text"><span class="start-title">{{ startLabel }}</span><span class="start-hint">{{ startHint }}</span></span>
-      </button>
 
       <div class="footer-right">
         <button class="px leave" @click="leave">
@@ -982,6 +1046,14 @@ const startHint = computed(() =>
         </PixelButton>
       </div>
     </PixelModal>
+
+    <!-- 방장이 기기 점검을 거치는 동안 먼저 들어온 참가자에게 띄우는 대기 오버레이 -->
+    <HostWaitingOverlay
+      v-if="showHostWaiting"
+      :room-title="roomTitle"
+      :host-name="hostName"
+      @leave="leave"
+    />
   </div>
 </template>
 
@@ -1012,7 +1084,7 @@ const startHint = computed(() =>
 .leave-desc { margin: 0 0 18px; font-size: 11px; color: var(--c-muted); line-height: 1.6; }
 .leave-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
-.room-ribbon { flex: none; height: 54px; padding: 0 28px; display: flex; align-items: center; gap: 14px; border-bottom: 2px solid rgba(56, 38, 61, .18); background: linear-gradient(110deg, rgba(207, 244, 231, .95), rgba(255, 240, 185, .95)); z-index: 5; }
+.room-ribbon { flex: none; position: relative; height: 54px; padding: 0 28px; display: flex; align-items: center; gap: 14px; border-bottom: 2px solid rgba(56, 38, 61, .18); background: linear-gradient(110deg, rgba(207, 244, 231, .95), rgba(255, 240, 185, .95)); z-index: 5; }
 .room-ribbon .px-kicker { padding: 5px 9px; font-size: 8px; }
 .room-ribbon .px-kicker i { width: 7px; height: 7px; border-radius: 50%; background: var(--c-coral); animation: px-blink 1s steps(2) infinite; }
 .room-ribbon b { font-size: 12px; }
@@ -1078,20 +1150,22 @@ const startHint = computed(() =>
   gap: 12px;
 }
 
-/* 게임 시작 (하단 바, 메시지창 오른쪽) */
+/* 게임 시작 (상단 바 정중앙)
+   절대 배치 이유 — 좌우 항목(방 제목·방 코드)의 폭이 상황마다 달라서, flex 흐름에 두면
+   버튼이 진짜 중앙에 오지 않고 방 제목 길이에 따라 흔들린다. */
 .start-btn {
-  flex: none;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
   border: var(--border-thick); background: #5cbf4a; color: #fff;
-  display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 16px;
-  border-radius: 14px 14px 10px 14px;
-  box-shadow: var(--shadow-sm); text-align: left;
+  display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 20px;
+  border-radius: 12px 12px 9px 12px;
+  box-shadow: var(--shadow-sm);
 }
 .start-btn.suggest { background: var(--c-yellow); color: var(--c-ink-soft); }
 .start-btn:disabled { opacity: 0.55; cursor: not-allowed; }
-.play-ico { font-size: 18px; }
-.start-text { line-height: 1.4; }
-.start-title { display: block; font-size: 11px; }
-.start-hint { display: block; font-size: 7px; opacity: 0.85; }
+.play-ico { font-size: 14px; }
+.start-title { font-size: 11px; }
 
 /* 방 코드 (하단 바, 나가기 버튼 왼쪽) */
 .ribbon-report {
@@ -1118,24 +1192,35 @@ const startHint = computed(() =>
 /* 하단 바 */
 .room-footer {
   flex: none; position: relative;
-  display: flex; align-items: center; gap: 16px;
+  /* 3열 그리드 — 채팅(좌) · 컨트롤(중앙) · 나가기(우).
+     양쪽을 minmax(0,1fr)로 두면 두 열이 항상 같은 폭이라 가운데가 바의 정중앙에 온다.
+     예전엔 컨트롤을 position:absolute로 중앙에 띄웠는데, 흐름에서 빠져 폭을 차지하지 않아
+     창이 좁아지면 채팅바·나가기 버튼과 그대로 겹쳤다. 그리드는 중앙 정렬과 밀어내기를 동시에 준다.
+     minmax의 0이 중요하다 — 기본 1fr(=minmax(auto,1fr))은 콘텐츠 최소폭 아래로 줄지 않아 넘친다. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center; gap: 16px;
   padding: 14px 22px;
   background: rgba(255, 253, 247, .97);
   border-top: var(--border);
 }
-.controls { position: absolute; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
+/* 행·열을 함께 명시한다 — 마크업 순서는 controls → chat-dock 인데 시각 순서는 채팅이 왼쪽이라
+   열만 지정하면 자동 배치 커서가 이미 2열을 지나쳐서 1열(채팅)이 다음 행으로 밀린다. */
+/* 크기 고정 — 창을 줄여도 아이콘은 그대로 두고 채팅바(1열, minmax(0,1fr))만 줄어든다.
+   더 좁아지면 잘려 나가는 걸 허용한다: 작아진 아이콘이 읽기 어려운 것보다 낫다는 판단. */
+.controls { grid-row: 1; grid-column: 2; justify-self: center; display: flex; gap: 10px; }
 .ctrl { width: 50px; height: 50px; border: 3px solid var(--c-ink-soft); border-radius: 13px 13px 9px 13px; background: #fff; color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow-sm); }
 .ctrl.on { background: #d9f2cf; color: #5cbf4a; }
 .ctrl.off { background: #fbdbe0; color: #e85d6e; }
 
-.chat-dock { position: relative; flex: none; width: 420px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; height: 52px; background: #fff; border: 3px solid var(--c-ink-soft); border-radius: 14px; box-shadow: var(--shadow-sm); }
+.chat-dock { grid-row: 1; grid-column: 1; position: relative; justify-self: start; width: 100%; min-width: 0; max-width: 420px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; height: 52px; background: #fff; border: 3px solid var(--c-ink-soft); border-radius: 14px; box-shadow: var(--shadow-sm); }
 .chat-log {
-  position: absolute; bottom: 62px; left: 0; width: 420px;
+  position: absolute; bottom: 62px; left: 0; width: 100%;
   display: flex; flex-direction: column; gap: 8px;
   overflow: visible;
 }
 .chat-log-list { display: flex; flex-direction: column; gap: 8px; }
-.bubble { position: relative; max-width: 420px; padding: 9px 22px 9px 12px; font-size: 9px; line-height: 1.7; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); word-break: break-word; overflow-wrap: anywhere; transition: opacity 0.4s ease; }
+.bubble { position: relative; max-width: 100%; padding: 9px 22px 9px 12px; font-size: 9px; line-height: 1.7; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); word-break: break-word; overflow-wrap: anywhere; transition: opacity 0.4s ease; }
 /* 6개 초과로 밀려날 땐 그대로 바로 사라지고, 시간이 지나 사라질 때만(.fading) 흐려지며 사라진다 */
 .bubble.fading { opacity: 0; }
 .bubble.me { background: #fff4cc; }
@@ -1188,7 +1273,7 @@ const startHint = computed(() =>
 .chat-full-backdrop { position: fixed; inset: 0; z-index: 45; background: transparent; }
 .chat-full {
   position: absolute; z-index: 46; bottom: 62px; left: 0;
-  width: 420px; max-height: min(65vh, 520px);
+  width: 100%; min-width: 260px; max-height: min(65vh, 520px);
   display: flex; flex-direction: column;
   background: rgba(255, 253, 247, 0.82);
   backdrop-filter: blur(6px);
@@ -1211,7 +1296,7 @@ const startHint = computed(() =>
 .bubble.full.me { background: rgba(255, 244, 204, 0.9); }
 .bubble.full.suggest { background: rgba(214, 244, 233, 0.9); }
 
-.footer-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.footer-right { grid-row: 1; grid-column: 3; justify-self: end; display: flex; align-items: center; gap: 10px; }
 .leave { display: flex; align-items: center; gap: 9px; padding: 0 18px; height: 52px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; background: var(--c-coral); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
 
 .room-toast { position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 60; padding: 13px 20px; background: #fffdf3; border: 3px solid #f0a815; color: #f0a815; font-size: 9px; line-height: 1.7; box-shadow: 5px 5px 0 rgba(43, 35, 51, 0.25); }
