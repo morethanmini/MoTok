@@ -103,9 +103,10 @@ src/
 │   └─ pixel.css          #  └ 공유 픽셀 유틸 클래스 + 공용 keyframes
 ├─ components/common/     # 재사용 컴포넌트 (AppHeader, AppPage, PixelButton/Card/Modal/Toast,
 │                         #   BrandLogo, BgmToggle, CoinIcon, ChargePointsModal,
-│                         #   LoginRequiredModal, GuestSignupPromptModal)
+│                         #   LoginRequiredModal, GuestSignupPromptModal, UserAvatar)
 ├─ composables/           # 재사용 로직 — useCamera, useHandLandmarker(MediaPipe), useLiveKitRoom,
-│                         #   useRoomChat, useBgm, useToast, useAsyncData, useLoginRequired,
+│                         #   useRoomChat, useBgm, useToast, useAsyncData, useAutoReload,
+│                         #   useUpload(S3 presigned 업로드), usePresenceHeartbeat, useLoginRequired,
 │                         #   useAccessDenied, useGuestSignupPrompt, useRoomUnloadLeave
 ├─ stores/                # Pinia — session(게스트/회원 세션)
 ├─ router/
@@ -148,6 +149,7 @@ src/
 ### 에셋
 
 - 디자인 에셋(픽셀 아트, BGM, 아이콘)은 `public/assets/`에 있으며 절대경로(`/assets/...`)로 참조합니다.
+- ⚠️ `public/assets/icons/profile/`(기본 프로필 아이콘)의 **파일명은 백엔드와의 계약**입니다. 마이페이지에서 아이콘을 고르면 확장자를 뺀 파일명(`4_cat`)이 서버로 가고, 서버가 `/assets/icons/profile/{preset}.png`를 조립해 `avatarUrl`에 저장합니다. 파일을 추가·삭제·개명하면 `src/features/account/avatarPresets.ts`의 목록도 함께 고쳐야 하고, 이름은 서버 검사 형식 `^\d{1,2}_[a-z]{2,16}$`을 지켜야 합니다.
 - MediaPipe wasm·손 인식 모델은 CDN 대신 `public/mediapipe/`에서 **셀프호스팅**합니다. 모델은 로비 진입 스플래시에서 미리 받아 세션 동안 재사용됩니다.
 
 ## 인증 가드
