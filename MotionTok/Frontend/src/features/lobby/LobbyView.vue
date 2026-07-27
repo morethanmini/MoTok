@@ -3,7 +3,15 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, friendsApi, ApiError, type LiveRoomSummary, type Friend as ApiFriend } from '@/api'
+import {
+  roomsApi,
+  friendsApi,
+  invitationsApi,
+  ApiError,
+  type LiveRoomSummary,
+  type Friend as ApiFriend,
+  type InvitationItem,
+} from '@/api'
 import { useSessionStore } from '@/stores/session'
 import { useAsyncData } from '@/composables/useAsyncData'
 import { useAutoReload } from '@/composables/useAutoReload'
@@ -16,6 +24,7 @@ import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import RoomCard from './components/RoomCard.vue'
 import FriendItem from './components/FriendItem.vue'
+import InviteCardStack from './components/InviteCardStack.vue'
 import LobbySplash from './components/LobbySplash.vue'
 import JoinRoomModal from './components/JoinRoomModal.vue'
 import CreateRoomModal, { type NewRoom } from './components/CreateRoomModal.vue'
@@ -41,7 +50,6 @@ const FACE_BGS = ['#ffe2e3', '#d8f4ec', '#fff0b9', '#dce7ff', '#e6e0f0', '#f0e6d
 function toFriend(f: ApiFriend): Friend {
   const slot = Number(f.userId) % FACES.length
   return {
-    userId: f.userId,
     name: f.nickname,
     face: FACES[slot] ?? '🐰',
     bg: FACE_BGS[slot] ?? '#ffe2e3',
@@ -52,7 +60,6 @@ function toFriend(f: ApiFriend): Friend {
           ? '로비에서 둘러보는 중'
           : '오프라인',
     online: f.presence !== 'OFFLINE',
-    playing: f.presence === 'IN_ROOM',
   }
 }
 
@@ -60,6 +67,22 @@ const NO_FRIENDS: Friend[] = []
 const { data: friends, reload: reloadFriends } = useAsyncData(
   async () => (await friendsApi.list()).map(toFriend),
   NO_FRIENDS,
+)
+
+// 받은 친구 요청 수 (GET /friends/requests?direction=received, -57)
+// 개수 전용 엔드포인트가 명세에 없어서 목록 길이를 센다(친구 화면 탭 배지와 같은 방식).
+const { data: pendingRequests, reload: reloadRequests } = useAsyncData(
+  async () => (await friendsApi.requests('received')).length,
+  0,
+)
+
+// 받은 방 초대 (GET /invitations, -100)
+// 게임룸에서만 STOMP가 연결되므로 로비에는 푸시받을 통로가 없다 — 초대는 서버에 5분간 저장되고
+// 이 폴링이 가져온다. 즉 최대 한 주기(12초)만큼 늦게 뜬다.
+const NO_INVITATIONS: InvitationItem[] = []
+const { data: invitations, reload: reloadInvitations } = useAsyncData(
+  () => invitationsApi.received(),
+  NO_INVITATIONS,
 )
 
 // API LiveRoomSummary → 로비 카드용 Room 매핑
@@ -174,73 +197,58 @@ function enterRoom(room: Room) {
   })
 }
 
-/**
- * 친구 따라 참가 (-98) — GET /friends/{id}/room 으로 지금 있는 방을 확인한 뒤 기존 입장 흐름을 탄다.
- *
- * 사이드바 목록에도 currentRoomId가 실려 오지만 그건 12초마다 갱신되는 값이라, 누르는 순간 다시 묻는다.
- * 그 사이 친구가 방을 나갔으면 없는 방에 들어가려다 실패하기 때문이다.
- *
- * 비밀방이면 비밀번호를 받는다 — 친구를 따라가는 건 상대 동의가 없는 행위다.
- * (초대받아 들어가는 경로(-100)는 방 안 사람이 허락한 것이라 초대코드로 비번을 면제받는다.)
- */
-function joinFriendRoom(f: Friend) {
-  guardMember(async () => {
-    let roomId: string | null
-    try {
-      roomId = (await friendsApi.room(f.userId)).roomId
-    } catch (e) {
-      return flash(e instanceof ApiError ? e.message : '친구 방을 확인하지 못했어요')
-    }
-    if (!roomId) {
-      flash(`${f.name}님이 방에서 나갔어요`)
-      void reloadFriends() // 목록이 낡아서 참가 버튼이 떠 있었던 것 — 바로 맞춰 준다
-      return
-    }
-    try {
-      const res = await roomsApi.join(roomId)
-      goDevice('친구의 게임', res.roomId)
-    } catch (e) {
-      if (!(e instanceof ApiError)) return flash('입장하지 못했어요')
-      if (e.code === 'ROOM_PASSWORD_REQUIRED') {
-        pwTarget.value = {
-          title: `${f.name}님의 방`,
-          game: '친구의 게임',
-          emoji: '🎮',
-          count: 0,
-          max: 0,
-          state: '대기 중',
-          visibility: '비공개',
-          disabled: false,
-          roomId,
-          hasPassword: true,
-        }
-        pwError.value = ''
-        return
-      }
-      // 정원 초과·게임 진행 중 등은 기존 join이 그대로 판정해 준다(ROOM_FULL / ROOM_GAME_IN_PROGRESS).
-      flash(e.message)
-    }
-  })
-}
-
 // 비밀방 비밀번호 입력 — 틀리면 모달을 닫지 않고 에러만 보여줘 재입력할 수 있게 한다.
 const pwTarget = ref<Room | null>(null)
 const pwError = ref('')
 const pwBusy = ref(false)
 /**
- * 로비 자동 갱신 — 방 목록과 친구 목록은 남이 바꾸는 데이터라 가만히 두면 낡는다.
- * 방이 새로 생기거나 정원이 차는 것, 친구가 접속하는 것을 새로고침 없이 따라간다.
+ * 로비 자동 갱신 — 방 목록·친구 목록·친구 요청·받은 방 초대는 남이 바꾸는 데이터라 가만히 두면 낡는다.
+ * 방이 새로 생기거나 정원이 차는 것, 친구가 접속하는 것, 요청·초대가 들어오는 것을
+ * 새로고침 없이 따라간다.
  *
  * 모달이 열려 있거나 스플래시 중에는 건너뛴다 — 목록이 밀려서 방금 본 것과 다른 방을 누르게 되면
  * 그게 더 나쁜 경험이다. 지금 보고 있는 페이지를 그대로 다시 불러오므로 페이지네이션도 유지된다.
  */
-useAutoReload(() => Promise.all([reloadRooms(), reloadFriends()]), {
-  // 친구 화면(20초)보다 짧게 — 방은 만들어지고 정원이 차는 속도가 빨라서 낡은 목록이 더 잘 티가 난다.
-  // 대기 중으로 보이는 방에 들어갔더니 이미 꽉 찬 상황을 줄이는 게 목적이다.
-  intervalMs: 12_000,
-  shouldSkip: () =>
-    showSplash.value || showJoin.value || showCreate.value || pwTarget.value !== null,
-})
+useAutoReload(
+  () => Promise.all([reloadRooms(), reloadFriends(), reloadRequests(), reloadInvitations()]),
+  {
+    // 친구 화면(20초)보다 짧게 — 방은 만들어지고 정원이 차는 속도가 빨라서 낡은 목록이 더 잘 티가 난다.
+    // 대기 중으로 보이는 방에 들어갔더니 이미 꽉 찬 상황을 줄이는 게 목적이다.
+    intervalMs: 12_000,
+    shouldSkip: () =>
+      showSplash.value || showJoin.value || showCreate.value || pwTarget.value !== null,
+  },
+)
+
+/**
+ * 초대 수락 (-100) — 초대에 실린 초대코드로 기존 입장 흐름을 탄다.
+ * 초대받아 들어가는 경로라 비밀방이어도 비밀번호를 묻지 않는다(방 안 사람이 허락한 입장이다).
+ *
+ * 초대를 치우는 건 입장에 성공한 <b>뒤</b>다 — 먼저 지우면 그 사이 정원이 찼거나 게임이 시작돼
+ * 입장이 막혔을 때 다시 눌러 볼 카드가 사라진다.
+ */
+async function acceptInvitation(invitation: InvitationItem) {
+  let roomId: string
+  try {
+    roomId = (await roomsApi.joinByInviteCode(invitation.inviteCode)).roomId
+  } catch (e) {
+    return flash(e instanceof ApiError ? e.message : '입장하지 못했어요')
+  }
+  await dismissInvitation(invitation)
+  goDevice('친구의 게임', roomId)
+}
+
+/** 초대를 서버와 화면에서 치운다. 이미 만료됐으면 404가 나는데, 사라지는 게 목적이라 그대로 둔다. */
+async function dismissInvitation(invitation: InvitationItem) {
+  invitations.value = invitations.value.filter(
+    (i) => i.invitationId !== invitation.invitationId,
+  )
+  try {
+    await invitationsApi.dismiss(invitation.invitationId)
+  } catch {
+    // 이미 만료·처리된 초대 — 화면에서 지웠으면 됐다
+  }
+}
 
 async function submitRoomPassword(password: string) {
   const room = pwTarget.value
@@ -381,15 +389,11 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
         <section class="side-card friends-card">
           <div class="side-title">
             친구 목록
+            <span v-if="pendingRequests > 0" class="req-badge">요청 {{ pendingRequests }}개</span>
             <button class="side-link" @click="router.push({ name: RouteName.Friends })">친구 목록 관리 →</button>
           </div>
           <div class="friends-list">
-            <FriendItem
-              v-for="(f, i) in friends"
-              :key="i"
-              :friend="f"
-              @join="joinFriendRoom(f)"
-            />
+            <FriendItem v-for="(f, i) in friends" :key="i" :friend="f" />
             <p v-if="friends.length === 0" class="friends-empty">
               아직 친구가 없어요.<br />친구 목록 관리에서 추가해 보세요!
             </p>
@@ -420,6 +424,13 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
       @join="submitRoomPassword"
     />
     <CreateRoomModal v-if="showCreate" :busy="creating" @close="showCreate = false" @create="createRoom" />
+
+    <!-- 받은 방 초대 (-100) — 모달이 아니라 쌓이는 카드. 배경 조작을 막지 않는다. -->
+    <InviteCardStack
+      :invitations="invitations"
+      @accept="acceptInvitation"
+      @reject="dismissInvitation"
+    />
 
     <PixelToast :message="toast" />
 
@@ -593,6 +604,17 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 .friends-list::-webkit-scrollbar-thumb:hover { background: var(--c-yellow); }
 .side-title { display: flex; align-items: center; font-size: 13px; font-weight: 700; margin-bottom: 13px; }
 .side-title span { margin-left: auto; font-size: 9px; color: var(--c-mint); }
+/* 받은 친구 요청 배지 — 위 span 규칙의 margin-left:auto가 '친구 목록 관리' 링크와 여백을 나눠 갖지 않도록 덮어쓴다 */
+.side-title .req-badge {
+  margin-left: 7px;
+  padding: 2px 6px;
+  border: 2px solid var(--c-ink);
+  border-radius: 999px;
+  background: var(--c-yellow);
+  color: var(--c-ink);
+  font-size: 8px;
+  font-weight: 700;
+}
 .side-link { margin-left: auto; border: 0; background: transparent; color: var(--c-blue); font-size: 9px; font-weight: 700; }
 .quick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .quick button { height: 62px; border: 2px solid var(--c-ink); border-radius: var(--radius-md); background: var(--c-yellow); font-size: 11px; font-weight: 700; box-shadow: var(--shadow-sm); }
