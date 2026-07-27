@@ -19,7 +19,6 @@ import {
   HIT_ZONE_OUTER_TOL,
   HOLD_GRACE_MS,
   HOLD_KEEP_RATIO,
-  CAMP_TIMEOUT_MS,
 } from './ringConfig'
 
 const LANE_STEP_DEG = 360 / LANE_COUNT
@@ -146,12 +145,6 @@ export function isInHoldZone(
 export class RingLogic {
   private readonly approachTimeMs: number
   readonly notes: TrackedRingNote[]
-  /** (손, 레인)별 존 진입 시각. null = 존 밖 */
-  private readonly zoneEnteredAt: Record<Hand, (number | null)[]> = {
-    left: new Array(LANE_COUNT).fill(null),
-    right: new Array(LANE_COUNT).fill(null),
-  }
-
   constructor(beatmap: RingBeatmap) {
     this.approachTimeMs = beatmap.approachTimeMs
     this.notes = beatmap.notes.map((n, id) => ({
@@ -166,7 +159,6 @@ export class RingLogic {
   }
 
   update(tMs: number, hands: Hands): RingEvent[] {
-    this.updateZones(tMs, hands)
     const events: RingEvent[] = []
     const usedHands = new Set<Hand>()
 
@@ -197,7 +189,7 @@ export class RingLogic {
       for (const side of sides) {
         const hand = hands[side]
         if (!hand || usedHands.has(side)) continue
-        if (!this.canHit(side, note.lane, tMs)) continue
+        if (!isInHitZone(hand, note.lane)) continue
         const judgement = judgeHit(delta)
         if (!judgement) continue
 
@@ -255,32 +247,6 @@ export class RingLogic {
         events.push({ type: 'miss', note })
       }
     }
-  }
-
-  /** 존 안 && 캠핑 아님 */
-  private canHit(side: Hand, lane: number, tMs: number): boolean {
-    const enteredAt = this.zoneEnteredAt[side][lane]
-    if (enteredAt === null || enteredAt === undefined) return false
-    return tMs - enteredAt <= CAMP_TIMEOUT_MS
-  }
-
-  private updateZones(tMs: number, hands: Hands): void {
-    for (const side of SIDES) {
-      const hand = hands[side]
-      for (let lane = 0; lane < LANE_COUNT; lane++) {
-        if (hand && isInHitZone(hand, lane)) {
-          this.zoneEnteredAt[side][lane] ??= tMs
-        } else {
-          this.zoneEnteredAt[side][lane] = null // 이탈 → 재활성
-        }
-      }
-    }
-  }
-
-  /** 캠핑으로 무효화된 상태인가 — HUD 경고용 */
-  isCamping(side: Hand, lane: number, tMs: number): boolean {
-    const enteredAt = this.zoneEnteredAt[side][lane]
-    return enteredAt != null && tMs - enteredAt > CAMP_TIMEOUT_MS
   }
 
   /**

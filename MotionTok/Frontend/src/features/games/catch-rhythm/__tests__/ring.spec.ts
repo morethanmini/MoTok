@@ -16,8 +16,9 @@ import {
   RING_RADIUS,
   HIT_ZONE_ANGLE_DEG,
   HIT_ZONE_INNER_TOL,
-  CAMP_TIMEOUT_MS,
   RING_HAND_SPEED,
+  TIGHT_GAP_MS,
+  TIGHT_MAX_LANE_STEP,
 } from '../ring/ringConfig'
 import { generateRingChart, RING_PRESETS } from '../ring/ringChart'
 import { DIFFICULTIES, LEAD_IN_MS, SLOT_MS } from '../generator/presets'
@@ -144,20 +145,13 @@ describe('탭 판정', () => {
     expect(logic.isFinished()).toBe(true)
   })
 
-  it('★ 캠핑 방지 — 존에 계속 얹어두면 무효, 나갔다 와야 재활성', () => {
+  it('존에 손을 계속 두고 있어도 잡힌다 (캠핑 방지 폐지)', () => {
+    // 리듬게임에서 같은 레인에 연달아 노트가 오는 건 정상 패턴인데,
+    // 손을 뺐다 넣으라고 강제하면 칠 수가 없다.
     const logic = new RingLogic(bm([tap({ timeMs: 5000 })]))
-    // 존에 오래 머문다
-    for (let t = 0; t <= CAMP_TIMEOUT_MS + 500; t += 250) logic.update(t, rightAt(0))
-    expect(logic.isCamping('right', 0, CAMP_TIMEOUT_MS + 500)).toBe(true)
-
-    // 그대로 도달해도 안 잡힌다
-    const camped = logic.update(5000, rightAt(0))
-    expect(camped.filter((e) => e.type === 'hit')).toHaveLength(0)
-
-    // 존을 벗어났다 재진입하면 다시 유효
-    logic.update(5010, NO_HANDS)
-    const revived = logic.update(5020, rightAt(0))
-    expect(revived.filter((e) => e.type === 'hit')).toHaveLength(1)
+    for (let t = 0; t <= 4900; t += 250) logic.update(t, rightAt(0))
+    const events = logic.update(5000, rightAt(0))
+    expect(events.filter((e) => e.type === 'hit')).toHaveLength(1)
   })
 
   it('한 손은 한 프레임에 노트 하나만 처리한다', () => {
@@ -295,8 +289,9 @@ describe('링 채보 생성기', () => {
     for (const difficulty of DIFFICULTIES) {
       const notes = SEEDS.flatMap((s) => generateRingChart(s, difficulty, ROUND_MS).notes)
       const holds = notes.filter((n) => n.type === 'hold').length / notes.length
-      expect(holds).toBeGreaterThan(RING_PRESETS[difficulty].holdRate - 0.08)
-      expect(holds).toBeLessThan(RING_PRESETS[difficulty].holdRate + 0.08)
+      // 빠른 구간에는 슬라이드를 넣지 않으므로 프리셋 값보다 낮게 나온다
+      expect(holds).toBeGreaterThan(0.08)
+      expect(holds).toBeLessThan(RING_PRESETS[difficulty].holdRate + 0.05)
     }
   })
 
@@ -323,6 +318,47 @@ describe('링 채보 생성기', () => {
       for (const n of slides) {
         const arc = RING_RADIUS * Math.abs(n.laneDelta!) * ((Math.PI * 2) / LANE_COUNT)
         expect(arc).toBeLessThanOrEqual(RING_HAND_SPEED * ((n.durationMs ?? 0) / 1000) + 1e-9)
+      }
+    }
+  })
+
+  it('★ 슬라이드가 지나가는 레인 위에는 노트를 놓지 않는다', () => {
+    for (const difficulty of DIFFICULTIES) {
+      for (const seed of SEEDS) {
+        const notes = generateRingChart(seed, difficulty, ROUND_MS).notes
+        const slides = notes.filter((n) => n.type === 'hold')
+        for (const s of slides) {
+          const delta = s.laneDelta ?? 0
+          const step = delta >= 0 ? 1 : -1
+          const swept = new Set<number>()
+          for (let i = 0; i !== delta + step; i += step) {
+            swept.add((((s.lane + i) % LANE_COUNT) + LANE_COUNT) % LANE_COUNT)
+          }
+          const end = s.timeMs + (s.durationMs ?? 0)
+          for (const n of notes) {
+            if (n === s) continue
+            if (n.timeMs < s.timeMs || n.timeMs > end) continue
+            expect(swept.has(n.lane)).toBe(false)
+          }
+        }
+      }
+    }
+  })
+
+  it('★ 짧은 간격 노트는 양손 가능 + 가까운 레인이다', () => {
+    for (const difficulty of DIFFICULTIES) {
+      for (const seed of SEEDS) {
+        const notes = generateRingChart(seed, difficulty, ROUND_MS).notes
+        for (let i = 1; i < notes.length; i++) {
+          const prev = notes[i - 1]!
+          const cur = notes[i]!
+          if (cur.timeMs - prev.timeMs >= TIGHT_GAP_MS) continue
+          if (cur.timeMs === prev.timeMs) continue // 동시 노트는 별도 규칙
+          expect(cur.hand).toBe('any')
+          const d = Math.abs(cur.lane - prev.lane) % LANE_COUNT
+          expect(Math.min(d, LANE_COUNT - d)).toBeLessThanOrEqual(TIGHT_MAX_LANE_STEP)
+          expect(cur.type).toBe('tap') // 빠른 구간엔 슬라이드가 끼지 않는다
+        }
       }
     }
   })
