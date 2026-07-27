@@ -27,9 +27,9 @@ export const GAME_CATALOG: GameEntry[] = [
     howToPlay: ['카메라에 두 손이 잘 보이도록 위치를 잡아요', '열 손가락을 움직여 모든 별을 동시에 켜요', '그대로 10초간 유지하면 완성 — 모양이 비슷할수록 고득점!'],
   },
   {
-    id: 'fishing', gameId: 2, name: 'MOTION FISH', tag: '두 손으로 낚시하기', emoji: '🎣', thumb: '#dff1fb', playable: false,
-    description: '양손으로 낚싯대를 던지고 당기는 동작을 따라 하며 물고기를 낚는 협동 게임이에요.',
-    howToPlay: ['한 손으로 낚싯대를 던지는 동작을 해요', '물고기가 미끼를 물면 반대 방향으로 손을 당겨요', '제한 시간 안에 가장 많이 낚으면 승리!'],
+    id: 'rhythm', gameId: 2, name: '캐치캐치리듬', tag: '날아오는 음표 잡기', emoji: '🐾', thumb: '#ffe6d8', playable: true,
+    description: '날아오는 음표 버블을 손으로 잡는 리듬 게임이에요. 방 전원이 똑같은 채보로 동시에 플레이하고 점수로 겨뤄요.',
+    howToPlay: ['카메라에 두 손이 잘 보이도록 위치를 잡아요', '음표가 다가와 커지는 순간 그 위에서 주먹을 쥐어요', '쥔 채로 쓸고 다니면 안 잡혀요 — 잡을 때마다 새로 쥐어야 해요'],
   },
   {
     id: 'dance', gameId: 3, name: 'DANCE BATTLE', tag: '리듬 · 풀바디 모션', emoji: '💃', thumb: '#fbf3d9', playable: false,
