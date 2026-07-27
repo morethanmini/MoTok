@@ -118,6 +118,10 @@ class GameSessionServiceTest {
                 .thenReturn(mock(ScheduledFuture.class));
         when(gameRepository.findById(4L)).thenReturn(Optional.of(Game.builder()
                 .id(4L).name("몸 끼워 맞추기").roundDurationSec(15).countdownSec(3).active(true).build()));
+        // 게임④(-9): 출제자 미참여 룰이라 2인 미만이면 시작이 거부된다 — 방장+참가자 스텁
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue("1", "방장", false, 0),
+                new LiveRoomMemberValue("2", "참가자", false, 1)));
 
         service.start(ROOM_ID, new GameStartRequest(4L, null, "hard"), host);
 
@@ -129,6 +133,22 @@ class GameSessionServiceTest {
         assertThat(event.setterUserId()).isEqualTo("1");
         assertThat(event.difficulty()).isEqualTo("hard");
         assertThat(event.endAt() - event.startAt()).isEqualTo(10_000);
+    }
+
+    /** 게임④(-9): 출제자는 관전만 하므로 1인 방에서는 라운드가 성립하지 않는다 — 시작 거부. */
+    @Test
+    void 게임4는_1인_방에서_시작할_수_없다() {
+        givenRoomWithHost();
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.empty());
+        when(gameRepository.findById(4L)).thenReturn(Optional.of(Game.builder()
+                .id(4L).name("몸 끼워 맞추기").roundDurationSec(15).countdownSec(3).active(true).build()));
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue("1", "방장", false, 0)));
+
+        assertThatThrownBy(() -> service.start(ROOM_ID, new GameStartRequest(4L, null, "easy"), host))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.GAME_NEED_MORE_PLAYERS);
     }
 
     /** 게임④ 출제 페이즈(-86): 출제자 포즈 제출 → challenge 저장 + POSE_SET 배포. */
