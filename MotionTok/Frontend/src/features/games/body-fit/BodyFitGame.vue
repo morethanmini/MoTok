@@ -299,7 +299,7 @@ onBeforeUnmount(() => {
     <div class="main">
       <div class="center">
         <div ref="viewportRef" class="viewport">
-          <canvas ref="glCanvasRef"></canvas>
+          <canvas ref="glCanvasRef" class="gl-canvas"></canvas>
 
           <canvas v-show="phase === 'incoming'" ref="thumbRef" class="thumb" width="96" height="96"></canvas>
 
@@ -458,7 +458,8 @@ onBeforeUnmount(() => {
   overflow: hidden;
   background: #0d0c24;
 }
-.viewport canvas {
+/* 3D 캔버스에만 — .viewport canvas로 잡으면 썸네일·PiP 오버레이 캔버스까지 늘어난다 */
+.gl-canvas {
   display: block;
   width: 100%;
   height: 100%;
