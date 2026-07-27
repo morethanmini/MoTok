@@ -142,23 +142,78 @@ function bubble(ctx: CanvasRenderingContext2D, note: NoteView) {
   ctx.fill()
 }
 
-/** catch 노트 속 음표 */
-function musicNote(ctx: CanvasRenderingContext2D, note: NoteView) {
-  const { x, y, radius } = note
-  if (radius < 12) return
-  const s = radius * 0.5
-  ctx.fillStyle = PALETTE[note.hand].edge
+const CATCH_GOLD = '#ffb32e'
+const CATCH_DEEP = '#c9700f'
+
+/**
+ * 주먹 노트 — 다른 노트와 **한눈에 구분돼야 한다**(가장 드물고 가장 준비가 필요한 노트).
+ * 둥근 버블 대신 각진 육각 코어 + 조여드는 집게 + 회전 스파이크 링으로 그린다.
+ */
+function grabNote(ctx: CanvasRenderingContext2D, note: NoteView, tMs: number) {
+  const { x, y, radius, progress } = note
+  const spin = tMs / 420
+  // 판정이 가까울수록 맥동이 빨라진다 — "이제 쥐어라"
+  const pulse = 1 + 0.14 * Math.sin(tMs / (progress > 0.75 ? 70 : 160))
+
+  ctx.save()
+  ctx.translate(x, y)
+
+  // 후광 — 멀리서도 눈에 띈다
+  const halo = ctx.createRadialGradient(0, 0, radius * 0.2, 0, 0, radius * 2.1 * pulse)
+  halo.addColorStop(0, 'rgba(255,179,46,0.42)')
+  halo.addColorStop(1, 'rgba(255,179,46,0)')
+  ctx.fillStyle = halo
   ctx.beginPath()
-  ctx.ellipse(x - s * 0.35, y + s * 0.55, s * 0.42, s * 0.32, -0.4, 0, Math.PI * 2)
+  ctx.arc(0, 0, radius * 2.1 * pulse, 0, Math.PI * 2)
   ctx.fill()
-  ctx.fillRect(x + s * 0.02, y - s * 0.75, Math.max(1.5, s * 0.14), s * 1.35)
+
+  // 회전 스파이크 링
+  ctx.rotate(spin)
+  ctx.fillStyle = CATCH_GOLD
+  const spikes = 8
+  for (let i = 0; i < spikes; i++) {
+    const a = (Math.PI * 2 * i) / spikes
+    const inner = radius * 1.15
+    const outer = radius * 1.62 * pulse
+    ctx.beginPath()
+    ctx.moveTo(Math.cos(a) * inner, Math.sin(a) * inner)
+    ctx.lineTo(Math.cos(a + 0.16) * outer, Math.sin(a + 0.16) * outer)
+    ctx.lineTo(Math.cos(a - 0.16) * outer, Math.sin(a - 0.16) * outer)
+    ctx.closePath()
+    ctx.fill()
+  }
+  ctx.rotate(-spin)
+
+  // 육각 코어 — 각진 형태라 원형 노트와 확실히 구분된다
+  const grad = ctx.createLinearGradient(0, -radius, 0, radius)
+  grad.addColorStop(0, '#ffe6a8')
+  grad.addColorStop(1, CATCH_GOLD)
+  ctx.fillStyle = grad
+  ctx.strokeStyle = CATCH_DEEP
+  ctx.lineWidth = Math.max(2, radius * 0.16)
   ctx.beginPath()
-  ctx.moveTo(x + s * 0.02, y - s * 0.75)
-  ctx.quadraticCurveTo(x + s * 0.85, y - s * 0.6, x + s * 0.6, y - s * 0.05)
-  ctx.lineTo(x + s * 0.55, y - s * 0.3)
-  ctx.quadraticCurveTo(x + s * 0.6, y - s * 0.5, x + s * 0.16, y - s * 0.5)
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI / 3) * i - Math.PI / 2
+    const px = Math.cos(a) * radius
+    const py = Math.sin(a) * radius
+    if (i === 0) ctx.moveTo(px, py)
+    else ctx.lineTo(px, py)
+  }
   ctx.closePath()
   ctx.fill()
+  ctx.stroke()
+
+  // 조여드는 집게 — 판정이 가까울수록 안쪽으로 모인다("쥐어라"는 신호)
+  const grip = radius * (1.5 - 0.45 * Math.min(1, progress))
+  ctx.strokeStyle = CATCH_DEEP
+  ctx.lineWidth = Math.max(2, radius * 0.2)
+  ctx.lineCap = 'round'
+  for (const dir of [-1, 1]) {
+    ctx.beginPath()
+    ctx.arc(0, 0, grip, dir > 0 ? -0.9 : Math.PI - 0.9, dir > 0 ? 0.9 : Math.PI + 0.9)
+    ctx.stroke()
+  }
+  ctx.restore()
 }
 
 /** swipe 노트 — 쥐지 않고 스쳐도 되는 노트라 '통과' 느낌의 이중 갈매기로 구분한다 */
@@ -199,14 +254,14 @@ function handSkeleton(ctx: CanvasRenderingContext2D, hand: HandView) {
     return
   }
 
-  const bone = Math.max(2.5, radius * 0.22) * (isFist ? 1.5 : 1)
+  const bone = Math.max(2, radius * 0.32) * (isFist ? 1.4 : 1)
   ctx.globalAlpha = isFist ? 1 : 0.8
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
 
   // 흰 외곽선을 깔아 배경과 상관없이 손이 보이게 한다
   for (const [width, stroke] of [
-    [bone + 4, 'rgba(255,255,255,0.9)'],
+    [bone + 3, 'rgba(255,255,255,0.85)'],
     [bone, color],
   ] as const) {
     ctx.lineWidth = width
@@ -282,17 +337,20 @@ export const catCandySkin: CatchSkin = {
     }
   },
 
-  drawNote(ctx, note) {
+  drawNote(ctx, note, tMs) {
     if (note.kind === 'trail') trailRibbon(ctx, note)
-    // 추적 중인 연결 노트는 헤드가 본체 역할을 하므로 버블을 다시 그리지 않는다
+    // 추적 중인 연결 노트는 헤드가 본체 역할을 하므로 본체를 다시 그리지 않는다
     if (note.tracing) return
 
     timingRings(ctx, note)
     ctx.save()
     ctx.globalAlpha = 0.4 + 0.6 * Math.min(1, note.scale)
-    bubble(ctx, note)
-    if (note.kind === 'swipe') swipeMark(ctx, note)
-    else if (note.kind === 'catch') musicNote(ctx, note)
+    if (note.kind === 'catch') {
+      grabNote(ctx, note, tMs)
+    } else {
+      bubble(ctx, note)
+      if (note.kind === 'swipe') swipeMark(ctx, note)
+    }
     ctx.restore()
   },
 

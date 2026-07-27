@@ -35,6 +35,11 @@ export interface CatchNote {
   path?: PathPoint[]
   /** 연결 노트의 지속 시간 */
   durationMs?: number
+  /**
+   * 이 노트만의 접근 시간. 없으면 비트맵 기본값을 쓴다.
+   * 주먹 노트처럼 준비 시간이 더 필요한 종류에 쓴다 — 판정 시각은 그대로고 더 일찍 등장한다.
+   */
+  approachMs?: number
 }
 
 export interface Beatmap {
@@ -117,6 +122,9 @@ export function parseBeatmap(json: unknown): Beatmap {
         }
       })
       parsed.durationMs = checkNumber(note.durationMs, `notes[${i}].durationMs`, { min: 100 })
+    }
+    if (note.approachMs !== undefined) {
+      parsed.approachMs = checkNumber(note.approachMs, `notes[${i}].approachMs`, { min: 100 })
     }
     return parsed
   })

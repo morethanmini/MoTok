@@ -11,7 +11,7 @@
  */
 
 import { mulberry32, foldSeed, type Rng } from '../core/rng'
-import { HAND_MAX_SPEED, REACH_SAFETY } from '../core/config'
+import { HAND_MAX_SPEED, REACH_SAFETY, CATCH_APPROACH_BONUS_MS, NOTE_RADIUS } from '../core/config'
 import type { Beatmap, CatchNote, PathPoint } from '../core/beatmap'
 import type { Hand, NoteHand, NoteKind } from '../core/types'
 import {
@@ -19,13 +19,15 @@ import {
   X_RANGE,
   Y_RANGE,
   MIN_GAP,
-  MAX_RESAMPLE,
+  OVERLAP_WINDOW_MS,
+  PLACEMENT_CANDIDATES,
   SLOT_MS,
   LEAD_IN_MS,
   CHART_BPM,
   HAND_SHUFFLE_RATE,
   TRAIL_SEGMENTS,
   TRAIL_SEG_BUDGET,
+  TRAIL_ANGLE_CANDIDATES,
   type KindWeights,
   type Difficulty,
 } from './presets'
@@ -69,18 +71,80 @@ function clampReach(point: Point, prev: Point | null, dtMs: number): Point {
 }
 
 /**
- * 스폰 위치 샘플링. avoid에 든 점들과 MIN_GAP 이상 떨어질 때까지 재샘플하고,
- * 상한을 넘으면 마지막 표본을 쓴다(밀집 구간에서 무한 루프 방지).
+ * 스폰 위치 선택 — 후보를 여러 개 뽑아 **장애물에서 가장 멀리 떨어진 것**을 고른다.
+ * 도달 보정을 적용한 뒤 점수를 매기므로, 보정 때문에 다시 겹치는 일이 없다.
+ * MIN_GAP을 만족하는 후보가 나오면 즉시 채택하고, 하나도 없으면 최선을 쓴다.
  */
-function samplePlacement(rng: Rng, spawnSide: Hand, avoid: Point[]): Point {
+function choosePlacement(
+  rng: Rng,
+  spawnSide: Hand,
+  obstacles: Obstacle[],
+  prevEnd: Point | null,
+  dtMs: number,
+): Point {
   const [x0, x1] = X_RANGE[spawnSide]
   const [y0, y1] = Y_RANGE
-  let point: Point = { x: 0, y: 0 }
-  for (let attempt = 0; attempt <= MAX_RESAMPLE; attempt++) {
-    point = { x: x0 + rng() * (x1 - x0), y: y0 + rng() * (y1 - y0) }
-    if (!avoid.some((p) => dist(point, p) < MIN_GAP)) break
+  let best: Point = { x: 0, y: 0 }
+  let bestScore = -Infinity
+
+  for (let i = 0; i < PLACEMENT_CANDIDATES; i++) {
+    const raw = { x: x0 + rng() * (x1 - x0), y: y0 + rng() * (y1 - y0) }
+    const point = clampReach(raw, prevEnd, dtMs)
+    const score = clearanceRatio(point, obstacles)
+    if (score > bestScore) {
+      bestScore = score
+      best = point
+    }
+    if (score >= 1) break // 요구 거리를 만족했으면 더 볼 것 없다
   }
-  return point
+  return best
+}
+
+/** 장애물 = 점 + "이 점과 얼마나 떨어져야 하는가". 시간이 가까울수록 더 벌려야 한다. */
+interface Obstacle {
+  x: number
+  y: number
+  needGap: number
+}
+
+/**
+ * 시간 간격에 따른 필요 거리.
+ * 거의 동시에 뜨는 노트는 확실히 벌리고(=MIN_GAP), 시차가 클수록 완화한다.
+ * 공간이 유한하므로 전부 최대로 벌리려 들면 오히려 배치가 실패한다.
+ */
+function requiredGap(dtMs: number): number {
+  const near = SLOT_MS * 1.5 // 이 안이면 사실상 동시에 보인다
+  if (dtMs <= near) return MIN_GAP
+  const k = Math.min(1, (dtMs - near) / (OVERLAP_WINDOW_MS - near))
+  // 시차가 멀어도 **노트 지름 아래로는 절대 안 내려간다** — 그 밑은 곧 시각적 겹침이다
+  return MIN_GAP + (NOTE_RADIUS * 2 - MIN_GAP) * k
+}
+
+/** 화면에 같이 떠 있는(판정 시각이 가까운) 노트들이 차지한 점들. */
+function occupiedPoints(notes: GeneratedNote[], timeMs: number): Obstacle[] {
+  const out: Obstacle[] = []
+  for (let i = notes.length - 1; i >= 0; i--) {
+    const n = notes[i]!
+    // 시간순 생성이라 창을 벗어나면 그 앞은 볼 필요가 없다
+    const dt = timeMs - endTimeOf(n)
+    if (dt > OVERLAP_WINDOW_MS) break
+    const needGap = requiredGap(Math.max(0, dt))
+    out.push({ x: n.x, y: n.y, needGap })
+    if (n.path) for (const p of n.path) out.push({ x: p.x, y: p.y, needGap })
+  }
+  return out
+}
+
+/**
+ * 장애물 대비 여유 비율 — 1 이상이면 요구 거리를 만족한다.
+ * 절대 거리가 아니라 비율로 봐야 "동시 노트를 우선 벌리는" 판단이 된다.
+ */
+function clearanceRatio(p: Point, obstacles: Obstacle[]): number {
+  let worst = Infinity
+  for (const o of obstacles) {
+    worst = Math.min(worst, Math.hypot(p.x - o.x, p.y - o.y) / o.needGap)
+  }
+  return worst
 }
 
 /** 전체 스폰 영역(좌우 합집합)으로 점을 밀어 넣는다. */
@@ -104,27 +168,51 @@ function pickKind(rng: Rng, weights: KindWeights): NoteKind {
 /**
  * 연결 노트 경로 — 시작점에서 이어지는 꺾인 선.
  * durationMs 동안 등속으로 훑으므로 **전체 길이가 손 속도 한계를 넘으면 안 된다**.
+ *
+ * 경로도 화면을 차지하므로 다른 노트를 피해야 한다 — 구간마다 방향 후보를 여러 개 뽑아
+ * 끝점·중점이 장애물에서 가장 먼 쪽을 고른다(시작점만 피하면 리본이 남의 노트를 관통한다).
  */
-function makeTrailPath(rng: Rng, start: Point, durationMs: number): PathPoint[] {
+function makeTrailPath(
+  rng: Rng,
+  start: Point,
+  durationMs: number,
+  obstacles: Obstacle[],
+): PathPoint[] {
   const [segLo, segHi] = TRAIL_SEGMENTS
   const segments = segLo + Math.floor(rng() * (segHi - segLo + 1))
   // 경로 전체를 durationMs 안에 훑어야 하므로 구간당 예산을 나눠 갖는다
   const budgetPerSeg = (HAND_MAX_SPEED * (durationMs / 1000) * REACH_SAFETY) / segments
+  const [fracLo, fracHi] = TRAIL_SEG_BUDGET
 
   const path: PathPoint[] = []
   let cur = start
   let angle = rng() * Math.PI * 2
-  const [fracLo, fracHi] = TRAIL_SEG_BUDGET
+
   for (let i = 0; i < segments; i++) {
-    // 급격히 꺾이면 못 따라가므로 ±60° 안에서만 방향을 튼다
-    angle += (rng() - 0.5) * (Math.PI / 1.5)
     const len = budgetPerSeg * (fracLo + rng() * (fracHi - fracLo))
-    const next = clampToField({
-      x: cur.x + Math.cos(angle) * len,
-      y: cur.y + Math.sin(angle) * len,
-    })
-    path.push(next)
-    cur = next
+    let best: Point = cur
+    let bestAngle = angle
+    let bestScore = -Infinity
+
+    for (let k = 0; k < TRAIL_ANGLE_CANDIDATES; k++) {
+      // 급격히 꺾이면 못 따라가므로 ±60° 안에서만 방향을 튼다
+      const a = angle + (rng() - 0.5) * (Math.PI / 1.5)
+      const end = clampToField({ x: cur.x + Math.cos(a) * len, y: cur.y + Math.sin(a) * len })
+      const mid = { x: (cur.x + end.x) / 2, y: (cur.y + end.y) / 2 }
+      const score = Math.min(clearanceRatio(end, obstacles), clearanceRatio(mid, obstacles))
+      if (score > bestScore) {
+        bestScore = score
+        best = end
+        bestAngle = a
+      }
+      if (score >= 1) break
+    }
+
+    path.push(best)
+    // 이 구간도 다음 구간의 장애물이 된다 — 경로가 자기 자신을 되밟지 않게
+    obstacles = [...obstacles, { x: best.x, y: best.y, needGap: MIN_GAP }]
+    cur = best
+    angle = bestAngle
   }
   return path
 }
@@ -163,7 +251,7 @@ export function generateBattleChart(
     const simultaneous = rng() < preset.simultaneous
     const owners: Hand[] = simultaneous ? ['left', 'right'] : [nextHand]
 
-    const placedThisSlot: Point[] = []
+    const placedThisSlot: Obstacle[] = []
     for (const owner of owners) {
       const prev = lastByHand[owner]
       // 연결 노트는 끝날 때까지 손을 붙잡으므로 "끝난 시각"부터 계산한다
@@ -176,12 +264,9 @@ export function generateBattleChart(
       const cross = dtMs >= preset.crossMinGapMs && rng() < preset.crossRate
       const spawnSide = cross ? other(owner) : owner
 
-      const avoid: Point[] = [...placedThisSlot]
-      if (prev) avoid.push(endOf(prev))
-
-      // ③ 도달 보정 — 시간 안에 갈 수 있는 거리로 당긴다
-      const sampled = samplePlacement(rng, spawnSide, avoid)
-      const { x, y } = clampReach(sampled, prev ? endOf(prev) : null, dtMs)
+      // ③ 겹침 회피 + 도달 보정 — 화면에 같이 떠 있는 모든 노트를 장애물로 본다
+      const obstacles: Obstacle[] = [...placedThisSlot, ...occupiedPoints(notes, timeMs)]
+      const { x, y } = choosePlacement(rng, spawnSide, obstacles, prev ? endOf(prev) : null, dtMs)
 
       const hand: NoteHand = rng() < preset.anyRate ? 'any' : owner
       const kind = pickKind(rng, preset.kinds)
@@ -190,11 +275,15 @@ export function generateBattleChart(
       if (kind === 'trail') {
         const [durLo, durHi] = preset.trailDurationMs
         note.durationMs = Math.round(durLo + rng() * (durHi - durLo))
-        note.path = makeTrailPath(rng, { x, y }, note.durationMs)
+        note.path = makeTrailPath(rng, { x, y }, note.durationMs, obstacles)
+      }
+      if (kind === 'catch') {
+        // 주먹은 쥘 준비가 필요하다 — 판정 시각은 그대로, 더 일찍 등장시킨다
+        note.approachMs = preset.approachTimeMs + CATCH_APPROACH_BONUS_MS
       }
       notes.push(note)
       lastByHand[owner] = note
-      placedThisSlot.push(note)
+      placedThisSlot.push({ x, y, needGap: MIN_GAP })
     }
 
     // 좌우 교대가 기본, 가끔 한 번 더 뒤집어 같은 손이 연속되게 한다

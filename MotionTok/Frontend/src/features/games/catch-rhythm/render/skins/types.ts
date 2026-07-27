@@ -78,7 +78,8 @@ export interface CatchSkin {
   label: string
   /** 캔버스 배경. 생략하면 렌더러가 투명 처리(뒤 화면이 비친다). */
   drawBackground?(ctx: CanvasRenderingContext2D, w: number, h: number, tMs: number): void
-  drawNote(ctx: CanvasRenderingContext2D, note: NoteView): void
+  /** tMs = 게임 시각. 회전·맥동처럼 시간 기반 연출에 쓴다(프레임률 무관). */
+  drawNote(ctx: CanvasRenderingContext2D, note: NoteView, tMs: number): void
   /** 히트/미스 이펙트. false를 반환하면 수명 종료 → 렌더러가 제거한다. */
   drawHitFx(ctx: CanvasRenderingContext2D, fx: HitFxView): boolean
   drawCursor(ctx: CanvasRenderingContext2D, hand: HandView): void

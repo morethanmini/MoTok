@@ -20,11 +20,24 @@ export const COMBO_MULT_MAX = 2.0 // 최대 2.0
  * 전반적으로 후하게 잡는다 — 어려움은 채보 밀도로 만들지 판정 반경으로 만들지 않는다.
  */
 export const NOTE_RADIUS = 0.15 // 노트 판정 반지름 (게임 좌표)
-export const HAND_RADIUS = 0.11 // 손 커서 판정 반지름
+/**
+ * 손 커서 판정 반지름 — **화면에 그려지는 크기이기도 하다**.
+ * 크게 잡으면 손이 화면을 다 덮어 노트가 안 보인다(실플레이 피드백). 작게 두고
+ * 실제 인식 관대함은 아래 배율로 만든다.
+ */
+export const HAND_RADIUS = 0.07
+/** 주먹 노트 — 준비 시간을 주는 대신 반경은 표준 */
+export const CATCH_REACH_SCALE = 1.15
 /** 스와이프는 스치듯 지나가므로 더 넉넉하게 */
-export const SWIPE_REACH_SCALE = 1.6
+export const SWIPE_REACH_SCALE = 1.9
 /** 연결 노트는 경로를 따라가는 중 흔들림이 크므로 가장 넉넉하게 */
-export const TRAIL_REACH_SCALE = 1.9
+export const TRAIL_REACH_SCALE = 2.2
+
+/**
+ * 주먹 노트는 "쥘 준비"가 필요하다 — 다른 노트보다 이만큼 먼저 등장한다.
+ * 판정 시각은 그대로고 접근 시간만 길어진다.
+ */
+export const CATCH_APPROACH_BONUS_MS = 800
 
 // ── 연결(trail) 노트 ───────────────────────────────────────
 /** 경로를 이 비율 이상 따라가면 PERFECT */

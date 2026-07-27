@@ -99,10 +99,18 @@ export const X_RANGE: Record<Hand, readonly [number, number]> = {
 }
 export const Y_RANGE: readonly [number, number] = [-0.6, 0.6]
 
-/** 직전 같은 손 노트(및 동시 노트 짝)와 이만큼은 떨어뜨린다 */
-export const MIN_GAP = 0.35
-/** 간격 조건을 못 맞출 때 재샘플 상한 — 넘으면 마지막 표본을 쓰고 도달 보정만 건다 */
-export const MAX_RESAMPLE = 10
+/**
+ * 화면에 같이 떠 있는 노트끼리 최소 이 거리는 떨어뜨린다.
+ * 노트 지름(2 × NOTE_RADIUS = 0.30)보다 커야 시각적으로 겹치지 않는다.
+ */
+export const MIN_GAP = 0.44
+/**
+ * 겹침 검사 시간 창 — 판정 시각이 이 안에 있는 노트끼리 거리를 본다.
+ * 접근 시간이 최대 1.9초(주먹 노트)라 그만큼 넓게 봐야 화면이 안 지저분해진다.
+ */
+export const OVERLAP_WINDOW_MS = 1700
+/** 위치 후보를 이만큼 뽑아 **가장 안 겹치는 것**을 고른다(실패해도 최선을 쓴다) */
+export const PLACEMENT_CANDIDATES = 24
 
 /** 좌우 교대를 기본으로 하되 이 확률로 한 번 더 뒤집어 단조로움을 깬다 */
 export const HAND_SHUFFLE_RATE = 0.25
@@ -114,4 +122,7 @@ export const TRAIL_SEGMENTS: readonly [number, number] = [1, 3]
  * 너무 짧으면 인식 반경 안에 경로가 통째로 들어와 **가만히 있어도 통과**한다 —
  * 판정을 후하게 가져가는 대신 경로는 반드시 손을 움직여야 하는 길이여야 한다.
  */
+/** 연결 노트 구간마다 방향 후보를 이만큼 뽑아 장애물을 가장 잘 피하는 쪽을 고른다 */
+export const TRAIL_ANGLE_CANDIDATES = 12
+
 export const TRAIL_SEG_BUDGET: readonly [number, number] = [0.6, 1.0]

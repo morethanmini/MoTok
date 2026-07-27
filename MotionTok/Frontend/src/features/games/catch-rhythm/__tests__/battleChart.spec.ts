@@ -7,9 +7,10 @@ import {
   LEAD_IN_MS,
   X_RANGE,
   Y_RANGE,
+  OVERLAP_WINDOW_MS,
   type Difficulty,
 } from '../generator/presets'
-import { HAND_MAX_SPEED } from '../core/config'
+import { HAND_MAX_SPEED, NOTE_RADIUS } from '../core/config'
 import { parseBeatmap } from '../core/beatmap'
 
 const ROUND_MS = 60_000
@@ -233,6 +234,57 @@ describe('난이도 곡선', () => {
     const playableSec = (ROUND_MS - LEAD_IN_MS) / 1000
     const perSec = allNotes('EASY').length / SEEDS.length / playableSec
     expect(perSec).toBeLessThan(1.0)
+  })
+})
+
+describe('★ 겹침 회피 — 화면에 같이 뜬 노트가 서로를 가리면 못 친다', () => {
+  /** 두 노트(경로 포함)의 가장 가까운 점 사이 거리 */
+  function closest(a: GeneratedNote, b: GeneratedNote): number {
+    const A = [{ x: a.x, y: a.y }, ...(a.path ?? [])]
+    const B = [{ x: b.x, y: b.y }, ...(b.path ?? [])]
+    let min = Infinity
+    for (const p of A) for (const q of B) min = Math.min(min, Math.hypot(p.x - q.x, p.y - q.y))
+    return min
+  }
+
+  it.each(DIFFICULTIES)('%s: 동시에 떠 있는 노트의 시각적 겹침이 8%% 미만', (difficulty) => {
+    let pairs = 0
+    let overlapped = 0
+    for (const seed of SEEDS) {
+      const notes = generateBattleChart(seed, difficulty, ROUND_MS).notes
+      for (let i = 0; i < notes.length; i++) {
+        for (let j = i + 1; j < notes.length; j++) {
+          const a = notes[i]!
+          const b = notes[j]!
+          if (b.timeMs - (a.timeMs + (a.durationMs ?? 0)) >= OVERLAP_WINDOW_MS) break
+          pairs++
+          // 중심 거리가 노트 지름보다 짧으면 화면에서 겹쳐 보인다
+          if (closest(a, b) < NOTE_RADIUS * 2) overlapped++
+        }
+      }
+    }
+    expect(pairs).toBeGreaterThan(100)
+    expect(overlapped / pairs).toBeLessThan(0.08)
+  })
+
+  it('거의 동시(400ms 이내)에 뜨는 노트는 특히 잘 벌어져 있다', () => {
+    for (const difficulty of DIFFICULTIES) {
+      let pairs = 0
+      let overlapped = 0
+      for (const seed of SEEDS) {
+        const notes = generateBattleChart(seed, difficulty, ROUND_MS).notes
+        for (let i = 0; i < notes.length; i++) {
+          for (let j = i + 1; j < notes.length; j++) {
+            const a = notes[i]!
+            const b = notes[j]!
+            if (b.timeMs - (a.timeMs + (a.durationMs ?? 0)) >= 400) break
+            pairs++
+            if (closest(a, b) < NOTE_RADIUS * 2) overlapped++
+          }
+        }
+      }
+      expect(overlapped / pairs).toBeLessThan(0.06)
+    }
   })
 })
 
