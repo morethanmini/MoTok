@@ -52,6 +52,14 @@ public class User extends BaseTimeEntity {
     @Column(name = "nickname_pending", nullable = false)
     private boolean nicknamePending;
 
+    /**
+     * 프로필 사진의 공개 URL. 미설정이면 null이고 클라이언트가 기본 아바타를 그린다.
+     * key가 아니라 완성된 URL을 저장하는 이유 — path-style(MinIO)과 virtual-hosted(AWS)의
+     * 주소 구조가 달라 key로부터 URL을 조립하면 환경에 따라 깨진다(StorageService.publicUrl 참고).
+     */
+    @Column(name = "avatar_url", length = 512)
+    private String avatarUrl;
+
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
@@ -74,6 +82,11 @@ public class User extends BaseTimeEntity {
 
     public void changePassword(String encodedPassword) {
         this.passwordHash = encodedPassword;
+    }
+
+    /** 프로필 사진 변경. null을 주면 기본 아바타로 되돌린다. */
+    public void changeAvatarUrl(String avatarUrl) {
+        this.avatarUrl = avatarUrl;
     }
 
     /**
