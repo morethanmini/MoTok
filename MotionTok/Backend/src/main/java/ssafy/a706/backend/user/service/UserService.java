@@ -27,11 +27,27 @@ import ssafy.a706.backend.user.withdrawal.RejoinPolicy;
 import ssafy.a706.backend.user.withdrawal.WithdrawnIdentifierType;
 
 import java.util.List;
+import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class UserService {
+
+    /**
+     * 기본 프로필 아이콘 파일명 규칙 — {@code 4_cat}, {@code 10_bunny} 처럼 번호와 영문 이름뿐이다.
+     *
+     * <p>목록 전체를 서버에 복사해 두지 않고 형식만 검사한다. 아이콘은 프론트엔드 정적 자산이라
+     * 늘거나 이름이 바뀌는 쪽은 항상 프론트인데, 목록을 양쪽에 두면 아이콘을 추가할 때마다 배포가
+     * 묶인다. 없는 파일을 고르더라도 화면은 기본 이모지로 떨어질 뿐이라(UserAvatar) 피해가 없다.</p>
+     *
+     * <p>대신 형식은 좁게 잡는다 — 슬래시·콜론·점이 못 들어가므로 경로 탈출이나 외부 URL 삽입이
+     * 불가능하다. 이 값은 <b>친구 목록을 통해 다른 사용자 화면에 img src로 렌더링</b>되므로 여기가 방어선이다.</p>
+     */
+    private static final Pattern AVATAR_PRESET = Pattern.compile("^\\d{1,2}_[a-z]{2,16}$");
+
+    /** 기본 프로필 아이콘이 놓인 정적 경로. 업로드 사진과 달리 S3가 아니라 우리 정적 자산이다. */
+    private static final String AVATAR_PRESET_PATH = "/assets/icons/profile/";
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -90,21 +106,54 @@ public class UserService {
      * </ol>
      * (둘 다 {@link StorageService#confirmOwned}가 처리한다.)
      *
-     * <p>key가 null이면 기본 아바타로 되돌린다 — 변경과 삭제를 한 엔드포인트로 처리한다.</p>
+     * <p>preset을 주면 업로드 없이 기본 프로필 아이콘을 고른 것이고, 둘 다 비어 있으면
+     * 아바타를 해제한다 — 선택·변경·삭제를 한 엔드포인트로 처리한다.</p>
      */
     @Transactional
     public UserProfileResponse updateAvatar(Long userId, UpdateAvatarRequest req) {
         User user = findActiveById(userId);
         String previousUrl = user.getAvatarUrl();
 
-        String key = req.key() == null || req.key().isBlank() ? null : req.key().trim();
-        user.changeAvatarUrl(key == null ? null : storageService.confirmOwned(UploadPurpose.AVATAR, userId, key));
+        user.changeAvatarUrl(resolveAvatarUrl(userId, req));
 
         // 이전 사진은 커밋된 뒤에 지운다. 트랜잭션 안에서 지우면 이후 롤백 시 아직 참조 중인
         // 객체를 이미 삭제한 상태가 되어 프로필 사진이 깨진다(삭제는 되돌릴 수 없다).
+        // 기본 아이콘으로 바꾸는 경우에도 그 전에 쓰던 업로드 사진은 여기서 함께 정리된다.
         deleteAfterCommit(previousUrl);
 
         return UserProfileResponse.from(user);
+    }
+
+    /**
+     * 요청 → 저장할 avatarUrl. key(업로드)와 preset(기본 아이콘)은 <b>동시에 올 수 없다</b> —
+     * 둘 다 주면 어느 쪽이 이겼는지 화면에서 알 수 없어 조용히 하나를 고르는 대신 거절한다.
+     */
+    private String resolveAvatarUrl(Long userId, UpdateAvatarRequest req) {
+        String key = trimToNull(req.key());
+        String preset = trimToNull(req.preset());
+
+        if (key != null && preset != null) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        if (preset != null) {
+            if (!AVATAR_PRESET.matcher(preset).matches()) {
+                throw new BusinessException(ErrorCode.INVALID_INPUT);
+            }
+            return AVATAR_PRESET_PATH + preset + ".png";
+        }
+        if (key != null) {
+            return storageService.confirmOwned(UploadPurpose.AVATAR, userId, key);
+        }
+        return null; // 아바타 해제
+    }
+
+    /** 폼에서 빈 문자열이 올 수 있어 null과 같이 다룬다. */
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     /** 이전 아바타 객체 정리. 실패해도 본 흐름을 막지 않는다 — 고아 객체는 나중에 정리할 수 있다. */
