@@ -15,7 +15,7 @@ import { usePoseLandmarker, type PoseLandmarkerResult } from '@/composables/useP
 import type { ActiveGameSession } from '../session'
 import { defaultConfig, type DifficultyKey, type Grade } from './config'
 import { PoseSmoother } from './oneEuro'
-import { AvatarRig } from './avatarRig'
+import { AvatarRig, type SegmentKey } from './avatarRig'
 import {
   createSkeletonState,
   normalizePose,
@@ -74,12 +74,29 @@ const totalScore = ref(0)
 const history = ref<{ round: number; grade: Grade; iou: number }[]>([])
 
 const GRADE_COLOR: Record<Grade, string> = {
-  PERFECT: 'var(--c-violet)',
-  GREAT: 'var(--c-mint)',
-  PASS: 'var(--c-yellow)',
-  FAIL: 'var(--c-coral)',
+  PERFECT: 'var(--bf-violet)',
+  GREAT: 'var(--bf-mint)',
+  PASS: 'var(--bf-gold)',
+  FAIL: 'var(--bf-coral)',
 }
 const GRADE_POINTS: Record<Grade, number> = { PERFECT: 100, GREAT: 85, PASS: 70, FAIL: 0 }
+
+/** 삐져나온 신체 부위 안내(실기 피드백) — 어디가 안 맞는지 말로도 짚어준다 */
+const SEGMENT_WARNING: Record<SegmentKey, string> = {
+  head: '머리가 벽에 걸려요',
+  torso: '몸통이 벽에 걸려요',
+  upperL: '왼팔이 벽에 걸려요',
+  foreL: '왼팔이 벽에 걸려요',
+  handL: '왼손이 벽에 걸려요',
+  upperR: '오른팔이 벽에 걸려요',
+  foreR: '오른팔이 벽에 걸려요',
+  handR: '오른손이 벽에 걸려요',
+}
+/** liveJudge/finalizeJudgment가 채우는 현재 삐져나온 세그먼트 — 경고 문구용 */
+const liveOverflow = ref<SegmentKey[]>([])
+const overflowWarning = computed(() =>
+  liveOverflow.value.length ? SEGMENT_WARNING[liveOverflow.value[0]!] : null,
+)
 
 const DIFFICULTIES: { key: DifficultyKey; label: string }[] = [
   { key: 'easy', label: '쉬움' },
@@ -205,6 +222,7 @@ function startRound() {
   if (!tracked.value || phase.value === 'setting' || phase.value === 'incoming') return
   judgment.value = null
   liveIou.value = 0
+  liveOverflow.value = []
   rig.setOverflow([])
   round.value += 1
   captureAt = performance.now() + 3000
@@ -232,6 +250,7 @@ function liveJudge(now: number) {
     lastLiveJudge = now
     const live = judgeRound(rig.lastSolved, setterPose, holeMargin, cfg)
     liveIou.value = live.iou
+    liveOverflow.value = live.overflow
     rig.setOverflow(live.overflow)
   }
 }
@@ -243,6 +262,7 @@ function finalizeJudgment(): RoundJudgment {
       : { outsideRatio: 1, passed: false, iou: 0, grade: 'FAIL' as Grade, overflow: [] }
   judgment.value = result
   liveIou.value = result.iou
+  liveOverflow.value = result.overflow
   rig.setOverflow(result.overflow)
   return result
 }
@@ -354,6 +374,7 @@ watch(
     applyDifficulty(s.difficulty)
     judgment.value = null
     liveIou.value = 0
+    liveOverflow.value = []
     setterPose = null
     poseSubmitted = false
     finishedSent = false
@@ -557,6 +578,10 @@ onBeforeUnmount(() => {
           <p class="gauge-hint">PASS {{ cfg.judge.grade.pass }} · GREAT {{ cfg.judge.grade.great }} · PERFECT {{ cfg.judge.grade.perfect }}</p>
         </div>
 
+        <div v-if="overflowWarning && phase === 'incoming' && !(isMultiplayer && isSetter)" class="warn-box">
+          ⚠ {{ overflowWarning }}
+        </div>
+
         <div class="card score-card">
           <h3>내 점수</h3>
           <p class="score">{{ totalScore }}<small>점</small></p>
@@ -614,14 +639,26 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .game {
+  /* 다크 HUD 팔레트 — 이 게임 화면 안에서만 쓴다(모톡 크림·픽셀 테마와 무관, 실기 피드백으로 재설계) */
+  --bf-bg: #0a0b1a;
+  --bf-panel: #12142b;
+  --bf-panel-2: #191c3a;
+  --bf-border: rgba(255, 255, 255, 0.09);
+  --bf-text: #eef0ff;
+  --bf-muted: #8d90b8;
+  --bf-mint: #45e0a8;
+  --bf-gold: #ffcf4d;
+  --bf-coral: #ff5d73;
+  --bf-violet: #b98bff;
+
   display: flex;
   flex-direction: column;
   gap: 14px;
   height: 100vh;
   padding: 16px;
-  background: var(--c-cream);
-  color: var(--c-ink);
-  font-family: var(--font-pixel);
+  background: var(--bf-bg);
+  color: var(--bf-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Pretendard', sans-serif;
 }
 /* 게임룸 셀프 타일 위 오버레이(멀티) — 자체 페이지가 아니라 타일을 채운다 */
 .game.embedded {
@@ -637,15 +674,15 @@ onBeforeUnmount(() => {
   z-index: 10;
   display: grid;
   place-items: center;
-  background: rgba(56, 38, 61, 0.45);
+  background: rgba(4, 5, 14, 0.72);
 }
 .results-card {
   min-width: 300px;
   padding: 20px;
-  background: var(--c-paper);
-  border: var(--border-thick);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-lg);
+  background: var(--bf-panel);
+  border: 1px solid var(--bf-border);
+  border-radius: 18px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -666,13 +703,14 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
-  border: var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--c-paper);
+  border: 1px solid var(--bf-border);
+  border-radius: 10px;
+  background: var(--bf-panel-2);
   font-size: 14px;
 }
 .results-list li.me {
-  background: var(--c-mint-soft);
+  background: rgba(69, 224, 168, 0.14);
+  border-color: var(--bf-mint);
 }
 .results-list .rank {
   font-weight: 800;
@@ -692,30 +730,36 @@ onBeforeUnmount(() => {
 }
 .pill {
   padding: 7px 14px;
-  background: var(--c-paper);
-  border: var(--border);
+  background: var(--bf-panel);
+  border: 1px solid var(--bf-border);
   border-radius: 999px;
-  box-shadow: var(--shadow-sm);
   font-size: 14px;
   font-weight: 700;
 }
 .round-pill {
-  background: var(--c-mint-soft);
+  background: var(--bf-panel-2);
+  color: var(--bf-mint);
 }
 .phase-pill {
   flex: 1;
   text-align: center;
+  color: var(--bf-text);
 }
 .timer-pill {
   font-variant-numeric: tabular-nums;
-  background: var(--c-paper);
+  background: var(--bf-panel-2);
+  color: var(--bf-coral);
+  border-color: rgba(255, 93, 115, 0.4);
 }
 .timer-pill.urgent {
-  background: var(--c-coral);
+  background: var(--bf-coral);
   color: #fff;
+  border-color: var(--bf-coral);
 }
 .setter-pill {
-  background: var(--c-yellow);
+  background: rgba(255, 207, 77, 0.14);
+  color: var(--bf-gold);
+  border-color: rgba(255, 207, 77, 0.4);
 }
 .main {
   display: flex;
@@ -733,9 +777,9 @@ onBeforeUnmount(() => {
   position: relative;
   flex: 1;
   min-height: 0;
-  border: var(--border-thick);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--bf-border);
+  border-radius: 18px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
   overflow: hidden;
   background: #0d0c24;
 }
@@ -753,17 +797,17 @@ onBeforeUnmount(() => {
   height: 96px;
   background: rgba(13, 12, 36, 0.7);
   border: 2px solid rgba(255, 255, 255, 0.35);
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
 }
 .pip {
   position: absolute;
   top: 12px;
   right: 12px;
   width: 180px;
-  border: var(--border);
-  border-radius: var(--radius-md);
+  border: 1px solid var(--bf-border);
+  border-radius: 12px;
   overflow: hidden;
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
   background: #000;
 }
 .pip-video {
@@ -785,7 +829,8 @@ onBeforeUnmount(() => {
 .pip-label {
   display: block;
   padding: 3px 8px;
-  background: var(--c-paper);
+  background: var(--bf-panel);
+  color: var(--bf-muted);
   font-size: 11px;
   font-weight: 700;
 }
@@ -796,8 +841,8 @@ onBeforeUnmount(() => {
   place-items: center;
   font-size: 120px;
   font-weight: 800;
-  color: var(--c-yellow);
-  text-shadow: 4px 4px 0 var(--c-ink);
+  color: var(--bf-gold);
+  text-shadow: 0 6px 24px rgba(255, 207, 77, 0.4);
   pointer-events: none;
 }
 .grade-pop {
@@ -832,14 +877,14 @@ onBeforeUnmount(() => {
 }
 .approach-bar .fill {
   height: 100%;
-  background: var(--c-mint);
+  background: var(--bf-mint);
   transition: width 100ms linear;
 }
 .approach-bar.urgent .fill {
-  background: var(--c-coral);
+  background: var(--bf-coral);
 }
 .side {
-  width: 250px;
+  width: 260px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -848,16 +893,17 @@ onBeforeUnmount(() => {
 }
 .card {
   padding: 14px;
-  background: var(--c-paper);
-  border: var(--border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-md);
+  background: var(--bf-panel);
+  border: 1px solid var(--bf-border);
+  border-radius: 16px;
 }
 .card h3 {
   margin-bottom: 8px;
   font-size: 13px;
   font-weight: 700;
-  color: var(--c-muted);
+  color: var(--bf-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 .gauge {
   display: block;
@@ -866,7 +912,7 @@ onBeforeUnmount(() => {
 }
 .gauge .track {
   fill: none;
-  stroke: var(--c-mint-soft);
+  stroke: var(--bf-panel-2);
   stroke-width: 11;
 }
 .gauge .fill {
@@ -876,9 +922,10 @@ onBeforeUnmount(() => {
   transform: rotate(-90deg);
   transform-origin: 60px 60px;
   transition: stroke-dashoffset 250ms linear, stroke 250ms linear;
+  filter: drop-shadow(0 0 6px currentColor);
 }
 .gauge .tick {
-  stroke: var(--c-ink);
+  stroke: var(--bf-muted);
   stroke-width: 2;
 }
 .gauge-num {
@@ -894,13 +941,23 @@ onBeforeUnmount(() => {
   margin-top: 6px;
   text-align: center;
   font-size: 11px;
-  color: var(--c-muted);
+  color: var(--bf-muted);
 }
 .spectate {
   text-align: center;
   font-size: 12px;
-  color: var(--c-muted);
+  color: var(--bf-muted);
   padding: 20px 0;
+}
+.warn-box {
+  padding: 10px 12px;
+  background: rgba(255, 93, 115, 0.12);
+  border: 1px solid rgba(255, 93, 115, 0.4);
+  border-radius: 12px;
+  color: var(--bf-coral);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
 }
 .score {
   font-size: 30px;
@@ -910,6 +967,7 @@ onBeforeUnmount(() => {
 .score small {
   font-size: 14px;
   margin-left: 2px;
+  color: var(--bf-muted);
 }
 .history {
   margin-top: 8px;
@@ -925,30 +983,28 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 8px;
   font-variant-numeric: tabular-nums;
+  color: var(--bf-muted);
 }
 .btn-start {
   padding: 13px;
-  background: var(--c-green);
-  color: #fff;
-  border: var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
+  background: var(--bf-mint);
+  color: #04231a;
+  border: none;
+  border-radius: 12px;
   font-family: inherit;
   font-size: 16px;
   font-weight: 800;
   cursor: pointer;
-  transition: var(--t-fast);
+  transition: opacity 0.15s, transform 0.15s;
 }
 .btn-start:hover:not(:disabled) {
-  transform: translate(-1px, -1px);
-  box-shadow: var(--shadow-lg);
+  transform: translateY(-1px);
 }
 .btn-start:active:not(:disabled) {
-  transform: translate(2px, 2px);
-  box-shadow: none;
+  transform: translateY(0);
 }
 .btn-start:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: default;
 }
 .diff-buttons {
@@ -958,18 +1014,19 @@ onBeforeUnmount(() => {
 .diff-btn {
   flex: 1;
   padding: 8px 4px;
-  background: var(--c-paper);
-  border: var(--border);
-  border-radius: var(--radius-sm);
+  background: var(--bf-panel-2);
+  border: 1px solid var(--bf-border);
+  border-radius: 10px;
+  color: var(--bf-text);
   font-family: inherit;
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  transition: var(--t-fast);
+  transition: background 0.15s;
 }
 .diff-btn.active {
-  background: var(--c-mint);
-  color: #fff;
-  box-shadow: var(--shadow-sm);
+  background: var(--bf-mint);
+  color: #04231a;
+  border-color: var(--bf-mint);
 }
 </style>
