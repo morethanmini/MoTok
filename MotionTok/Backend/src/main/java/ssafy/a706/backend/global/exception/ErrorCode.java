@@ -61,6 +61,7 @@ public enum ErrorCode {
     ROOM_GAME_IN_PROGRESS(HttpStatus.CONFLICT, "ROOM_GAME_IN_PROGRESS", "게임이 진행 중인 방에는 입장할 수 없습니다."),
     ROOM_MAX_PLAYERS_BELOW_CURRENT(HttpStatus.CONFLICT, "ROOM_MAX_PLAYERS_BELOW_CURRENT", "최대 인원은 현재 참가자 수보다 작게 설정할 수 없습니다."),
     QUICK_START_NO_ROOM(HttpStatus.NOT_FOUND, "QUICK_START_NO_ROOM", "입장 가능한 방이 없습니다."),
+    ROOM_INVITE_FORBIDDEN(HttpStatus.FORBIDDEN, "ROOM_INVITE_FORBIDDEN", "방 참가자만 친구를 초대할 수 있습니다."),
 
     // game / session
     GAME_NOT_FOUND(HttpStatus.NOT_FOUND, "GAME_NOT_FOUND", "존재하지 않는 게임입니다."),
@@ -96,7 +97,11 @@ public enum ErrorCode {
     FRIEND_REQUEST_DUPLICATE(HttpStatus.CONFLICT, "FRIEND_REQUEST_DUPLICATE", "이미 보낸 친구 요청이 있습니다."),
     FRIEND_REQUEST_NOT_FOUND(HttpStatus.NOT_FOUND, "FRIEND_REQUEST_NOT_FOUND", "존재하지 않는 친구 요청입니다."),
     FRIEND_REQUEST_FORBIDDEN(HttpStatus.FORBIDDEN, "FRIEND_REQUEST_FORBIDDEN", "이 친구 요청을 처리할 권한이 없습니다."),
-    FRIEND_NOT_FOUND(HttpStatus.NOT_FOUND, "FRIEND_NOT_FOUND", "친구가 아닙니다.");
+    FRIEND_NOT_FOUND(HttpStatus.NOT_FOUND, "FRIEND_NOT_FOUND", "친구가 아닙니다."),
+
+    // 방 초대 (-100)
+    INVITATION_DUPLICATE(HttpStatus.CONFLICT, "INVITATION_DUPLICATE", "이미 보낸 초대가 있습니다."),
+    INVITATION_NOT_FOUND(HttpStatus.NOT_FOUND, "INVITATION_NOT_FOUND", "존재하지 않거나 만료된 초대입니다.");
 
     private final HttpStatus status;
     private final String code;
