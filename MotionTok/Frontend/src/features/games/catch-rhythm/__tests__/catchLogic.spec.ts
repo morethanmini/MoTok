@@ -276,17 +276,28 @@ describe('연결(trail) 노트 — 경로를 따라 그린다', () => {
     expect(events.filter((e) => e.type === 'miss')).toHaveLength(1)
   })
 
-  it('절반쯤 따라가면 GOOD', () => {
+  it('대부분 따라가다 막판에 놓치면 GOOD', () => {
     const logic = new CatchLogic(bm([trail()]))
     logic.update(2000, at(0))
     const events = []
     for (let t = 2000; t <= 2600; t += 50) {
       const ratio = (t - 2000) / 600
-      // 후반부터 경로를 벗어난다
-      events.push(...logic.update(t, ratio < 0.5 ? at(ratio * 1.2) : at(-0.9)))
+      // 3/4 지점까지 따라가다 이탈
+      events.push(...logic.update(t, ratio < 0.75 ? at(ratio * 1.2) : at(-0.9)))
     }
     const hit = events.find((e) => e.type === 'hit')
     expect(hit).toMatchObject({ judgement: 'good' })
+  })
+
+  it('앞부분만 따라가는 건 인정 안 된다 — 인식 반경 안은 공짜 구간이라 채점에서 뺀다', () => {
+    const logic = new CatchLogic(bm([trail()]))
+    logic.update(2000, at(0))
+    const events = []
+    for (let t = 2000; t <= 2600; t += 50) {
+      const ratio = (t - 2000) / 600
+      events.push(...logic.update(t, ratio < 0.5 ? at(ratio * 1.2) : at(-0.9)))
+    }
+    expect(events.filter((e) => e.type === 'miss')).toHaveLength(1)
   })
 
   it('헤드를 아예 못 잡으면 일반 노트처럼 MISS', () => {

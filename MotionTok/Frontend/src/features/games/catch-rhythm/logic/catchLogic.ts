@@ -168,7 +168,8 @@ export class CatchLogic {
       if (note.status === 'tracing') {
         const done = this.traceStep(note, tMs, hands)
         if (done) {
-          const coverage = note.samples === 0 ? 0 : note.tracked / note.samples
+          // 채점 구간이 아예 없을 만큼 짧은 경로는 헤드를 잡은 것만으로 인정한다
+          const coverage = note.samples === 0 ? 1 : note.tracked / note.samples
           const judgement = coverageJudgement(coverage)
           const hand = note.tracingHand ?? 'right'
           if (judgement === 'miss') {
@@ -220,7 +221,14 @@ export class CatchLogic {
     return events
   }
 
-  /** 연결 노트 한 프레임 추적. 경로가 끝났으면 true. */
+  /**
+   * 연결 노트 한 프레임 추적. 경로가 끝났으면 true.
+   *
+   * ★ 채점은 **실제로 움직여야 하는 구간에서만** 한다.
+   * 인식 반경이 후해서 경로 앞부분은 헤드에 손을 얹고 가만히 있어도 닿는다 —
+   * 그 구간까지 세면 "안 따라가도 GOOD"이 나온다. 기대 위치가 시작점의 반경을
+   * 벗어난 뒤부터 세면 "따라갔는가"만 정확히 남는다.
+   */
   private traceStep(note: TrackedNote, tMs: number, hands: Hands): boolean {
     const duration = note.durationMs ?? 0
     const ratio = duration === 0 ? 1 : (tMs - note.timeMs) / duration
@@ -239,8 +247,11 @@ export class CatchLogic {
       return false
     })
 
-    note.samples += 1
-    if (near) note.tracked += 1
+    const movedAway = Math.hypot(want.x - note.x, want.y - note.y) > reach
+    if (movedAway) {
+      note.samples += 1
+      if (near) note.tracked += 1
+    }
     return ratio >= 1
   }
 
