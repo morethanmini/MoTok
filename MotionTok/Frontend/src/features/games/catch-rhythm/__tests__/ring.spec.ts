@@ -15,7 +15,7 @@ import {
   LANE_COUNT,
   RING_RADIUS,
   HIT_ZONE_ANGLE_DEG,
-  HIT_ZONE_RADIUS_TOL,
+  HIT_ZONE_INNER_TOL,
   CAMP_TIMEOUT_MS,
   RING_HAND_SPEED,
 } from '../ring/ringConfig'
@@ -81,9 +81,13 @@ describe('히트 존', () => {
     expect(isInHitZone(atLane(3), 3)).toBe(true)
   })
 
-  it('반지름이 벗어나면 존 밖', () => {
-    expect(isInHitZone(atLane(3, RING_RADIUS - HIT_ZONE_RADIUS_TOL - 0.05), 3)).toBe(false)
-    expect(isInHitZone(atLane(3, RING_RADIUS + HIT_ZONE_RADIUS_TOL + 0.05), 3)).toBe(false)
+  it('★ 안쪽으로 들어오면 존 밖, 바깥으로 뻗는 건 계속 인정', () => {
+    // 중심 쪽으로 너무 들어오면 레인을 벗어난 것
+    expect(isInHitZone(atLane(3, RING_RADIUS - HIT_ZONE_INNER_TOL - 0.05), 3)).toBe(false)
+    expect(isInHitZone(atLane(3, RING_RADIUS - HIT_ZONE_INNER_TOL + 0.05), 3)).toBe(true)
+    // 바깥으로는 아무리 뻗어도 빠지지 않는다 — 오버슈트는 실수가 아니다
+    expect(isInHitZone(atLane(3, RING_RADIUS + 0.5), 3)).toBe(true)
+    expect(isInHitZone(atLane(3, RING_RADIUS + 1.5), 3)).toBe(true)
   })
 
   it('각도 허용 범위 경계', () => {
@@ -265,19 +269,6 @@ describe('링 채보 생성기', () => {
     }
   })
 
-  it('★ 슬라이드도 지속 시간 안에 돌 수 있는 만큼만 돈다', () => {
-    for (const difficulty of DIFFICULTIES) {
-      const slides = SEEDS.flatMap((s) =>
-        generateRingChart(s, difficulty, ROUND_MS).notes.filter((n) => (n.laneDelta ?? 0) !== 0),
-      )
-      expect(slides.length).toBeGreaterThan(0)
-      for (const n of slides) {
-        const arc = RING_RADIUS * Math.abs(n.laneDelta!) * ((Math.PI * 2) / LANE_COUNT)
-        expect(arc).toBeLessThanOrEqual(RING_HAND_SPEED * ((n.durationMs ?? 0) / 1000) + 1e-9)
-      }
-    }
-  })
-
   it('같은 손 최소 간격을 지킨다', () => {
     for (const difficulty of DIFFICULTIES) {
       const minGap = RING_PRESETS[difficulty].minSameHandGapMs
@@ -292,13 +283,19 @@ describe('링 채보 생성기', () => {
     }
   })
 
-  it('양손 인식(any)이 기본이고 홀드도 섞인다', () => {
+  it('양손 인식(any)이 기본이다', () => {
     for (const difficulty of DIFFICULTIES) {
       const notes = SEEDS.flatMap((s) => generateRingChart(s, difficulty, ROUND_MS).notes)
       const any = notes.filter((n) => n.hand === 'any').length / notes.length
-      const holds = notes.filter((n) => n.type === 'hold').length / notes.length
       expect(any).toBeGreaterThan(0.4)
-      expect(holds).toBeGreaterThan(0.15)
+    }
+  })
+
+  it('★ 홀드는 현재 생성하지 않는다 (실플레이 피드백으로 제외)', () => {
+    for (const difficulty of DIFFICULTIES) {
+      const notes = SEEDS.flatMap((s) => generateRingChart(s, difficulty, ROUND_MS).notes)
+      expect(notes.every((n) => n.type === 'tap')).toBe(true)
+      expect(RING_PRESETS[difficulty].holdRate).toBe(0)
     }
   })
 

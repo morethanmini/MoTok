@@ -10,7 +10,7 @@ import { HAND_RADIUS } from '../core/config'
 import type { Hand, Judgement, NoteHand } from '../core/types'
 import type { CatchSkin, HitFxView } from '../render/skins/types'
 import type { RenderHand } from '../render/renderer'
-import { LANE_COUNT, RING_RADIUS, HIT_ZONE_ANGLE_DEG, HIT_ZONE_RADIUS_TOL } from './ringConfig'
+import { LANE_COUNT, RING_RADIUS, HIT_ZONE_ANGLE_DEG, HIT_ZONE_INNER_TOL } from './ringConfig'
 import {
   laneAngleDeg,
   laneDirection,
@@ -192,12 +192,16 @@ export class RingRenderer {
     const c = this.toPixels(0, 0)
     ctx.save()
 
-    // 존 두께(반지름 허용 범위)를 옅은 띠로
-    ctx.strokeStyle = 'rgba(224,122,79,0.16)'
-    ctx.lineWidth = HIT_ZONE_RADIUS_TOL * 2 * unit
+    // 판정 가능 영역 — 링 안쪽 경계부터 바깥은 전부. 안쪽 경계만 보여 주면 된다.
+    const innerEdge = (RING_RADIUS - HIT_ZONE_INNER_TOL) * unit
+    const band = ctx.createRadialGradient(c.x, c.y, innerEdge, c.x, c.y, RING_RADIUS * unit * 1.5)
+    band.addColorStop(0, 'rgba(224,122,79,0.16)')
+    band.addColorStop(1, 'rgba(224,122,79,0.04)')
+    ctx.fillStyle = band
     ctx.beginPath()
-    ctx.arc(c.x, c.y, RING_RADIUS * unit, 0, Math.PI * 2)
-    ctx.stroke()
+    ctx.arc(c.x, c.y, RING_RADIUS * unit * 1.5, 0, Math.PI * 2)
+    ctx.arc(c.x, c.y, innerEdge, 0, Math.PI * 2, true)
+    ctx.fill()
 
     // 판정 링 본선
     ctx.strokeStyle = 'rgba(224,122,79,0.55)'
@@ -211,8 +215,8 @@ export class RingRenderer {
     ctx.lineWidth = Math.max(1, unit * 0.006)
     for (let lane = 0; lane < LANE_COUNT; lane++) {
       const deg = laneAngleDeg(lane) + 180 / LANE_COUNT // 레인 사이 경계
-      const inner = this.polarToPixels(deg, RING_RADIUS - HIT_ZONE_RADIUS_TOL)
-      const outer = this.polarToPixels(deg, RING_RADIUS + HIT_ZONE_RADIUS_TOL)
+      const inner = this.polarToPixels(deg, RING_RADIUS - HIT_ZONE_INNER_TOL)
+      const outer = this.polarToPixels(deg, RING_RADIUS * 1.35)
       ctx.beginPath()
       ctx.moveTo(inner.x, inner.y)
       ctx.lineTo(outer.x, outer.y)
