@@ -88,4 +88,13 @@ describe('normalizePose', () => {
     expect(p.wristR).toBeNull()
     expect(p.hipMid).toBeNull()
   })
+
+  it('팔 관절에는 어깨 기준 상대 깊이 z가 실린다 (+ = 카메라 쪽)', () => {
+    const lm = landmarks()
+    lm[11] = { x: 0.65, y: 0.42, z: 0.1, visibility: 1 }
+    lm[12] = { x: 0.35, y: 0.38, z: 0.1, visibility: 1 }
+    lm[13] = { x: 0.7, y: 0.6, z: -0.05, visibility: 1 } // MediaPipe: 음수 = 카메라 쪽
+    const p = normalizePose(lm, false)!
+    expect(p.elbowL!.z).toBeGreaterThan(0)
+  })
 })

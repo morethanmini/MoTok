@@ -52,7 +52,8 @@ class OneEuro1D {
 }
 
 /**
- * 33개 포즈 랜드마크의 x·y 일괄 필터 (z는 판정에서 버리므로 필터링하지 않는다 — §5-5).
+ * 33개 포즈 랜드마크의 x·y·z 일괄 필터. z는 판정에서 버리지만(§5-5) 렌더 깊이
+ * (팔 앞/뒤 방향)에 쓰이고, MediaPipe z는 x·y보다 지터가 심해 필터가 더 필요하다.
  * 랜드마크 개수·순서가 프레임마다 같다는 MediaPipe 보장에 기댄다.
  */
 export class PoseSmoother {
@@ -60,7 +61,7 @@ export class PoseSmoother {
   private lastT: number | null = null
 
   constructor(params: OneEuroParams, landmarkCount = 33) {
-    this.filters = Array.from({ length: landmarkCount * 2 }, () => new OneEuro1D(params))
+    this.filters = Array.from({ length: landmarkCount * 3 }, () => new OneEuro1D(params))
   }
 
   /** 녹화 재생 루프 시작 등 시간축이 끊길 때 호출 — 이전 상태를 버린다 */
@@ -70,14 +71,15 @@ export class PoseSmoother {
   }
 
   /** tMs: 프레임 타임스탬프(ms). 원본은 건드리지 않고 필터링된 사본을 돌려준다. */
-  apply<T extends { x: number; y: number }>(landmarks: T[], tMs: number): T[] {
+  apply<T extends { x: number; y: number; z?: number }>(landmarks: T[], tMs: number): T[] {
     const dt =
       this.lastT === null ? 1 / 30 : Math.min(Math.max((tMs - this.lastT) / 1000, 1e-3), 0.1)
     this.lastT = tMs
     return landmarks.map((lm, i) => ({
       ...lm,
-      x: this.filters[i * 2]!.next(lm.x, dt),
-      y: this.filters[i * 2 + 1]!.next(lm.y, dt),
+      x: this.filters[i * 3]!.next(lm.x, dt),
+      y: this.filters[i * 3 + 1]!.next(lm.y, dt),
+      z: lm.z === undefined ? undefined : this.filters[i * 3 + 2]!.next(lm.z, dt),
     }))
   }
 }

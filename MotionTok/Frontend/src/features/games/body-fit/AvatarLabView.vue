@@ -117,6 +117,10 @@ function initThree(canvas: HTMLCanvasElement) {
   sun.shadow.camera.near = 0.5
   sun.shadow.camera.far = 12
   scene.add(sun)
+  // 림 라이트 — 뒤쪽 역광이 캡슐 윤곽을 배경에서 띄운다 (입체감)
+  const rim = new THREE.DirectionalLight(0x7f9dff, 1.4)
+  rim.position.set(-2, 2.5, -3.5)
+  scene.add(rim)
 
   rig = new AvatarRig(cfg.avatar)
   scene.add(rig.group)
@@ -136,6 +140,9 @@ function renderLoop() {
   rafId = requestAnimationFrame(renderLoop)
   if (!renderer) return
   if (mode.value === 'replay') stepReplay(performance.now())
+  // 패럴랙스: 아바타가 기울면 카메라가 살짝 따라 돈다 — 시점 변화가 입체감을 만든다
+  camera.position.x += (rig.group.position.x * 0.35 - camera.position.x) * 0.06
+  camera.lookAt(0, -0.5, 0)
   const t0 = performance.now()
   renderer.render(scene, camera)
   renderSum += performance.now() - t0
