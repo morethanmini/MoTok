@@ -101,7 +101,15 @@ public enum ErrorCode {
 
     // 방 초대 (-100)
     INVITATION_DUPLICATE(HttpStatus.CONFLICT, "INVITATION_DUPLICATE", "이미 보낸 초대가 있습니다."),
-    INVITATION_NOT_FOUND(HttpStatus.NOT_FOUND, "INVITATION_NOT_FOUND", "존재하지 않거나 만료된 초대입니다.");
+    INVITATION_NOT_FOUND(HttpStatus.NOT_FOUND, "INVITATION_NOT_FOUND", "존재하지 않거나 만료된 초대입니다."),
+
+    // storage (업로드) — presigned 방식이라 서버가 막을 지점이 정해져 있다(StorageService 주석 참고)
+    UPLOAD_UNSUPPORTED_TYPE(HttpStatus.BAD_REQUEST, "UPLOAD_UNSUPPORTED_TYPE", "지원하지 않는 파일 형식입니다."),
+    UPLOAD_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "UPLOAD_TOO_LARGE", "파일 용량이 제한을 초과했습니다."),
+    UPLOAD_PURPOSE_NOT_PRESIGNABLE(HttpStatus.BAD_REQUEST, "UPLOAD_PURPOSE_NOT_PRESIGNABLE", "직접 업로드할 수 없는 용도입니다."),
+    UPLOAD_KEY_FORBIDDEN(HttpStatus.FORBIDDEN, "UPLOAD_KEY_FORBIDDEN", "이 파일에 대한 권한이 없습니다."),
+    UPLOAD_OBJECT_NOT_FOUND(HttpStatus.NOT_FOUND, "UPLOAD_OBJECT_NOT_FOUND", "업로드된 파일을 찾을 수 없습니다."),
+    STORAGE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "STORAGE_UNAVAILABLE", "파일 저장소에 접근할 수 없습니다.");
 
     private final HttpStatus status;
     private final String code;
