@@ -31,11 +31,18 @@ export interface BodyFitConfig {
      * 1 = 측정값 그대로, 2 = 두 배로 기울임
      */
     leanGain: number
+    /** 머리 기울기 증폭 배율 — 얼굴 없는 구는 위치 이동만 보이므로 각도를 키워 체감을 살린다 */
+    headGain: number
   }
   /** 판정 모델 (기획 §7, UI 스펙 §2) */
   judge: {
     /** 면적비 — 구멍 면적 = 원본 면적 × K. 유일한 난이도 노브 (§2-3) */
     K: number
+    /**
+     * 난이도 모드 프리셋 → K. 쉬움 1.5는 실기 플레이로 확정(2026-07-27),
+     * 보통·어려움은 캘리브레이션 대상 초깃값 (UI 스펙 §11)
+     */
+    difficultyK: { easy: number; normal: number; hard: number }
     /** 세그먼트별 마진 배율 (§2-2) — 관절에서 멀수록 각도 오차가 증폭되므로 말단이 크다 */
     marginMul: {
       headTorso: number
@@ -73,9 +80,11 @@ export function defaultConfig(): BodyFitConfig {
       capsuleRadius: 0.13,
       headRadius: 0.42,
       leanGain: 1.6,
+      headGain: 1.5,
     },
     judge: {
-      K: 1.7,
+      K: 1.5,
+      difficultyK: { easy: 1.5, normal: 1.35, hard: 1.2 },
       marginMul: { headTorso: 0.6, upperArm: 1.0, forearm: 1.6, hand: 2.0 },
       overflowTolerance: 0.03,
       grade: { perfect: 92, great: 82, pass: 70 },

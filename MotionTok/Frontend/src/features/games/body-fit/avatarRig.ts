@@ -69,16 +69,22 @@ export class AvatarRig {
   /** 마지막으로 적용된 골격 — 판정기가 이 값을 그대로 쓴다 */
   lastSolved: SolvedSkeleton | null = null
 
-  private readonly material = new THREE.MeshStandardMaterial({
+  // sheen이 매트한 표면에 옅은 빛 산란을 얹어 점토 같은 부드러움을 낸다 (§5-2 목표 룩)
+  private readonly material = new THREE.MeshPhysicalMaterial({
     color: 0xffffff,
-    roughness: 0.85,
+    roughness: 0.75,
     metalness: 0,
+    sheen: 0.55,
+    sheenRoughness: 0.6,
+    sheenColor: 0xffffff,
   })
-  /** 삐져나온 세그먼트용 — UI 스펙 §1-3 --overflow */
-  private readonly overflowMaterial = new THREE.MeshStandardMaterial({
+  /** 삐져나온 세그먼트용 — UI 스펙 §1-3 --overflow. emissive라 블룸에서 실제로 빛난다 */
+  private readonly overflowMaterial = new THREE.MeshPhysicalMaterial({
     color: 0xff2d3f,
-    roughness: 0.85,
+    roughness: 0.75,
     metalness: 0,
+    emissive: 0xff2d3f,
+    emissiveIntensity: 0.55,
   })
 
   private readonly head: THREE.Mesh

@@ -21,6 +21,7 @@ import {
 import { defaultConfig } from './config'
 import { PoseSmoother } from './oneEuro'
 import { AvatarRig, normalizePose, type LandmarkPoint } from './avatarRig'
+import { createStage, type Stage } from './stage'
 
 interface Frame {
   /** 녹화 시작 기준 경과 ms */
@@ -61,10 +62,10 @@ const statusText = computed(() => {
 })
 
 // ── three.js 씬 (반응형으로 만들 필요 없는 것들은 전부 plain 변수) ──
+let stage: Stage | null = null
 let renderer: THREE.WebGLRenderer | null = null
 let scene: THREE.Scene
 let camera: THREE.PerspectiveCamera
-let ground: THREE.Mesh
 let rig: AvatarRig
 let rafId = 0
 let resizeObs: ResizeObserver | null = null
@@ -91,60 +92,26 @@ let replayPtr = 0
 let lastReplayT = Infinity
 
 function initThree(canvas: HTMLCanvasElement) {
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-  renderer.shadowMap.enabled = true
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap
-  renderer.toneMapping = THREE.ACESFilmicToneMapping
-
-  scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x0d0c24) // --bg-sunken (UI 스펙 §1-1)
-
-  camera = new THREE.PerspectiveCamera(40, 1, 0.1, 50)
-  camera.position.set(0, 0.3, 4.8)
-  camera.lookAt(0, -0.5, 0)
-
-  // 순백 매트 재질이 살아나는 부드러운 조명 (§5-2)
-  scene.add(new THREE.HemisphereLight(0xbdc7ff, 0x1a1836, 1.1))
-  const sun = new THREE.DirectionalLight(0xffffff, 2.2)
-  sun.position.set(2.5, 4, 3)
-  sun.castShadow = true
-  sun.shadow.mapSize.set(1024, 1024)
-  sun.shadow.camera.left = -3
-  sun.shadow.camera.right = 3
-  sun.shadow.camera.top = 3
-  sun.shadow.camera.bottom = -3
-  sun.shadow.camera.near = 0.5
-  sun.shadow.camera.far = 12
-  scene.add(sun)
-  // 림 라이트 — 뒤쪽 역광이 캡슐 윤곽을 배경에서 띄운다 (입체감)
-  const rim = new THREE.DirectionalLight(0x7f9dff, 1.4)
-  rim.position.set(-2, 2.5, -3.5)
-  scene.add(rim)
+  // 공용 무대(stage.ts) — 조명·IBL·포디움·안개는 랩과 본 게임이 공유한다
+  stage = createStage(canvas)
+  renderer = stage.renderer
+  scene = stage.scene
+  camera = stage.camera
 
   rig = new AvatarRig(cfg.avatar)
   scene.add(rig.group)
-
-  // 접지 그림자만 받는 투명 바닥
-  ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(20, 20),
-    new THREE.ShadowMaterial({ opacity: 0.35 }),
-  )
-  ground.rotation.x = -Math.PI / 2
-  ground.position.y = rig.floorY
-  ground.receiveShadow = true
-  scene.add(ground)
+  stage.setFloorY(rig.floorY)
 }
 
 function renderLoop() {
   rafId = requestAnimationFrame(renderLoop)
-  if (!renderer) return
+  if (!stage) return
   if (mode.value === 'replay') stepReplay(performance.now())
   // 패럴랙스: 아바타가 기울면 카메라가 살짝 따라 돈다 — 시점 변화가 입체감을 만든다
   camera.position.x += (rig.group.position.x * 0.35 - camera.position.x) * 0.06
   camera.lookAt(0, -0.5, 0)
   const t0 = performance.now()
-  renderer.render(scene, camera)
+  stage.render()
   renderSum += performance.now() - t0
   renderN++
 }
@@ -304,7 +271,7 @@ function stepReplay(now: number) {
 // ── 라이프사이클 ────────────────────────────────
 watch(cfg.avatar, () => {
   rig.applyConfig(cfg.avatar)
-  ground.position.y = rig.floorY
+  stage?.setFloorY(rig.floorY)
 })
 // cfg.filter는 PoseSmoother가 참조로 들고 있어 즉시 반영 — watch 불필요.
 // 미러 전환은 필터 상태만 끊어준다 (x가 점프하므로)
@@ -312,19 +279,17 @@ watch(mirror, () => smoother.reset())
 
 onMounted(async () => {
   const canvas = glCanvasRef.value!
-  const stage = stageRef.value!
+  const stageEl = stageRef.value!
   initThree(canvas)
 
   const resize = () => {
-    const w = stage.clientWidth
-    const h = stage.clientHeight
-    if (!w || !h || !renderer) return
-    renderer.setSize(w, h, false)
-    camera.aspect = w / h
-    camera.updateProjectionMatrix()
+    const w = stageEl.clientWidth
+    const h = stageEl.clientHeight
+    if (!w || !h || !stage) return
+    stage.setSize(w, h)
   }
   resizeObs = new ResizeObserver(resize)
-  resizeObs.observe(stage)
+  resizeObs.observe(stageEl)
   resize()
   renderLoop()
   statsTimer = window.setInterval(flushStats, 500)
@@ -351,7 +316,8 @@ onBeforeUnmount(() => {
   stream?.getTracks().forEach((t) => t.stop())
   resizeObs?.disconnect()
   rig?.dispose()
-  renderer?.dispose()
+  stage?.dispose()
+  stage = null
   renderer = null
 })
 </script>
@@ -445,6 +411,12 @@ onBeforeUnmount(() => {
               >허리 기울기 증폭 <b>×{{ cfg.avatar.leanGain.toFixed(2) }}</b></span
             >
             <input v-model.number="cfg.avatar.leanGain" type="range" min="1" max="3" step="0.05" />
+          </label>
+          <label>
+            <span
+              >머리 기울기 증폭 <b>×{{ cfg.avatar.headGain.toFixed(2) }}</b></span
+            >
+            <input v-model.number="cfg.avatar.headGain" type="range" min="1" max="3" step="0.05" />
           </label>
         </section>
 
