@@ -42,6 +42,9 @@ public class GameSessionRepository {
             // 과제 payload는 게임에 따라 JSON일 수 있어 URL-encode로 안전하게 담는다 (-137)
             fields.put("challenge", URLEncoder.encode(session.challenge(), StandardCharsets.UTF_8));
         }
+        if (session.setterUserId() != null) {
+            fields.put("setterUserId", session.setterUserId());
+        }
         fields.put("startAt", String.valueOf(session.startAt()));
         fields.put("endAt", String.valueOf(session.endAt()));
         fields.put("status", session.status());
@@ -70,6 +73,7 @@ public class GameSessionRepository {
                 encodedChallenge == null
                         ? null
                         : URLDecoder.decode(encodedChallenge, StandardCharsets.UTF_8),
+                (String) f.get("setterUserId"),
                 Long.parseLong((String) f.get("startAt")),
                 Long.parseLong((String) f.get("endAt")),
                 (String) f.get("status")

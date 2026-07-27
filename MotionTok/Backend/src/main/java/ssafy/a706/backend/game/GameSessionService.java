@@ -12,6 +12,7 @@ import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameProgressRequest;
 import ssafy.a706.backend.game.dto.GameResultEntry;
 import ssafy.a706.backend.game.dto.GameStartRequest;
+import ssafy.a706.backend.game.dto.PoseSubmitRequest;
 import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.model.GamePlayerScore;
 import ssafy.a706.backend.game.model.GameSession;
@@ -22,6 +23,7 @@ import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
 import ssafy.a706.backend.signal.RoomMembershipReader;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -57,6 +59,16 @@ public class GameSessionService {
     private static final long FINGER_STAR_GAME_ID = 1L;
     /** 게임① 부가 지표 stats 키 (-137 일반화 후 레거시 표기 유지용). */
     private static final String STAT_STARS_HIT = "starsHit";
+
+    /** 게임④(몸 끼워 맞추기, S15P11A706-86) — 출제 페이즈가 있는 게임. */
+    private static final long BODY_FIT_GAME_ID = 4L;
+    /** 게임④ 출제 페이즈 길이 — FE config·기획 §3과 동기화. */
+    private static final long BODY_FIT_SETTING_MILLIS = 5_000;
+    /** 게임④ 난이도 → 벽 접근 시간(ms) — FE config.difficulty와 동기화. */
+    private static final Map<String, Long> BODY_FIT_APPROACH_MILLIS =
+            Map.of("easy", 7_000L, "normal", 6_000L, "hard", 5_000L);
+    /** 포즈 payload 상한 — 랜드마크 33점 JSON은 ~2KB, 여유 4배 (§9-2). */
+    private static final int MAX_POSE_PAYLOAD_BYTES = 8_192;
 
     /**
      * 별자리 과제 후보(핑거 스타 콘텐츠) — 게임① 전용 챌린지 풀.
@@ -113,8 +125,23 @@ public class GameSessionService {
         String challenge = resolveChallenge(gameId, request);
         String sessionId = UUID.randomUUID().toString();
         long startAt = now + game.getCountdownSec() * 1000L;
-        long endAt = startAt + game.getRoundDurationSec() * 1000L;
-        GameSession session = new GameSession(sessionId, gameId, challenge,
+
+        // 게임④(-86): 라운드 = 출제 5s + 벽 접근(난이도별). v1은 단일 라운드·출제자 = 방장.
+        // 출제자 로테이션·멀티 라운드는 -48에서 확장한다.
+        String difficulty = null;
+        String setterUserId = null;
+        long endAt;
+        if (gameId == BODY_FIT_GAME_ID) {
+            difficulty = request.difficulty() != null
+                    && BODY_FIT_APPROACH_MILLIS.containsKey(request.difficulty())
+                    ? request.difficulty() : "easy";
+            setterUserId = sender.userId();
+            endAt = startAt + BODY_FIT_SETTING_MILLIS + BODY_FIT_APPROACH_MILLIS.get(difficulty);
+        } else {
+            endAt = startAt + game.getRoundDurationSec() * 1000L;
+        }
+
+        GameSession session = new GameSession(sessionId, gameId, challenge, setterUserId,
                 startAt, endAt, GameSession.STATUS_PLAYING);
         sessionRepository.saveSession(roomId, session);
         liveRoomRepository.updateStatus(roomId, "PLAYING");
@@ -122,10 +149,35 @@ public class GameSessionService {
         // constellationKey는 게임① FE 하위호환 필드 — 게임①일 때만 challenge와 같은 값
         String legacyConstellationKey = gameId == FINGER_STAR_GAME_ID ? challenge : null;
         broadcast(roomId, GameEventResponse.gameStart(
-                sessionId, gameId, challenge, legacyConstellationKey, now, startAt, endAt));
+                sessionId, gameId, challenge, legacyConstellationKey, setterUserId, difficulty,
+                now, startAt, endAt));
         scheduleEnd(roomId, sessionId, endAt + END_GRACE_MILLIS);
-        log.info("game session started: room={} session={} game={} challenge={}",
-                roomId, sessionId, gameId, challenge);
+        log.info("game session started: room={} session={} game={} challenge={} setter={}",
+                roomId, sessionId, gameId, challenge, setterUserId);
+    }
+
+    /**
+     * 게임④ 출제자 포즈 수리(-86) — challenge 저장 + POSE_SET 재방송.
+     * 각 클라이언트가 받은 랜드마크를 같은 렌더 함수에 넣으므로 전원이 동일한 벽을 본다(§9-2).
+     */
+    public void submitPose(String roomId, PoseSubmitRequest request, AuthPrincipal sender) {
+        requireMembership(roomId, sender);
+        GameSession session = requireActiveSession(roomId);
+        if (session.gameId() != BODY_FIT_GAME_ID || session.setterUserId() == null) {
+            throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
+        }
+        if (!sender.userId().equals(session.setterUserId())) {
+            throw new BusinessException(ErrorCode.GAME_NOT_SETTER);
+        }
+        String pose = request.pose();
+        if (pose == null || pose.isBlank()
+                || pose.getBytes(StandardCharsets.UTF_8).length > MAX_POSE_PAYLOAD_BYTES) {
+            throw new BusinessException(ErrorCode.GAME_POSE_INVALID);
+        }
+        sessionRepository.updateChallenge(roomId, pose);
+        broadcast(roomId, GameEventResponse.poseSet(session.sessionId(), sender.userId(), pose));
+        log.info("pose set: room={} session={} setter={} bytes={}",
+                roomId, session.sessionId(), sender.userId(), pose.length());
     }
 
     /** 라운드 중 진행 상황 중계 — 저장 없음, 클램프 후 방 토픽으로 재방송. */

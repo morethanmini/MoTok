@@ -11,6 +11,8 @@ import java.util.List;
  *       클라이언트는 serverNow와 자기 시계 차이로 오프셋을 보정한다(서버 권위 타이머).
  *       challenge는 게임별 과제 payload(-137) — constellationKey는 게임①(핑거 스타)
  *       하위호환 필드로, 게임①일 때만 challenge와 같은 값이 실린다.</li>
+ *   <li>POSE_SET — 게임④ 출제자 포즈 수리(-86). challenge(랜드마크 JSON)·userId(출제자) 유효.
+ *       각 클라이언트가 이 랜드마크로 같은 벽을 렌더한다.</li>
  *   <li>PROGRESS — 참가자 진행 상황 중계(비영속). userId·starsLit·holdProgress만 유효.</li>
  *   <li>PLAYER_FINISHED — 참가자 최초 제출 수리. score·starsHit 유효.</li>
  *   <li>GAME_END — 서버 정산. results(순위 내림차순) 유효. 이후 방 상태는 WAITING 복귀.</li>
@@ -22,6 +24,8 @@ public record GameEventResponse(
         Long gameId,
         String challenge,
         String constellationKey,
+        String setterUserId,
+        String difficulty,
         Long serverNow,
         Long startAt,
         Long endAt,
@@ -34,30 +38,37 @@ public record GameEventResponse(
         List<GameResultEntry> results
 ) {
 
-    public enum EventType { GAME_START, PROGRESS, PLAYER_FINISHED, GAME_END }
+    public enum EventType { GAME_START, POSE_SET, PROGRESS, PLAYER_FINISHED, GAME_END }
 
     public static GameEventResponse gameStart(String sessionId, long gameId, String challenge,
-                                              String legacyConstellationKey,
+                                              String legacyConstellationKey, String setterUserId,
+                                              String difficulty,
                                               long serverNow, long startAt, long endAt) {
         return new GameEventResponse(EventType.GAME_START, sessionId, gameId, challenge,
-                legacyConstellationKey, serverNow, startAt, endAt,
+                legacyConstellationKey, setterUserId, difficulty, serverNow, startAt, endAt,
                 null, null, null, null, null, null, null);
+    }
+
+    public static GameEventResponse poseSet(String sessionId, String setterUserId, String challenge) {
+        return new GameEventResponse(EventType.POSE_SET, sessionId, null, challenge,
+                null, setterUserId, null, null, null, null,
+                setterUserId, null, null, null, null, null, null);
     }
 
     public static GameEventResponse progress(String sessionId, String userId, String nickname,
                                              int starsLit, double holdProgress) {
-        return new GameEventResponse(EventType.PROGRESS, sessionId, null, null, null,
+        return new GameEventResponse(EventType.PROGRESS, sessionId, null, null, null, null, null,
                 null, null, null, userId, nickname, starsLit, holdProgress, null, null, null);
     }
 
     public static GameEventResponse playerFinished(String sessionId, String userId, String nickname,
                                                    int score, int starsHit) {
-        return new GameEventResponse(EventType.PLAYER_FINISHED, sessionId, null, null, null,
+        return new GameEventResponse(EventType.PLAYER_FINISHED, sessionId, null, null, null, null, null,
                 null, null, null, userId, nickname, null, null, score, starsHit, null);
     }
 
     public static GameEventResponse gameEnd(String sessionId, List<GameResultEntry> results) {
-        return new GameEventResponse(EventType.GAME_END, sessionId, null, null, null,
+        return new GameEventResponse(EventType.GAME_END, sessionId, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, results);
     }
 }
