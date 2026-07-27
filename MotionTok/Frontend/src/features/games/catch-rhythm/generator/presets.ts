@@ -13,7 +13,13 @@ export function isDifficulty(value: unknown): value is Difficulty {
   return typeof value === 'string' && (DIFFICULTIES as string[]).includes(value)
 }
 
-/** 노트 종류 가중치 — 합이 1이 아니어도 되고, 비율로 정규화된다. */
+/**
+ * 노트 종류 가중치 — 합이 1이 아니어도 되고, 비율로 정규화된다.
+ *
+ * catch(주먹 쥐기)는 **현재 전 난이도 0**이다. 손 트래킹으로 쥠/폄을 구분하는 게
+ * 태생적으로 느리고 부정확해서 실플레이에서 계속 걸림돌이 됐다.
+ * 판정 로직·렌더·테스트는 남아 있으니 되살리려면 이 숫자만 올리면 된다.
+ */
 export interface KindWeights {
   swipe: number
   trail: number
@@ -43,7 +49,7 @@ export interface Preset {
 
 /**
  * 실플레이 피드백(2026-07-27) 2차 반영.
- * - **스와이프가 주력**. 주먹(catch)은 인식률·피로도 문제로 특수 노트로 내렸다
+ * - **스와이프가 주력**. 주먹(catch)은 인식률 문제로 아예 빼고, 스와이프/연결 둘로 간다
  * - **양손 인식(any)이 기본** — 손을 지정하면 급격히 어려워진다
  * - 크로스는 "스와이프인데 손이 꼬이는" 재미 요소로만 남긴다
  */
@@ -53,7 +59,7 @@ export const PRESETS: Record<Difficulty, Preset> = {
     simultaneous: 0,
     crossRate: 0,
     anyRate: 0.75,
-    kinds: { swipe: 0.72, trail: 0.22, catch: 0.06 },
+    kinds: { swipe: 0.76, trail: 0.24, catch: 0 },
     trailDurationMs: [1100, 1700],
     minSameHandGapMs: 500,
     crossMinGapMs: 900,
@@ -64,7 +70,7 @@ export const PRESETS: Record<Difficulty, Preset> = {
     simultaneous: 0.08,
     crossRate: 0.16,
     anyRate: 0.6,
-    kinds: { swipe: 0.66, trail: 0.24, catch: 0.1 },
+    kinds: { swipe: 0.73, trail: 0.27, catch: 0 },
     trailDurationMs: [1000, 1500],
     minSameHandGapMs: 380,
     crossMinGapMs: 800,
@@ -75,7 +81,7 @@ export const PRESETS: Record<Difficulty, Preset> = {
     simultaneous: 0.2,
     crossRate: 0.3,
     anyRate: 0.45,
-    kinds: { swipe: 0.62, trail: 0.25, catch: 0.13 },
+    kinds: { swipe: 0.71, trail: 0.29, catch: 0 },
     trailDurationMs: [850, 1300],
     minSameHandGapMs: 300,
     crossMinGapMs: 700,
