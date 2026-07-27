@@ -14,16 +14,27 @@ import type { NoteHand, NoteKind } from './types'
 export class BeatmapError extends Error {}
 
 const HANDS: NoteHand[] = ['left', 'right', 'any']
-const KINDS: NoteKind[] = ['catch', 'swipe']
+const KINDS: NoteKind[] = ['swipe', 'trail', 'catch']
+
+export interface PathPoint {
+  x: number
+  y: number
+}
 
 export interface CatchNote {
   timeMs: number
-  /** 게임 좌표. 화면 중앙이 원점, 가로는 종횡비만큼 넓다. */
+  /** 게임 좌표. 화면 중앙이 원점, 가로는 종횡비만큼 넓다. 연결 노트는 경로의 시작점. */
   x: number
   y: number
   hand: NoteHand
-  /** catch = 주먹 쥐기, swipe = 손이 지나가기만 해도 됨 */
   kind: NoteKind
+  /**
+   * 연결(trail) 노트가 따라가야 할 경로. (x, y)를 시작점으로 이어지는 나머지 점들.
+   * timeMs부터 durationMs 동안 경로 위를 등속으로 훑는다.
+   */
+  path?: PathPoint[]
+  /** 연결 노트의 지속 시간 */
+  durationMs?: number
 }
 
 export interface Beatmap {
@@ -91,13 +102,23 @@ export function parseBeatmap(json: unknown): Beatmap {
         `notes[${i}].kind은(는) ${KINDS.join('/')} 중 하나여야 합니다 (현재: ${JSON.stringify(note.kind)})`,
       )
     }
-    return {
-      timeMs,
-      x,
-      y,
-      hand: (note.hand as NoteHand) ?? 'any',
-      kind: (note.kind as NoteKind) ?? 'catch',
+    const kind = (note.kind as NoteKind) ?? 'catch'
+    const parsed: CatchNote = { timeMs, x, y, hand: (note.hand as NoteHand) ?? 'any', kind }
+
+    if (kind === 'trail') {
+      if (!Array.isArray(note.path) || note.path.length === 0) {
+        fail(`notes[${i}].path는 연결 노트에 필수입니다`)
+      }
+      parsed.path = (note.path as unknown[]).map((p, j) => {
+        const pt = p as Record<string, unknown>
+        return {
+          x: checkNumber(pt.x, `notes[${i}].path[${j}].x`, { min: -2, max: 2 }),
+          y: checkNumber(pt.y, `notes[${i}].path[${j}].y`, { min: -1, max: 1 }),
+        }
+      })
+      parsed.durationMs = checkNumber(note.durationMs, `notes[${i}].durationMs`, { min: 100 })
     }
+    return parsed
   })
   notes.sort((a, b) => a.timeMs - b.timeMs)
 

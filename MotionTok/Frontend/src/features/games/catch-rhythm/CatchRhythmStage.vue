@@ -88,7 +88,13 @@ function pumpLogic(hands: Hands, tMs: number) {
     // miss는 잡을 손이 정해져 있으니 노트의 손을 쓴다('any'는 오른손 색으로)
     const hand = event.type === 'hit' ? event.hand : event.note.hand === 'left' ? 'left' : 'right'
     scorer.add(judgement)
-    renderer.spawnFx(event.note.x, event.note.y, judgement, hand, tMs)
+    // 연결 노트는 경로 끝에서 터져야 자연스럽다
+    const at =
+      event.type === 'hit' && event.note.kind === 'trail'
+        ? (event.note.path?.[event.note.path.length - 1] ?? event.note)
+        : event.note
+    // 콤보를 넘겨 이펙트 크기를 키운다 — 잘 치고 있다는 감각
+    renderer.spawnFx(at.x, at.y, judgement, hand, tMs, scorer.combo)
     sfx?.play(renderer.skin.sfx[judgement])
   }
   score.value = scorer.score

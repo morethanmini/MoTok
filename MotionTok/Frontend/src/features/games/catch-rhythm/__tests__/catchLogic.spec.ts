@@ -3,6 +3,7 @@ import {
   CatchLogic,
   noteProgress,
   isInReach,
+  trailPointAt,
   type Hands,
   type HandState,
 } from '../logic/catchLogic'
@@ -192,7 +193,81 @@ describe('스와이프 판정 — 손이 지나가기만 해도 인정', () => {
 
   it('멀리 있으면 스와이프도 안 잡힌다', () => {
     const logic = new CatchLogic(bm([swipe()]))
-    const events = logic.update(2000, { left: null, right: passing({ x: -0.5 }) })
+    const events = logic.update(2000, { left: null, right: passing({ x: -0.9 }) })
     expect(events.filter((e) => e.type === 'hit')).toHaveLength(0)
+  })
+})
+
+describe('연결(trail) 노트 — 경로를 따라 그린다', () => {
+  const trail = (over: Partial<CatchNote> = {}): CatchNote =>
+    note({
+      kind: 'trail',
+      x: 0,
+      y: 0,
+      durationMs: 600,
+      path: [{ x: 1.2, y: 0 }],
+      ...over,
+    })
+  const at = (x: number, y = 0): Hands => ({ left: null, right: { x, y, grabbed: false } })
+
+  it('경로 위 기대 위치를 등속으로 계산한다', () => {
+    const n = trail()
+    expect(trailPointAt(n, 0)).toEqual({ x: 0, y: 0 })
+    expect(trailPointAt(n, 0.5).x).toBeCloseTo(0.6)
+    expect(trailPointAt(n, 1).x).toBeCloseTo(1.2)
+    // 범위를 벗어난 비율은 끝점으로 고정
+    expect(trailPointAt(n, 2).x).toBeCloseTo(1.2)
+  })
+
+  it('경로를 잘 따라가면 PERFECT', () => {
+    const logic = new CatchLogic(bm([trail()]))
+    logic.update(2000, at(0)) // 헤드 잡기 → tracing 시작
+    const events = []
+    for (let t = 2000; t <= 2600; t += 50) {
+      const ratio = (t - 2000) / 600
+      events.push(...logic.update(t, at(ratio * 1.2)))
+    }
+    const hits = events.filter((e) => e.type === 'hit')
+    expect(hits).toHaveLength(1)
+    expect(hits[0]).toMatchObject({ judgement: 'perfect' })
+    expect(hits[0]!.type === 'hit' && hits[0]!.coverage).toBeGreaterThan(0.65)
+  })
+
+  it('헤드만 잡고 안 따라가면 MISS', () => {
+    const logic = new CatchLogic(bm([trail()]))
+    logic.update(2000, at(0))
+    const events = []
+    for (let t = 2050; t <= 2600; t += 50) events.push(...logic.update(t, at(0))) // 제자리
+    expect(events.filter((e) => e.type === 'miss')).toHaveLength(1)
+  })
+
+  it('절반쯤 따라가면 GOOD', () => {
+    const logic = new CatchLogic(bm([trail()]))
+    logic.update(2000, at(0))
+    const events = []
+    for (let t = 2000; t <= 2600; t += 50) {
+      const ratio = (t - 2000) / 600
+      // 후반부터 경로를 벗어난다
+      events.push(...logic.update(t, ratio < 0.5 ? at(ratio * 1.2) : at(-0.9)))
+    }
+    const hit = events.find((e) => e.type === 'hit')
+    expect(hit).toMatchObject({ judgement: 'good' })
+  })
+
+  it('헤드를 아예 못 잡으면 일반 노트처럼 MISS', () => {
+    const logic = new CatchLogic(bm([trail()]))
+    const events = runFrames(logic, [
+      [2000, NO_HANDS],
+      [2161, NO_HANDS],
+    ])
+    expect(events.filter((e) => e.type === 'miss')).toHaveLength(1)
+  })
+
+  it('주먹을 안 쥐어도 헤드가 잡힌다 (swipe와 같은 요건)', () => {
+    const logic = new CatchLogic(bm([trail()]))
+    logic.update(2000, at(0))
+    // tracing으로 넘어갔다면 활성 노트로 남아 있다
+    expect(logic.activeNotes()).toHaveLength(1)
+    expect(logic.isFinished()).toBe(false)
   })
 })

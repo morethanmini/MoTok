@@ -1,17 +1,24 @@
 /**
- * 캐치(그랩) 판정 로직 — DOM/카메라 의존 없는 순수 로직.
+ * 노트 판정 로직 — DOM/카메라 의존 없는 순수 로직.
  *
- * 노트는 고정 위치 (x, y)에서 원경→근경으로 접근(스케일 확대)해 timeMs에 판정 크기에 도달한다.
- * "펴짐→쥠" 전환 이벤트 시점에 손-노트 거리 < NOTE_RADIUS + HAND_RADIUS && 타이밍 창 내 → 히트.
- * 쥔 채로 있으면 전환이 없으므로 연속 히트가 나지 않는다(쓸고 다니기 방지).
+ * 노트는 고정 위치에서 원경→근경으로 접근(스케일 확대)해 timeMs에 판정 크기에 도달한다.
  *
- * 프로토의 슬래시 경로는 분기까지 통째로 제거했다 — type 없는 노트가 slash로 새지 않도록.
+ * - swipe (주력): 판정창 안에서 손이 반경에 들어오면 히트. 쥠 여부 무관
+ * - trail: 헤드를 잡은 뒤 경로를 따라간 **커버리지 비율**로 판정
+ * - catch (특수): "펴짐→쥠" 전환 순간에만 인정 — 쥔 채로 쓸고 다니기 방지
  */
 
-import { NOTE_RADIUS, HAND_RADIUS, SWIPE_REACH_SCALE } from '../core/config'
+import {
+  NOTE_RADIUS,
+  HAND_RADIUS,
+  SWIPE_REACH_SCALE,
+  TRAIL_REACH_SCALE,
+  TRAIL_PERFECT_COVERAGE,
+  TRAIL_GOOD_COVERAGE,
+} from '../core/config'
 import { judgeHit, isMissed } from '../core/judge'
-import type { Beatmap, CatchNote } from '../core/beatmap'
-import type { Hand, HitJudgement } from '../core/types'
+import type { Beatmap, CatchNote, PathPoint } from '../core/beatmap'
+import type { Hand, HitJudgement, Judgement } from '../core/types'
 
 /** 프레임마다 넘기는 손 상태. grabbed는 "펴짐→쥠" 전환 프레임에만 true. */
 export interface HandState {
@@ -22,17 +29,30 @@ export interface HandState {
 
 export type Hands = Record<Hand, HandState | null>
 
-type NoteStatus = 'pending' | 'active' | 'hit' | 'miss'
+type NoteStatus = 'pending' | 'active' | 'tracing' | 'hit' | 'miss'
 
 export interface TrackedNote extends CatchNote {
   id: number
   status: NoteStatus
+  /** trail 전용 — 경로를 따라간 표본 수 / 전체 표본 수 */
+  samples: number
+  tracked: number
+  /** trail 전용 — 지금 따라가고 있는 손 */
+  tracingHand: Hand | null
 }
 
 export type CatchEvent =
   | { type: 'spawn'; note: TrackedNote }
   | { type: 'miss'; note: TrackedNote }
-  | { type: 'hit'; note: TrackedNote; judgement: HitJudgement; hand: Hand; deltaMs: number }
+  | {
+      type: 'hit'
+      note: TrackedNote
+      judgement: HitJudgement
+      hand: Hand
+      deltaMs: number
+      /** trail이면 경로 커버리지(0~1), 그 외는 1 */
+      coverage: number
+    }
 
 const SIDES: Hand[] = ['left', 'right']
 
@@ -41,11 +61,58 @@ export function noteProgress(note: CatchNote, tMs: number, approachTimeMs: numbe
   return 1 - (note.timeMs - tMs) / approachTimeMs
 }
 
-/** 손-노트 거리가 히트 반경 안인가. 스와이프는 스치듯 지나가므로 더 넉넉하다. */
+function reachOf(note: CatchNote): number {
+  const base = NOTE_RADIUS + HAND_RADIUS
+  if (note.kind === 'swipe') return base * SWIPE_REACH_SCALE
+  if (note.kind === 'trail') return base * TRAIL_REACH_SCALE
+  return base
+}
+
+/** 손-노트 거리가 히트 반경 안인가. 종류별로 반경이 다르다. */
 export function isInReach(hand: HandState | null, note: CatchNote): boolean {
   if (!hand) return false
-  const reach = (NOTE_RADIUS + HAND_RADIUS) * (note.kind === 'swipe' ? SWIPE_REACH_SCALE : 1)
-  return Math.hypot(hand.x - note.x, hand.y - note.y) < reach
+  return Math.hypot(hand.x - note.x, hand.y - note.y) < reachOf(note)
+}
+
+/**
+ * 연결 노트의 시각 t에서 손이 있어야 할 위치.
+ * ratio 0 = 시작점, 1 = 경로 끝. 구간 길이에 비례해 등속으로 훑는다.
+ */
+export function trailPointAt(note: CatchNote, ratio: number): PathPoint {
+  const start: PathPoint = { x: note.x, y: note.y }
+  const path = note.path ?? []
+  if (path.length === 0) return start
+
+  const points = [start, ...path]
+  const segLens: number[] = []
+  let total = 0
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]!
+    const b = points[i]!
+    const len = Math.hypot(b.x - a.x, b.y - a.y)
+    segLens.push(len)
+    total += len
+  }
+  if (total === 0) return start
+
+  let want = Math.max(0, Math.min(1, ratio)) * total
+  for (let i = 0; i < segLens.length; i++) {
+    const len = segLens[i]!
+    if (want <= len || i === segLens.length - 1) {
+      const a = points[i]!
+      const b = points[i + 1]!
+      const k = len === 0 ? 0 : Math.min(1, want / len)
+      return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k }
+    }
+    want -= len
+  }
+  return points[points.length - 1]!
+}
+
+function coverageJudgement(coverage: number): Judgement {
+  if (coverage >= TRAIL_PERFECT_COVERAGE) return 'perfect'
+  if (coverage >= TRAIL_GOOD_COVERAGE) return 'good'
+  return 'miss'
 }
 
 export class CatchLogic {
@@ -54,7 +121,14 @@ export class CatchLogic {
 
   constructor(beatmap: Pick<Beatmap, 'approachTimeMs' | 'notes'>) {
     this.approachTimeMs = beatmap.approachTimeMs
-    this.notes = beatmap.notes.map((n, id) => ({ ...n, id, status: 'pending' }))
+    this.notes = beatmap.notes.map((n, id) => ({
+      ...n,
+      id,
+      status: 'pending',
+      samples: 0,
+      tracked: 0,
+      tracingHand: null,
+    }))
   }
 
   /**
@@ -72,6 +146,25 @@ export class CatchLogic {
         note.status = 'active'
         events.push({ type: 'spawn', note })
       }
+
+      // ── 연결 노트: 이미 따라가는 중이면 커버리지를 쌓는다 ────────────────
+      if (note.status === 'tracing') {
+        const done = this.traceStep(note, tMs, hands)
+        if (done) {
+          const coverage = note.samples === 0 ? 0 : note.tracked / note.samples
+          const judgement = coverageJudgement(coverage)
+          const hand = note.tracingHand ?? 'right'
+          if (judgement === 'miss') {
+            note.status = 'miss'
+            events.push({ type: 'miss', note })
+          } else {
+            note.status = 'hit'
+            events.push({ type: 'hit', note, judgement, hand, deltaMs: 0, coverage })
+          }
+        }
+        continue
+      }
+
       if (note.status !== 'active') continue
 
       const delta = tMs - note.timeMs
@@ -85,25 +178,55 @@ export class CatchLogic {
       for (const side of sides) {
         const hand = hands[side]
         if (!hand || usedHands.has(side)) continue
-        // swipe만 손이 닿기만 해도 인정. 그 외(catch·미지정)는 "펴짐→쥠" 전환 순간만 —
+        // swipe·trail은 손이 닿기만 하면 되고, catch만 "펴짐→쥠" 전환을 요구한다.
         // 조건을 이 방향으로 써야 kind가 빠진 노트가 공짜 히트로 새지 않는다.
-        if (note.kind !== 'swipe' && !hand.grabbed) continue
+        if (note.kind !== 'swipe' && note.kind !== 'trail' && !hand.grabbed) continue
         if (!isInReach(hand, note)) continue
 
         const judgement = judgeHit(delta) // 이른 히트(delta<0)도 창 내면 인정
         if (!judgement) continue
 
-        note.status = 'hit'
         usedHands.add(side)
-        events.push({ type: 'hit', note, judgement, hand: side, deltaMs: delta })
+        if (note.kind === 'trail') {
+          // 헤드를 잡았다 → 이제부터 경로를 따라간다
+          note.status = 'tracing'
+          note.tracingHand = side
+          break
+        }
+        note.status = 'hit'
+        events.push({ type: 'hit', note, judgement, hand: side, deltaMs: delta, coverage: 1 })
         break
       }
     }
     return events
   }
 
+  /** 연결 노트 한 프레임 추적. 경로가 끝났으면 true. */
+  private traceStep(note: TrackedNote, tMs: number, hands: Hands): boolean {
+    const duration = note.durationMs ?? 0
+    const ratio = duration === 0 ? 1 : (tMs - note.timeMs) / duration
+    const want = trailPointAt(note, ratio)
+
+    // 지정된 손이 사라졌으면 다른 손도 인정한다(인식을 후하게)
+    const candidates: Hand[] = note.hand === 'any' ? SIDES : [note.hand]
+    const reach = reachOf(note)
+    const near = candidates.some((side) => {
+      const h = hands[side]
+      if (!h) return false
+      if (Math.hypot(h.x - want.x, h.y - want.y) < reach) {
+        note.tracingHand = side
+        return true
+      }
+      return false
+    })
+
+    note.samples += 1
+    if (near) note.tracked += 1
+    return ratio >= 1
+  }
+
   activeNotes(): TrackedNote[] {
-    return this.notes.filter((n) => n.status === 'active')
+    return this.notes.filter((n) => n.status === 'active' || n.status === 'tracing')
   }
 
   isFinished(): boolean {

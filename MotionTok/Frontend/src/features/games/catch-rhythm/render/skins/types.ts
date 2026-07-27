@@ -25,6 +25,12 @@ export interface NoteView {
   kind: NoteKind
   /** 반대편 영역에서 온 크로스 노트인가 (기본 스킨은 시각 구분하지 않는다) */
   cross: boolean
+  /** trail 전용 — 시작점 포함 경로(px) */
+  path?: { x: number; y: number }[]
+  /** trail 전용 — 지금 따라가야 할 지점(px). 추적 중일 때만 있다 */
+  head?: { x: number; y: number }
+  /** trail 전용 — 헤드를 잡고 따라가는 중인가 */
+  tracing?: boolean
 }
 
 export interface HitFxView {
@@ -34,6 +40,10 @@ export interface HitFxView {
   judgement: Judgement
   hand: Hand
   elapsedMs: number
+  /** 이펙트 전체 수명(ms) — 스킨이 진행도를 계산할 때 쓴다 */
+  lifeMs: number
+  /** 이 히트로 도달한 콤보. 큰 콤보일수록 연출을 키우라는 힌트 */
+  combo: number
 }
 
 export interface HandView {

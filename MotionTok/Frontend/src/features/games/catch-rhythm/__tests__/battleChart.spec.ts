@@ -141,17 +141,57 @@ describe('노트 다양성', () => {
     expect(ratio).toBeLessThanOrEqual(PRESETS[difficulty].anyRate + 0.06)
   })
 
-  it.each(DIFFICULTIES)('%s: 스와이프 노트가 프리셋 비율 ±6%%p 안', (difficulty) => {
+  it.each(DIFFICULTIES)('%s: 노트 종류 분포가 프리셋 가중치 ±6%%p 안', (difficulty) => {
     const notes = allNotes(difficulty)
-    const ratio = notes.filter((n) => n.kind === 'swipe').length / notes.length
-    expect(ratio).toBeGreaterThanOrEqual(PRESETS[difficulty].swipeRate - 0.06)
-    expect(ratio).toBeLessThanOrEqual(PRESETS[difficulty].swipeRate + 0.06)
+    const w = PRESETS[difficulty].kinds
+    const total = w.swipe + w.trail + w.catch
+    for (const kind of ['swipe', 'trail', 'catch'] as const) {
+      const ratio = notes.filter((n) => n.kind === kind).length / notes.length
+      expect(ratio).toBeGreaterThanOrEqual(w[kind] / total - 0.06)
+      expect(ratio).toBeLessThanOrEqual(w[kind] / total + 0.06)
+    }
   })
 
-  it('모든 난이도에 catch·swipe가 둘 다 나온다', () => {
+  it('★ 스와이프가 주력이다 — 주먹(catch)은 특수 노트로만 나온다', () => {
+    for (const difficulty of DIFFICULTIES) {
+      const notes = allNotes(difficulty)
+      const swipe = notes.filter((n) => n.kind === 'swipe').length / notes.length
+      const grab = notes.filter((n) => n.kind === 'catch').length / notes.length
+      expect(swipe).toBeGreaterThan(0.55)
+      expect(grab).toBeLessThan(0.2)
+    }
+  })
+
+  it('★ 양손 인식(any)이 기본이다', () => {
+    for (const difficulty of DIFFICULTIES) {
+      const notes = allNotes(difficulty)
+      const any = notes.filter((n) => n.hand === 'any').length / notes.length
+      expect(any).toBeGreaterThan(0.4)
+    }
+  })
+
+  it('세 종류가 모두 나온다', () => {
     for (const difficulty of DIFFICULTIES) {
       const kinds = new Set(allNotes(difficulty).map((n) => n.kind))
-      expect(kinds).toEqual(new Set(['catch', 'swipe']))
+      expect(kinds).toEqual(new Set(['swipe', 'trail', 'catch']))
+    }
+  })
+
+  it('연결 노트는 경로와 길이를 갖고, 경로가 손 속도 안에서 훑을 수 있다', () => {
+    for (const difficulty of DIFFICULTIES) {
+      const trails = allNotes(difficulty).filter((n) => n.kind === 'trail')
+      expect(trails.length).toBeGreaterThan(0)
+      for (const n of trails) {
+        expect(n.path?.length).toBeGreaterThan(0)
+        expect(n.durationMs).toBeGreaterThan(0)
+        const pts = [{ x: n.x, y: n.y }, ...(n.path ?? [])]
+        let total = 0
+        for (let i = 1; i < pts.length; i++) {
+          total += Math.hypot(pts[i]!.x - pts[i - 1]!.x, pts[i]!.y - pts[i - 1]!.y)
+        }
+        // 경로 전체를 지속 시간 안에 훑을 수 있어야 한다
+        expect(total).toBeLessThanOrEqual(HAND_MAX_SPEED * ((n.durationMs ?? 0) / 1000) + 1e-9)
+      }
     }
   })
 
