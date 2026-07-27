@@ -18,13 +18,13 @@ const { message: toast, flash } = useToast()
 
 const EMOJI: Record<string, string> = {
   '핑거 스타': '✨', '리듬 펀치': '🥊', '모션 피싱': '🎣',
-  '드로잉 릴레이': '🎨', '포즈 매치': '🤸', '버블 팝': '🫧',
+  '그림으로 말해요': '🎨', '포즈 매치': '🤸', '버블 팝': '🫧',
 }
 const ART: Record<string, string> = {
   '핑거 스타': '/assets/intro/constellation.png',
   '리듬 펀치': '/assets/intro/tambourine.png',
   '모션 피싱': '/assets/intro/fishing-rod.png',
-  '드로잉 릴레이': '/assets/intro/sketchbook.png',
+  '그림으로 말해요': '/assets/intro/sketchbook.png',
   '포즈 매치': '/assets/intro/person.png',
 }
 const MOCK_GAMES: Game[] = [
@@ -32,7 +32,8 @@ const MOCK_GAMES: Game[] = [
   { id: 2, name: '모션 피싱', description: '온몸으로 즐기는 낚시', mode: 'SOLO', minPlayers: 1, maxPlayers: 4, supportsBot: false, category: '전신', thumbnailUrl: '', playable: true },
   { id: 3, name: '리듬 펀치', description: '비트에 맞춰 펀치!', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '리듬', thumbnailUrl: '', playable: true },
   { id: 5, name: '포즈 매치', description: '화면 속 포즈를 따라해요', mode: 'VERSUS', minPlayers: 2, maxPlayers: 8, supportsBot: true, category: '전신', thumbnailUrl: '', playable: false },
-  { id: 6, name: '드로잉 릴레이', description: '몸으로 그리고 맞히기', mode: 'COOP', minPlayers: 3, maxPlayers: 8, supportsBot: false, category: '파티', thumbnailUrl: '', playable: false },
+  // 정식 규칙은 4인부터 — 게스트 로컬 테스트(1인 노출)를 위해 명세 확정 전까지 minPlayers 1
+  { id: 6, name: '그림으로 말해요', description: '그림 이어그리기 · AI가 맞혀요', mode: 'COOP', minPlayers: 1, maxPlayers: 8, supportsBot: false, category: '파티', thumbnailUrl: '', playable: true },
 ]
 
 const { data: games } = useAsyncData(() => gamesApi.list(), MOCK_GAMES)
