@@ -32,19 +32,57 @@ export interface BodyFitConfig {
      */
     leanGain: number
   }
+  /** 판정 모델 (기획 §7, UI 스펙 §2) */
+  judge: {
+    /** 면적비 — 구멍 면적 = 원본 면적 × K. 유일한 난이도 노브 (§2-3) */
+    K: number
+    /** 세그먼트별 마진 배율 (§2-2) — 관절에서 멀수록 각도 오차가 증폭되므로 말단이 크다 */
+    marginMul: {
+      headTorso: number
+      upperArm: number
+      forearm: number
+      hand: number
+    }
+    /** 내 실루엣 중 구멍 밖 픽셀 비율이 이 이하면 통과 */
+    overflowTolerance: number
+    /** 등급 임계 (UI 스펙 §1-4) — IoU × 100 기준 */
+    grade: { perfect: number; great: number; pass: number }
+    /** 판정 마스크 한 변(px) — 128이면 정확도·비용 균형 (§9-1) */
+    maskSize: number
+  }
+  /** 벽 연출 */
+  wall: {
+    /** 벽 접근 시간(ms) — UI 스펙 §7 */
+    approachMs: number
+  }
 }
+
+export type Grade = 'PERFECT' | 'GREAT' | 'PASS' | 'FAIL'
 
 export function defaultConfig(): BodyFitConfig {
   return {
     filter: {
       minCutoff: 1.2,
-      beta: 0.4,
+      // 0.4는 빠른 동작이 뭉뚝하게 눌렸다(2026-07-27 실기) — 속도 추종을 올림
+      beta: 0.8,
     },
     avatar: {
-      limbScale: 1.3,
+      // 1.6이면 팔 길이가 인체 비율(어깨너비 대비 ~1.3배)과 맞아 교차 포즈가 1:1로 매핑된다.
+      // 1.3(기획 초안)에서는 팔이 짧아 X자 교차가 몸 중앙까지 닿지 못했다 (2026-07-27 실기)
+      limbScale: 1.6,
       capsuleRadius: 0.13,
       headRadius: 0.42,
       leanGain: 1.6,
+    },
+    judge: {
+      K: 1.7,
+      marginMul: { headTorso: 0.6, upperArm: 1.0, forearm: 1.6, hand: 2.0 },
+      overflowTolerance: 0.03,
+      grade: { perfect: 92, great: 82, pass: 70 },
+      maskSize: 128,
+    },
+    wall: {
+      approachMs: 7000,
     },
   }
 }

@@ -25,6 +25,8 @@ export const RouteName = {
   Unsupported: 'unsupported',
   /** 게임④ 아바타 렌더러 랩 — 개발 전용 (-136) */
   DevAvatarLab: 'dev-avatar-lab',
+  /** 게임④ 벽·구멍·판정 랩 — 개발 전용 (-47, -46) */
+  DevWallLab: 'dev-wall-lab',
 } as const
 
 export type RouteName = (typeof RouteName)[keyof typeof RouteName]

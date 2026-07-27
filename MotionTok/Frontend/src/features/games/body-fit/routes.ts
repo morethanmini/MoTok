@@ -12,5 +12,10 @@ export const bodyFitRoutes: RouteRecordRaw[] = import.meta.env.DEV
         name: RouteName.DevAvatarLab,
         component: () => import('./AvatarLabView.vue'),
       },
+      {
+        path: '/dev/wall-lab',
+        name: RouteName.DevWallLab,
+        component: () => import('./WallLabView.vue'),
+      },
     ]
   : []
