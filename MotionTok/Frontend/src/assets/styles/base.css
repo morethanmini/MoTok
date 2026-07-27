@@ -7,6 +7,12 @@
   image-rendering: pixelated;
 }
 
+@font-face {
+  font-family: 'DNF Bit Bit';
+  src: url('/fonts/DNFBitBitv2.ttf') format('truetype');
+  font-display: swap;
+}
+
 html,
 body {
   margin: 0;
@@ -17,6 +23,11 @@ body {
   font-family: var(--font-pixel);
   color: var(--c-ink);
   background: var(--c-cream);
+}
+
+body,
+body * {
+  font-weight: 400 !important;
 }
 
 #app {

@@ -64,4 +64,20 @@ defineEmits<{ join: [] }>()
   padding: 5px 7px;
   font-size: 8px;
 }
+
+.friend {
+  margin-bottom: 8px;
+  padding: 9px 8px;
+  border: 2px solid #ead8ba;
+  border-radius: 9px;
+  background: #fffaf0;
+  box-shadow: 2px 2px 0 #eadcc6;
+}
+.friend:last-child { border-bottom: 2px solid #ead8ba; }
+.face { width: 44px; height: 44px; border-color: #b98e5e; border-radius: 9px; box-shadow: 2px 2px 0 #ead8bd; }
+.friend-info b { color: #443127; font-size: 14px; }
+.friend-info small { margin-top: 4px; color: #897460; font-size: 10px; }
+.status { width: 10px; height: 10px; border: 2px solid #60945b; border-radius: 3px; background: #82bd74; box-shadow: none; }
+.status.offline { border-color: #998d85; background: #b7aaa2; box-shadow: none; }
+.invite { border-color: #8d704e; border-radius: 5px; background: #e6efc7; color: #5d4c36; box-shadow: 2px 2px 0 #c2aa82; }
 </style>

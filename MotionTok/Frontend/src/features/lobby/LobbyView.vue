@@ -20,6 +20,17 @@ import LobbySplash from './components/LobbySplash.vue'
 import JoinRoomModal from './components/JoinRoomModal.vue'
 import CreateRoomModal, { type NewRoom } from './components/CreateRoomModal.vue'
 import { containsProfanity } from '@/utils/profanity'
+import lobbyCatScene from '@/assets/lobby/lobby-cat-scene.png'
+import lobbyBalloon from '@/assets/lobby/lobby-balloon.png'
+import lobbyBalloonString from '@/assets/lobby/lobby-balloon-string.png'
+import lobbyGardenGrassTile from '@/assets/lobby/lobby-garden-grass-tile.png'
+import lobbyHeartBubble from '@/assets/lobby/lobby-heart-bubble.png'
+import lobbyCloudA from '@/assets/lobby/lobby-cloud-a.png'
+import lobbyCloudB from '@/assets/lobby/lobby-cloud-b.png'
+import lobbyRoomListBoard from '@/assets/lobby/lobby-room-list-board.png'
+import lobbyEmptyCatTuna from '@/assets/lobby/lobby-empty-cat-tuna.png'
+import lobbyCreateRoomButton from '@/assets/lobby/lobby-create-room-button.png'
+import lobbyEmptyCatToys from '@/assets/lobby/lobby-empty-cat-toys.png'
 
 const router = useRouter()
 const session = useSessionStore()
@@ -104,6 +115,11 @@ function prevPage() {
 function refreshRooms() {
   page.value = 1
   void reloadRooms()
+}
+
+function searchRooms() {
+  query.value = query.value.trim()
+  page.value = 1
 }
 
 const filteredRooms = computed(() => {
@@ -314,17 +330,6 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 
 <template>
   <div class="shell px-paper-bg">
-    <!-- 떠다니는 장식 스티커 -->
-    <div class="pixel-decor">
-      <i class="d-sticker d-moon">☾</i>
-      <i class="d-sticker d-headphone">🎧</i>
-      <i class="d-sticker d-palette">🎨</i>
-      <i class="d-sticker d-fish">🐟</i>
-      <i class="spark s1">✦</i>
-      <i class="spark s2">★</i>
-      <i class="spark s3">✦</i>
-    </div>
-
     <!-- 상단 바 (공용 헤더) -->
     <AppHeader />
 
@@ -333,12 +338,21 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
       <main class="content">
         <section class="lobby-hero">
           <div>
-            <h1>같이 놀 방을 찾아볼까요?</h1>
-            <p>대기 중인 방에 입장하거나 직접 새 방을 만들 수 있어요. 🔒 방은 비밀번호가 필요해요.</p>
+            <h1 class="hero-title">같이 놀 방을 찾아볼까요?</h1>
           </div>
+          <img class="hero-cloud hero-cloud-a pixel-image" :src="lobbyCloudA" alt="" aria-hidden="true" />
+          <img class="hero-cloud hero-cloud-b pixel-image" :src="lobbyCloudB" alt="" aria-hidden="true" />
+          <div class="hero-grass pixel-image" :style="{ backgroundImage: `url(${lobbyGardenGrassTile})` }" aria-hidden="true" />
+          <div class="hero-cat-group">
+            <img class="hero-cat-scene pixel-image" :src="lobbyCatScene" alt="풍선을 든 고양이 캐릭터" />
+            <img class="hero-balloon-string pixel-image" :src="lobbyBalloonString" alt="" aria-hidden="true" />
+            <span class="hero-rope-hook" aria-hidden="true" />
+            <img class="hero-balloon pixel-image" :src="lobbyBalloon" alt="둥둥 떠다니는 풍선" />
+          </div>
+          <img class="hero-heart pixel-image" :src="lobbyHeartBubble" alt="" aria-hidden="true" />
           <div class="hero-actions">
-            <PixelButton variant="primary" @click="quickStart">⚡ 빠른 참가</PixelButton>
-            <PixelButton @click="openJoin">⌁ 코드 참가</PixelButton>
+            <PixelButton variant="primary" @click="quickStart">＋ 빠른 입장</PixelButton>
+            <PixelButton @click="openJoin">＋ 코드 입장</PixelButton>
           </div>
         </section>
 
@@ -347,12 +361,20 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
         </div>
 
         <div class="section-head">
-          <h2>방 목록</h2>
+          <h2 class="room-list-title" :style="{ backgroundImage: `url(${lobbyRoomListBoard})` }">
+            <span>방 목록</span>
+          </h2>
           <p>{{ roomResult }}</p>
+          <div class="room-pager room-pager-inline">
+            <button class="pager-btn" :disabled="!hasPrev" @click="prevPage">← 이전</button>
+            <span class="pager-page">{{ page }}</span>
+            <button class="pager-btn" :disabled="!hasNext" @click="nextPage">다음 →</button>
+          </div>
           <label class="room-search">
             ⌕ <input v-model="query" placeholder="방 제목 검색" />
           </label>
-          <PixelButton class="create-room-btn" @click="openCreate">＋ 방 만들기</PixelButton>
+          <button class="room-search-btn" type="button" @click="searchRooms">검색</button>
+          <PixelButton class="create-room-btn" :style="{ backgroundImage: `url(${lobbyCreateRoomButton})` }" @click="openCreate">＋ 방 만들기</PixelButton>
           <button class="refresh-btn" @click="refreshRooms">새로고침 ↻</button>
         </div>
 
@@ -365,21 +387,18 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
               @enter="enterRoom(room)"
             />
             <div v-if="filteredRooms.length === 0" class="empty">
-              검색 결과가 없어요. 다른 방 제목을 입력해보세요.
+              <img class="empty-sign pixel-image" :src="lobbyEmptyCatTuna" alt="" aria-hidden="true" />
+              <p>아직 생성된 방이 없어요.</p>
+              <span>새 방을 만들어 친구와 함께 놀아보세요!</span>
             </div>
           </section>
         </div>
 
-        <div class="room-pager">
-          <button class="pager-btn" :disabled="!hasPrev" @click="prevPage">← 이전</button>
-          <span class="pager-page">{{ page }}</span>
-          <button class="pager-btn" :disabled="!hasNext" @click="nextPage">다음 →</button>
-        </div>
       </main>
 
       <aside class="side">
         <section class="side-card friends-card">
-          <div class="side-title">
+          <div class="side-title friend-title">
             친구 목록
             <button class="side-link" @click="router.push({ name: RouteName.Friends })">친구 목록 관리 →</button>
           </div>
@@ -391,6 +410,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
               @join="joinFriendRoom(f)"
             />
             <p v-if="friends.length === 0" class="friends-empty">
+              <img class="friends-empty-toys pixel-image" :src="lobbyEmptyCatToys" alt="" aria-hidden="true" />
               아직 친구가 없어요.<br />친구 목록 관리에서 추가해 보세요!
             </p>
           </div>
@@ -431,7 +451,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 <style scoped>
 .shell {
   height: 100vh;
-  min-width: 1100px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -499,7 +519,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   align-items: stretch;
   gap: 18px;
   min-height: 150px;
-  margin-bottom: 60px;
+  margin-bottom: 18px;
   padding: 16px 22px;
   border: var(--border);
   border-radius: 20px;
@@ -536,7 +556,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   border: 2px solid var(--c-ink);
   border-radius: 11px;
   box-shadow: 2px 2px 0 #d9cbd9;
-  font-size: 15px;
+  font-size: 25px;
 }
 .room-search input { width: 240px; border: 0; outline: 0; background: transparent; font-size: 14px; }
 .refresh-btn { margin-left: 12px; border: 0; background: transparent; color: var(--c-blue); font-size: 14px; font-weight: 700; }
@@ -565,7 +585,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
 }
 .friends-list {
   flex: 1;
@@ -576,7 +596,8 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   scrollbar-width: thin;
   scrollbar-color: var(--c-mint) #f3ecf3;
 }
-.friends-empty { margin: 18px 4px; font-size: 9px; line-height: 1.7; color: var(--c-muted); text-align: center; }
+.friends-empty { margin: 24px 4px; font-size: 14px; line-height: 1.8; color: #7e6856; text-align: center; }
+.friends-empty-toys { display: block; width: 104px; height: auto; margin: 0 auto 13px; }
 .friends-list::-webkit-scrollbar { width: 10px; }
 .friends-list::-webkit-scrollbar-button,
 .friends-list::-webkit-scrollbar-button:start:decrement,
@@ -603,5 +624,333 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 
 @media (max-width: 1260px) {
   .layout { grid-template-columns: minmax(0, 1fr) 260px; }
+}
+
+/* Reference-inspired sunny pixel lobby skin. Scoped to the lobby so other screens retain their tokens. */
+.lobby-page {
+  --lobby-bg: #fffaf0;
+  --lobby-surface: #fffdf7;
+  --lobby-border: #d9b77f;
+  --lobby-text: #34251f;
+  --lobby-muted: #8c7966;
+  --lobby-yellow: #ffd976;
+  --lobby-coral: #ef7775;
+  --lobby-blue: #4f86d9;
+  --lobby-green: #a8c979;
+  --lobby-sky: #bfe9ff;
+  color: var(--lobby-text);
+  background-color: var(--lobby-bg);
+  background-image:
+    linear-gradient(0deg, rgba(204, 169, 115, .11) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(204, 169, 115, .08) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+.shell::before { height: 5px; background: #bd6d45; opacity: 1; }
+.layout { max-width: 1640px; width: 100%; box-sizing: border-box; margin: 0 auto; gap: 26px; padding: 32px 46px 26px; }
+.content { padding: 0; margin: 0; }
+.lobby-hero {
+  position: relative;
+  isolation: isolate;
+  min-height: 228px;
+  overflow: hidden;
+  padding: 34px 46px;
+  border: 3px solid var(--lobby-border);
+  border-radius: 19px;
+  box-shadow: 5px 5px 0 #d9c6a5;
+  background: #bfe9ff;
+}
+.lobby-hero::before {
+  content: none;
+  position: absolute;
+  z-index: 1;
+  inset: auto 0 0;
+  height: 27px;
+  border-top: 3px solid #5b8d45;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 5px, #5e9f49 5px 8px, transparent 8px 13px) 0 0 / 100% 10px,
+    repeating-linear-gradient(90deg, #9ad269 0 12px, #77b959 12px 22px, #b8df7a 22px 28px) 0 8px / 100% 13px,
+    repeating-linear-gradient(90deg, #bc8454 0 18px, #d6a469 18px 35px) 0 21px / 100% 8px;
+  pointer-events: none;
+}
+.lobby-hero::after {
+  content: none;
+  position: absolute;
+  right: 30%; bottom: 13px;
+  width: 70px; height: 70px;
+  display: grid; place-items: center;
+  border: 3px solid #9e6b43;
+  border-radius: 35% 35% 28% 28%;
+  background: #ffc578;
+  font-size: 43px;
+  image-rendering: pixelated;
+  box-shadow: 5px 5px 0 rgba(111, 74, 48, .2);
+}
+.lobby-hero > div:first-child { max-width: 49%; z-index: 2; }
+.hero-cloud {
+  position: absolute;
+  z-index: 0;
+  width: 150px;
+  height: auto;
+  opacity: .62;
+  pointer-events: none;
+  animation: hero-cloud-drift 19s ease-in-out infinite;
+}
+.hero-cloud-a { top: 15px; left: 43%; }
+.hero-cloud-b {
+  top: 56px;
+  left: 63%;
+  width: 125px;
+  opacity: .48;
+  animation-duration: 25s;
+  animation-delay: -9s;
+  animation-direction: reverse;
+}
+@keyframes hero-cloud-drift {
+  0%, 100% { transform: translate(-10px, 0); }
+  50% { transform: translate(15px, -4px); }
+}
+.hero-grass {
+  position: absolute;
+  z-index: 4;
+  inset: auto 0 -9px;
+  width: 100%;
+  height: 58px;
+  background-repeat: repeat-x;
+  background-size: auto 58px;
+  background-position: left bottom;
+  pointer-events: none;
+}
+.hero-cat-group {
+  position: absolute;
+  z-index: 2;
+  right: 28%;
+  bottom: -2px;
+  width: 145px;
+  height: 145px;
+  pointer-events: none;
+}
+.hero-cat-scene { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.hero-balloon {
+  position: absolute;
+  z-index: 4;
+  left: -8px;
+  bottom: 139px;
+  width: 60px;
+  height: auto;
+  transform-origin: bottom center;
+  animation: hero-balloon-float 3.2s ease-in-out infinite;
+}
+.hero-balloon-string {
+  position: absolute;
+  z-index: 3;
+  left: 14px;
+  bottom: 53px;
+  width: 17px;
+  height: 97px;
+  object-fit: fill;
+  object-position: top center;
+  pointer-events: none;
+}
+.hero-rope-hook {
+  position: absolute;
+  z-index: 3;
+  left: 27px;
+  bottom: 53px;
+  width: 27px;
+  height: 9px;
+  border-bottom: 3px solid #837462;
+  border-radius: 0 0 0 7px;
+  transform: rotate(-7deg);
+  transform-origin: left center;
+  pointer-events: none;
+}
+@keyframes hero-balloon-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.hero-heart {
+  position: absolute;
+  z-index: 2;
+  right: calc(28% - 24px);
+  bottom: 112px;
+  width: 60px;
+  height: auto;
+  pointer-events: none;
+}
+.pixel-image { image-rendering: pixelated; image-rendering: crisp-edges; }
+.lobby-hero .hero-title {
+  color: var(--lobby-text);
+  font-family: var(--font-pixel);
+  font-size: 42px;
+  font-weight: normal;
+  letter-spacing: -1px;
+  text-shadow: 2px 2px 0 #ead7b8;
+}
+.lobby-hero h1::after { content: ' ✦'; color: var(--lobby-coral); }
+.lobby-hero p { max-width: 620px; color: #594941; font-size: 14px; line-height: 1.75; }
+.lobby-hero .hero-actions { z-index: 3; flex-direction: column; align-self: center; margin-left: auto; }
+.lobby-hero .hero-actions :deep(.px-btn) {
+  min-width: 224px;
+  height: 62px;
+  justify-content: center;
+  padding-left: 0;
+  border: 3px solid #925c47;
+  border-radius: 7px;
+  box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), inset -2px -3px 0 rgba(120,58,47,.25), 5px 5px 0 #a66b50;
+  color: #fff;
+  font-size: 19px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.lobby-hero .hero-actions :deep(.v-primary) { background: #ef6d70; }
+.lobby-hero .hero-actions :deep(.v-secondary) { background: #4078cf; }
+.guest-note { border-color: var(--lobby-border); background: #fff0b9; color: #73583e; }
+.section-head { min-height: 70px; padding: 0 8px; }
+.section-head .room-list-title {
+  display: grid;
+  width: 145px;
+  height: 49px;
+  padding: 0 13px 1px 6px;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background-color: transparent;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  box-shadow: none;
+  color: #32231b;
+  font-size: 15px;
+  line-height: 1;
+  text-shadow: 1px 1px 0 rgba(255, 237, 191, .65);
+}
+.room-list-title span { transform: translateX(4px); }
+.section-head p { color: var(--lobby-muted); }
+.room-search {
+  border: 0;
+  border-bottom: 2px solid #d9b77f;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.room-search input { color: var(--lobby-text); }
+.room-search-btn {
+  height: 34px;
+  padding: 0 12px;
+  border: 2px solid #b78d5d;
+  border-radius: 7px;
+  background: #fff7e5;
+  box-shadow: 2px 2px 0 #e4cfad;
+  color: #4b372b;
+  font-size: 12px;
+}
+.create-room-btn {
+  min-width: 148px;
+  height: 45px;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background-color: transparent !important;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  box-shadow: none !important;
+  color: #34251f !important;
+  font-size: 15px;
+}
+.refresh-btn { color: #69513e; }
+.room-list-wrap { padding: 10px; border: 2px dashed #dfc9a6; border-radius: 18px; background: rgba(255, 253, 247, .65); }
+.room-list { gap: 13px; }
+.empty { min-height: 170px; display: grid; place-content: center; gap: 10px; border-color: #dfc9a6; background: #fffdf8; color: var(--lobby-muted); }
+.empty::before { content: '↔'; justify-self: center; display: grid; place-items: center; width: 48px; height: 35px; border: 3px solid #a97b51; border-radius: 8px; background: #d8b184; color: #fff7df; font-size: 28px; }
+.room-pager { margin: 16px 0 0; }
+.room-list-wrap { min-height: 260px; }
+.empty {
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #75624f;
+  font-size: 17px;
+  transform: translateY(42px);
+}
+.empty::before { content: none; }
+.empty-sign { width: 106px; height: auto; margin-bottom: 4px; }
+.empty p { margin: 0; line-height: 1.25; }
+.empty span { color: #8b7965; font-size: 14px; }
+.room-pager { margin: 18px 0 0; }
+.room-pager-inline { margin: 0 12px 0 10px; gap: 7px; }
+.room-pager-inline .pager-btn { padding: 5px 8px; font-size: 10px; }
+.room-pager-inline .pager-page { min-width: 13px; font-size: 11px; }
+.pager-btn { border-color: var(--lobby-border); box-shadow: 2px 2px 0 #e2d0b5; color: #735f4c; }
+.side { gap: 20px; }
+.side-card { border: 3px solid var(--lobby-border); border-radius: 16px; box-shadow: 4px 4px 0 #dfcdb0; background: var(--lobby-surface); }
+.side-title { margin: -17px -17px 14px; padding: 12px 15px; border-bottom: 2px solid #ead9bd; background: #d7e7ad; color: #403124; font-size: 16px; }
+.friends-card { padding: 14px; border: 0; background: transparent; box-shadow: none; }
+.friends-card .friend-title {
+  width: calc(100% - 28px);
+  margin: -14px 0 14px -14px;
+  padding: 11px 14px;
+  border: 2px solid #8fa76d;
+  border-radius: 0;
+  border-bottom: 2px solid #8fa76d;
+  background: #bed795;
+  box-shadow: 3px 3px 0 #d2be95;
+  clip-path: polygon(0 0, calc(100% - 11px) 0, 100% 11px, calc(100% - 11px) 100%, 0 100%);
+}
+.friends-card .side-link { margin-left: auto; color: #72583d; font-size: 11px; }
+.friends-list {
+  padding: 4px 8px;
+  border: 2px dashed #dfc9a6;
+  border-radius: 12px;
+  background: rgba(255, 253, 247, .65);
+}
+.side-link { color: #7b5d3d; }
+.notice { flex: none; min-height: 148px; background: #fffdf7; }
+.notice .side-title { background: #ffe294; }
+.notice .side-title::after { content: 'NEW'; margin-left: auto; padding: 4px 6px; border-radius: 4px; background: #e77491; color: #fff; font-size: 8px; font-style: normal; }
+.notice p { position: relative; padding-right: 38px; color: #67594d; font-size: 12px; }
+.notice b { color: #db6673; font-size: 16px; }
+.notice p::after { content: '🎁'; position: absolute; right: 0; bottom: -6px; font-size: 36px; }
+
+@media (max-width: 920px) {
+  .shell { height: auto; min-height: 100vh; overflow: visible; }
+  .layout { grid-template-columns: 1fr; padding: 22px 18px 30px; }
+  .side { display: grid; grid-template-columns: 1fr 1fr; }
+  .friends-card { min-height: 240px; }
+  .lobby-hero > div:first-child { max-width: 52%; }
+  .hero-cat-group { right: 27%; }
+}
+@media (max-width: 640px) {
+  .layout { padding: 16px 12px 24px; }
+  .lobby-hero { min-height: 300px; padding: 23px; }
+  .lobby-hero > div:first-child { max-width: 100%; }
+  .lobby-hero .hero-actions { position: absolute; bottom: 20px; left: 23px; flex-direction: row; }
+  .lobby-hero .hero-actions :deep(.px-btn) { min-width: 0; height: 43px; padding: 0 12px; font-size: 11px; }
+  .hero-grass { inset: auto 0 -7px; height: 45px; background-size: auto 45px; }
+  .hero-cat-group { right: 12%; bottom: -3px; width: 118px; height: 118px; }
+  .hero-balloon { left: -4px; bottom: 113px; width: 45px; }
+  .hero-balloon-string { left: 12px; bottom: 42px; width: 14px; height: 85px; }
+  .hero-rope-hook { left: 22px; bottom: 42px; width: 21px; height: 7px; border-bottom-width: 2px; }
+  .hero-heart { right: calc(12% - 16px); bottom: 126px; width: 48px; }
+  .hero-cloud-a { top: 10px; left: 42%; width: 105px; }
+  .hero-cloud-b { top: 48px; left: 64%; width: 88px; }
+  .section-head { flex-wrap: wrap; gap: 10px; padding: 8px 0; }
+  .section-head .room-list-title { width: 123px; height: 42px; padding: 0 11px 1px 5px; font-size: 16px; }
+  .room-pager-inline { margin: 0; }
+  .room-search { order: 3; width: 100%; margin-left: 0; }
+  .room-search input { width: 100%; }
+  .room-search-btn { order: 4; }
+  .create-room-btn { min-width: 135px; height: 43px; margin-left: 0; font-size: 13px; }
+  .room-list { grid-template-columns: 1fr; }
+  .side { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-balloon, .hero-cloud { animation: none; }
 }
 </style>

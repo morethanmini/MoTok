@@ -17,10 +17,10 @@ defineEmits<{ enter: [] }>()
                공개방은 아무것도 그리지 않는다 — 없는 표시는 잘못 읽힐 수가 없다. -->
           <i v-if="room.visibility === '비공개'" class="lock" title="비밀방 · 입장 시 비밀번호 필요">🔒</i>
         </strong>
-        <div class="room-state" :class="{ playing: room.disabled }">● {{ room.state }}</div>
+        <span class="room-count">{{ room.count }}/{{ room.max }}명</span>
       </div>
       <div class="room-side">
-        <span class="room-count">{{ room.count }}/{{ room.max }}명</span>
+        <div class="room-state" :class="{ playing: room.disabled }">● {{ room.state }}</div>
         <button class="room-enter" :disabled="room.disabled" @click="$emit('enter')">
           {{ room.disabled ? '입장 불가' : '입장' }}
         </button>
@@ -105,4 +105,39 @@ defineEmits<{ enter: [] }>()
   background: #ddd4d5;
   color: #92878f;
 }
+
+/* Warm, game-lobby treatment; room data and emit contract stay unchanged. */
+.room-card-inner {
+  border: 2px solid #d9b77f;
+  border-radius: 12px;
+  background: #fffdf7;
+  box-shadow: 3px 3px 0 #e6d2b1;
+}
+.room-card:hover .room-card-inner { box-shadow: 5px 5px 0 #dcc398; }
+.room-icon {
+  width: 54px;
+  height: 52px;
+  border-color: #c39a68;
+  border-radius: 10px;
+  background-color: #dff3cf;
+}
+.room-copy strong { margin-bottom: 1px; color: #423127; font-size: 15px; }
+.room-copy .room-count { display: block; padding: 1px 0 0; text-align: left; }
+.room-state { color: #5d9c5e; font-size: 11px; }
+.room-state.playing { color: #dc7171; }
+.room-count { color: #735d47; }
+.room-enter {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #6f5139;
+  font-size: 12px;
+}
+.room-enter:not(:disabled):hover { transform: translateY(-1px); filter: brightness(1.04); }
+.room-enter:disabled { border: 0; background: transparent; box-shadow: none; }
+@media (prefers-reduced-motion: reduce) { .room-card-inner, .room-enter { transition: none; } }
 </style>

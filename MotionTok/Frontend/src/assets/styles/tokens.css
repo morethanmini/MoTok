@@ -48,7 +48,7 @@
   --radius-card: 17px 17px 13px 17px;
 
   /* ── 폰트 ────────────────────────────────── */
-  --font-pixel: 'Galmuri11', 'Galmuri9', monospace;
+  --font-pixel: 'DNF Bit Bit', monospace;
 
   /* ── 트랜지션 ────────────────────────────── */
   --t-fast: transform .12s ease, box-shadow .12s ease, filter .12s ease;
