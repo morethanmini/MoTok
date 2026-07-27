@@ -22,9 +22,14 @@ export const usersApi = {
   /**
    * 프로필 사진 확정. 업로드가 끝난 뒤 그 오브젝트 key를 알려 준다.
    * URL이 아니라 key를 보내는 이유 — 서버가 소유권을 확인하고 공개 URL을 직접 계산한다.
-   * key에 null을 주면 기본 아바타로 되돌린다.
+   * key에 null을 주면 아바타를 해제한다(기본 이모지).
    */
   updateAvatar: (key: string | null) => http.patch<UserProfile>('/users/me/avatar', { key }),
+  /**
+   * 기본 프로필 아이콘 선택. 업로드가 없으므로 S3를 거치지 않는다 —
+   * preset은 파일명(예: '4_cat')이고 서버가 정적 경로를 붙여 저장한다.
+   */
+  setAvatarPreset: (preset: string) => http.patch<UserProfile>('/users/me/avatar', { preset }),
 
   getPoints: () => http.get<{ pointBalance: number }>('/users/me/points'),
   getPointHistory: (page = 0, size = 20) =>

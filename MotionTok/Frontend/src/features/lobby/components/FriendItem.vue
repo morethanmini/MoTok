@@ -1,13 +1,21 @@
 <script setup lang="ts">
 /** 접속 친구 한 명. 이름·현재 상태 문구와 온라인 여부 점만 보여준다(읽기 전용). */
 import type { Friend } from '../data'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 
 defineProps<{ friend: Friend }>()
 </script>
 
 <template>
   <div class="friend">
-    <div class="face" :style="{ background: friend.bg }">{{ friend.face }}</div>
+    <!-- 사진이 없거나 못 불러온 친구는 이모지 얼굴로 떨어진다(UserAvatar가 처리). -->
+    <UserAvatar
+      class="face"
+      :style="{ background: friend.bg }"
+      :src="friend.avatarUrl"
+      :fallback="friend.face"
+      :alt="`${friend.name} 프로필 사진`"
+    />
     <div class="friend-info">
       <b>{{ friend.name }}</b>
       <small>{{ friend.game }}</small>
