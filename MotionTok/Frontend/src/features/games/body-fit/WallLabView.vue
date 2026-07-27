@@ -18,6 +18,7 @@ import { AvatarRig } from './avatarRig'
 import { normalizePose, type SolvedSkeleton } from './skeleton'
 import { VIEW, VIEW_SIZE, drawSilhouette } from './silhouette'
 import { holeMarginFor, judgeRound, type RoundJudgment } from './judge'
+import { createStage, type Stage } from './stage'
 
 const cfg = reactive(defaultConfig())
 const pose = usePoseLandmarker()
@@ -41,6 +42,16 @@ const GRADE_COLOR: Record<Grade, string> = {
   FAIL: '#FF4D6A',
 }
 
+const DIFFICULTIES = [
+  { key: 'easy', label: '쉬움' },
+  { key: 'normal', label: '보통' },
+  { key: 'hard', label: '어려움' },
+] as const
+
+function setDifficulty(key: (typeof DIFFICULTIES)[number]['key']) {
+  cfg.judge.K = cfg.judge.difficultyK[key]
+}
+
 const statusText = computed(() => {
   if (camError.value) return camError.value
   if (pose.error.value) return pose.error.value
@@ -52,6 +63,7 @@ const statusText = computed(() => {
 })
 
 // ── three.js 씬 ──
+let stage: Stage | null = null
 let renderer: THREE.WebGLRenderer | null = null
 let scene: THREE.Scene
 let camera: THREE.PerspectiveCamera
@@ -76,48 +88,15 @@ const WALL_START_Z = -12
 const WALL_TEX_SIZE = 512
 
 function initThree(canvas: HTMLCanvasElement) {
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-  renderer.shadowMap.enabled = true
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap
-  renderer.toneMapping = THREE.ACESFilmicToneMapping
-
-  scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x0d0c24)
-  scene.fog = new THREE.Fog(0x0d0c24, 8, 16) // 먼 벽이 어둠에서 다가오는 느낌
-
-  camera = new THREE.PerspectiveCamera(40, 1, 0.1, 50)
-  camera.position.set(0, 0.3, 4.8)
-  camera.lookAt(0, -0.5, 0)
-
-  scene.add(new THREE.HemisphereLight(0xbdc7ff, 0x1a1836, 1.1))
-  const sun = new THREE.DirectionalLight(0xffffff, 2.2)
-  sun.position.set(2.5, 4, 3)
-  sun.castShadow = true
-  sun.shadow.mapSize.set(1024, 1024)
-  sun.shadow.camera.left = -3
-  sun.shadow.camera.right = 3
-  sun.shadow.camera.top = 3
-  sun.shadow.camera.bottom = -3
-  sun.shadow.camera.near = 0.5
-  sun.shadow.camera.far = 12
-  scene.add(sun)
-  // 림 라이트 — 뒤쪽 역광이 캡슐 윤곽을 배경에서 띄운다 (입체감)
-  const rim = new THREE.DirectionalLight(0x7f9dff, 1.4)
-  rim.position.set(-2, 2.5, -3.5)
-  scene.add(rim)
+  // 공용 무대(stage.ts) — 조명·IBL·포디움·안개는 랩과 본 게임이 공유한다
+  stage = createStage(canvas)
+  renderer = stage.renderer
+  scene = stage.scene
+  camera = stage.camera
 
   rig = new AvatarRig(cfg.avatar)
   scene.add(rig.group)
-
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(30, 30),
-    new THREE.ShadowMaterial({ opacity: 0.35 }),
-  )
-  ground.rotation.x = -Math.PI / 2
-  ground.position.y = rig.floorY
-  ground.receiveShadow = true
-  scene.add(ground)
+  stage.setFloorY(rig.floorY)
 
   // 벽 — 실루엣 뷰포트(VIEW)와 같은 정사각형 평면이라 구멍과 아바타가 정확히 정렬된다
   mapCanvas = document.createElement('canvas')
@@ -128,6 +107,7 @@ function initThree(canvas: HTMLCanvasElement) {
   wallAlpha = new THREE.CanvasTexture(alphaCanvas)
   wall = new THREE.Mesh(
     new THREE.PlaneGeometry(VIEW_SIZE, VIEW_SIZE),
+    // transparent 유지 — 유령 실루엣(#555 알파)이 반투명으로 보여야 목표 가이드가 된다
     new THREE.MeshBasicMaterial({
       map: wallMap,
       alphaMap: wallAlpha,
@@ -140,12 +120,12 @@ function initThree(canvas: HTMLCanvasElement) {
   scene.add(wall)
 }
 
-/** 출제 포즈 → 벽 텍스처. 구멍(마진 M)은 투명, 그 안에 옅은 원본 윤곽(§7-1) */
+/** 출제 포즈 → 벽 텍스처. 구멍(마진 M)은 투명, 테두리는 발광 림, 안쪽에 목표 유령(§7-1) */
 function buildWallTexture(setter: SolvedSkeleton, margin: number) {
+  const S = WALL_TEX_SIZE
   const alpha = alphaCanvas.getContext('2d')!
-  alpha.globalCompositeOperation = 'source-over'
   alpha.fillStyle = '#fff' // alphaMap: 흰색 = 불투명 벽
-  alpha.fillRect(0, 0, WALL_TEX_SIZE, WALL_TEX_SIZE)
+  alpha.fillRect(0, 0, S, S)
   alpha.fillStyle = '#000' // 구멍 = 투명
   alpha.strokeStyle = '#000'
   drawSilhouette(alpha, setter, cfg, margin)
@@ -153,11 +133,30 @@ function buildWallTexture(setter: SolvedSkeleton, margin: number) {
   alpha.strokeStyle = '#555'
   drawSilhouette(alpha, setter, cfg, 0)
 
+  // 어두운 석판 — 수직 그라데이션 + 노이즈 얼룩 (목업의 돌벽 질감 근사)
   const map = mapCanvas.getContext('2d')!
-  map.fillStyle = '#3d357f' // 고대비 단색 패널 (§8)
-  map.fillRect(0, 0, WALL_TEX_SIZE, WALL_TEX_SIZE)
-  map.fillStyle = '#c9c6f2' // 유령 실루엣 색
-  map.strokeStyle = '#c9c6f2'
+  const grad = map.createLinearGradient(0, 0, 0, S)
+  grad.addColorStop(0, '#2e2a58')
+  grad.addColorStop(0.5, '#242047')
+  grad.addColorStop(1, '#181532')
+  map.fillStyle = grad
+  map.fillRect(0, 0, S, S)
+  for (let i = 0; i < 700; i++) {
+    map.fillStyle = `rgba(${Math.random() < 0.5 ? '0,0,0' : '255,255,255'},${(Math.random() * 0.04).toFixed(3)})`
+    const w = 2 + Math.random() * 26
+    map.fillRect(Math.random() * S, Math.random() * S, w, w * (0.2 + Math.random()))
+  }
+  // 구멍 림 글로우: 마진+0.05 폭으로 시안 실루엣을 깔면, alpha가 마진 안쪽을
+  // 도려내서 구멍 둘레에 발광 링만 남는다 — 구멍 가독성(§8)의 핵심
+  // 림 글로우 — 캔버스 shadowBlur로 그린 페인트 발광 (후처리 블룸 없이도 빛나 보인다)
+  map.shadowColor = '#7fdcff'
+  map.shadowBlur = 18
+  map.fillStyle = '#b7f1ff'
+  map.strokeStyle = '#b7f1ff'
+  drawSilhouette(map, setter, cfg, margin + 0.05)
+  map.shadowBlur = 0
+  map.fillStyle = '#d6d4f6' // 유령(목표) 실루엣 색
+  map.strokeStyle = '#d6d4f6'
   drawSilhouette(map, setter, cfg, 0)
 
   wallMap.needsUpdate = true
@@ -209,12 +208,12 @@ function tick(now: number) {
 
 function renderLoop() {
   rafId = requestAnimationFrame(renderLoop)
-  if (!renderer) return
+  if (!stage) return
   tick(performance.now())
   // 패럴랙스: 아바타가 기울면 카메라가 살짝 따라 돈다 — 시점 변화가 입체감을 만든다
   camera.position.x += (rig.group.position.x * 0.35 - camera.position.x) * 0.06
   camera.lookAt(0, -0.5, 0)
-  renderer.render(scene, camera)
+  stage.render()
 }
 
 function onPose(result: PoseLandmarkerResult) {
@@ -228,19 +227,17 @@ function onPose(result: PoseLandmarkerResult) {
 
 onMounted(async () => {
   const canvas = glCanvasRef.value!
-  const stage = stageRef.value!
+  const stageEl = stageRef.value!
   initThree(canvas)
 
   const resize = () => {
-    const w = stage.clientWidth
-    const h = stage.clientHeight
-    if (!w || !h || !renderer) return
-    renderer.setSize(w, h, false)
-    camera.aspect = w / h
-    camera.updateProjectionMatrix()
+    const w = stageEl.clientWidth
+    const h = stageEl.clientHeight
+    if (!w || !h || !stage) return
+    stage.setSize(w, h)
   }
   resizeObs = new ResizeObserver(resize)
-  resizeObs.observe(stage)
+  resizeObs.observe(stageEl)
   resize()
   renderLoop()
 
@@ -266,7 +263,8 @@ onBeforeUnmount(() => {
   rig?.dispose()
   wallMap?.dispose()
   wallAlpha?.dispose()
-  renderer?.dispose()
+  stage?.dispose()
+  stage = null
   renderer = null
 })
 </script>
@@ -301,11 +299,22 @@ onBeforeUnmount(() => {
         </button>
         <section>
           <h2>난이도</h2>
+          <div class="diff-buttons">
+            <button
+              v-for="d in DIFFICULTIES"
+              :key="d.key"
+              class="btn"
+              :class="{ active: cfg.judge.K === cfg.judge.difficultyK[d.key] }"
+              @click="setDifficulty(d.key)"
+            >
+              {{ d.label }}
+            </button>
+          </div>
           <label>
             <span
               >면적비 K <b>×{{ cfg.judge.K.toFixed(2) }}</b></span
             >
-            <input v-model.number="cfg.judge.K" type="range" min="1.2" max="2.5" step="0.05" />
+            <input v-model.number="cfg.judge.K" type="range" min="1.1" max="2.5" step="0.05" />
           </label>
           <p class="hint">
             구멍 면적 = 포즈 면적 × K. 다음 라운드부터 적용. 통과 여부는 구멍 기준,
@@ -481,5 +490,18 @@ label input[type='range'] {
 .btn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+.diff-buttons {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.diff-buttons .btn {
+  flex: 1;
+}
+.diff-buttons .btn.active {
+  border-color: #b6f03c;
+  color: #b6f03c;
+  font-weight: 700;
 }
 </style>

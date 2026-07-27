@@ -311,8 +311,13 @@ export function solveSkeleton(
   const hip: Pt = { x: Math.sin(lean) * TORSO_LEN, y: -Math.cos(lean) * TORSO_LEN }
 
   if (p.headUp) setDir(state.headDir, p.headUp.x, p.headUp.y)
+  // 머리 기울기 증폭 — 수직 기준 각도를 headGain배, ±60° 클램프
+  const headAngle = Math.max(
+    -1.05,
+    Math.min(1.05, Math.atan2(state.headDir.x, state.headDir.y) * cfg.headGain),
+  )
   const headDist = NECK_LEN + cfg.headRadius
-  const head: Pt = { x: state.headDir.x * headDist, y: state.headDir.y * headDist }
+  const head: Pt = { x: Math.sin(headAngle) * headDist, y: Math.cos(headAngle) * headDist }
 
   const upperLen = UPPER_ARM_LEN * cfg.limbScale
   const foreLen = FOREARM_LEN * cfg.limbScale
