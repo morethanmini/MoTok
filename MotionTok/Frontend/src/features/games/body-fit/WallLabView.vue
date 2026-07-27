@@ -16,9 +16,9 @@ import { defaultConfig, type Grade } from './config'
 import { PoseSmoother } from './oneEuro'
 import { AvatarRig } from './avatarRig'
 import { normalizePose, type SolvedSkeleton } from './skeleton'
-import { VIEW, VIEW_SIZE, drawSilhouette } from './silhouette'
 import { holeMarginFor, judgeRound, type RoundJudgment } from './judge'
 import { createStage, type Stage } from './stage'
+import { createWall, type WallHandle } from './wall'
 
 const cfg = reactive(defaultConfig())
 const pose = usePoseLandmarker()
@@ -64,15 +64,10 @@ const statusText = computed(() => {
 
 // ── three.js 씬 ──
 let stage: Stage | null = null
-let renderer: THREE.WebGLRenderer | null = null
 let scene: THREE.Scene
 let camera: THREE.PerspectiveCamera
 let rig: AvatarRig
-let wall: THREE.Mesh
-let wallMap: THREE.CanvasTexture
-let wallAlpha: THREE.CanvasTexture
-let mapCanvas: HTMLCanvasElement
-let alphaCanvas: HTMLCanvasElement
+let wall: WallHandle
 let rafId = 0
 let resizeObs: ResizeObserver | null = null
 let stream: MediaStream | null = null
@@ -85,12 +80,10 @@ let holeMargin = 0
 let captureAt = 0
 let approachStart = 0
 const WALL_START_Z = -12
-const WALL_TEX_SIZE = 512
 
 function initThree(canvas: HTMLCanvasElement) {
   // 공용 무대(stage.ts) — 조명·IBL·포디움·안개는 랩과 본 게임이 공유한다
   stage = createStage(canvas)
-  renderer = stage.renderer
   scene = stage.scene
   camera = stage.camera
 
@@ -98,69 +91,8 @@ function initThree(canvas: HTMLCanvasElement) {
   scene.add(rig.group)
   stage.setFloorY(rig.floorY)
 
-  // 벽 — 실루엣 뷰포트(VIEW)와 같은 정사각형 평면이라 구멍과 아바타가 정확히 정렬된다
-  mapCanvas = document.createElement('canvas')
-  mapCanvas.width = mapCanvas.height = WALL_TEX_SIZE
-  alphaCanvas = document.createElement('canvas')
-  alphaCanvas.width = alphaCanvas.height = WALL_TEX_SIZE
-  wallMap = new THREE.CanvasTexture(mapCanvas)
-  wallAlpha = new THREE.CanvasTexture(alphaCanvas)
-  wall = new THREE.Mesh(
-    new THREE.PlaneGeometry(VIEW_SIZE, VIEW_SIZE),
-    // transparent 유지 — 유령 실루엣(#555 알파)이 반투명으로 보여야 목표 가이드가 된다
-    new THREE.MeshBasicMaterial({
-      map: wallMap,
-      alphaMap: wallAlpha,
-      transparent: true,
-      side: THREE.DoubleSide,
-    }),
-  )
-  wall.position.set(0, (VIEW.top + VIEW.bottom) / 2, WALL_START_Z)
-  wall.visible = false
-  scene.add(wall)
-}
-
-/** 출제 포즈 → 벽 텍스처. 구멍(마진 M)은 투명, 테두리는 발광 림, 안쪽에 목표 유령(§7-1) */
-function buildWallTexture(setter: SolvedSkeleton, margin: number) {
-  const S = WALL_TEX_SIZE
-  const alpha = alphaCanvas.getContext('2d')!
-  alpha.fillStyle = '#fff' // alphaMap: 흰색 = 불투명 벽
-  alpha.fillRect(0, 0, S, S)
-  alpha.fillStyle = '#000' // 구멍 = 투명
-  alpha.strokeStyle = '#000'
-  drawSilhouette(alpha, setter, cfg, margin)
-  alpha.fillStyle = '#555' // 옅은 원본 윤곽 — 반투명 유령 (여기 맞추면 PERFECT)
-  alpha.strokeStyle = '#555'
-  drawSilhouette(alpha, setter, cfg, 0)
-
-  // 어두운 석판 — 수직 그라데이션 + 노이즈 얼룩 (목업의 돌벽 질감 근사)
-  const map = mapCanvas.getContext('2d')!
-  const grad = map.createLinearGradient(0, 0, 0, S)
-  grad.addColorStop(0, '#2e2a58')
-  grad.addColorStop(0.5, '#242047')
-  grad.addColorStop(1, '#181532')
-  map.fillStyle = grad
-  map.fillRect(0, 0, S, S)
-  for (let i = 0; i < 700; i++) {
-    map.fillStyle = `rgba(${Math.random() < 0.5 ? '0,0,0' : '255,255,255'},${(Math.random() * 0.04).toFixed(3)})`
-    const w = 2 + Math.random() * 26
-    map.fillRect(Math.random() * S, Math.random() * S, w, w * (0.2 + Math.random()))
-  }
-  // 구멍 림 글로우: 마진+0.05 폭으로 시안 실루엣을 깔면, alpha가 마진 안쪽을
-  // 도려내서 구멍 둘레에 발광 링만 남는다 — 구멍 가독성(§8)의 핵심
-  // 림 글로우 — 캔버스 shadowBlur로 그린 페인트 발광 (후처리 블룸 없이도 빛나 보인다)
-  map.shadowColor = '#7fdcff'
-  map.shadowBlur = 18
-  map.fillStyle = '#b7f1ff'
-  map.strokeStyle = '#b7f1ff'
-  drawSilhouette(map, setter, cfg, margin + 0.05)
-  map.shadowBlur = 0
-  map.fillStyle = '#d6d4f6' // 유령(목표) 실루엣 색
-  map.strokeStyle = '#d6d4f6'
-  drawSilhouette(map, setter, cfg, 0)
-
-  wallMap.needsUpdate = true
-  wallAlpha.needsUpdate = true
+  wall = createWall()
+  scene.add(wall.mesh)
 }
 
 function startRound() {
@@ -181,16 +113,16 @@ function tick(now: number) {
     if (now >= captureAt && rig.lastSolved) {
       setterPose = rig.lastSolved
       holeMargin = holeMarginFor(setterPose, cfg)
-      buildWallTexture(setterPose, holeMargin)
-      wall.position.z = WALL_START_Z
-      wall.visible = true
+      wall.build(setterPose, holeMargin, cfg)
+      wall.mesh.position.z = WALL_START_Z
+      wall.mesh.visible = true
       approachStart = now
       phase.value = 'approach'
     }
   } else if (phase.value === 'approach') {
     const t = Math.min(1, (now - approachStart) / cfg.wall.approachMs)
     approachPct.value = Math.round(t * 100)
-    wall.position.z = WALL_START_Z * (1 - easeIn(t))
+    wall.mesh.position.z = WALL_START_Z * (1 - easeIn(t))
     if (t >= 1 && setterPose && rig.lastSolved) {
       const result = judgeRound(rig.lastSolved, setterPose, holeMargin, cfg)
       judgment.value = result
@@ -199,9 +131,9 @@ function tick(now: number) {
     }
   } else if (phase.value === 'result') {
     // 통과하면 벽이 아바타를 지나쳐 뒤로 사라진다
-    if (judgment.value?.passed && wall.visible) {
-      wall.position.z += 0.12
-      if (wall.position.z > 4) wall.visible = false
+    if (judgment.value?.passed && wall.mesh.visible) {
+      wall.mesh.position.z += 0.12
+      if (wall.mesh.position.z > 4) wall.mesh.visible = false
     }
   }
 }
@@ -261,11 +193,9 @@ onBeforeUnmount(() => {
   stream?.getTracks().forEach((t) => t.stop())
   resizeObs?.disconnect()
   rig?.dispose()
-  wallMap?.dispose()
-  wallAlpha?.dispose()
+  wall?.dispose()
   stage?.dispose()
   stage = null
-  renderer = null
 })
 </script>
 

@@ -63,7 +63,6 @@ const statusText = computed(() => {
 
 // ── three.js 씬 (반응형으로 만들 필요 없는 것들은 전부 plain 변수) ──
 let stage: Stage | null = null
-let renderer: THREE.WebGLRenderer | null = null
 let scene: THREE.Scene
 let camera: THREE.PerspectiveCamera
 let rig: AvatarRig
@@ -94,7 +93,6 @@ let lastReplayT = Infinity
 function initThree(canvas: HTMLCanvasElement) {
   // 공용 무대(stage.ts) — 조명·IBL·포디움·안개는 랩과 본 게임이 공유한다
   stage = createStage(canvas)
-  renderer = stage.renderer
   scene = stage.scene
   camera = stage.camera
 
@@ -318,7 +316,6 @@ onBeforeUnmount(() => {
   rig?.dispose()
   stage?.dispose()
   stage = null
-  renderer = null
 })
 </script>
 
