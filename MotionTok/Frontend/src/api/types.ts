@@ -306,6 +306,25 @@ export interface FriendRoomResponse {
   roomId: string | null
 }
 
+// ── 방 초대 (-100) ─────────────────────────
+/** POST /v1/live-rooms/{roomId}/invitations 요청 (CreateInvitationRequest) */
+export interface CreateInvitationRequest {
+  friendId: number
+}
+/**
+ * GET /invitations 응답 항목 (InvitationItem).
+ * inviteCode가 실려 있어 수락 시 join-by-invite-code로 바로 입장한다(비밀방 비밀번호 면제).
+ */
+export interface InvitationItem {
+  invitationId: string
+  roomId: string
+  roomTitle: string
+  inviteCode: string
+  fromNickname: string
+  createdAt: string
+  expiresAt: string
+}
+
 // ── 신고 ──────────────────────────────────
 export interface ReportRequest {
   reportedUserId: number
