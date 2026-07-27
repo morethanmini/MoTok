@@ -19,12 +19,14 @@ import {
 export type { PoseLandmarkerResult }
 
 const WASM_PATH = '/mediapipe/wasm'
-const MODEL_PATH = '/mediapipe/models/pose_landmarker_lite.task'
+// full(9MB): lite(5.5MB)보다 랜드마크가 정확·안정 — 아바타 뭉뚝함 개선 (2026-07-27 실기).
+// 저사양에서 fps가 부족하면 pose_landmarker_lite.task로 되돌린다 (파일 둘 다 배치돼 있음)
+const MODEL_PATH = '/mediapipe/models/pose_landmarker_full.task'
 
 /** 로딩 진행률 콜백 — fraction은 0~1. */
 export type LoadProgress = (fraction: number) => void
 
-/** 모델 다운로드(5.5MB)에 로딩바 0~90%를 배정, 나머지는 wasm 로드 + GPU 초기화 구간. */
+/** 모델 다운로드(9MB)에 로딩바 0~90%를 배정, 나머지는 wasm 로드 + GPU 초기화 구간. */
 const MODEL_WEIGHT = 0.9
 
 let landmarkerPromise: Promise<PoseLandmarker> | null = null
