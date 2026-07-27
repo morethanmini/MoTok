@@ -23,6 +23,8 @@ export const RouteName = {
   GamesCatalog: 'games-catalog',
   Admin: 'admin',
   Unsupported: 'unsupported',
+  /** 게임④ 아바타 렌더러 랩 — 개발 전용 (-136) */
+  DevAvatarLab: 'dev-avatar-lab',
 } as const
 
 export type RouteName = (typeof RouteName)[keyof typeof RouteName]
