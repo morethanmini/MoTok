@@ -539,12 +539,20 @@ function applyGameEvent(e: GameEvent) {
 function openPicker() {
   picker.value = true
 }
-function launch(g: GameEntry, difficulty?: string) {
+async function launch(g: GameEntry, difficulty?: string) {
   picker.value = false
   // 방장 + 서버 연결 + 플레이 가능 → 서버에 시작 요청. GAME_START가 방 전체에 돌아와 마운트된다.
   if (g.playable && roomChat.connected.value && selfIsHost.value) {
     if (!captureOn.value) {
       flash('카메라를 켜고 시작해 주세요')
+      return
+    }
+    // 게임④(-9): 출제자는 관전하는 룰이라 1인 방에선 라운드가 성립 안 함 —
+    // 시작 시점 인원을 재조회해 혼자면 서버 세션 없이 로컬 연습 모드로 돌린다.
+    if (g.id === 'shape' && (await memberCountNow()) < 2) {
+      flash('혼자 있어서 연습 모드로 시작해요 — 출제와 플레이를 모두 해요')
+      activeSession.value = null
+      activeGame.value = g
       return
     }
     roomChat.startGame(g.gameId, undefined, difficulty)
@@ -568,6 +576,15 @@ function launch(g: GameEntry, difficulty?: string) {
   roomChat.suggestGame(g.gameId, g.name)
   suggestCooldown.value = true
   setTimeout(() => (suggestCooldown.value = false), SUGGEST_COOLDOWN_MS)
+}
+
+/** 시작 클릭 시점의 실제 방 인원 — 조회 실패 시 2로 간주해 정상(서버 시작) 경로로 보낸다 */
+async function memberCountNow(): Promise<number> {
+  try {
+    return (await roomsApi.detail(roomCode.value)).members.length
+  } catch {
+    return 2
+  }
 }
 
 /** 게임 컴포넌트의 진행 상황(컴포넌트에서 300ms 스로틀) → 서버 중계 */
