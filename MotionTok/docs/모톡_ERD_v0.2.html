@@ -127,6 +127,7 @@ erDiagram
     varchar email UK "소셜 전용 계정은 null 가능"
     varchar password_hash "소셜 전용 시 null"
     varchar nickname UK
+    varchar avatar_url "프로필 사진 공개 URL · null이면 기본 아바타"
     varchar role "USER | ADMIN"
     varchar status "ACTIVE | SUSPENDED | BANNED | DELETED"
     int point_balance "기본 0"

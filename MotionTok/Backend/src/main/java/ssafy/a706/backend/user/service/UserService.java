@@ -5,6 +5,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import ssafy.a706.backend.auth.oauth.OauthProvider;
 import ssafy.a706.backend.auth.oauth.OauthUserInfo;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
@@ -13,8 +15,11 @@ import ssafy.a706.backend.auth.oauth.repository.OauthAccountRepository;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.storage.StorageService;
+import ssafy.a706.backend.storage.UploadPurpose;
 import ssafy.a706.backend.user.entity.User;
 import ssafy.a706.backend.user.controller.dto.PublicUserProfileResponse;
+import ssafy.a706.backend.user.controller.dto.UpdateAvatarRequest;
 import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
 import ssafy.a706.backend.user.controller.dto.WithdrawRequest;
 import ssafy.a706.backend.user.repository.UserRepository;
@@ -34,6 +39,7 @@ public class UserService {
     private final OauthAccountRepository oauthAccountRepository;
     private final OauthClientResolver oauthClientResolver;
     private final RejoinPolicy rejoinPolicy;
+    private final StorageService storageService;
 
     public UserProfileResponse getProfile(Long userId) {
         return UserProfileResponse.from(findActiveById(userId));
@@ -68,6 +74,55 @@ public class UserService {
         } catch (DataIntegrityViolationException e) {
             throw new BusinessException(ErrorCode.NICKNAME_ALREADY_USED);
         }
+    }
+
+    /**
+     * PATCH /users/me/avatar — 업로드가 끝난 오브젝트를 프로필 사진으로 확정한다.
+     *
+     * <p>업로드 자체는 브라우저가 presigned URL로 S3에 직접 하므로 <b>서버는 결과만 받는다.</b>
+     * 그래서 여기서 두 가지를 반드시 확인해야 한다 — 둘 중 하나라도 빠지면 presigned 방식의
+     * 마지막 방어선이 사라진다:</p>
+     * <ol>
+     *   <li><b>소유권</b> — key가 내 prefix({@code public/avatars/{userId}/})인가.
+     *       안 하면 남의 key나 아무 문자열이나 자기 프로필에 박을 수 있다.</li>
+     *   <li><b>존재</b> — 실제로 올라간 객체인가. presigned URL만 받고 PUT을 하지 않아도
+     *       클라이언트는 key를 알고 있어서, 확인하지 않으면 깨진 URL이 DB에 남는다.</li>
+     * </ol>
+     * (둘 다 {@link StorageService#confirmOwned}가 처리한다.)
+     *
+     * <p>key가 null이면 기본 아바타로 되돌린다 — 변경과 삭제를 한 엔드포인트로 처리한다.</p>
+     */
+    @Transactional
+    public UserProfileResponse updateAvatar(Long userId, UpdateAvatarRequest req) {
+        User user = findActiveById(userId);
+        String previousUrl = user.getAvatarUrl();
+
+        String key = req.key() == null || req.key().isBlank() ? null : req.key().trim();
+        user.changeAvatarUrl(key == null ? null : storageService.confirmOwned(UploadPurpose.AVATAR, userId, key));
+
+        // 이전 사진은 커밋된 뒤에 지운다. 트랜잭션 안에서 지우면 이후 롤백 시 아직 참조 중인
+        // 객체를 이미 삭제한 상태가 되어 프로필 사진이 깨진다(삭제는 되돌릴 수 없다).
+        deleteAfterCommit(previousUrl);
+
+        return UserProfileResponse.from(user);
+    }
+
+    /** 이전 아바타 객체 정리. 실패해도 본 흐름을 막지 않는다 — 고아 객체는 나중에 정리할 수 있다. */
+    private void deleteAfterCommit(String previousUrl) {
+        String previousKey = storageService.keyFromPublicUrl(previousUrl);
+        if (previousKey == null) {
+            return;
+        }
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            storageService.deleteQuietly(previousKey);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                storageService.deleteQuietly(previousKey);
+            }
+        });
     }
 
     /** PATCH /users/me/password — 현재 비밀번호 확인 후 변경. 변경 시 Refresh 토큰을 무효화해 다른 세션을 로그아웃시킨다. */
