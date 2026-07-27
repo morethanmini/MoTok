@@ -11,7 +11,7 @@ import { useHandLandmarker } from '@/composables/useHandLandmarker'
 import { GameClock } from './core/clock'
 import { ScoreTracker } from './core/score'
 import { COUNTDOWN_SECONDS } from './core/config'
-import { CatchLogic, type Hands } from './logic/catchLogic'
+import { CatchLogic, type Hands, type CatchEvent, type TrackedNote } from './logic/catchLogic'
 import { generateBattleChart } from './generator/battleChart'
 import { LEAD_IN_MS, type Difficulty } from './generator/presets'
 import { HandInputTracker } from './input/handInput'
@@ -19,6 +19,17 @@ import { Renderer, type RenderHand } from './render/renderer'
 import { resolveSkin } from './render/skins'
 import { SfxPlayer } from './audio/sfx'
 import type { Judgement } from './core/types'
+import {
+  RingLogic,
+  holdBearingDeg,
+  laneAngleDeg,
+  type RingEvent,
+  type TrackedRingNote,
+} from './ring/ringLogic'
+import { generateRingChart } from './ring/ringChart'
+import { RingRenderer } from './ring/ringRenderer'
+import { RING_RADIUS } from './ring/ringConfig'
+import type { GameMode } from './core/types'
 
 const props = withDefaults(
   defineProps<{
@@ -37,8 +48,10 @@ const props = withDefaults(
      * 없으면 마운트 시점이 t=0 — 솔로는 이걸로 충분하다.
      */
     epochZeroMs?: number | null
+    /** 'catch' = 자유 좌표 잡기, 'ring' = 마이마이 레인 */
+    mode?: GameMode
   }>(),
-  { durationMs: 90_000, skinId: 'cat-candy', video: null, epochZeroMs: null },
+  { durationMs: 90_000, skinId: 'cat-candy', video: null, epochZeroMs: null, mode: 'catch' },
 )
 
 const emit = defineEmits<{
@@ -63,13 +76,18 @@ const handsSeen = ref(false)
 const remainingSec = ref(0)
 
 const landmarker = useHandLandmarker()
-const chart = shallowRef(generateBattleChart(props.seed, props.difficulty, props.durationMs))
+const isRing = props.mode === 'ring'
+const chart = shallowRef(
+  isRing
+    ? generateRingChart(props.seed, props.difficulty, props.durationMs)
+    : generateBattleChart(props.seed, props.difficulty, props.durationMs),
+)
 
 let audioCtx: AudioContext | null = null
 let clock: GameClock | null = null
-let logic: CatchLogic | null = null
+let logic: CatchLogic | RingLogic | null = null
 let scorer: ScoreTracker | null = null
-let renderer: Renderer | null = null
+let renderer: Renderer | RingRenderer | null = null
 let sfx: SfxPlayer | null = null
 const input = new HandInputTracker()
 
@@ -106,6 +124,25 @@ const TIERS = [
 
 const tier = computed(() => TIERS.find((t) => accuracy.value >= t.min) ?? TIERS[TIERS.length - 1]!)
 
+/**
+ * 이펙트를 터뜨릴 게임 좌표.
+ * 캐치: 노트 자리(연결 노트는 경로 끝). 링: 레인 위치를 각도에서 계산한다.
+ */
+function fxPointOf(event: CatchEvent | RingEvent, tMs: number): { x: number; y: number } {
+  const note = event.note
+  if (isRing) {
+    const ring = note as TrackedRingNote
+    const deg = ring.type === 'hold' ? holdBearingDeg(ring, tMs) : laneAngleDeg(ring.lane)
+    const rad = (deg * Math.PI) / 180
+    return { x: Math.sin(rad) * RING_RADIUS, y: Math.cos(rad) * RING_RADIUS }
+  }
+  const c = note as TrackedNote
+  if (event.type === 'hit' && c.kind === 'trail' && c.path?.length) {
+    return c.path[c.path.length - 1]!
+  }
+  return { x: c.x, y: c.y }
+}
+
 /** 판정 파이프 — 입력 콜백과 렌더 루프 양쪽에서 부른다. */
 function pumpLogic(hands: Hands, tMs: number) {
   if (!logic || !scorer || !renderer) return
@@ -115,11 +152,8 @@ function pumpLogic(hands: Hands, tMs: number) {
     // miss는 잡을 손이 정해져 있으니 노트의 손을 쓴다('any'는 오른손 색으로)
     const hand = event.type === 'hit' ? event.hand : event.note.hand === 'left' ? 'left' : 'right'
     scorer.add(judgement)
-    // 연결 노트는 경로 끝에서 터져야 자연스럽다
-    const at =
-      event.type === 'hit' && event.note.kind === 'trail'
-        ? (event.note.path?.[event.note.path.length - 1] ?? event.note)
-        : event.note
+    // 이펙트가 터질 위치 — 모드마다 노트 좌표계가 다르다
+    const at = fxPointOf(event, tMs)
     // 콤보를 넘겨 이펙트 크기를 키운다 — 잘 치고 있다는 감각
     renderer.spawnFx(at.x, at.y, judgement, hand, tMs, scorer.combo)
     // 콤보를 같이 넘긴다 — 히트음이 반음씩 올라가 "타고 있다"는 감각을 만든다
@@ -199,7 +233,8 @@ function loop() {
   pumpLogic(withoutGrab(latestHands), t)
 
   renderer.resize()
-  renderer.draw({
+  // 두 렌더러의 draw 시그니처는 notes 타입만 다르다 — 모드별로 각자 자기 노트를 받는다
+  ;(renderer as { draw: (f: unknown) => void }).draw({
     tMs: t,
     notes: logic.notes,
     approachTimeMs: chart.value.approachTimeMs,
@@ -246,10 +281,12 @@ async function boot() {
     sfx = new SfxPlayer(audioCtx)
 
     const skin = resolveSkin(props.skinId)
-    renderer = new Renderer(canvas, skin)
+    renderer = isRing ? new RingRenderer(canvas, skin) : new Renderer(canvas, skin)
     renderer.resize()
 
-    logic = new CatchLogic(chart.value)
+    logic = isRing
+      ? new RingLogic(chart.value as ReturnType<typeof generateRingChart>)
+      : new CatchLogic(chart.value as ReturnType<typeof generateBattleChart>)
     scorer = new ScoreTracker()
     clock = new GameClock(audioCtx)
 

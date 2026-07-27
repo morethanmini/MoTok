@@ -20,3 +20,10 @@ export type NoteHand = Hand | 'any'
  * - catch: 노트 위에서 **주먹을 쥐어야** 한다(펴짐→쥠 전환 순간만 인정) — 특수 노트
  */
 export type NoteKind = 'swipe' | 'trail' | 'catch'
+
+/**
+ * 플레이 모드.
+ * - catch: 화면 아무 곳에나 뜨는 노트를 손으로 잡는다(기본)
+ * - ring: 마이마이식 — 중심에서 링으로 밀려 나오는 노트를 레인 위치에서 받는다
+ */
+export type GameMode = 'catch' | 'ring'
