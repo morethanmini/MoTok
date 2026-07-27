@@ -91,6 +91,10 @@ public enum ErrorCode {
     CHAT_REPORT_DUPLICATE(HttpStatus.CONFLICT, "CHAT_REPORT_DUPLICATE", "이미 신고한 채팅입니다."),
     CHAT_REPORT_NOT_FOUND(HttpStatus.NOT_FOUND, "CHAT_REPORT_NOT_FOUND", "존재하지 않는 신고입니다."),
 
+    // user report (-112) — 대상이 없거나 탈퇴·정지된 경우는 USER_NOT_FOUND를 재사용한다(-96과 같은 선)
+    USER_REPORT_SELF(HttpStatus.BAD_REQUEST, "USER_REPORT_SELF", "자신은 신고할 수 없습니다."),
+    USER_REPORT_DUPLICATE(HttpStatus.CONFLICT, "USER_REPORT_DUPLICATE", "이미 접수된 신고가 처리 중입니다."),
+
     // friend (-57) — 닉네임으로 상대를 못 찾는 경우는 USER_NOT_FOUND를 재사용한다
     FRIEND_SELF_REQUEST(HttpStatus.BAD_REQUEST, "FRIEND_SELF_REQUEST", "자신에게는 친구 요청을 보낼 수 없습니다."),
     FRIEND_ALREADY(HttpStatus.CONFLICT, "FRIEND_ALREADY", "이미 친구입니다."),
