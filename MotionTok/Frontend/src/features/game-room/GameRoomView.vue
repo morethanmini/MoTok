@@ -6,7 +6,7 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
 import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason } from '@/api'
-import type { GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
+import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { useCamera } from '@/composables/useCamera'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
@@ -26,6 +26,9 @@ import CreateRoomModal, { type NewRoom } from '@/features/lobby/components/Creat
 // MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
 const FingerStarGame = defineAsyncComponent(
   () => import('@/features/games/finger-star/FingerStarGame.vue'),
+)
+const DrawingRelayGame = defineAsyncComponent(
+  () => import('@/features/games/drawing-relay/DrawingRelayGame.vue'),
 )
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
@@ -422,6 +425,8 @@ const suggestCooldown = ref(false)
 const activeGame = ref<GameEntry | null>(null)
 const activeSession = ref<ActiveGameSession | null>(null)
 const gameResults = ref<GameResultEntry[] | null>(null)
+/** 그림으로 말해요(게임 10) — DRAW/DRAW_RESULT 릴레이를 게임 컴포넌트로 전달하는 피드 */
+const drawFeed = ref<GameEvent[]>([])
 
 // ── 게임 화면 송출 — 게임 중에는 카메라와 함께 게임 캔버스를 화면공유 트랙으로 발행한다.
 // 다른 참가자는 타일마다 게임 화면 ↔ 카메라를 토글로 골라 본다(ParticipantTile).
@@ -476,20 +481,30 @@ function applyGameEvent(e: GameEvent) {
     if (!entry) return
     gameResults.value = null
     liveScores.value = {}
+    drawFeed.value = []
     activeSession.value = {
       sessionId: e.sessionId,
-      constellationKey: e.constellationKey,
+      constellationKey: e.constellationKey ?? '',
       startAt: e.startAt,
       endAt: e.endAt,
       clockOffset: e.serverNow - Date.now(),
+      topicWord: e.topicWord ?? null,
+      turnOrder: e.turnOrder ?? null,
+      turnDurationSec: e.turnDurationSec ?? null,
+      handoverSec: e.handoverSec ?? null,
     }
     activeGame.value = entry
     picker.value = false
-    if (!captureOn.value) flash('카메라를 켜면 게임에 참여할 수 있어요')
+    if (!captureOn.value && !entry.cameraOptional) flash('카메라를 켜면 게임에 참여할 수 있어요')
     return
   }
   // 이하 이벤트는 현재 세션 것만 반영(닫은 뒤 늦게 도착한 프레임 방어)
   if (activeSession.value?.sessionId !== e.sessionId) return
+  // 그리기 릴레이 — 게임 컴포넌트가 피드를 watch로 소비한다(자기 에코 무시 포함)
+  if (e.type === 'DRAW' || e.type === 'DRAW_RESULT') {
+    drawFeed.value = [...drawFeed.value, e]
+    return
+  }
   if (e.type === 'PROGRESS') {
     const row = liveScores.value[e.userId]
     if (row?.finished) return // 완주 확정 후의 늦은 진행 프레임은 무시
@@ -524,7 +539,7 @@ function launch(g: GameEntry) {
   picker.value = false
   // 방장 + 서버 연결 + 플레이 가능 → 서버에 시작 요청. GAME_START가 방 전체에 돌아와 마운트된다.
   if (g.playable && roomChat.connected.value && selfIsHost.value) {
-    if (!captureOn.value) {
+    if (!captureOn.value && !g.cameraOptional) {
       flash('카메라를 켜고 시작해 주세요')
       return
     }
@@ -533,7 +548,7 @@ function launch(g: GameEntry) {
   }
   // 서버 미연동 데모 — 로컬 솔로 플레이 폴백
   if (g.playable && !roomChat.connected.value) {
-    if (!captureOn.value) {
+    if (!captureOn.value && !g.cameraOptional) {
       flash('카메라를 켜야 게임을 플레이할 수 있어요')
       return
     }
@@ -572,6 +587,7 @@ function closeGame() {
   activeSession.value = null
   gameResults.value = null
   liveScores.value = {}
+  drawFeed.value = []
 }
 
 function copyCode() {
@@ -723,12 +739,20 @@ async function openInvite() {
 }
 
 const startLabel = computed(() => (amRoomHost.value ? 'START' : '제안'))
+/**
+ * 게임 선택 버튼 잠금 — 서버 연결 중에는 방장 여부를 알기 전까지 잠근다(제안 오발신 방지).
+ * STOMP 미연결(백엔드 미연동 로컬 데모)에서는 상세 조회가 영영 안 끝나므로 잠그지 않는다 —
+ * 이때 열리는 게임은 로컬 솔로 폴백뿐이고 제안 발신은 useRoomChat이 미연결 시 무시한다.
+ */
+const pickerLocked = computed(() => roomChat.connected.value && !detailLoaded.value)
 const startHint = computed(() =>
-  !detailLoaded.value
-    ? '방 정보를 불러오는 중…'
-    : amRoomHost.value
-      ? '게임을 선택하고 시작!'
-      : '하고 싶은 게임을 제안해보세요',
+  !roomChat.connected.value
+    ? '오프라인 — 로컬 게임을 플레이할 수 있어요'
+    : !detailLoaded.value
+      ? '방 정보를 불러오는 중…'
+      : amRoomHost.value
+        ? '게임을 선택하고 시작!'
+        : '하고 싶은 게임을 제안해보세요',
 )
 </script>
 
@@ -767,7 +791,7 @@ const startHint = computed(() =>
       <button
         class="px start-btn"
         :class="{ suggest: !amRoomHost }"
-        :disabled="!detailLoaded || (!amRoomHost && suggestCooldown)"
+        :disabled="pickerLocked || (detailLoaded && !amRoomHost && suggestCooldown)"
         :title="startHint"
         @click="openPicker"
       >
@@ -811,6 +835,22 @@ const startHint = computed(() =>
             @close="closeGame"
             @progress="onGameProgress"
             @finished="onGameFinished"
+          />
+          <!-- 그림으로 말해요 — 솔로(session=null)·멀티(명세 v0.2.20 턴 릴레이) -->
+          <DrawingRelayGame
+            v-else-if="activeGame?.id === 'draw'"
+            ref="gameComp"
+            :video="selfVideoEl ?? null"
+            :session="activeSession"
+            :results="gameResults"
+            :my-user-id="myParticipantId"
+            :draw-events="drawFeed"
+            @close="closeGame"
+            @draw="(seq: number, ops: DrawOp[]) => roomChat.sendGameDraw(seq, ops)"
+            @draw-result="
+              (r: { guesses: string[]; answerRank: number; score: number }) =>
+                roomChat.sendGameDrawResult(r.guesses, r.answerRank, r.score)
+            "
           />
           <div class="self-label">
             <span class="c-g">{{ selfIsHost ? 'YOU · HOST' : 'YOU' }}</span>
