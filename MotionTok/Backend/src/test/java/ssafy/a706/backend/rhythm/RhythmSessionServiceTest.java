@@ -76,7 +76,7 @@ class RhythmSessionServiceTest {
 
     private RhythmSession playingSession() {
         long now = System.currentTimeMillis();
-        return new RhythmSession("S1", 42L, "HARD", now - 1000, now + 60_000,
+        return new RhythmSession("S1", 42L, "HARD", "catch", now - 1000, now + 60_000,
                 RhythmSession.STATUS_PLAYING);
     }
 
@@ -95,7 +95,7 @@ class RhythmSessionServiceTest {
         when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
         when(membershipReader.isMember(eq(ROOM_ID), anyString())).thenReturn(true);
 
-        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD"), guest))
+        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch"), guest))
                 .isInstanceOf(RhythmException.class)
                 .hasFieldOrPropertyWithValue("code", "RHYTHM_NOT_HOST");
         verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
@@ -108,7 +108,7 @@ class RhythmSessionServiceTest {
         when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
         when(membershipReader.isMember(eq(ROOM_ID), anyString())).thenReturn(false);
 
-        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD"), host))
+        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch"), host))
                 .isInstanceOf(RhythmException.class)
                 .hasFieldOrPropertyWithValue("code", "RHYTHM_NOT_IN_ROOM");
     }
@@ -118,11 +118,12 @@ class RhythmSessionServiceTest {
         givenRoomWithHost();
         givenNoActiveSession();
 
-        service.start(ROOM_ID, new RhythmRequests.Start("HARD"), host);
+        service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch"), host);
 
         RhythmEventResponse event = lastEvent();
         assertThat(event.type()).isEqualTo("RHYTHM_START");
         assertThat(event.difficulty()).isEqualTo("HARD");
+        assertThat(event.mode()).isEqualTo("catch");
         // seed는 문자열이어야 한다 — long을 숫자로 내리면 JS 정밀도에서 값이 갈린다
         assertThat(event.seed()).isNotBlank();
         assertThat(Long.parseLong(event.seed())).isNotNull();
@@ -141,7 +142,7 @@ class RhythmSessionServiceTest {
         givenRoomWithHost();
         givenNoActiveSession();
 
-        service.start(ROOM_ID, new RhythmRequests.Start("IMPOSSIBLE"), host);
+        service.start(ROOM_ID, new RhythmRequests.Start("IMPOSSIBLE", "catch"), host);
 
         assertThat(lastEvent().difficulty()).isEqualTo("NORMAL");
     }
@@ -154,7 +155,7 @@ class RhythmSessionServiceTest {
         when(membershipReader.isMember(eq(ROOM_ID), anyString())).thenReturn(true);
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(playingSession()));
 
-        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("EASY"), host))
+        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("EASY", "catch"), host))
                 .isInstanceOf(RhythmException.class)
                 .hasFieldOrPropertyWithValue("code", "RHYTHM_ALREADY_ACTIVE");
     }

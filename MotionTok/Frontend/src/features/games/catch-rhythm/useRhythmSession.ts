@@ -12,6 +12,7 @@
 import { onScopeDispose, ref, shallowRef, watch, type Ref } from 'vue'
 import type { RhythmEvent, RhythmLiveRow, RhythmResultEntry } from './rhythmTypes'
 import type { Difficulty } from './generator/presets'
+import type { GameMode } from './core/types'
 
 interface StompLike {
   connected: Readonly<Ref<boolean>>
@@ -27,6 +28,7 @@ export interface RhythmRound {
   sessionId: string
   seed: string
   difficulty: Difficulty
+  mode: GameMode
   /** 게임 시각 t=0에 해당하는 **로컬** 타임스탬프 (= 서버 serverNow) */
   epochZeroMs: number
   /** 채보 길이 = endAt - serverNow. 전원이 같은 값을 계산한다 */
@@ -57,6 +59,7 @@ export function useRhythmSession(roomChat: StompLike, roomId: Ref<string>) {
         sessionId: event.sessionId,
         seed: event.seed,
         difficulty: event.difficulty,
+        mode: event.mode ?? 'catch',
         // 서버의 serverNow 시점을 t=0으로 잡는다 — 카운트다운(서버 countdownSec)과
         // 채보 앞 유예(LEAD_IN)가 같은 3초라 자연스럽게 맞물린다.
         epochZeroMs: event.serverNow - clockOffset.value,
@@ -128,8 +131,8 @@ export function useRhythmSession(roomChat: StompLike, roomId: Ref<string>) {
 
   // ── 발행 ──────────────────────────────────────────────
 
-  const start = (difficulty: Difficulty) =>
-    roomChat.publishRaw(`/app/rooms/${roomId.value}/rhythm/start`, { difficulty })
+  const start = (difficulty: Difficulty, mode: GameMode) =>
+    roomChat.publishRaw(`/app/rooms/${roomId.value}/rhythm/start`, { difficulty, mode })
 
   const sendProgress = (score: number, combo: number) =>
     roomChat.publishRaw(`/app/rooms/${roomId.value}/rhythm/progress`, { score, combo })

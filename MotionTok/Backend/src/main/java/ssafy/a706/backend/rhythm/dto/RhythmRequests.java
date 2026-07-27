@@ -10,8 +10,11 @@ public final class RhythmRequests {
     private RhythmRequests() {
     }
 
-    /** 방장이 라운드를 연다. difficulty가 없거나 알 수 없는 값이면 NORMAL로 폴백. */
-    public record Start(String difficulty) {
+    /**
+     * 방장이 라운드를 연다.
+     * difficulty가 없거나 알 수 없는 값이면 NORMAL, mode는 catch로 폴백한다.
+     */
+    public record Start(String difficulty, String mode) {
     }
 
     /** 라운드 중 실시간 점수 중계(1초 스로틀). 저장하지 않는다. */

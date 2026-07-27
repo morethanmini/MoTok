@@ -7,6 +7,7 @@
  */
 
 import type { Difficulty } from './generator/presets'
+import type { GameMode } from './core/types'
 
 export interface RhythmResultEntry {
   rank: number
@@ -30,6 +31,7 @@ export type RhythmEvent =
       /** 서버가 Long을 문자열로 내린다 — JS number 정밀도(2^53)를 넘을 수 있다 */
       seed: string
       difficulty: Difficulty
+      mode: GameMode
       /** 이벤트를 만든 시각(서버 기준) — 로컬 시계와의 오차 보정에 쓴다 */
       serverNow: number
       /** 카운트다운이 끝나고 첫 노트가 오기 시작하는 시각(서버 기준) */

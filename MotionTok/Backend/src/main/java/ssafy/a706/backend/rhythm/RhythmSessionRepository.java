@@ -42,6 +42,7 @@ public class RhythmSessionRepository {
         fields.put("sessionId", session.sessionId());
         fields.put("seed", Long.toString(session.seed()));
         fields.put("difficulty", session.difficulty());
+        fields.put("mode", session.mode());
         fields.put("startAt", Long.toString(session.startAt()));
         fields.put("endAt", Long.toString(session.endAt()));
         fields.put("status", session.status());
@@ -65,6 +66,7 @@ public class RhythmSessionRepository {
                 sessionId,
                 num(f, "seed", 0L),
                 str(f, "difficulty") == null ? "NORMAL" : str(f, "difficulty"),
+                str(f, "mode") == null ? "catch" : str(f, "mode"),
                 num(f, "startAt", 0L),
                 num(f, "endAt", 0L),
                 str(f, "status") == null ? RhythmSession.STATUS_ENDED : str(f, "status")));

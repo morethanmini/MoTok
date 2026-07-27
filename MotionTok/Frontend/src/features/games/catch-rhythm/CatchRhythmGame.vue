@@ -14,6 +14,7 @@ import { DIFFICULTIES, type Difficulty } from './generator/presets'
 import { useRhythmSession } from './useRhythmSession'
 import type { Judgement } from './core/types'
 import type { RhythmLiveRow } from './rhythmTypes'
+import type { GameMode } from './core/types'
 
 const props = defineProps<{
   /** 게임룸 셀프 타일의 <video> — 스트림이 attach되어 재생 중이어야 한다 */
@@ -37,6 +38,7 @@ const emit = defineEmits<{ close: [] }>()
 const SOLO_ROUND_MS = 60_000
 
 const difficulty = ref<Difficulty>('NORMAL')
+const mode = ref<GameMode>('catch')
 const errorMsg = ref('')
 const soloSeed = ref<number | null>(null)
 const submitted = ref(false)
@@ -47,6 +49,11 @@ const session = useRhythmSession(props.roomChat, roomId)
 const isMultiplayer = computed(() => props.roomChat.connected.value)
 /** 대전은 서버 라운드, 솔로는 로컬 시드 */
 const playing = computed(() => session.round.value !== null || soloSeed.value !== null)
+
+const MODES: { id: GameMode; label: string; hint: string }[] = [
+  { id: 'catch', label: '캐치', hint: '화면 곳곳의 음표를 손으로 잡아요' },
+  { id: 'ring', label: '마이마이', hint: '가장자리 링에서 받아쳐요' },
+]
 
 const DIFFICULTY_LABEL: Record<Difficulty, string> = {
   EASY: '쉬움',
@@ -70,7 +77,7 @@ function start() {
   errorMsg.value = ''
   submitted.value = false
   if (isMultiplayer.value) {
-    if (props.isHost && !session.start(difficulty.value)) {
+    if (props.isHost && !session.start(difficulty.value, mode.value)) {
       errorMsg.value = '서버에 연결되어 있지 않아요'
     }
     return // 비방장은 RHYTHM_START를 기다린다
@@ -131,6 +138,7 @@ watch(
       :difficulty="session.round.value?.difficulty ?? difficulty"
       :duration-ms="session.round.value?.durationMs ?? SOLO_ROUND_MS"
       :epoch-zero-ms="session.round.value?.epochZeroMs ?? null"
+      :mode="session.round.value?.mode ?? mode"
       :video="video"
       @finished="onFinished"
       @progress="onProgress"
@@ -167,7 +175,22 @@ watch(
 
     <div v-if="!playing" class="ready">
       <p class="title">캐치캐치리듬</p>
-      <p class="desc">날아오는 음표를 <b>손으로 잡아요</b></p>
+      <p class="desc">{{ MODES.find((m) => m.id === mode)?.hint }}</p>
+
+      <div class="levels">
+        <button
+          v-for="m in MODES"
+          :key="m.id"
+          type="button"
+          class="px level"
+          :class="{ on: mode === m.id }"
+          :disabled="isMultiplayer && !isHost"
+          :title="m.hint"
+          @click="mode = m.id"
+        >
+          {{ m.label }}
+        </button>
+      </div>
 
       <div class="levels">
         <button

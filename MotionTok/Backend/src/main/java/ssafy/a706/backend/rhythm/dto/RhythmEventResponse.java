@@ -21,6 +21,7 @@ public record RhythmEventResponse(
         String sessionId,
         String seed,
         String difficulty,
+        String mode,
         Long serverNow,
         Long startAt,
         Long endAt,
@@ -33,25 +34,25 @@ public record RhythmEventResponse(
 ) {
 
     public static RhythmEventResponse start(String sessionId, long seed, String difficulty,
-                                            long serverNow, long startAt, long endAt) {
+                                            String mode, long serverNow, long startAt, long endAt) {
         return new RhythmEventResponse("RHYTHM_START", sessionId, Long.toString(seed), difficulty,
-                serverNow, startAt, endAt, null, null, null, null, null, null);
+                mode, serverNow, startAt, endAt, null, null, null, null, null, null);
     }
 
     public static RhythmEventResponse progress(String sessionId, String userId, String nickname,
                                                int score, int combo) {
-        return new RhythmEventResponse("PROGRESS", sessionId, null, null,
+        return new RhythmEventResponse("PROGRESS", sessionId, null, null, null,
                 null, null, null, userId, nickname, score, combo, null, null);
     }
 
     public static RhythmEventResponse playerFinished(String sessionId, String userId, String nickname,
                                                      int score, int maxCombo) {
-        return new RhythmEventResponse("PLAYER_FINISHED", sessionId, null, null,
+        return new RhythmEventResponse("PLAYER_FINISHED", sessionId, null, null, null,
                 null, null, null, userId, nickname, score, null, maxCombo, null);
     }
 
     public static RhythmEventResponse end(String sessionId, List<RhythmResultEntry> results) {
-        return new RhythmEventResponse("RHYTHM_END", sessionId, null, null,
+        return new RhythmEventResponse("RHYTHM_END", sessionId, null, null, null,
                 null, null, null, null, null, null, null, null, results);
     }
 }

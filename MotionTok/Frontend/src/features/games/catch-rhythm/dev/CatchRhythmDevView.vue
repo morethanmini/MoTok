@@ -9,9 +9,10 @@ import { ref } from 'vue'
 import CatchRhythmStage from '../CatchRhythmStage.vue'
 import { DIFFICULTIES, type Difficulty } from '../generator/presets'
 import { SKINS } from '../render/skins'
-import type { Judgement } from '../core/types'
+import type { Judgement, GameMode } from '../core/types'
 
 const difficulty = ref<Difficulty>('NORMAL')
+const mode = ref<GameMode>('catch')
 const skinId = ref<string>('cat-candy')
 const seed = ref<string>('20260727')
 const durationSec = ref(60)
@@ -56,6 +57,14 @@ function onError(message: string) {
       <h1>캐치캐치리듬 <small>개발 플레이</small></h1>
 
       <label>
+        모드
+        <select v-model="mode" :disabled="running">
+          <option value="catch">캐치</option>
+          <option value="ring">마이마이</option>
+        </select>
+      </label>
+
+      <label>
         난이도
         <select v-model="difficulty" :disabled="running">
           <option v-for="d in DIFFICULTIES" :key="d" :value="d">{{ d }}</option>
@@ -94,6 +103,7 @@ function onError(message: string) {
         :difficulty="difficulty"
         :duration-ms="durationSec * 1000"
         :skin-id="skinId"
+        :mode="mode"
         @finished="onFinished"
         @error="onError"
       >

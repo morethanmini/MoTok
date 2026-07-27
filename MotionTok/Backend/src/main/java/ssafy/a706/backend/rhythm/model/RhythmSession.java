@@ -10,6 +10,7 @@ package ssafy.a706.backend.rhythm.model;
  * @param seed       방 전원이 같은 채보를 만들기 위한 시드. 클라이언트에 문자열로 내려간다
  *                   (Java long이 JS number 정밀도 2^53을 넘을 수 있다)
  * @param difficulty EASY | NORMAL | HARD
+ * @param mode       catch | ring — 방 전원이 같은 모드로 플레이한다
  * @param startAt    라운드 시작(epoch millis) — 카운트다운이 끝나는 시각
  * @param endAt      라운드 종료(epoch millis)
  */
@@ -17,6 +18,7 @@ public record RhythmSession(
         String sessionId,
         long seed,
         String difficulty,
+        String mode,
         long startAt,
         long endAt,
         String status

@@ -67,6 +67,9 @@ public class RhythmSessionService {
 
     private static final Set<String> DIFFICULTIES = Set.of("EASY", "NORMAL", "HARD");
     private static final String DEFAULT_DIFFICULTY = "NORMAL";
+    /** 캐치 = 기본 모드, 링 = 마이마이 */
+    private static final Set<String> MODES = Set.of("catch", "ring");
+    private static final String DEFAULT_MODE = "catch";
 
     private final RoomMembershipReader membershipReader;
     private final LiveRoomRepository liveRoomRepository;
@@ -96,19 +99,20 @@ public class RhythmSessionService {
         }
 
         String difficulty = resolveDifficulty(request == null ? null : request.difficulty());
+        String mode = resolveMode(request == null ? null : request.mode());
         long seed = ThreadLocalRandom.current().nextLong();
         String sessionId = UUID.randomUUID().toString();
         long startAt = now + RhythmGameSeeder.COUNTDOWN_SEC * 1000L;
         long endAt = startAt + RhythmGameSeeder.ROUND_DURATION_SEC * 1000L;
 
         sessionRepository.saveSession(roomId, new RhythmSession(
-                sessionId, seed, difficulty, startAt, endAt, RhythmSession.STATUS_PLAYING));
+                sessionId, seed, difficulty, mode, startAt, endAt, RhythmSession.STATUS_PLAYING));
         liveRoomRepository.updateStatus(roomId, "PLAYING");
 
-        broadcast(roomId, RhythmEventResponse.start(sessionId, seed, difficulty, now, startAt, endAt));
+        broadcast(roomId, RhythmEventResponse.start(sessionId, seed, difficulty, mode, now, startAt, endAt));
         scheduleEnd(roomId, sessionId, endAt + END_GRACE_MILLIS);
-        log.info("rhythm session started: room={} session={} difficulty={} seed={}",
-                roomId, sessionId, difficulty, seed);
+        log.info("rhythm session started: room={} session={} mode={} difficulty={} seed={}",
+                roomId, sessionId, mode, difficulty, seed);
     }
 
     /** 라운드 중 실시간 점수 중계 — 저장 없이 클램프 후 재방송. */
@@ -258,6 +262,10 @@ public class RhythmSessionService {
     /** 알 수 없는 난이도는 거부하지 않고 NORMAL로 폴백한다(형제 필드 constellationKey와 같은 관례). */
     private String resolveDifficulty(String requested) {
         return requested != null && DIFFICULTIES.contains(requested) ? requested : DEFAULT_DIFFICULTY;
+    }
+
+    private String resolveMode(String requested) {
+        return requested != null && MODES.contains(requested) ? requested : DEFAULT_MODE;
     }
 
     private void broadcast(String roomId, RhythmEventResponse event) {
