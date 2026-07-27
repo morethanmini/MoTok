@@ -74,6 +74,8 @@ const counts = ref<Record<Judgement, number>>({ perfect: 0, good: 0, miss: 0 })
 const countdown = ref(COUNTDOWN_SECONDS)
 const handsSeen = ref(false)
 const remainingSec = ref(0)
+/** 로딩이 늦어 놓친 노트 수 — 0보다 크면 안내를 띄운다 */
+const lateStart = ref(0)
 
 const landmarker = useHandLandmarker()
 const isRing = props.mode === 'ring'
@@ -314,6 +316,19 @@ async function boot() {
     // 솔로는 지금이 t=0. 어느 쪽이든 LEAD_IN_MS 동안 카운트다운 오버레이가 뜬다.
     const skewSec = props.epochZeroMs == null ? 0 : (props.epochZeroMs - Date.now()) / 1000
     clock.start(audioCtx.currentTime + skewSec)
+
+    // ★ 늦게 시작한 참가자 보정.
+    // 손 인식 모델(7.5MB)이 캐시에 없으면 로드에 수 초가 걸리는데, 대전에서는 t=0을
+    // 서버 시각에 맞추므로 그만큼 t가 점프한다. 그때 지나간 노트를 평소 경로로 처리하면
+    // 한 프레임에 수십 개의 miss가 쏟아지며 이펙트·오실레이터가 동시 생성돼 화면이 멈춘다.
+    // 놓친 건 점수에 반영하되 연출은 내보내지 않는다.
+    const missedWhileLoading = logic.catchUp(clock.now())
+    if (missedWhileLoading > 0) {
+      for (let i = 0; i < missedWhileLoading; i++) scorer.add('miss')
+      lateStart.value = missedWhileLoading
+      counts.value = { ...scorer.counts }
+    }
+
     phase.value = 'countdown'
     loop()
   } catch (err) {
@@ -363,6 +378,9 @@ defineExpose({ canvas: canvasEl })
     </div>
 
     <p v-if="phase === 'playing' && !handsSeen" class="hand-lost">손이 보이지 않아요</p>
+    <p v-if="lateStart > 0 && phase !== 'result'" class="late">
+      준비가 늦어 {{ lateStart }}개를 놓쳤어요
+    </p>
 
     <div v-if="phase === 'result'" class="overlay result">
       <p class="tier" :style="{ color: tier.color }">{{ tier.grade }}</p>
@@ -441,6 +459,17 @@ defineExpose({ canvas: canvasEl })
   margin-left: auto;
   font-size: 1rem;
   color: #7a6a60;
+}
+.late {
+  position: absolute;
+  top: 2.4rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(179, 64, 42, 0.85);
+  color: #fff;
+  font-size: 0.78rem;
 }
 .hand-lost {
   position: absolute;
