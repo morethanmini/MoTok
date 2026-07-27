@@ -27,6 +27,8 @@ export const RouteName = {
   DevAvatarLab: 'dev-avatar-lab',
   /** 게임④ 벽·구멍·판정 랩 — 개발 전용 (-47, -46) */
   DevWallLab: 'dev-wall-lab',
+  /** 게임④ 인게임 화면(모톡 템플릿) — 개발 전용, 솔로 루프 (-47) */
+  DevBodyFitGame: 'dev-body-fit-game',
 } as const
 
 export type RouteName = (typeof RouteName)[keyof typeof RouteName]

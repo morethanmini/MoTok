@@ -17,5 +17,10 @@ export const bodyFitRoutes: RouteRecordRaw[] = import.meta.env.DEV
         name: RouteName.DevWallLab,
         component: () => import('./WallLabView.vue'),
       },
+      {
+        path: '/dev/body-fit-game',
+        name: RouteName.DevBodyFitGame,
+        component: () => import('./BodyFitGame.vue'),
+      },
     ]
   : []
