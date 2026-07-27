@@ -339,7 +339,7 @@ function beginMpJudging() {
 async function judgeMp() {
   judgeError.value = null
   try {
-    const r = await judgeDrawing(finalImage.value, topic.value)
+    const r = await judgeDrawing(finalImage.value)
     const rank = findAnswerRank(topic.value, r.guesses)
     // 화면 전환은 DRAW_RESULT 에코 수신 시 — 전원이 같은 경로로 결과를 본다
     emit('drawResult', { guesses: r.guesses, answerRank: rank, score: scoreForRank(rank) })
@@ -408,9 +408,9 @@ function applyRemoteOps(userId: string, ops: DrawOp[]) {
   }
 }
 
-/** DRAW_RESULT 수신 — 전원 동일 결과 화면. 채점 주체가 모의 채점이었는지는 전달되지 않는다. */
+/** DRAW_RESULT 수신 — 전원 동일 결과 화면 */
 function applyDrawResult(guesses: string[], rank: number, score: number) {
-  judgeResult.value = { guesses, source: 'gms' }
+  judgeResult.value = { guesses }
   answerRank.value = rank
   finalScore.value = score
   if (!finalImage.value) finalImage.value = paper.toDataURL('image/png')
@@ -423,7 +423,7 @@ watch(
   () => props.results,
   (results) => {
     if (!results || !isMultiplayer.value || judgeResult.value) return
-    judgeResult.value = { guesses: [], source: 'gms' }
+    judgeResult.value = { guesses: [] }
     answerRank.value = 0
     finalScore.value = 0
     if (!finalImage.value) finalImage.value = paper.toDataURL('image/png')
@@ -478,7 +478,7 @@ function finishDrawing() {
 async function judge() {
   judgeError.value = null
   try {
-    const r = await judgeDrawing(finalImage.value, topic.value)
+    const r = await judgeDrawing(finalImage.value)
     judgeResult.value = r
     answerRank.value = findAnswerRank(topic.value, r.guesses)
     finalScore.value = scoreForRank(answerRank.value)
@@ -937,9 +937,6 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
           </li>
         </ol>
       </div>
-      <p v-if="judgeResult.source === 'mock'" class="dr-sub">
-        모의 채점 결과예요 — VITE_GMS_KEY 설정 시 실제 AI가 채점해요
-      </p>
       <div class="dr-actions">
         <!-- 다시 하기는 솔로 전용 — 멀티는 방장이 게임 선택으로 새 세션을 시작한다 -->
         <button v-if="!isMultiplayer" class="dr-start" @click="startGame">🔁 다시 하기</button>
