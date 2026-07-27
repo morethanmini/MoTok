@@ -19,6 +19,7 @@ import {
   TRAIL_GOOD_COVERAGE,
 } from '../core/config'
 import { judgeHit, isMissed, windowCloseness } from '../core/judge'
+import { MISS_AFTER_MS } from '../core/config'
 import type { Beatmap, CatchNote, PathPoint } from '../core/beatmap'
 import type { Hand, HitJudgement, Judgement } from '../core/types'
 
@@ -253,6 +254,28 @@ export class CatchLogic {
       if (near) note.tracked += 1
     }
     return ratio >= 1
+  }
+
+  /**
+   * 늦게 시작한 참가자용 — 이미 판정 시각이 지난 노트를 **이벤트 없이** 정리한다.
+   *
+   * 대전에서 t=0은 서버 시각에 맞추는데, 손 인식 모델(7.5MB)이 캐시에 없으면
+   * 로드에 수 초가 걸려 그만큼 t가 점프한다. 그때 지나간 노트를 평소처럼 처리하면
+   * 한 프레임에 수십 개의 miss가 쏟아지며 이펙트·효과음이 동시에 생성돼 화면이 멈춘다.
+   * 놓친 건 놓친 대로 세되(점수 공정성) 연출은 내보내지 않는다.
+   *
+   * @returns 이렇게 정리된 노트 수
+   */
+  catchUp(tMs: number): number {
+    let skipped = 0
+    for (const note of this.notes) {
+      if (note.status === 'hit' || note.status === 'miss') continue
+      if (tMs - note.timeMs > MISS_AFTER_MS * windowScaleOf(note)) {
+        note.status = 'miss'
+        skipped += 1
+      }
+    }
+    return skipped
   }
 
   activeNotes(): TrackedNote[] {

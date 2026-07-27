@@ -280,6 +280,22 @@ export class RingLogic {
     return enteredAt != null && tMs - enteredAt > CAMP_TIMEOUT_MS
   }
 
+  /**
+   * 늦게 시작한 참가자용 — 이미 지난 노트를 이벤트 없이 정리한다.
+   * 이유는 CatchLogic.catchUp 주석 참고(연출 폭주 방지).
+   */
+  catchUp(tMs: number): number {
+    let skipped = 0
+    for (const note of this.notes) {
+      if (note.status === 'hit' || note.status === 'miss') continue
+      if (isMissed(tMs - note.timeMs - (note.durationMs ?? 0))) {
+        note.status = 'miss'
+        skipped += 1
+      }
+    }
+    return skipped
+  }
+
   activeNotes(): TrackedRingNote[] {
     return this.notes.filter((n) => n.status === 'active' || n.status === 'holding')
   }

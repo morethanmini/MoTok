@@ -23,6 +23,8 @@ const FX_LIFE_MS = 560
 const FLASH_MS = 180
 const SHAKE_MS = 260
 const SHAKE_PX = 9
+/** 동시에 살아 있는 이펙트 상한 — 넘치면 오래된 것부터 버린다(프레임 폭주 방지) */
+const MAX_FX = 24
 
 /** 노트 색 — 캐치 모드와 같은 규칙(왼손 파랑 / 오른손 빨강 / 아무손 보라) */
 const NOTE_COLOR: Record<NoteHand, { body: string; edge: string }> = {
@@ -73,6 +75,8 @@ export class RingRenderer {
       bornMs: tMs,
       combo,
     })
+    if (this.fx.length > MAX_FX) this.fx.splice(0, this.fx.length - MAX_FX)
+
     if (judgement === 'miss') {
       this.shakeUntil = tMs + SHAKE_MS
     } else {

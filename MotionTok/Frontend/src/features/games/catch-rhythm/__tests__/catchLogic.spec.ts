@@ -317,3 +317,34 @@ describe('연결(trail) 노트 — 경로를 따라 그린다', () => {
     expect(logic.isFinished()).toBe(false)
   })
 })
+
+describe('catchUp — 늦게 시작한 참가자 보정', () => {
+  const at = (t: number): [number, Hands] => [t, NO_HANDS]
+
+  it('이미 지난 노트를 이벤트 없이 정리한다', () => {
+    const notes = [note({ timeMs: 1000 }), note({ timeMs: 2000 }), note({ timeMs: 9000 })]
+    const logic = new CatchLogic(bm(notes))
+
+    // 로딩이 늦어 t=5000에 시작 — 앞의 두 개는 이미 지났다
+    const skipped = logic.catchUp(5000)
+    expect(skipped).toBe(2)
+
+    // 정리된 노트는 이후 update에서 이벤트를 내지 않는다(연출 폭주 방지)
+    const events = runFrames(logic, [at(5000), at(5100)])
+    expect(events.filter((e) => e.type === 'miss')).toHaveLength(0)
+    expect(logic.isFinished()).toBe(false) // 남은 노트는 그대로 살아 있다
+  })
+
+  it('아직 안 지난 노트는 건드리지 않는다', () => {
+    const logic = new CatchLogic(bm([note({ timeMs: 9000 })]))
+    expect(logic.catchUp(5000)).toBe(0)
+    // 정상적으로 판정된다
+    const hits = logic.update(9000, { left: null, right: { x: 0.4, y: 0.2, grabbed: true } })
+    expect(hits.filter((e) => e.type === 'hit')).toHaveLength(1)
+  })
+
+  it('제때 시작하면 아무것도 정리하지 않는다', () => {
+    const logic = new CatchLogic(bm([note({ timeMs: 1000 }), note({ timeMs: 2000 })]))
+    expect(logic.catchUp(0)).toBe(0)
+  })
+})

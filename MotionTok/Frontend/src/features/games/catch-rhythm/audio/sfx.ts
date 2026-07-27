@@ -5,8 +5,13 @@
 
 import type { ToneSpec } from '../render/skins/types'
 
+/** 동시 발성 상한 */
+const MAX_VOICES = 12
+
 export class SfxPlayer {
   private master: GainNode | null = null
+  /** 지금 울리고 있는 소리 수 — 한꺼번에 수십 개가 생기면 오디오 스레드가 막힌다 */
+  private voices = 0
 
   constructor(private readonly ctx: AudioContext) {}
 
@@ -30,6 +35,7 @@ export class SfxPlayer {
    */
   play(spec: ToneSpec | null, combo = 0): void {
     if (!spec || this.ctx.state === 'closed') return
+    if (this.voices >= MAX_VOICES) return // 폭주 방어 — 어차피 귀로 구분 안 된다
     const now = this.ctx.currentTime
     const dur = spec.durationMs / 1000
     // 12콤보마다 반음(2^(1/12)), 최대 +12반음(한 옥타브)
@@ -52,9 +58,11 @@ export class SfxPlayer {
 
     osc.connect(env)
     env.connect(this.bus)
+    this.voices += 1
     osc.start(now)
     osc.stop(now + dur + 0.02)
     osc.onended = () => {
+      this.voices -= 1
       osc.disconnect()
       env.disconnect()
     }
