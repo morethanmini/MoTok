@@ -486,6 +486,8 @@ function applyGameEvent(e: GameEvent) {
       clockOffset: e.serverNow - Date.now(),
       setterUserId: e.setterUserId ?? null,
       difficulty: e.difficulty ?? null,
+      roundNo: e.roundNo ?? null,
+      totalRounds: e.totalRounds ?? null,
     }
     activeGame.value = entry
     picker.value = false
@@ -528,7 +530,7 @@ function applyGameEvent(e: GameEvent) {
 function openPicker() {
   picker.value = true
 }
-function launch(g: GameEntry) {
+function launch(g: GameEntry, difficulty?: string) {
   picker.value = false
   // 방장 + 서버 연결 + 플레이 가능 → 서버에 시작 요청. GAME_START가 방 전체에 돌아와 마운트된다.
   if (g.playable && roomChat.connected.value && selfIsHost.value) {
@@ -536,7 +538,7 @@ function launch(g: GameEntry) {
       flash('카메라를 켜고 시작해 주세요')
       return
     }
-    roomChat.startGame(g.gameId)
+    roomChat.startGame(g.gameId, undefined, difficulty)
     return
   }
   // 서버 미연동 데모 — 로컬 솔로 플레이 폴백

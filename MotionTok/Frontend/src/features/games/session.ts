@@ -11,4 +11,7 @@ export interface ActiveGameSession {
   setterUserId?: string | null
   /** 게임④(-86): 난이도(easy/normal/hard) — 벽 접근 시간·구멍 여유 */
   difficulty?: string | null
+  /** 게임④ 출제자 로테이션(-48): 1-based 현재 라운드 / 전체 라운드 수 */
+  roundNo?: number | null
+  totalRounds?: number | null
 }
