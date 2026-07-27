@@ -103,9 +103,28 @@ class GameSessionServiceTest {
         verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
         GameEventResponse event = eventCaptor.getValue();
         assertThat(event.type()).isEqualTo(GameEventResponse.EventType.GAME_START);
-        assertThat(event.constellationKey()).isEqualTo("orion");
+        assertThat(event.challenge()).isEqualTo("orion");
+        assertThat(event.constellationKey()).isEqualTo("orion"); // 게임① 하위호환 필드 (-137)
         assertThat(event.startAt()).isLessThan(event.endAt());
         assertThat(event.serverNow()).isLessThanOrEqualTo(event.startAt());
+    }
+
+    /** -137 일반화: 출제 페이즈가 따로 있는 게임(게임④)은 과제 없이 시작한다. */
+    @Test
+    void 게임1이_아니면_시작_시_과제가_비어있다() {
+        givenRoomWithHost();
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.empty());
+        when(gameTaskScheduler.schedule(any(Runnable.class), any(Instant.class)))
+                .thenReturn(mock(ScheduledFuture.class));
+        when(gameRepository.findById(4L)).thenReturn(Optional.of(Game.builder()
+                .id(4L).name("몸 끼워 맞추기").roundDurationSec(15).countdownSec(3).active(true).build()));
+
+        service.start(ROOM_ID, new GameStartRequest(4L, null), host);
+
+        verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
+        GameEventResponse event = eventCaptor.getValue();
+        assertThat(event.challenge()).isNull();
+        assertThat(event.constellationKey()).isNull();
     }
 
     @Test
@@ -173,7 +192,7 @@ class GameSessionServiceTest {
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(
                 new GameSession(sessionId, 1L, "gemini", 0, 1, GameSession.STATUS_PLAYING)));
         when(sessionRepository.findScores(ROOM_ID)).thenReturn(Map.of(
-                "2", new GamePlayerScore("2", "참가자", 88, 5, 1000)));
+                "2", new GamePlayerScore("2", "참가자", 88, Map.of("starsHit", 5), 1000)));
         when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
                 new LiveRoomMemberValue("1", "방장", false, 0),
                 new LiveRoomMemberValue("2", "참가자", false, 0)));

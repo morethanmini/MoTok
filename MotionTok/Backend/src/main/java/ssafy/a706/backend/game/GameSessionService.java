@@ -53,8 +53,13 @@ public class GameSessionService {
 
     private static final String GAME_TOPIC = "/topic/rooms/%s/game";
 
+    /** 게임①(핑거 스타) — 과제(challenge)가 별자리 키인 게임. */
+    private static final long FINGER_STAR_GAME_ID = 1L;
+    /** 게임① 부가 지표 stats 키 (-137 일반화 후 레거시 표기 유지용). */
+    private static final String STAT_STARS_HIT = "starsHit";
+
     /**
-     * 별자리 과제 후보(핑거 스타 콘텐츠) — 게임1 전용. 공통 서버 밖(게임 모듈)으로 분리 대상.
+     * 별자리 과제 후보(핑거 스타 콘텐츠) — 게임① 전용 챌린지 풀.
      * FE constellations.ts와 동기화 필수 — 별자리 추가·삭제 시 양쪽을 함께 갱신한다.
      */
     private static final Set<String> CONSTELLATION_KEYS = Set.of(
@@ -105,19 +110,22 @@ public class GameSessionService {
             throw new BusinessException(ErrorCode.GAME_SESSION_ALREADY_ACTIVE);
         }
 
-        String constellationKey = resolveConstellation(request.constellationKey());
+        String challenge = resolveChallenge(gameId, request);
         String sessionId = UUID.randomUUID().toString();
         long startAt = now + game.getCountdownSec() * 1000L;
         long endAt = startAt + game.getRoundDurationSec() * 1000L;
-        GameSession session = new GameSession(sessionId, gameId, constellationKey,
+        GameSession session = new GameSession(sessionId, gameId, challenge,
                 startAt, endAt, GameSession.STATUS_PLAYING);
         sessionRepository.saveSession(roomId, session);
         liveRoomRepository.updateStatus(roomId, "PLAYING");
 
-        broadcast(roomId, GameEventResponse.gameStart(sessionId, gameId, constellationKey, now, startAt, endAt));
+        // constellationKey는 게임① FE 하위호환 필드 — 게임①일 때만 challenge와 같은 값
+        String legacyConstellationKey = gameId == FINGER_STAR_GAME_ID ? challenge : null;
+        broadcast(roomId, GameEventResponse.gameStart(
+                sessionId, gameId, challenge, legacyConstellationKey, now, startAt, endAt));
         scheduleEnd(roomId, sessionId, endAt + END_GRACE_MILLIS);
-        log.info("game session started: room={} session={} game={} constellation={}",
-                roomId, sessionId, gameId, constellationKey);
+        log.info("game session started: room={} session={} game={} challenge={}",
+                roomId, sessionId, gameId, challenge);
     }
 
     /** 라운드 중 진행 상황 중계 — 저장 없음, 클램프 후 방 토픽으로 재방송. */
@@ -137,7 +145,8 @@ public class GameSessionService {
         int score = clamp(request.score() == null ? 0 : request.score(), 0, MAX_SCORE);
         int starsHit = clamp(request.starsHit() == null ? 0 : request.starsHit(), 0, MAX_STARS);
         GamePlayerScore playerScore = new GamePlayerScore(
-                sender.userId(), sender.displayName(), score, starsHit, System.currentTimeMillis());
+                sender.userId(), sender.displayName(), score,
+                Map.of(STAT_STARS_HIT, starsHit), System.currentTimeMillis());
         // 최초 제출만 수리 — 재제출·중복 프레임은 조용히 무시(브로드캐스트도 없음).
         if (!sessionRepository.saveScoreIfAbsent(roomId, playerScore)) {
             return;
@@ -238,6 +247,18 @@ public class GameSessionService {
         if (!membershipReader.isMember(roomId, sender.userId())) {
             throw new BusinessException(ErrorCode.GAME_NOT_IN_ROOM);
         }
+    }
+
+    /**
+     * 게임별 과제(challenge) 결정 (-137).
+     * 게임①: 별자리 키(요청값 검증, 없으면 무작위). 그 외(게임④ 등 출제 페이즈가 있는
+     * 게임): 시작 시점에는 과제가 없다 — 세션 도중 updateChallenge로 채워진다(§9-2).
+     */
+    private String resolveChallenge(long gameId, GameStartRequest request) {
+        if (gameId == FINGER_STAR_GAME_ID) {
+            return resolveConstellation(request.constellationKey());
+        }
+        return null;
     }
 
     private String resolveConstellation(String requested) {
