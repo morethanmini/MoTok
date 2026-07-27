@@ -11,7 +11,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { usePoseLandmarker, type PoseLandmarkerResult } from '@/composables/usePoseLandmarker'
-import { defaultConfig, type Grade } from './config'
+import { defaultConfig, type DifficultyKey, type Grade } from './config'
 import { PoseSmoother } from './oneEuro'
 import { AvatarRig } from './avatarRig'
 import { normalizePose, type LandmarkPoint, type SolvedSkeleton } from './skeleton'
@@ -50,14 +50,18 @@ const GRADE_COLOR: Record<Grade, string> = {
 }
 const GRADE_POINTS: Record<Grade, number> = { PERFECT: 100, GREAT: 85, PASS: 70, FAIL: 0 }
 
-const DIFFICULTIES = [
+const DIFFICULTIES: { key: DifficultyKey; label: string }[] = [
   { key: 'easy', label: '쉬움' },
   { key: 'normal', label: '보통' },
   { key: 'hard', label: '어려움' },
-] as const
+]
+const difficulty = ref<DifficultyKey>('easy')
 
-function setDifficulty(key: (typeof DIFFICULTIES)[number]['key']) {
-  cfg.judge.K = cfg.judge.difficultyK[key]
+/** 난이도 = 구멍 여유(K) + 벽 속도. 다음 라운드부터 적용된다 */
+function setDifficulty(key: DifficultyKey) {
+  difficulty.value = key
+  cfg.judge.K = cfg.difficulty[key].K
+  cfg.wall.approachMs = cfg.difficulty[key].approachMs
 }
 
 const phaseLabel = computed(() => {
@@ -380,10 +384,10 @@ onBeforeUnmount(() => {
               v-for="d in DIFFICULTIES"
               :key="d.key"
               class="diff-btn"
-              :class="{ active: cfg.judge.K === cfg.judge.difficultyK[d.key] }"
+              :class="{ active: difficulty === d.key }"
               @click="setDifficulty(d.key)"
             >
-              {{ d.label }}
+              {{ d.label }} {{ (cfg.difficulty[d.key].approachMs / 1000).toFixed(0) }}s
             </button>
           </div>
         </div>

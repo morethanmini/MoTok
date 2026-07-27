@@ -34,15 +34,15 @@ export interface BodyFitConfig {
     /** 머리 기울기 증폭 배율 — 얼굴 없는 구는 위치 이동만 보이므로 각도를 키워 체감을 살린다 */
     headGain: number
   }
+  /**
+   * 난이도 모드 프리셋 — 구멍 여유(K)와 벽 접근 시간이 함께 바뀐다.
+   * 쉬움 K 1.5는 실기 플레이로 확정(2026-07-27), 나머지는 캘리브레이션 대상 초깃값 (UI 스펙 §11)
+   */
+  difficulty: Record<DifficultyKey, { K: number; approachMs: number }>
   /** 판정 모델 (기획 §7, UI 스펙 §2) */
   judge: {
-    /** 면적비 — 구멍 면적 = 원본 면적 × K. 유일한 난이도 노브 (§2-3) */
+    /** 면적비 — 구멍 면적 = 원본 면적 × K. 난이도의 핵심 노브 (§2-3) */
     K: number
-    /**
-     * 난이도 모드 프리셋 → K. 쉬움 1.5는 실기 플레이로 확정(2026-07-27),
-     * 보통·어려움은 캘리브레이션 대상 초깃값 (UI 스펙 §11)
-     */
-    difficultyK: { easy: number; normal: number; hard: number }
     /** 세그먼트별 마진 배율 (§2-2) — 관절에서 멀수록 각도 오차가 증폭되므로 말단이 크다 */
     marginMul: {
       headTorso: number
@@ -65,6 +65,7 @@ export interface BodyFitConfig {
 }
 
 export type Grade = 'PERFECT' | 'GREAT' | 'PASS' | 'FAIL'
+export type DifficultyKey = 'easy' | 'normal' | 'hard'
 
 export function defaultConfig(): BodyFitConfig {
   return {
@@ -82,9 +83,13 @@ export function defaultConfig(): BodyFitConfig {
       leanGain: 1.6,
       headGain: 1.5,
     },
+    difficulty: {
+      easy: { K: 1.5, approachMs: 7000 },
+      normal: { K: 1.35, approachMs: 6000 },
+      hard: { K: 1.2, approachMs: 5000 },
+    },
     judge: {
       K: 1.5,
-      difficultyK: { easy: 1.5, normal: 1.35, hard: 1.2 },
       marginMul: { headTorso: 0.6, upperArm: 1.0, forearm: 1.6, hand: 2.0 },
       overflowTolerance: 0.03,
       grade: { perfect: 92, great: 82, pass: 70 },
