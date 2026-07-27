@@ -77,6 +77,7 @@ public class FriendService {
                 .map(u -> FriendResponse.of(
                         u.getId(),
                         u.getNickname(),
+                        u.getAvatarUrl(),
                         presences.getOrDefault(u.getId(), PresenceSnapshot.OFFLINE)))
                 .toList();
     }

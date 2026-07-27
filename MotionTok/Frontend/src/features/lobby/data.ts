@@ -18,9 +18,15 @@ export interface Room {
 }
 
 export interface Friend {
+  /** 목록 렌더링 키. 배열 인덱스를 키로 쓰면 폴링으로 순서가 바뀔 때마다
+   *  <img>가 새로 만들어져 사진을 다시 내려받는다. */
+  userId: number
   name: string
+  /** 사진이 없는 친구의 기본 얼굴(이모지) */
   face: string
   game: string
   bg: string
   online: boolean
+  /** 프로필 사진 URL. 없으면 face를 그린다. */
+  avatarUrl: string | null
 }

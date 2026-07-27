@@ -53,7 +53,8 @@ const query = ref('')
 const showJoin = ref(false)
 const showCreate = ref(false)
 
-// 사이드바 친구 목록 (GET /friends, -57). 얼굴·배경색은 API에 없는 값이라 userId로 팔레트를 골라
+// 사이드바 친구 목록 (GET /friends, -57). 사진(avatarUrl)이 있으면 그걸 그리고, 없는 친구만
+// 이모지로 채운다. 이모지·배경색은 API에 없는 값이라 userId로 팔레트를 골라
 // 같은 친구가 항상 같은 아바타로 보이게 한다(매 로드마다 바뀌면 목록이 낯설어진다).
 const FACES = ['🐰', '🐻', '🐱', '🦊', '🐨', '🐼', '🐯', '🐥']
 const FACE_BGS = ['#ffe2e3', '#d8f4ec', '#fff0b9', '#dce7ff', '#e6e0f0', '#f0e6df', '#ffe6cc', '#e0f0e6']
@@ -61,9 +62,11 @@ const FACE_BGS = ['#ffe2e3', '#d8f4ec', '#fff0b9', '#dce7ff', '#e6e0f0', '#f0e6d
 function toFriend(f: ApiFriend): Friend {
   const slot = Number(f.userId) % FACES.length
   return {
+    userId: f.userId,
     name: f.nickname,
     face: FACES[slot] ?? '🐰',
     bg: FACE_BGS[slot] ?? '#ffe2e3',
+    avatarUrl: f.avatarUrl ?? null,
     game:
       f.presence === 'IN_ROOM'
         ? '게임방에 참가중'
@@ -412,7 +415,9 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
             <button class="side-link" @click="router.push({ name: RouteName.Friends })">친구 목록 관리 →</button>
           </div>
           <div class="friends-list">
-            <FriendItem v-for="(f, i) in friends" :key="i" :friend="f" />
+            <!-- key는 userId — 접속 상태가 바뀌면 목록 순서가 바뀌는데(온라인 우선 정렬),
+                 인덱스를 키로 쓰면 그때마다 <img>가 새로 만들어져 사진을 다시 받는다. -->
+            <FriendItem v-for="f in friends" :key="f.userId" :friend="f" />
             <p v-if="friends.length === 0" class="friends-empty">
               <img class="friends-empty-toys pixel-image" :src="lobbyEmptyCatToys" alt="" aria-hidden="true" />
               아직 친구가 없어요.<br />친구 목록 관리에서 추가해 보세요!
