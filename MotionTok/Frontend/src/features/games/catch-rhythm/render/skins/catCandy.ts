@@ -1,26 +1,59 @@
 /**
  * 기본 스킨 「캣캔디」 — 파스텔 피치 픽셀아트 톤(catchcatchrhythm.png).
- * 노트 = 캔디색 음표 버블, 커서 = 고양이 발바닥, 히트 = 버블 팝 + 별 파티클.
  *
  * 1차는 전부 절차 드로잉이다 — 스프라이트·음원 에셋이 나오면 이 파일만 갈아끼우면 된다.
- * 크로스 노트는 시각 구분을 하지 않는다("어? 왼손이 오른쪽에!?"가 의도된 재미).
+ *
+ * 타이밍 가독성(2026-07-27 피드백):
+ *  - **판정 링**: 판정 크기 그대로인 고정 점선 원. "여기까지 오면 친다"의 기준선.
+ *  - **접근 링**: 바깥에서 판정 링으로 조여든다. 두 원이 겹치는 순간이 PERFECT.
+ * 커서는 발바닥 대신 **손 골격 그대로** 그린다 — 내 손이라는 감각이 훨씬 낫다.
  */
 
-import type { CatchSkin, HandView, HitFxView, NoteView } from './types'
-import type { Hand } from '../../core/types'
+import { HAND_BONES, type CatchSkin, type HandView, type HitFxView, type NoteView } from './types'
+import type { Hand, NoteHand } from '../../core/types'
 
-const PALETTE: Record<Hand, { body: string; edge: string; glow: string }> = {
+const PALETTE: Record<NoteHand, { body: string; edge: string; glow: string }> = {
   left: { body: '#b9a8ff', edge: '#7a63e0', glow: '#e3dcff' }, // 파스텔 퍼플
   right: { body: '#ffb38a', edge: '#e07a4f', glow: '#ffe2cf' }, // 코랄
+  any: { body: '#9fe6c8', edge: '#3fa87e', glow: '#dcf7ec' }, // 민트 — 아무 손이나
 }
+const HAND_COLOR: Record<Hand, string> = { left: '#7a63e0', right: '#e07a4f' }
 
 const FX_MS = 420
 
-function bubble(ctx: CanvasRenderingContext2D, note: NoteView) {
-  const { x, y, radius, hand } = note
-  const c = PALETTE[hand]
+/** 판정 링 + 접근 링 — 노트보다 먼저(아래에) 그린다. */
+function timingRings(ctx: CanvasRenderingContext2D, note: NoteView) {
+  const { x, y, judgeRadius, progress } = note
+  const c = PALETTE[note.hand]
 
-  // 본체 — 위쪽이 밝은 캔디 그라데이션
+  ctx.save()
+  // 판정 링 — 고정. 접근 중에는 은은하게, 판정 순간에 또렷해진다.
+  const near = Math.max(0, 1 - Math.abs(1 - progress) * 3)
+  ctx.globalAlpha = 0.3 + 0.55 * near
+  ctx.strokeStyle = c.edge
+  ctx.lineWidth = Math.max(1.5, judgeRadius * 0.1)
+  ctx.setLineDash([judgeRadius * 0.45, judgeRadius * 0.35])
+  ctx.beginPath()
+  ctx.arc(x, y, judgeRadius, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.setLineDash([])
+
+  // 접근 링 — 바깥에서 판정 링으로 수렴. 판정선을 지나면 안 그린다.
+  if (progress < 1) {
+    const outer = judgeRadius * (1 + 2.4 * (1 - progress))
+    ctx.globalAlpha = 0.25 + 0.5 * progress
+    ctx.lineWidth = Math.max(1.5, judgeRadius * 0.13)
+    ctx.beginPath()
+    ctx.arc(x, y, outer, 0, Math.PI * 2)
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+function bubble(ctx: CanvasRenderingContext2D, note: NoteView) {
+  const { x, y, radius } = note
+  const c = PALETTE[note.hand]
+
   const grad = ctx.createRadialGradient(
     x - radius * 0.3,
     y - radius * 0.35,
@@ -40,7 +73,6 @@ function bubble(ctx: CanvasRenderingContext2D, note: NoteView) {
   ctx.strokeStyle = c.edge
   ctx.stroke()
 
-  // 하이라이트
   ctx.fillStyle = 'rgba(255,255,255,0.75)'
   ctx.beginPath()
   ctx.ellipse(
@@ -55,12 +87,12 @@ function bubble(ctx: CanvasRenderingContext2D, note: NoteView) {
   ctx.fill()
 }
 
-/** 버블 안 음표 — 반지름이 작을 땐 생략(뭉개짐 방지) */
+/** catch 노트 속 음표 */
 function musicNote(ctx: CanvasRenderingContext2D, note: NoteView) {
-  const { x, y, radius, hand } = note
+  const { x, y, radius } = note
   if (radius < 12) return
   const s = radius * 0.5
-  ctx.fillStyle = PALETTE[hand].edge
+  ctx.fillStyle = PALETTE[note.hand].edge
   ctx.beginPath()
   ctx.ellipse(x - s * 0.35, y + s * 0.55, s * 0.42, s * 0.32, -0.4, 0, Math.PI * 2)
   ctx.fill()
@@ -74,53 +106,84 @@ function musicNote(ctx: CanvasRenderingContext2D, note: NoteView) {
   ctx.fill()
 }
 
-/** 고양이 발바닥 — 큰 젤리 하나 + 발가락 4개. 쥐면 오므린다. */
-function paw(ctx: CanvasRenderingContext2D, hand: HandView) {
-  const { x, y, radius, isFist, side } = hand
-  const c = PALETTE[side]
-  const squeeze = isFist ? 0.62 : 1
-  const spread = isFist ? 0.72 : 1
+/** swipe 노트 — 쥐지 않고 스쳐도 되는 노트라 '통과' 느낌의 이중 갈매기로 구분한다 */
+function swipeMark(ctx: CanvasRenderingContext2D, note: NoteView) {
+  const { x, y, radius } = note
+  if (radius < 10) return
+  const s = radius * 0.55
+  ctx.save()
+  ctx.strokeStyle = PALETTE[note.hand].edge
+  ctx.lineWidth = Math.max(2, radius * 0.16)
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  for (const off of [-s * 0.45, s * 0.35]) {
+    ctx.beginPath()
+    ctx.moveTo(x + off - s * 0.3, y - s * 0.55)
+    ctx.lineTo(x + off + s * 0.3, y)
+    ctx.lineTo(x + off - s * 0.3, y + s * 0.55)
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+/** 손 골격 — 뼈대 + 관절. 쥐면 색이 진해지고 굵어진다. */
+function handSkeleton(ctx: CanvasRenderingContext2D, hand: HandView) {
+  const { landmarks, isFist, side, radius } = hand
+  const color = HAND_COLOR[side]
 
   ctx.save()
-  ctx.globalAlpha = 0.92
-
-  // 발바닥 젤리
-  ctx.fillStyle = c.body
-  ctx.strokeStyle = c.edge
-  ctx.lineWidth = Math.max(1.5, radius * 0.14)
-  ctx.beginPath()
-  ctx.ellipse(
-    x,
-    y + radius * 0.18,
-    radius * 0.72 * squeeze,
-    radius * 0.6 * squeeze,
-    0,
-    0,
-    Math.PI * 2,
-  )
-  ctx.fill()
-  ctx.stroke()
-
-  // 발가락
-  const toes: [number, number][] = [
-    [-0.62, -0.5],
-    [-0.22, -0.78],
-    [0.22, -0.78],
-    [0.62, -0.5],
-  ]
-  for (const [tx, ty] of toes) {
+  if (landmarks.length < 21) {
+    // 트래킹이 불완전하면 손바닥 위치만이라도 표시
+    ctx.globalAlpha = 0.8
+    ctx.strokeStyle = color
+    ctx.lineWidth = 3
     ctx.beginPath()
-    ctx.ellipse(
-      x + tx * radius * spread,
-      y + ty * radius * spread,
-      radius * 0.24 * squeeze,
-      radius * 0.28 * squeeze,
-      tx * 0.5,
-      0,
-      Math.PI * 2,
-    )
-    ctx.fill()
+    ctx.arc(hand.x, hand.y, radius, 0, Math.PI * 2)
     ctx.stroke()
+    ctx.restore()
+    return
+  }
+
+  const bone = Math.max(2.5, radius * 0.22) * (isFist ? 1.5 : 1)
+  ctx.globalAlpha = isFist ? 1 : 0.8
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+
+  // 흰 외곽선을 깔아 배경과 상관없이 손이 보이게 한다
+  for (const [width, stroke] of [
+    [bone + 4, 'rgba(255,255,255,0.9)'],
+    [bone, color],
+  ] as const) {
+    ctx.lineWidth = width
+    ctx.strokeStyle = stroke
+    ctx.beginPath()
+    for (const [a, b] of HAND_BONES) {
+      const p = landmarks[a]
+      const q = landmarks[b]
+      if (!p || !q) continue
+      ctx.moveTo(p.x, p.y)
+      ctx.lineTo(q.x, q.y)
+    }
+    ctx.stroke()
+  }
+
+  // 손끝 관절 강조 — 손 방향을 읽기 쉽게
+  ctx.fillStyle = color
+  for (const i of [4, 8, 12, 16, 20]) {
+    const p = landmarks[i]
+    if (!p) continue
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, bone * 0.7, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  // 쥔 상태 표시 — 판정 반경을 채운 원
+  if (isFist) {
+    ctx.globalAlpha = 0.22
+    ctx.fillStyle = color
+    ctx.beginPath()
+    ctx.arc(hand.x, hand.y, radius, 0, Math.PI * 2)
+    ctx.fill()
   }
   ctx.restore()
 }
@@ -150,7 +213,6 @@ export const catCandySkin: CatchSkin = {
     ctx.fillStyle = grad
     ctx.fillRect(0, 0, w, h)
 
-    // 천천히 흐르는 구름 — 시간 기반이라 프레임률과 무관
     ctx.fillStyle = 'rgba(255,255,255,0.5)'
     for (let i = 0; i < 3; i++) {
       const speed = 0.008 + i * 0.004
@@ -166,11 +228,12 @@ export const catCandySkin: CatchSkin = {
   },
 
   drawNote(ctx, note) {
+    timingRings(ctx, note)
     ctx.save()
-    // 원경일수록 흐리게 — 접근감
-    ctx.globalAlpha = 0.35 + 0.65 * Math.min(1, note.scale)
+    ctx.globalAlpha = 0.4 + 0.6 * Math.min(1, note.scale)
     bubble(ctx, note)
-    musicNote(ctx, note)
+    if (note.kind === 'swipe') swipeMark(ctx, note)
+    else musicNote(ctx, note)
     ctx.restore()
   },
 
@@ -181,7 +244,6 @@ export const catCandySkin: CatchSkin = {
     ctx.save()
 
     if (fx.judgement === 'miss') {
-      // 미스는 조용히 스러진다
       ctx.globalAlpha = (1 - t) * 0.5
       ctx.strokeStyle = '#9b8f88'
       ctx.lineWidth = 2
@@ -192,7 +254,6 @@ export const catCandySkin: CatchSkin = {
       return true
     }
 
-    // 버블 팝 — 링이 퍼지며 옅어진다
     ctx.globalAlpha = 1 - t
     ctx.strokeStyle = c.edge
     ctx.lineWidth = Math.max(1.5, fx.radius * 0.16 * (1 - t))
@@ -200,7 +261,6 @@ export const catCandySkin: CatchSkin = {
     ctx.arc(fx.x, fx.y, fx.radius * (1 + t * 1.1), 0, Math.PI * 2)
     ctx.stroke()
 
-    // 별 파티클 — PERFECT만 사방으로 튄다
     const count = fx.judgement === 'perfect' ? 6 : 3
     ctx.fillStyle = fx.judgement === 'perfect' ? '#ffd66b' : c.glow
     for (let i = 0; i < count; i++) {
@@ -213,14 +273,12 @@ export const catCandySkin: CatchSkin = {
   },
 
   drawCursor(ctx, hand) {
-    paw(ctx, hand)
+    handSkeleton(ctx, hand)
   },
 
   sfx: {
-    // 뽁 — 짧고 높게 튀어오른다
     perfect: { type: 'sine', freq: 880, sweepTo: 1620, durationMs: 130, gain: 0.32 },
     good: { type: 'sine', freq: 620, sweepTo: 880, durationMs: 120, gain: 0.24 },
-    // 미스는 낮게 떨어지는 힘없는 소리
     miss: { type: 'triangle', freq: 220, sweepTo: 110, durationMs: 180, gain: 0.16 },
   },
 }

@@ -25,7 +25,8 @@ const emit = defineEmits<{
   finished: [payload: { score: number; maxCombo: number; counts: Record<Judgement, number> }]
 }>()
 
-const ROUND_MS = 90_000
+/** 실플레이 피드백 반영 — 90초는 너무 길었다 */
+const ROUND_MS = 60_000
 
 type Phase = 'ready' | 'playing'
 const phase = ref<Phase>('ready')

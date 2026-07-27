@@ -20,14 +20,53 @@ export interface Preset {
   simultaneous: number
   /** 반대편 영역에서 스폰될 확률 (팔이 꼬이는 재미) */
   crossRate: number
+  /** 아무 손으로나 잡을 수 있는 노트의 비율 — 숨돌릴 틈을 준다 */
+  anyRate: number
+  /** 스와이프(지나가기만 해도 되는) 노트의 비율 */
+  swipeRate: number
+  /** 같은 손 노트 사이 최소 간격 — 물리적 연타 한계 */
+  minSameHandGapMs: number
+  /** 크로스는 반대편까지 가야 하므로 이만큼 여유가 있을 때만 만든다 */
+  crossMinGapMs: number
   /** 노트가 원경에서 판정 지점까지 오는 시간 */
   approachTimeMs: number
 }
 
+/**
+ * 실플레이 피드백(2026-07-27) 반영해 전반적으로 낮췄다.
+ * 이전 값(0.20/0.38/0.55 + 손 전용 노트만)은 손이 물리적으로 못 따라갔다.
+ */
 export const PRESETS: Record<Difficulty, Preset> = {
-  EASY: { density: 0.2, simultaneous: 0, crossRate: 0, approachTimeMs: 1400 },
-  NORMAL: { density: 0.38, simultaneous: 0.1, crossRate: 0.1, approachTimeMs: 1200 },
-  HARD: { density: 0.55, simultaneous: 0.25, crossRate: 0.35, approachTimeMs: 1000 },
+  EASY: {
+    density: 0.16,
+    simultaneous: 0,
+    crossRate: 0,
+    anyRate: 0.5,
+    swipeRate: 0.25,
+    minSameHandGapMs: 500,
+    crossMinGapMs: 900,
+    approachTimeMs: 1500,
+  },
+  NORMAL: {
+    density: 0.28,
+    simultaneous: 0.08,
+    crossRate: 0.12,
+    anyRate: 0.3,
+    swipeRate: 0.3,
+    minSameHandGapMs: 400,
+    crossMinGapMs: 800,
+    approachTimeMs: 1300,
+  },
+  HARD: {
+    density: 0.42,
+    simultaneous: 0.2,
+    crossRate: 0.28,
+    anyRate: 0.15,
+    swipeRate: 0.35,
+    minSameHandGapMs: 300,
+    crossMinGapMs: 700,
+    approachTimeMs: 1100,
+  },
 }
 
 // ── 채보 기하 ──────────────────────────────────────────────
@@ -39,7 +78,7 @@ export const SLOT_MS = 250
 /** 카운트다운 직후 유예 — 이 시간 전에는 노트를 놓지 않는다 */
 export const LEAD_IN_MS = 3000
 
-/** 손별 기본 스폰 영역(게임 좌표). 겹치는 [-0.1, 0.1]은 가운데 공용 구간. */
+/** 손별 기본 스폰 영역(게임 좌표). 두 구간이 이어져 있어 합집합이 볼록하다(도달 보정에 필요). */
 export const X_RANGE: Record<Hand, readonly [number, number]> = {
   left: [-0.75, 0.1],
   right: [-0.1, 0.75],
@@ -48,7 +87,7 @@ export const Y_RANGE: readonly [number, number] = [-0.6, 0.6]
 
 /** 직전 같은 손 노트(및 동시 노트 짝)와 이만큼은 떨어뜨린다 */
 export const MIN_GAP = 0.35
-/** 간격 조건을 못 맞출 때 재샘플 상한 — 넘으면 마지막 표본을 그대로 쓴다 */
+/** 간격 조건을 못 맞출 때 재샘플 상한 — 넘으면 마지막 표본을 쓰고 도달 보정만 건다 */
 export const MAX_RESAMPLE = 10
 
 /** 좌우 교대를 기본으로 하되 이 확률로 한 번 더 뒤집어 단조로움을 깬다 */

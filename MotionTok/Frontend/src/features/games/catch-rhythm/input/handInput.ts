@@ -61,6 +61,8 @@ export class HandInputTracker {
   }
   /** 렌더링용 확정 쥠 상태 (커서 모양) */
   readonly isFisted: Record<Hand, boolean> = { left: false, right: false }
+  /** 렌더링용 손 전체 랜드마크(게임 좌표) — 손 모양을 그대로 그리기 위해 보관한다 */
+  readonly landmarks: Record<Hand, Point[]> = { left: [], right: [] }
 
   update(frame: HandFrame, aspect: number): Hands {
     const seen: Record<Hand, Landmark[] | null> = { left: null, right: null }
@@ -77,11 +79,13 @@ export class HandInputTracker {
         // 손이 사라지면 상태를 새로 시작한다 — 유령 전환 방지
         this.fists[side] = new StableState(false)
         this.isFisted[side] = false
+        this.landmarks[side] = []
         continue
       }
       const stable = this.fists[side]
       const fisted = stable.update(isFist(lm))
       this.isFisted[side] = fisted
+      this.landmarks[side] = lm.map((p) => toGameCoords(p.x, p.y, aspect))
 
       const palm = palmCenter(lm)
       const { x, y } = toGameCoords(palm.x, palm.y, aspect)
@@ -96,5 +100,7 @@ export class HandInputTracker {
     this.fists = { left: new StableState(false), right: new StableState(false) }
     this.isFisted.left = false
     this.isFisted.right = false
+    this.landmarks.left = []
+    this.landmarks.right = []
   }
 }

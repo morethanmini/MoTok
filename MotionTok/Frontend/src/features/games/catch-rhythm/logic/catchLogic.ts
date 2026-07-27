@@ -8,7 +8,7 @@
  * 프로토의 슬래시 경로는 분기까지 통째로 제거했다 — type 없는 노트가 slash로 새지 않도록.
  */
 
-import { NOTE_RADIUS, HAND_RADIUS } from '../core/config'
+import { NOTE_RADIUS, HAND_RADIUS, SWIPE_REACH_SCALE } from '../core/config'
 import { judgeHit, isMissed } from '../core/judge'
 import type { Beatmap, CatchNote } from '../core/beatmap'
 import type { Hand, HitJudgement } from '../core/types'
@@ -41,10 +41,11 @@ export function noteProgress(note: CatchNote, tMs: number, approachTimeMs: numbe
   return 1 - (note.timeMs - tMs) / approachTimeMs
 }
 
-/** 손-노트 거리가 히트 반경 안인가. */
+/** 손-노트 거리가 히트 반경 안인가. 스와이프는 스치듯 지나가므로 더 넉넉하다. */
 export function isInReach(hand: HandState | null, note: CatchNote): boolean {
   if (!hand) return false
-  return Math.hypot(hand.x - note.x, hand.y - note.y) < NOTE_RADIUS + HAND_RADIUS
+  const reach = (NOTE_RADIUS + HAND_RADIUS) * (note.kind === 'swipe' ? SWIPE_REACH_SCALE : 1)
+  return Math.hypot(hand.x - note.x, hand.y - note.y) < reach
 }
 
 export class CatchLogic {
@@ -84,7 +85,9 @@ export class CatchLogic {
       for (const side of sides) {
         const hand = hands[side]
         if (!hand || usedHands.has(side)) continue
-        if (!hand.grabbed) continue // 전환 이벤트 시점만 인정
+        // swipe만 손이 닿기만 해도 인정. 그 외(catch·미지정)는 "펴짐→쥠" 전환 순간만 —
+        // 조건을 이 방향으로 써야 kind가 빠진 노트가 공짜 히트로 새지 않는다.
+        if (note.kind !== 'swipe' && !hand.grabbed) continue
         if (!isInReach(hand, note)) continue
 
         const judgement = judgeHit(delta) // 이른 히트(delta<0)도 창 내면 인정

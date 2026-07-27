@@ -16,6 +16,7 @@ const note = (over: Partial<CatchNote> = {}): CatchNote => ({
   x: 0.4,
   y: 0.2,
   hand: 'any',
+  kind: 'catch',
   ...over,
 })
 
@@ -139,5 +140,59 @@ describe('캐치(그랩) 판정', () => {
     const later = logic.update(2500, { left: null, right: grabbing() })
     expect(later).toEqual([])
     expect(logic.isFinished()).toBe(true)
+  })
+
+  it('kind가 빠진 노트는 안전하게 catch로 취급한다 (공짜 히트 방지)', () => {
+    const bare = { timeMs: 2000, x: 0.4, y: 0.2, hand: 'any' } as unknown as CatchNote
+    const logic = new CatchLogic(bm([bare]))
+    const open = logic.update(2000, { left: null, right: grabbing({ grabbed: false }) })
+    expect(open.filter((e) => e.type === 'hit')).toHaveLength(0)
+  })
+})
+
+describe('스와이프 판정 — 손이 지나가기만 해도 인정', () => {
+  const swipe = (over: Partial<CatchNote> = {}) => note({ kind: 'swipe', ...over })
+  const passing = (over: Partial<HandState> = {}): HandState => ({
+    x: 0.4,
+    y: 0.2,
+    grabbed: false,
+    ...over,
+  })
+
+  it('주먹을 안 쥐어도 반경 안이면 히트', () => {
+    const logic = new CatchLogic(bm([swipe()]))
+    const events = logic.update(2000, { left: null, right: passing() })
+    const hits = events.filter((e) => e.type === 'hit')
+    expect(hits).toHaveLength(1)
+    expect(hits[0]).toMatchObject({ judgement: 'perfect' })
+  })
+
+  it('판정창 밖이면 손이 있어도 안 잡힌다', () => {
+    const logic = new CatchLogic(bm([swipe()]))
+    expect(
+      logic.update(1700, { left: null, right: passing() }).filter((e) => e.type === 'hit'),
+    ).toHaveLength(0)
+  })
+
+  it('캐치보다 넉넉한 반경을 가진다', () => {
+    const far = passing({ x: 0.4 + (NOTE_RADIUS + HAND_RADIUS) * 1.15 })
+    // 같은 위치에서 catch는 놓치고 swipe는 잡힌다
+    const catchLogic = new CatchLogic(bm([note()]))
+    expect(
+      catchLogic
+        .update(2000, { left: null, right: { ...far, grabbed: true } })
+        .filter((e) => e.type === 'hit'),
+    ).toHaveLength(0)
+
+    const swipeLogic = new CatchLogic(bm([swipe()]))
+    expect(
+      swipeLogic.update(2000, { left: null, right: far }).filter((e) => e.type === 'hit'),
+    ).toHaveLength(1)
+  })
+
+  it('멀리 있으면 스와이프도 안 잡힌다', () => {
+    const logic = new CatchLogic(bm([swipe()]))
+    const events = logic.update(2000, { left: null, right: passing({ x: -0.5 }) })
+    expect(events.filter((e) => e.type === 'hit')).toHaveLength(0)
   })
 })
