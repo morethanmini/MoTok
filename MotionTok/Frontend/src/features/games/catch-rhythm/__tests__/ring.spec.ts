@@ -20,7 +20,7 @@ import {
   TIGHT_GAP_MS,
   TIGHT_MAX_LANE_STEP,
 } from '../ring/ringConfig'
-import { generateRingChart, RING_PRESETS } from '../ring/ringChart'
+import { generateRingChart, RING_PRESETS, RING_TAP_PRESETS } from '../ring/ringChart'
 import { DIFFICULTIES, LEAD_IN_MS, SLOT_MS } from '../generator/presets'
 import type { Hands } from '../logic/catchLogic'
 
@@ -406,6 +406,97 @@ describe('링 · 탭만 모드 (슬라이드 끄기)', () => {
             expect(arc).toBeLessThanOrEqual(RING_HAND_SPEED * ((n.timeMs - prev.t) / 1000) + 1e-9)
           }
           last[n.owner] = { lane: n.lane, t: n.timeMs }
+        }
+      }
+    }
+  })
+
+  it('같은 seed면 완전히 같은 채보 (프레이즈 생성기도 결정적)', () => {
+    expect(JSON.stringify(generateRingChart('42', 'HARD', ROUND_MS, false))).toBe(
+      JSON.stringify(generateRingChart(42, 'HARD', ROUND_MS, false)),
+    )
+  })
+
+  it('노트는 유효한 레인·시각에 놓인다 (탭 전용)', () => {
+    for (const d of DIFFICULTIES) {
+      for (const n of generateRingChart(9, d, ROUND_MS, false).notes) {
+        expect(n.lane).toBeGreaterThanOrEqual(0)
+        expect(n.lane).toBeLessThan(LANE_COUNT)
+        expect(n.timeMs).toBeGreaterThanOrEqual(LEAD_IN_MS)
+        expect(n.timeMs).toBeLessThanOrEqual(ROUND_MS)
+      }
+    }
+  })
+
+  it('★ 정박 일변도가 아니다 — 엇박(버스트·갤럽) 간격이 나온다', () => {
+    // 예전 생성기는 모든 간격이 250ms 격자 위였다("너무 정박으로만 나옴" 피드백).
+    for (const d of ['NORMAL', 'HARD'] as const) {
+      const gaps = SEEDS.flatMap((s) => {
+        const notes = generateRingChart(s, d, ROUND_MS, false).notes
+        return notes.slice(1).map((n, i) => n.timeMs - notes[i]!.timeMs)
+      }).filter((g) => g > 0)
+      // 촘촘한 연타 구간(버스트 150/175ms · 갤럽 짧은 박)이 실제로 존재한다
+      expect(gaps.some((g) => g >= 100 && g <= 200)).toBe(true)
+      // 서로 다른 간격이 여러 종류 — 리듬이 단조롭지 않다
+      expect(new Set(gaps).size).toBeGreaterThanOrEqual(4)
+    }
+  })
+
+  it('★ 반대편 점프 교차가 나온다 (위 찍고 아래 찍기)', () => {
+    for (const d of ['NORMAL', 'HARD'] as const) {
+      const step = RING_TAP_PRESETS[d].stepMs
+      const found = SEEDS.some((s) => {
+        const notes = generateRingChart(s, d, ROUND_MS, false).notes
+        return notes.slice(1).some((n, i) => {
+          const prev = notes[i]!
+          const raw = Math.abs(n.lane - prev.lane) % LANE_COUNT
+          const dist = Math.min(raw, LANE_COUNT - raw)
+          return n.timeMs - prev.timeMs <= step && dist >= 3
+        })
+      })
+      expect(found).toBe(true)
+    }
+  })
+
+  it('같은 손 연타 한계(탭 전용 프리셋)를 지킨다', () => {
+    for (const d of DIFFICULTIES) {
+      const minGap = RING_TAP_PRESETS[d].minSameHandGapMs
+      for (const seed of SEEDS) {
+        const last: Record<string, number | undefined> = {}
+        for (const n of generateRingChart(seed, d, ROUND_MS, false).notes) {
+          const prev = last[n.owner]
+          if (prev !== undefined) expect(n.timeMs - prev).toBeGreaterThanOrEqual(minGap)
+          last[n.owner] = n.timeMs
+        }
+      }
+    }
+  })
+
+  it('짧은 간격 노트는 양손 가능(any)이다 (탭 전용)', () => {
+    for (const d of DIFFICULTIES) {
+      for (const seed of SEEDS) {
+        const notes = generateRingChart(seed, d, ROUND_MS, false).notes
+        for (let i = 1; i < notes.length; i++) {
+          const gap = notes[i]!.timeMs - notes[i - 1]!.timeMs
+          if (gap <= 0 || gap >= TIGHT_GAP_MS) continue // 동시 노트는 별도 규칙
+          expect(notes[i]!.hand).toBe('any')
+        }
+      }
+    }
+  })
+
+  it('동시 노트끼리는 2레인 미만으로 붙지 않는다 (탭 전용)', () => {
+    for (const d of DIFFICULTIES) {
+      for (const seed of SEEDS) {
+        const byTime = new Map<number, number[]>()
+        for (const n of generateRingChart(seed, d, ROUND_MS, false).notes) {
+          const lanes = byTime.get(n.timeMs) ?? []
+          for (const l of lanes) {
+            const raw = Math.abs(n.lane - l) % LANE_COUNT
+            expect(Math.min(raw, LANE_COUNT - raw)).toBeGreaterThanOrEqual(2)
+          }
+          lanes.push(n.lane)
+          byTime.set(n.timeMs, lanes)
         }
       }
     }
