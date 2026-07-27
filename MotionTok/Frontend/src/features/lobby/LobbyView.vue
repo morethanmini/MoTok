@@ -17,11 +17,13 @@ import { useAsyncData } from '@/composables/useAsyncData'
 import { useAutoReload } from '@/composables/useAutoReload'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
+import { useUserProfile } from '@/composables/useUserProfile'
 import type { Friend, Room } from './data'
 
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
+import UserProfileModal from '@/components/common/UserProfileModal.vue'
 import RoomCard from './components/RoomCard.vue'
 import FriendItem from './components/FriendItem.vue'
 import InviteCardStack from './components/InviteCardStack.vue'
@@ -45,6 +47,8 @@ const router = useRouter()
 const session = useSessionStore()
 const bgm = useBgm()
 const { message: toast, flash } = useToast()
+/** 친구 박스 클릭 → 공개 프로필(-96). 친구·랭킹 화면과 같은 컴포저블. */
+const viewer = useUserProfile()
 
 // 스플래시(로딩)는 세션 첫 진입에만 표시. 이후 로비 재방문 시엔 건너뜀.
 const SPLASH_SEEN_KEY = 'motok.splashSeen'
@@ -417,7 +421,12 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
           <div class="friends-list">
             <!-- key는 userId — 접속 상태가 바뀌면 목록 순서가 바뀌는데(온라인 우선 정렬),
                  인덱스를 키로 쓰면 그때마다 <img>가 새로 만들어져 사진을 다시 받는다. -->
-            <FriendItem v-for="f in friends" :key="f.userId" :friend="f" />
+            <FriendItem
+              v-for="f in friends"
+              :key="f.userId"
+              :friend="f"
+              @open="viewer.open(f.userId, f.name)"
+            />
             <p v-if="friends.length === 0" class="friends-empty">
               <img class="friends-empty-toys pixel-image" :src="lobbyEmptyCatToys" alt="" aria-hidden="true" />
               아직 친구가 없어요.<br />친구 목록 관리에서 추가해 보세요!
@@ -457,6 +466,17 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
       @reject="dismissInvitation"
     />
 
+    <!-- 친구 박스를 누르면 공개 프로필(-96). 친구·랭킹 화면과 같은 모달·같은 조회 규칙을 쓴다. -->
+    <UserProfileModal
+      v-if="viewer.isOpen.value"
+      :user-id="viewer.targetId.value!"
+      :profile="viewer.profile.value"
+      :nickname="viewer.nickname.value"
+      :loading="viewer.loading.value"
+      :error="viewer.error.value"
+      @close="viewer.close()"
+      @reported="flash"
+    />
     <PixelToast :message="toast" />
 
     <!-- 스플래시 -->
