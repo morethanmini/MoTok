@@ -117,10 +117,10 @@ function other(hand: Hand): Hand {
 /**
  * seed + 난이도 + 라운드 길이 → 링 채보.
  * 캐치 생성기와 같은 슬롯 격자·같은 유예를 쓴다(두 모드의 리듬 감각을 맞추기 위해).
- */
-/**
- * @param slides 슬라이드 노트를 낼지. false면 탭만 나오는 대신 **밀도를 확 올린다**
- *               — 손이 묶이지 않으니 훨씬 빠른 패턴을 칠 수 있다.
+ *
+ * @param slides 슬라이드 노트를 낼지. false(탭 전용 모드)면 슬롯 격자 대신
+ *               **프레이즈 기반 생성기**로 간다 — 정박 일변도를 깨고 엇박·버스트·
+ *               점프 교차 같은 패턴 다양성이 여기서 나온다.
  */
 export function generateRingChart(
   seed: number | string,
@@ -128,16 +128,8 @@ export function generateRingChart(
   durationMs: number,
   slides = true,
 ): GeneratedRingChart {
-  const base = RING_PRESETS[difficulty]
-  const preset: RingPreset = slides
-    ? base
-    : {
-        ...base,
-        holdRate: 0,
-        density: Math.min(0.95, base.density * 1.55),
-        simultaneous: Math.min(0.5, base.simultaneous + 0.22),
-        minSameHandGapMs: Math.round(base.minSameHandGapMs * 0.8),
-      }
+  if (!slides) return generateRingTapChart(seed, difficulty, durationMs)
+  const preset = RING_PRESETS[difficulty]
   const rng = mulberry32(foldSeed(seed))
 
   const notes: GeneratedRingNote[] = []
@@ -220,6 +212,266 @@ export function generateRingChart(
     nextHand = other(nextHand)
   }
 
+  return {
+    approachTimeMs: preset.approachTimeMs,
+    notes,
+    durationMs: notes.length ? endTimeOf(notes[notes.length - 1]!) : 0,
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 탭 전용(밀도 높은) 모드 — 프레이즈 기반 생성기
+//
+// 슬롯 격자에 독립 확률로 노트를 뿌리면 간격이 250ms 정박 일변도가 돼 재미가 없다
+// (실플레이 피드백: "너무 정박으로만 나옴"). 그래서 탭 전용 모드는 채보를
+// **프레이즈(짧은 패턴 묶음) 단위**로 만든다: 계단·트릴·버스트·점프 교차·갤럽 엇박·양손 동시.
+//
+// 물리 불변식은 슬라이드 모드와 동일하게 지킨다 — 단 검사 단위가 다르다:
+// 손을 번갈아 쓰는 프레이즈는 "직전 노트와 가까울 것"이 아니라
+// **각 손 기준 도달 가능성**(같은 손 연타 한계 + 링 둘레 이동 속도)으로 보장한다.
+// 예: 12시↔6시 점프 교차는 노트 간 250ms지만 왼손은 12시, 오른손은 6시에
+// 머물러 있으므로 손마다는 500ms 간격 + 제자리다.
+// ═══════════════════════════════════════════════════════════════
+
+export interface RingTapPreset {
+  approachTimeMs: number
+  /** 같은 손 연타 한계 — 프레이즈가 뭘 의도하든 이걸 넘는 노트는 버려진다 */
+  minSameHandGapMs: number
+  /** 여유 있는 노트가 아무 손이나 가능(any)일 확률. 빠른 구간은 무조건 any */
+  anyRate: number
+  /** 프레이즈 사이 쉼(ms) — 숨 돌릴 틈이자 밀도 조절 손잡이 */
+  restMs: readonly [number, number]
+  /** 계단·트릴·점프 노트 간격(ms) */
+  stepMs: number
+  /** 계단·트릴 프레이즈 길이(노트 수) 범위 */
+  phraseLen: readonly [number, number]
+  /** 버스트 노트 간격(ms). 손이 번갈아 맡아 한 손 기준은 2배가 된다. 0이면 버스트 없음 */
+  burstGapMs: number
+  /** 프레이즈 종류 가중치 (합이 1이 아니어도 비율로 동작) */
+  weights: {
+    stream: number
+    trill: number
+    burst: number
+    jump: number
+    gallop: number
+    doubles: number
+  }
+}
+
+export const RING_TAP_PRESETS: Record<Difficulty, RingTapPreset> = {
+  EASY: {
+    approachTimeMs: 1500,
+    minSameHandGapMs: 400,
+    anyRate: 0.8,
+    restMs: [800, 1300],
+    stepMs: 600,
+    phraseLen: [3, 4],
+    burstGapMs: 0,
+    weights: { stream: 0.55, trill: 0.15, burst: 0, jump: 0.1, gallop: 0, doubles: 0.2 },
+  },
+  NORMAL: {
+    approachTimeMs: 1300,
+    minSameHandGapMs: 320,
+    anyRate: 0.65,
+    restMs: [500, 850],
+    stepMs: 375,
+    phraseLen: [3, 5],
+    burstGapMs: 175,
+    weights: { stream: 0.3, trill: 0.15, burst: 0.1, jump: 0.2, gallop: 0.15, doubles: 0.1 },
+  },
+  HARD: {
+    approachTimeMs: 1100,
+    minSameHandGapMs: 256,
+    anyRate: 0.5,
+    restMs: [400, 850],
+    stepMs: 250,
+    phraseLen: [4, 6],
+    burstGapMs: 150,
+    weights: { stream: 0.2, trill: 0.15, burst: 0.2, jump: 0.25, gallop: 0.15, doubles: 0.05 },
+  },
+}
+
+function normLane(lane: number): number {
+  return ((lane % LANE_COUNT) + LANE_COUNT) % LANE_COUNT
+}
+
+/**
+ * 목표 레인을 그 손이 갈 수 있는 만큼만 이동시킨다(캐치의 "도달 보정"과 같은 원리).
+ * 프레이즈는 의도를 말하고, 물리적으로 안 되는 거리는 여기서 직전 위치 쪽으로 당겨진다.
+ */
+function clampLaneForOwner(
+  prev: GeneratedRingNote | null,
+  targetLane: number,
+  timeMs: number,
+): number {
+  if (!prev) return normLane(targetLane)
+  const from = endLaneOf(prev)
+  const maxStep = Math.floor(reachableLanes(timeMs - endTimeOf(prev)))
+  let delta = normLane(targetLane - from)
+  if (delta > LANE_COUNT / 2) delta -= LANE_COUNT // 원형이라 짧은 방향으로
+  const step = Math.max(-maxStep, Math.min(maxStep, delta))
+  return normLane(from + step)
+}
+
+export function generateRingTapChart(
+  seed: number | string,
+  difficulty: Difficulty,
+  durationMs: number,
+): GeneratedRingChart {
+  const preset = RING_TAP_PRESETS[difficulty]
+  const rng = mulberry32(foldSeed(seed))
+
+  const notes: GeneratedRingNote[] = []
+  const lastByHand: Record<Hand, GeneratedRingNote | null> = { left: null, right: null }
+  let lastNote: GeneratedRingNote | null = null
+  let hand: Hand = rng() < 0.5 ? 'left' : 'right'
+
+  const randInt = (lo: number, hi: number) => lo + Math.floor(rng() * (hi - lo + 1))
+  const dirOf = () => (rng() < 0.5 ? -1 : 1)
+
+  /**
+   * 물리 제약을 통과한 노트만 채보에 실린다 — 같은 손 연타 한계 미달이면 버리고,
+   * 못 가는 레인은 당기고, 동시 노트끼리는 2레인 미만으로 붙지 않는다.
+   */
+  const emit = (owner: Hand, timeMs: number, targetLane: number): GeneratedRingNote | null => {
+    timeMs = Math.round(timeMs)
+    if (timeMs > durationMs) return null
+    const prev = lastByHand[owner]
+    if (prev && timeMs - endTimeOf(prev) < preset.minSameHandGapMs) return null
+    const lane = clampLaneForOwner(prev, targetLane, timeMs)
+    if (notes.some((n) => n.timeMs === timeMs && laneDistance(n.lane, lane) < 2)) return null
+    // 빠른 구간에서 손을 지정하면 물리적으로 못 친다 — 슬라이드 모드와 같은 규칙
+    const tight = lastNote !== null && lastNote.timeMs !== timeMs && timeMs - lastNote.timeMs < TIGHT_GAP_MS
+    const noteHand: NoteHand = tight || rng() < preset.anyRate ? 'any' : owner
+    const note: GeneratedRingNote = { timeMs, lane, hand: noteHand, type: 'tap', owner }
+    notes.push(note)
+    lastByHand[owner] = note
+    lastNote = note
+    return note
+  }
+
+  /** 계단 — 한 방향으로 감아 도는 기본 채움 */
+  const stream = (t: number): number => {
+    const len = randInt(preset.phraseLen[0], preset.phraseLen[1])
+    const dir = dirOf()
+    let lane = lastNote ? lastNote.lane + dir : Math.floor(rng() * LANE_COUNT)
+    for (let i = 0; i < len; i++) {
+      const emitted = emit(hand, t + i * preset.stepMs, lane)
+      lane = (emitted ? emitted.lane : lane) + dir
+      hand = other(hand)
+    }
+    return t + (len - 1) * preset.stepMs
+  }
+
+  /** 트릴 — 이웃한 두 레인을 양손이 번갈아 두드린다 */
+  const trill = (t: number): number => {
+    const len = randInt(preset.phraseLen[0] + 1, preset.phraseLen[1] + 1)
+    const a = Math.floor(rng() * LANE_COUNT)
+    const b = normLane(a + randInt(1, 2) * dirOf())
+    for (let i = 0; i < len; i++) {
+      emit(hand, t + i * preset.stepMs, i % 2 === 0 ? a : b)
+      hand = other(hand)
+    }
+    return t + (len - 1) * preset.stepMs
+  }
+
+  /** 버스트 — 촘촘한 연타가 이웃 레인으로 흘러간다. 밀도의 정점 */
+  const burst = (t: number): number => {
+    const len = randInt(4, 6)
+    const dir = dirOf()
+    let lane = lastNote ? lastNote.lane : Math.floor(rng() * LANE_COUNT)
+    for (let i = 0; i < len; i++) {
+      const emitted = emit(hand, t + i * preset.burstGapMs, lane)
+      if (emitted) lane = emitted.lane
+      if (rng() < 0.6) lane += dir
+      hand = other(hand)
+    }
+    return t + (len - 1) * preset.burstGapMs
+  }
+
+  /** 점프 교차 — 반대편 레인을 번갈아 찍는다(12시↔6시). 손이 하나씩 맡아 각자는 제자리 */
+  const jump = (t: number): number => {
+    const pairs = randInt(2, 4)
+    const rotate = randInt(-1, 1) // 축이 조금씩 도는 변형
+    let a = Math.floor(rng() * LANE_COUNT)
+    let b = normLane(a + LANE_COUNT / 2 + randInt(-1, 1))
+    for (let i = 0; i < pairs; i++) {
+      emit(hand, t + 2 * i * preset.stepMs, a)
+      hand = other(hand)
+      emit(hand, t + (2 * i + 1) * preset.stepMs, b)
+      hand = other(hand)
+      a = normLane(a + rotate)
+      b = normLane(b + rotate)
+    }
+    return t + (2 * pairs - 1) * preset.stepMs
+  }
+
+  /** 갤럽 — "다-닥" 싱코페이션. 반 박을 밀어 두드리는 엇박이 여기서 나온다 */
+  const gallop = (t: number): number => {
+    const cycles = randInt(2, 4)
+    const longGap = Math.round(preset.stepMs * 1.5)
+    const shortGap = preset.stepMs * 2 - longGap
+    const dir = dirOf()
+    let lane = lastNote ? lastNote.lane : Math.floor(rng() * LANE_COUNT)
+    let tc = t
+    for (let i = 0; i < cycles; i++) {
+      const first = emit(hand, tc, lane)
+      hand = other(hand)
+      if (first) lane = first.lane
+      const second = emit(hand, tc + longGap, lane + dir)
+      hand = other(hand)
+      if (second) lane = second.lane
+      tc += longGap + shortGap
+    }
+    return tc - shortGap
+  }
+
+  /** 더블 — 양손 동시 타격. 좌우 대칭이라 읽자마자 몸이 나간다 */
+  const doubles = (t: number): number => {
+    const reps = randInt(2, 3)
+    const rotate = randInt(-1, 1)
+    let left = 5 + randInt(0, 2) // 9시 부근(5·6·7)
+    let right = normLane(LANE_COUNT - left) // 대칭: 3·2·1
+    const gap = preset.stepMs * 2
+    for (let i = 0; i < reps; i++) {
+      emit('left', t + i * gap, left)
+      emit('right', t + i * gap, right)
+      const nl = normLane(left + rotate)
+      const nr = normLane(right - rotate)
+      if (laneDistance(nl, nr) >= 2) {
+        left = nl
+        right = nr
+      }
+    }
+    return t + (reps - 1) * gap
+  }
+
+  const table: [number, (t: number) => number][] = [
+    [preset.weights.stream, stream],
+    [preset.weights.trill, trill],
+    [preset.weights.burst, burst],
+    [preset.weights.jump, jump],
+    [preset.weights.gallop, gallop],
+    [preset.weights.doubles, doubles],
+  ]
+  const totalWeight = table.reduce((s, [w]) => s + w, 0)
+
+  let cursor = LEAD_IN_MS
+  while (cursor <= durationMs) {
+    let r = rng() * totalWeight
+    let phrase = table[0]![1]
+    for (const [w, fn] of table) {
+      r -= w
+      if (r < 0) {
+        phrase = fn
+        break
+      }
+    }
+    const end = phrase(cursor)
+    cursor = end + preset.restMs[0] + Math.round(rng() * (preset.restMs[1] - preset.restMs[0]))
+  }
+
+  notes.sort((a, b) => a.timeMs - b.timeMs)
   return {
     approachTimeMs: preset.approachTimeMs,
     notes,
