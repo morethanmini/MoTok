@@ -19,6 +19,12 @@ export const usersApi = {
   withdraw: (proof: WithdrawRequest) => http.delete<void>('/users/me', proof),
   changePassword: (currentPassword: string, newPassword: string) =>
     http.patch<void>('/users/me/password', { currentPassword, newPassword }),
+  /**
+   * 프로필 사진 확정. 업로드가 끝난 뒤 그 오브젝트 key를 알려 준다.
+   * URL이 아니라 key를 보내는 이유 — 서버가 소유권을 확인하고 공개 URL을 직접 계산한다.
+   * key에 null을 주면 기본 아바타로 되돌린다.
+   */
+  updateAvatar: (key: string | null) => http.patch<UserProfile>('/users/me/avatar', { key }),
 
   getPoints: () => http.get<{ pointBalance: number }>('/users/me/points'),
   getPointHistory: (page = 0, size = 20) =>
