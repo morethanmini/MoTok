@@ -326,6 +326,7 @@ async function submitReport() {
 }
 
 // ── 유저 신고 (방 코드 왼쪽 버튼 — 현재 접속한 참가자 중에서 고르거나, 목록에 없으면 닉네임 직접 입력) ──
+// 참가자 목록에서 '다른 유저'를 고른 상태를 나타내는 화면 전용 값 — 서버 사유 코드가 아니다.
 const USER_REPORT_OTHER = 'OTHER'
 const userReportOpen = ref(false)
 // 참가자를 고르면 identity, 목록에 없는 다른 유저를 고르면 USER_REPORT_OTHER
@@ -360,7 +361,8 @@ async function submitUserReport() {
   try {
     await reportsApi.report({
       reportedUserId,
-      reasonType: USER_REPORT_OTHER,
+      // 서버 ReportReason 에 OTHER 는 없다(ETC). 이 화면은 사유를 고르지 않고 자유 입력만 받으므로 ETC로 보낸다.
+      reasonType: 'ETC',
       reasonText: `[닉네임: ${nickname}] ${content}`,
     })
     flash('신고가 접수됐어요')

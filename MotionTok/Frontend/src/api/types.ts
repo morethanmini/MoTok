@@ -304,6 +304,8 @@ export interface LeaderboardEntry {
   nickname: string
   bestScore: number
   playCount: number
+  /** 프로필 사진 URL. null이면 기본 아바타를 그린다. */
+  avatarUrl?: string | null
 }
 export interface LeaderboardResponse {
   gameId: number
@@ -358,10 +360,17 @@ export interface InvitationItem {
 }
 
 // ── 신고 ──────────────────────────────────
+/** 신고 사유 코드 — 채팅 신고(-132)와 목록을 공유한다(서버 ReportReason). */
+export type ReportReason = 'ABUSE' | 'HATE' | 'SEXUAL' | 'SPAM' | 'ETC'
+
 export interface ReportRequest {
   reportedUserId: number
-  reasonType: string
+  reasonType: ReportReason
+  /** 직접 입력 사유(선택). 최대 200자 */
   reasonText?: string | null
+}
+export interface ReportCreateResponse {
+  reportId: number
 }
 
 // ── 콘텐츠 (리듬게임 곡/채보/AI 제시어) ─────
