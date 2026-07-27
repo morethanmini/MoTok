@@ -46,8 +46,10 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   scene.environmentIntensity = 0.35
   pmrem.dispose()
 
+  // 8.2로 물러서면 아바타가 화면을 꽉 채우지 않고 벽 전체(구멍 + 주변 석판)가
+  // 같이 들어온다 — 원래 4.8은 아바타가 뷰포트를 거의 다 가려 벽이 안 보였다(실기 피드백).
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 50)
-  camera.position.set(0, 0.3, 4.8)
+  camera.position.set(0, 0.3, 8.2)
   camera.lookAt(0, -0.5, 0)
 
   scene.add(new THREE.HemisphereLight(0xbdc7ff, 0x14122e, 0.6))

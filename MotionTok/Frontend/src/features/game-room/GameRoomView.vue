@@ -455,6 +455,15 @@ interface LiveScoreRow {
   score: number | null
 }
 const liveScores = ref<Record<string, LiveScoreRow>>({})
+/** 게임④(-9) 전용 — score(GRADE_POINTS 역산: 100/85/70/그 외)로 등급 배지를 보여준다 */
+const BODY_FIT_GRADE: Record<number, { label: string; color: string }> = {
+  100: { label: 'PERFECT', color: '#b98bff' },
+  85: { label: 'GREAT', color: '#45e0a8' },
+  70: { label: 'PASS', color: '#ffcf4d' },
+}
+function bodyFitGrade(score: number) {
+  return BODY_FIT_GRADE[score] ?? { label: 'FAIL', color: '#ff5d73' }
+}
 const scoreboardRows = computed(() => {
   const rows = Object.entries(liveScores.value).map(([userId, r]) => ({ userId, ...r }))
   rows.sort(
@@ -850,7 +859,11 @@ const startHint = computed(() =>
         </div>
 
         <!-- 실시간 스코어보드 (게임 중, S15P11A706-82) -->
-        <div v-if="activeSession && !gameResults" class="px game-scoreboard">
+        <div
+          v-if="activeSession && !gameResults"
+          class="px game-scoreboard"
+          :class="{ bf: activeGame?.id === 'shape' }"
+        >
           <div class="gs-title">⭐ LIVE SCORE</div>
           <div
             v-for="row in scoreboardRows"
@@ -859,7 +872,14 @@ const startHint = computed(() =>
             :class="{ me: row.userId === myParticipantId }"
           >
             <span class="gs-name">{{ row.nickname }}</span>
-            <span class="gs-val">{{ row.finished ? `${row.score}점 ✓` : `⭐ ${row.starsLit}` }}</span>
+            <span
+              v-if="activeGame?.id === 'shape' && row.finished"
+              class="gs-badge"
+              :style="{ color: bodyFitGrade(row.score ?? 0).color, borderColor: bodyFitGrade(row.score ?? 0).color }"
+            >
+              {{ bodyFitGrade(row.score ?? 0).label }}
+            </span>
+            <span v-else class="gs-val">{{ row.finished ? `${row.score}점 ✓` : `⭐ ${row.starsLit}` }}</span>
           </div>
           <div v-if="scoreboardRows.length === 0" class="gs-empty">진행 상황 수신 대기 중…</div>
         </div>
@@ -1165,6 +1185,14 @@ const startHint = computed(() =>
 .gs-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 110px; }
 .gs-val { color: #5cbf4a; white-space: nowrap; }
 .gs-empty { font-size: 7px; color: #a99f86; }
+.gs-badge { font-size: 7px; font-weight: 800; padding: 2px 6px; border: 1px solid; border-radius: 6px; white-space: nowrap; }
+
+/* 게임④(-9) 전용 다크 테마 — 인게임 화면(BodyFitGame)과 톤을 맞춘다 */
+.game-scoreboard.bf { background: rgba(18, 20, 43, 0.96); border-color: rgba(255, 255, 255, 0.12); }
+.game-scoreboard.bf .gs-title { color: #ffcf4d; }
+.game-scoreboard.bf .gs-row { color: #eef0ff; }
+.game-scoreboard.bf .gs-row.me .gs-name { color: #45e0a8; }
+.game-scoreboard.bf .gs-empty { color: #8d90b8; }
 
 /* 자기 타일 — 항상 가장 크게 */
 .self-tile.self-spot {
