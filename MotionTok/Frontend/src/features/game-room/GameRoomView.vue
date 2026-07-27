@@ -26,6 +26,9 @@ import CreateRoomModal, { type NewRoom } from '@/features/lobby/components/Creat
 const FingerStarGame = defineAsyncComponent(
   () => import('@/features/games/finger-star/FingerStarGame.vue'),
 )
+const CatchRhythmGame = defineAsyncComponent(
+  () => import('@/features/games/catch-rhythm/CatchRhythmGame.vue'),
+)
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -518,6 +521,16 @@ function openPicker() {
 }
 function launch(g: GameEntry) {
   picker.value = false
+  // 캐치캐치리듬은 전용 STOMP 채널을 쓴다 — 공용 게임 세션(GAME_START) 경로를 타지 않고
+  // 컴포넌트가 자기 생명주기를 소유한다. 난이도 선택·시작은 컴포넌트 안에서.
+  if (g.id === 'rhythm') {
+    if (!captureOn.value) {
+      flash('카메라를 켜고 시작해 주세요')
+      return
+    }
+    activeGame.value = g
+    return
+  }
   // 방장 + 서버 연결 + 플레이 가능 → 서버에 시작 요청. GAME_START가 방 전체에 돌아와 마운트된다.
   if (g.playable && roomChat.connected.value && selfIsHost.value) {
     if (!captureOn.value) {
@@ -787,6 +800,13 @@ const startHint = computed(() =>
             @close="closeGame"
             @progress="onGameProgress"
             @finished="onGameFinished"
+          />
+          <!-- 캐치캐치리듬 — 전용 채널이라 activeSession을 쓰지 않는다(자기 생명주기 소유) -->
+          <CatchRhythmGame
+            v-if="activeGame?.id === 'rhythm'"
+            ref="gameComp"
+            :video="selfVideoEl ?? null"
+            @close="closeGame"
           />
           <div class="self-label">
             <span class="c-g">{{ selfIsHost ? 'YOU · HOST' : 'YOU' }}</span>

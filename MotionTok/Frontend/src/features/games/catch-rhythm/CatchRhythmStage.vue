@@ -26,10 +26,13 @@ const props = withDefaults(
     difficulty: Difficulty
     durationMs?: number
     skinId?: string
-    /** 방에서 이미 잡아 둔 카메라 스트림. 없으면 직접 getUserMedia. */
-    stream?: MediaStream | null
+    /**
+     * 분석에 쓸 <video>. 게임룸이면 셀프 타일 비디오를 그대로 넘긴다(카메라를 또 열지 않는다).
+     * 없으면 개발 페이지처럼 자체적으로 getUserMedia 한다.
+     */
+    video?: HTMLVideoElement | null
   }>(),
-  { durationMs: 90_000, skinId: 'cat-candy', stream: null },
+  { durationMs: 90_000, skinId: 'cat-candy', video: null },
 )
 
 const emit = defineEmits<{
@@ -163,24 +166,30 @@ function loop() {
   if (logic.isFinished() || t >= props.durationMs + 1500) finish()
 }
 
-async function acquireStream(): Promise<MediaStream> {
-  if (props.stream) return props.stream
+/**
+ * 분석용 <video> 확보.
+ * 방에서 넘겨준 게 있으면 그대로 쓰고(카메라 중복 점유 금지), 없으면 자체 스트림을 연다.
+ */
+async function resolveVideo(): Promise<HTMLVideoElement | null> {
+  if (props.video) return props.video
+
+  const video = videoEl.value
+  if (!video) return null
   ownStream = await navigator.mediaDevices.getUserMedia({
     video: { width: { ideal: 640 }, height: { ideal: 360 }, facingMode: 'user' },
     audio: false,
   })
-  return ownStream
+  video.srcObject = ownStream
+  await video.play()
+  return video
 }
 
 async function boot() {
   try {
-    const stream = await acquireStream()
-    const video = videoEl.value
+    const video = await resolveVideo()
     const canvas = canvasEl.value
     if (!video || !canvas) return
 
-    video.srcObject = stream
-    await video.play()
     if (!video.videoWidth) {
       await new Promise<void>((res) =>
         video.addEventListener('loadedmetadata', () => res(), { once: true }),
