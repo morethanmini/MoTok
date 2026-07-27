@@ -8,7 +8,8 @@
  * 서버가 준 serverNow를 t=0으로 맞추므로 전원이 같은 순간에 같은 노트를 본다.
  * **솔로 폴백**: STOMP가 안 붙었으면 로컬 시드로 혼자 돈다.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { preloadHandLandmarker } from '@/composables/useHandLandmarker'
 import CatchRhythmStage from './CatchRhythmStage.vue'
 import { DIFFICULTIES, type Difficulty } from './generator/presets'
 import { useRhythmSession } from './useRhythmSession'
@@ -41,6 +42,9 @@ const difficulty = ref<Difficulty>('NORMAL')
 const mode = ref<GameMode>('catch')
 const errorMsg = ref('')
 const soloSeed = ref<number | null>(null)
+/** 손 인식 모델 준비 상태 — 0~1. 1이면 시작해도 첫 노트를 안 놓친다 */
+const modelProgress = ref(0)
+const modelReady = computed(() => modelProgress.value >= 1)
 const submitted = ref(false)
 
 const roomId = computed(() => props.roomId)
@@ -113,6 +117,18 @@ function backToLobby() {
   soloSeed.value = null
   emit('close')
 }
+
+/**
+ * 게임 카드를 여는 순간 모델(7.5MB)을 미리 받는다.
+ *
+ * 대전은 t=0을 서버 시각에 맞추므로, 라운드가 시작된 뒤에 모델을 받기 시작하면
+ * 그 시간만큼 노트를 놓친다(로비 프리로드가 없는 2번째 창에서 실제로 발생했다).
+ * 시작 버튼을 누르기 전에 끝내 두면 이 문제가 원천적으로 사라진다.
+ */
+onMounted(async () => {
+  const ok = await preloadHandLandmarker((f) => (modelProgress.value = f))
+  if (ok) modelProgress.value = 1
+})
 
 // 방장이 시작하면 다른 참가자도 자동으로 라운드에 들어간다
 watch(
@@ -209,10 +225,22 @@ watch(
       <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
 
       <div class="actions">
-        <button v-if="!isMultiplayer || isHost" type="button" class="px btn primary" @click="start">
-          시작
+        <button
+          v-if="!isMultiplayer || isHost"
+          type="button"
+          class="px btn primary"
+          :disabled="!modelReady"
+          @click="start"
+        >
+          {{ modelReady ? '시작' : `준비 중 ${Math.round(modelProgress * 100)}%` }}
         </button>
-        <p v-else class="wait-host">방장이 시작하기를 기다리는 중…</p>
+        <p v-else class="wait-host">
+          {{
+            modelReady
+              ? '방장이 시작하기를 기다리는 중…'
+              : `준비 중 ${Math.round(modelProgress * 100)}%`
+          }}
+        </p>
         <button type="button" class="px btn" @click="backToLobby">나가기</button>
       </div>
     </div>
@@ -279,6 +307,10 @@ watch(
   color: #5c4a3f;
   cursor: pointer;
   font-size: 0.85rem;
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 .btn.primary {
   background: #e07a4f;
