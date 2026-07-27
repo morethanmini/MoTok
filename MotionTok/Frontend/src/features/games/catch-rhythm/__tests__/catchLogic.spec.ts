@@ -4,10 +4,11 @@ import {
   noteProgress,
   isInReach,
   trailPointAt,
+  approachOf,
   type Hands,
   type HandState,
 } from '../logic/catchLogic'
-import { NOTE_RADIUS, HAND_RADIUS } from '../core/config'
+import { NOTE_RADIUS, HAND_RADIUS, CATCH_REACH_SCALE, SWIPE_REACH_SCALE } from '../core/config'
 import type { CatchNote } from '../core/beatmap'
 
 const bm = (notes: CatchNote[]) => ({ approachTimeMs: 1200, notes })
@@ -32,12 +33,45 @@ describe('noteProgress / isInReach', () => {
     expect(noteProgress(n, 2000, 1200)).toBeCloseTo(1)
   })
 
-  it('히트 반경 = NOTE_RADIUS + HAND_RADIUS', () => {
-    const n = note({ x: 0, y: 0 })
-    const reach = NOTE_RADIUS + HAND_RADIUS
-    expect(isInReach({ x: reach - 0.01, y: 0, grabbed: true }, n)).toBe(true)
-    expect(isInReach({ x: reach + 0.01, y: 0, grabbed: true }, n)).toBe(false)
-    expect(isInReach(null, n)).toBe(false)
+  it('히트 반경은 노트 종류별 배율을 탄다', () => {
+    const base = NOTE_RADIUS + HAND_RADIUS
+    const at = (x: number) => ({ x, y: 0, grabbed: true })
+
+    const grab = note({ x: 0, y: 0 })
+    expect(isInReach(at(base * CATCH_REACH_SCALE - 0.01), grab)).toBe(true)
+    expect(isInReach(at(base * CATCH_REACH_SCALE + 0.01), grab)).toBe(false)
+    expect(isInReach(null, grab)).toBe(false)
+
+    // 관대함 순서: 연결 > 스와이프 > 주먹
+    const swipeNote = note({ x: 0, y: 0, kind: 'swipe' })
+    const trailNote = note({ x: 0, y: 0, kind: 'trail' })
+    const outsideGrab = at(base * CATCH_REACH_SCALE + 0.02)
+    expect(isInReach(outsideGrab, swipeNote)).toBe(true)
+    expect(isInReach(at(base * SWIPE_REACH_SCALE + 0.02), swipeNote)).toBe(false)
+    expect(isInReach(at(base * SWIPE_REACH_SCALE + 0.02), trailNote)).toBe(true)
+  })
+
+  it('노트별 접근 시간이 있으면 그것을 쓴다 (주먹은 더 일찍 등장)', () => {
+    const plain = note({ timeMs: 2000 })
+    const early = note({ timeMs: 2000, approachMs: 2000 })
+    expect(approachOf(plain, 1200)).toBe(1200)
+    expect(approachOf(early, 1200)).toBe(2000)
+    // 판정 시각은 둘 다 같다
+    expect(noteProgress(plain, 2000, 1200)).toBeCloseTo(1)
+    expect(noteProgress(early, 2000, 1200)).toBeCloseTo(1)
+    // 다른 건 등장 시점 — 주먹 노트가 800ms 먼저 화면에 뜬다(준비 시간)
+    expect(noteProgress(plain, 800, 1200)).toBeCloseTo(0)
+    expect(noteProgress(early, 0, 1200)).toBeCloseTo(0)
+  })
+
+  it('주먹 노트는 다른 노트보다 일찍 스폰된다', () => {
+    const logic = new CatchLogic(
+      bm([note({ timeMs: 3000, approachMs: 2000 }), note({ timeMs: 3000, kind: 'swipe' })]),
+    )
+    // 주먹은 t=1000(3000-2000)에, 스와이프는 t=1800(3000-1200)에 등장
+    expect(logic.update(1000, NO_HANDS).map((e) => e.type)).toEqual(['spawn'])
+    expect(logic.update(1500, NO_HANDS)).toEqual([])
+    expect(logic.update(1800, NO_HANDS).map((e) => e.type)).toEqual(['spawn'])
   })
 })
 

@@ -11,6 +11,7 @@
 import {
   NOTE_RADIUS,
   HAND_RADIUS,
+  CATCH_REACH_SCALE,
   SWIPE_REACH_SCALE,
   TRAIL_REACH_SCALE,
   TRAIL_PERFECT_COVERAGE,
@@ -56,16 +57,21 @@ export type CatchEvent =
 
 const SIDES: Hand[] = ['left', 'right']
 
+/** 이 노트의 접근 시간 — 노트별 값이 있으면 그것이 우선(주먹 노트는 더 길다). */
+export function approachOf(note: CatchNote, fallbackMs: number): number {
+  return note.approachMs ?? fallbackMs
+}
+
 /** 노트 접근 진행도 0(스폰)→1(판정 시점). 도달 후에는 1 초과. */
 export function noteProgress(note: CatchNote, tMs: number, approachTimeMs: number): number {
-  return 1 - (note.timeMs - tMs) / approachTimeMs
+  return 1 - (note.timeMs - tMs) / approachOf(note, approachTimeMs)
 }
 
 function reachOf(note: CatchNote): number {
   const base = NOTE_RADIUS + HAND_RADIUS
   if (note.kind === 'swipe') return base * SWIPE_REACH_SCALE
   if (note.kind === 'trail') return base * TRAIL_REACH_SCALE
-  return base
+  return base * CATCH_REACH_SCALE
 }
 
 /** 손-노트 거리가 히트 반경 안인가. 종류별로 반경이 다르다. */
@@ -142,7 +148,7 @@ export class CatchLogic {
     for (const note of this.notes) {
       if (note.status === 'hit' || note.status === 'miss') continue
 
-      if (note.status === 'pending' && tMs >= note.timeMs - this.approachTimeMs) {
+      if (note.status === 'pending' && tMs >= note.timeMs - approachOf(note, this.approachTimeMs)) {
         note.status = 'active'
         events.push({ type: 'spawn', note })
       }

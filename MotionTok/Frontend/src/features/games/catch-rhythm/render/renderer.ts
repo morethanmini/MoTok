@@ -152,20 +152,24 @@ export class Renderer {
         }
       }
 
-      this.skin.drawNote(ctx, {
-        x,
-        y,
-        radius: judgeRadius * scale,
-        judgeRadius,
-        scale,
-        progress,
-        hand: note.hand,
-        kind: note.kind,
-        cross: (note as TrackedNote & { cross?: boolean }).cross === true,
-        path,
-        head,
-        tracing: note.status === 'tracing',
-      })
+      this.skin.drawNote(
+        ctx,
+        {
+          x,
+          y,
+          radius: judgeRadius * scale,
+          judgeRadius,
+          scale,
+          progress,
+          hand: note.hand,
+          kind: note.kind,
+          cross: (note as TrackedNote & { cross?: boolean }).cross === true,
+          path,
+          head,
+          tracing: note.status === 'tracing',
+        },
+        frame.tMs,
+      )
     }
 
     this.fx = this.fx.filter((f) => {
