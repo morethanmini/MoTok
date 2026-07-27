@@ -35,7 +35,11 @@ public record GameEventResponse(
         Double holdProgress,
         Integer score,
         Integer starsHit,
-        List<GameResultEntry> results
+        List<GameResultEntry> results,
+        /** 게임④ 출제자 로테이션(-48) — 1-based 현재 라운드. 로테이션 없는 게임은 null */
+        Integer roundNo,
+        /** 게임④ 로테이션(-48) — 전체 라운드 수(참가자 수). 로테이션 없는 게임은 null */
+        Integer totalRounds
 ) {
 
     public enum EventType { GAME_START, POSE_SET, PROGRESS, PLAYER_FINISHED, GAME_END }
@@ -43,32 +47,33 @@ public record GameEventResponse(
     public static GameEventResponse gameStart(String sessionId, long gameId, String challenge,
                                               String legacyConstellationKey, String setterUserId,
                                               String difficulty,
-                                              long serverNow, long startAt, long endAt) {
+                                              long serverNow, long startAt, long endAt,
+                                              Integer roundNo, Integer totalRounds) {
         return new GameEventResponse(EventType.GAME_START, sessionId, gameId, challenge,
                 legacyConstellationKey, setterUserId, difficulty, serverNow, startAt, endAt,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, roundNo, totalRounds);
     }
 
     public static GameEventResponse poseSet(String sessionId, String setterUserId, String challenge) {
         return new GameEventResponse(EventType.POSE_SET, sessionId, null, challenge,
                 null, setterUserId, null, null, null, null,
-                setterUserId, null, null, null, null, null, null);
+                setterUserId, null, null, null, null, null, null, null, null);
     }
 
     public static GameEventResponse progress(String sessionId, String userId, String nickname,
                                              int starsLit, double holdProgress) {
         return new GameEventResponse(EventType.PROGRESS, sessionId, null, null, null, null, null,
-                null, null, null, userId, nickname, starsLit, holdProgress, null, null, null);
+                null, null, null, userId, nickname, starsLit, holdProgress, null, null, null, null, null);
     }
 
     public static GameEventResponse playerFinished(String sessionId, String userId, String nickname,
                                                    int score, int starsHit) {
         return new GameEventResponse(EventType.PLAYER_FINISHED, sessionId, null, null, null, null, null,
-                null, null, null, userId, nickname, null, null, score, starsHit, null);
+                null, null, null, userId, nickname, null, null, score, starsHit, null, null, null);
     }
 
     public static GameEventResponse gameEnd(String sessionId, List<GameResultEntry> results) {
         return new GameEventResponse(EventType.GAME_END, sessionId, null, null, null, null, null,
-                null, null, null, null, null, null, null, null, null, results);
+                null, null, null, null, null, null, null, null, null, results, null, null);
     }
 }

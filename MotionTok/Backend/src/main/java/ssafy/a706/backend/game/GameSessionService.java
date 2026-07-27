@@ -126,32 +126,40 @@ public class GameSessionService {
         String sessionId = UUID.randomUUID().toString();
         long startAt = now + game.getCountdownSec() * 1000L;
 
-        // 게임④(-86): 라운드 = 출제 5s + 벽 접근(난이도별). v1은 단일 라운드·출제자 = 방장.
-        // 출제자 로테이션·멀티 라운드는 -48에서 확장한다.
+        // 게임④(-86, -48): 라운드 = 출제 5s + 벽 접근(난이도별). 출제자는 참가 순(joinedAt)으로
+        // 로테이션 — 전원이 한 번씩 출제자를 맡을 때까지 endRound가 자동으로 다음 라운드를 연다.
         String difficulty = null;
         String setterUserId = null;
+        List<String> setterOrder = List.of();
         long endAt;
         if (gameId == BODY_FIT_GAME_ID) {
             difficulty = request.difficulty() != null
                     && BODY_FIT_APPROACH_MILLIS.containsKey(request.difficulty())
                     ? request.difficulty() : "easy";
-            setterUserId = sender.userId();
+            setterOrder = liveRoomRepository.findMembers(roomId).stream()
+                    .sorted(Comparator.comparingLong(LiveRoomMemberValue::joinedAt))
+                    .map(LiveRoomMemberValue::userId)
+                    .toList();
+            setterUserId = setterOrder.isEmpty() ? sender.userId() : setterOrder.get(0);
             endAt = startAt + BODY_FIT_SETTING_MILLIS + BODY_FIT_APPROACH_MILLIS.get(difficulty);
+            sessionRepository.clearTotals(roomId);
         } else {
             endAt = startAt + game.getRoundDurationSec() * 1000L;
         }
 
         GameSession session = new GameSession(sessionId, gameId, challenge, setterUserId,
-                startAt, endAt, GameSession.STATUS_PLAYING);
+                startAt, endAt, GameSession.STATUS_PLAYING, setterOrder, 0, difficulty);
         sessionRepository.saveSession(roomId, session);
         liveRoomRepository.updateStatus(roomId, "PLAYING");
 
         // constellationKey는 게임① FE 하위호환 필드 — 게임①일 때만 challenge와 같은 값
         String legacyConstellationKey = gameId == FINGER_STAR_GAME_ID ? challenge : null;
+        Integer roundNo = setterOrder.isEmpty() ? null : 1;
+        Integer totalRounds = setterOrder.isEmpty() ? null : setterOrder.size();
         broadcast(roomId, GameEventResponse.gameStart(
                 sessionId, gameId, challenge, legacyConstellationKey, setterUserId, difficulty,
-                now, startAt, endAt));
-        scheduleEnd(roomId, sessionId, endAt + END_GRACE_MILLIS);
+                now, startAt, endAt, roundNo, totalRounds));
+        scheduleEnd(roomId, sessionId, 0, endAt + END_GRACE_MILLIS);
         log.info("game session started: room={} session={} game={} challenge={} setter={}",
                 roomId, sessionId, gameId, challenge, setterUserId);
     }
@@ -194,6 +202,10 @@ public class GameSessionService {
     public void finish(String roomId, GameFinishRequest request, AuthPrincipal sender) {
         requireMembership(roomId, sender);
         GameSession session = requireActiveSession(roomId);
+        // 게임④(-9): 출제자는 이번 라운드에 플레이하지 않는다 — 제출해도 조용히 무시.
+        if (session.gameId() == BODY_FIT_GAME_ID && sender.userId().equals(session.setterUserId())) {
+            return;
+        }
         int score = clamp(request.score() == null ? 0 : request.score(), 0, MAX_SCORE);
         int starsHit = clamp(request.starsHit() == null ? 0 : request.starsHit(), 0, MAX_STARS);
         GamePlayerScore playerScore = new GamePlayerScore(
@@ -207,36 +219,82 @@ public class GameSessionService {
                 session.sessionId(), sender.userId(), sender.displayName(), score, starsHit));
 
         long memberCount = liveRoomRepository.findMembers(roomId).size();
-        if (memberCount > 0 && sessionRepository.countScores(roomId) >= memberCount) {
-            endRound(roomId, session.sessionId());
+        // 게임④는 출제자를 뺀 인원만큼만 제출하면 조기 정산.
+        long requiredCount = session.gameId() == BODY_FIT_GAME_ID && session.setterUserId() != null
+                ? Math.max(0, memberCount - 1) : memberCount;
+        if (requiredCount > 0 && sessionRepository.countScores(roomId) >= requiredCount) {
+            endRound(roomId, session.sessionId(), session.roundIndex());
         }
     }
 
     /**
      * 라운드 정산 — 스케줄러(시간 종료)와 finish(전원 완주)가 모두 호출할 수 있어
      * Redis SETNX 가드로 1회만 실행된다. 미제출 참가자는 0점 미완주로 포함.
+     *
+     * <p>게임④ 로테이션(-48): 이번 라운드 점수를 누적(totals)에 더한 뒤, 아직 출제 안 한
+     * 참가자가 남아있으면 GAME_END 대신 다음 라운드 GAME_START를 연다. 전원이 한 번씩
+     * 출제자를 마치면 그때 누적 점수로 최종 GAME_END를 배포한다.</p>
      */
-    private void endRound(String roomId, String sessionId) {
-        if (!sessionRepository.tryAcquireEndGuard(roomId, sessionId)) {
+    private void endRound(String roomId, String sessionId, int roundIndex) {
+        if (!sessionRepository.tryAcquireEndGuard(roomId, sessionId, roundIndex)) {
             return;
         }
         cancelScheduledEnd(roomId);
         GameSession session = sessionRepository.findSession(roomId).orElse(null);
-        if (session == null || !session.sessionId().equals(sessionId)) {
-            return; // 이미 새 세션으로 대체된 stale 예약
+        if (session == null || !session.sessionId().equals(sessionId) || session.roundIndex() != roundIndex) {
+            return; // 이미 다음 라운드/새 세션으로 대체된 stale 예약
         }
+
+        boolean rotates = session.gameId() == BODY_FIT_GAME_ID && !session.setterOrder().isEmpty();
+        if (rotates) {
+            sessionRepository.findScores(roomId)
+                    .forEach((userId, s) -> sessionRepository.addToTotal(roomId, userId, s.score()));
+            int nextRoundIndex = nextSetterIndex(roomId, session);
+            if (nextRoundIndex < session.setterOrder().size()) {
+                startNextRound(roomId, session, nextRoundIndex);
+                return;
+            }
+        }
+
         sessionRepository.markEnded(roomId);
         liveRoomRepository.updateStatus(roomId, "WAITING");
 
-        Map<String, GamePlayerScore> scores = sessionRepository.findScores(roomId);
         List<LiveRoomMemberValue> members = liveRoomRepository.findMembers(roomId);
-        List<GameResultEntry> results = rank(members, scores);
+        List<GameResultEntry> results = rotates
+                ? rankByTotal(members, sessionRepository.findTotals(roomId), session.setterOrder())
+                : rank(members, sessionRepository.findScores(roomId));
         broadcast(roomId, GameEventResponse.gameEnd(sessionId, results));
         // write-behind 정산(-117) — 회원 결과 leaderboards 적재 + rank ZSET 갱신은 비동기 리스너에 위임.
         // endRound가 SETNX 가드로 1회만 실행되므로 정산도 1회 발행된다.
         eventPublisher.publishEvent(new GameSettledEvent(session.gameId(), results));
-        log.info("game session ended: room={} session={} players={} submitted={}",
-                roomId, sessionId, members.size(), scores.size());
+        log.info("game session ended: room={} session={} players={}", roomId, sessionId, members.size());
+    }
+
+    /** setterOrder에서 다음 출제자 인덱스 — 그새 방을 나간 참가자는 건너뛴다. */
+    private int nextSetterIndex(String roomId, GameSession session) {
+        int idx = session.roundIndex() + 1;
+        while (idx < session.setterOrder().size()
+                && !membershipReader.isMember(roomId, session.setterOrder().get(idx))) {
+            idx++;
+        }
+        return idx;
+    }
+
+    /** 로테이션(-48) 다음 라운드 시작 — 클라 요청 없이 서버가 자동으로 다음 출제자를 지정한다. */
+    private void startNextRound(String roomId, GameSession prev, int roundIndex) {
+        String setterUserId = prev.setterOrder().get(roundIndex);
+        long now = System.currentTimeMillis();
+        long startAt = now;
+        long endAt = startAt + BODY_FIT_SETTING_MILLIS + BODY_FIT_APPROACH_MILLIS.get(prev.difficulty());
+        GameSession next = new GameSession(prev.sessionId(), prev.gameId(), null, setterUserId,
+                startAt, endAt, GameSession.STATUS_PLAYING, prev.setterOrder(), roundIndex, prev.difficulty());
+        sessionRepository.saveSession(roomId, next);
+        broadcast(roomId, GameEventResponse.gameStart(
+                prev.sessionId(), prev.gameId(), null, null, setterUserId, prev.difficulty(),
+                now, startAt, endAt, roundIndex + 1, prev.setterOrder().size()));
+        scheduleEnd(roomId, prev.sessionId(), roundIndex, endAt + END_GRACE_MILLIS);
+        log.info("game round advanced: room={} session={} round={} setter={}",
+                roomId, prev.sessionId(), roundIndex, setterUserId);
     }
 
     /** 점수 내림차순(동점은 먼저 제출한 쪽 우선) 순위. 방에 남은 전원 포함 — 미제출자는 0점. */
@@ -265,12 +323,39 @@ public class GameSessionService {
         return results;
     }
 
-    private void scheduleEnd(String roomId, String sessionId, long atMillis) {
+    /**
+     * 게임④ 로테이션(-48) 최종 순위 — 라운드별 GamePlayerScore가 아니라 누적 총점(totals)으로 매긴다.
+     * 동점자는 출제 순서(setterOrder)가 빠른 쪽을 우선한다.
+     */
+    private List<GameResultEntry> rankByTotal(
+            List<LiveRoomMemberValue> members, Map<String, Integer> totals, List<String> setterOrder) {
+        record Row(String userId, String nickname, int score, int orderIdx) {}
+        List<Row> rows = new ArrayList<>();
+        for (LiveRoomMemberValue m : members) {
+            int score = totals.getOrDefault(m.userId(), 0);
+            int orderIdx = setterOrder.indexOf(m.userId());
+            rows.add(new Row(m.userId(), m.displayName(), score, orderIdx < 0 ? Integer.MAX_VALUE : orderIdx));
+        }
+        rows.sort(Comparator.comparingInt(Row::score).reversed()
+                .thenComparingInt(Row::orderIdx));
+        int playerCount = rows.size();
+        List<GameResultEntry> results = new ArrayList<>(playerCount);
+        for (int i = 0; i < rows.size(); i++) {
+            Row r = rows.get(i);
+            int rankNo = i + 1;
+            int pointsEarned = PointCalculator.calc(rankNo, r.score(), playerCount);
+            // 전원이 로테이션에 참가했으므로 finished=true, starsHit은 게임④와 무관해 0.
+            results.add(new GameResultEntry(rankNo, r.userId(), r.nickname(), r.score(), 0, true, pointsEarned));
+        }
+        return results;
+    }
+
+    private void scheduleEnd(String roomId, String sessionId, int roundIndex, long atMillis) {
         cancelScheduledEnd(roomId);
         ScheduledFuture<?> future = gameTaskScheduler.schedule(
                 () -> {
                     try {
-                        endRound(roomId, sessionId);
+                        endRound(roomId, sessionId, roundIndex);
                     } catch (Exception e) {
                         log.error("game round settlement failed: room={} session={}", roomId, sessionId, e);
                     }

@@ -1,5 +1,7 @@
 package ssafy.a706.backend.game.model;
 
+import java.util.List;
+
 /**
  * Redis game:session:{roomId} 해시에서 복원한 게임 세션 상태.
  * startAt/endAt은 epoch millis(서버 권위 시각) — 클라이언트는 GAME_START의
@@ -18,7 +20,13 @@ public record GameSession(
         String setterUserId,
         long startAt,
         long endAt,
-        String status
+        String status,
+        /** 게임④ 출제자 로테이션 순서(S15P11A706-48) — 참가 순(joinedAt)으로 고정. 로테이션 없는 게임은 빈 리스트 */
+        List<String> setterOrder,
+        /** setterOrder 안의 0-based 현재 라운드 인덱스 — 로테이션 없는 게임은 항상 0 */
+        int roundIndex,
+        /** 게임④ 난이도(easy/normal/hard) — 다음 라운드도 같은 난이도를 쓰기 위해 세션에 고정해둔다 */
+        String difficulty
 ) {
     public static final String STATUS_PLAYING = "PLAYING";
     public static final String STATUS_ENDED = "ENDED";

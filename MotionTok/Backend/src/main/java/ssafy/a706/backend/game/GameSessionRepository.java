@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -48,7 +49,15 @@ public class GameSessionRepository {
         fields.put("startAt", String.valueOf(session.startAt()));
         fields.put("endAt", String.valueOf(session.endAt()));
         fields.put("status", session.status());
-        // 이전 세션 잔재(점수 포함)를 지우고 새로 시작한다.
+        if (!session.setterOrder().isEmpty()) {
+            // userId는 숫자/UUID라 콤마와 충돌하지 않는다 — liveroom과 동일하게 단순 join으로 담는다
+            fields.put("setterOrder", String.join(",", session.setterOrder()));
+        }
+        fields.put("roundIndex", String.valueOf(session.roundIndex()));
+        if (session.difficulty() != null) {
+            fields.put("difficulty", session.difficulty());
+        }
+        // 이전 라운드 잔재(이번 라운드 제출 점수)를 지우고 새로 시작한다. 로테이션 누적 점수(totals)는 별도 키라 안 지워진다.
         redisTemplate.delete(key);
         redisTemplate.delete(scoresKey(roomId));
         redisTemplate.<String, String>opsForHash().putAll(key, fields);
@@ -67,6 +76,8 @@ public class GameSessionRepository {
             return Optional.empty();
         }
         String encodedChallenge = (String) f.get("challenge");
+        String setterOrderRaw = (String) f.get("setterOrder");
+        String roundIndexRaw = (String) f.get("roundIndex");
         return Optional.of(new GameSession(
                 (String) f.get("sessionId"),
                 Long.parseLong((String) f.get("gameId")),
@@ -76,7 +87,11 @@ public class GameSessionRepository {
                 (String) f.get("setterUserId"),
                 Long.parseLong((String) f.get("startAt")),
                 Long.parseLong((String) f.get("endAt")),
-                (String) f.get("status")
+                (String) f.get("status"),
+                setterOrderRaw == null || setterOrderRaw.isBlank()
+                        ? List.of() : List.of(setterOrderRaw.split(",")),
+                roundIndexRaw == null ? 0 : Integer.parseInt(roundIndexRaw),
+                (String) f.get("difficulty")
         ));
     }
 
@@ -86,12 +101,32 @@ public class GameSessionRepository {
 
     /**
      * 정산 1회 실행 가드 — 타이머 스레드와 "전원 완주" 조기 종료가 경합해도
-     * Redis SETNX로 한쪽만 true를 받는다.
+     * Redis SETNX로 한쪽만 true를 받는다. 로테이션(-48)에서는 라운드마다 키가 달라야
+     * 다음 라운드의 정산이 이전 라운드 가드에 막히지 않는다.
      */
-    public boolean tryAcquireEndGuard(String roomId, String sessionId) {
+    public boolean tryAcquireEndGuard(String roomId, String sessionId, int roundIndex) {
         Boolean acquired = redisTemplate.opsForValue()
-                .setIfAbsent(endedKey(roomId, sessionId), "1", SESSION_TTL);
+                .setIfAbsent(endedKey(roomId, sessionId, roundIndex), "1", SESSION_TTL);
         return Boolean.TRUE.equals(acquired);
+    }
+
+    /** 로테이션(-48) 누적 점수 — 라운드가 넘어가도 지워지지 않는다. 새 로테이션 시작 시 clearTotals로만 초기화. */
+    public void clearTotals(String roomId) {
+        redisTemplate.delete(totalsKey(roomId));
+    }
+
+    public void addToTotal(String roomId, String userId, int delta) {
+        String key = totalsKey(roomId);
+        redisTemplate.<String, String>opsForHash().increment(key, userId, delta);
+        redisTemplate.expire(key, SESSION_TTL);
+    }
+
+    /** 참가자 userId → 로테이션 누적 점수. 아직 한 라운드도 못 채운 참가자는 맵에 없다(0점으로 취급). */
+    public Map<String, Integer> findTotals(String roomId) {
+        Map<String, Integer> out = new HashMap<>();
+        redisTemplate.opsForHash().entries(totalsKey(roomId))
+                .forEach((k, v) -> out.put((String) k, Integer.parseInt((String) v)));
+        return out;
     }
 
     /**
@@ -164,7 +199,11 @@ public class GameSessionRepository {
         return "game:session:" + roomId + ":scores";
     }
 
-    private String endedKey(String roomId, String sessionId) {
-        return "game:session:" + roomId + ":ended:" + sessionId;
+    private String totalsKey(String roomId) {
+        return "game:session:" + roomId + ":totals";
+    }
+
+    private String endedKey(String roomId, String sessionId, int roundIndex) {
+        return "game:session:" + roomId + ":ended:" + sessionId + ":" + roundIndex;
     }
 }
