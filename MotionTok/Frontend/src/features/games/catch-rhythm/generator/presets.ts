@@ -95,8 +95,13 @@ export const PRESETS: Record<Difficulty, Preset> = {
 export const CHART_BPM = 120
 /** 1/2박 = 250ms @ BPM 120 — 노트가 놓일 수 있는 최소 간격 */
 export const SLOT_MS = 250
-/** 카운트다운 직후 유예 — 이 시간 전에는 노트를 놓지 않는다 */
-export const LEAD_IN_MS = 3000
+/**
+ * 카운트다운 직후 유예 — 이 시간 전에는 노트를 놓지 않는다.
+ *
+ * 3초는 카운트다운이 끝나자마자 첫 노트가 도착해 대처할 틈이 없었다(실플레이 피드백).
+ * 카운트다운 3초 + 손을 올리고 자세를 잡을 2초를 준다.
+ */
+export const LEAD_IN_MS = 5000
 
 /** 손별 기본 스폰 영역(게임 좌표). 두 구간이 이어져 있어 합집합이 볼록하다(도달 보정에 필요). */
 export const X_RANGE: Record<Hand, readonly [number, number]> = {

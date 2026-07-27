@@ -11,7 +11,14 @@ import { mulberry32, foldSeed, type Rng } from '../core/rng'
 import { LEAD_IN_MS, SLOT_MS, type Difficulty } from '../generator/presets'
 import type { Hand, NoteHand } from '../core/types'
 import type { RingBeatmap, RingNote } from './ringLogic'
-import { LANE_COUNT, RING_RADIUS, RING_HAND_SPEED, RING_REACH_SAFETY } from './ringConfig'
+import {
+  LANE_COUNT,
+  RING_RADIUS,
+  RING_HAND_SPEED,
+  RING_REACH_SAFETY,
+  TIGHT_GAP_MS,
+  TIGHT_MAX_LANE_STEP,
+} from './ringConfig'
 
 export interface RingPreset {
   density: number
@@ -30,7 +37,7 @@ export interface RingPreset {
 
 export const RING_PRESETS: Record<Difficulty, RingPreset> = {
   EASY: {
-    density: 0.18,
+    density: 0.26,
     holdRate: 0.22,
     holdDurationMs: [900, 1400],
     anyRate: 0.75,
@@ -39,7 +46,7 @@ export const RING_PRESETS: Record<Difficulty, RingPreset> = {
     approachTimeMs: 1500,
   },
   NORMAL: {
-    density: 0.3,
+    density: 0.44,
     holdRate: 0.25,
     holdDurationMs: [800, 1300],
     anyRate: 0.6,
@@ -48,7 +55,7 @@ export const RING_PRESETS: Record<Difficulty, RingPreset> = {
     approachTimeMs: 1300,
   },
   HARD: {
-    density: 0.44,
+    density: 0.62,
     holdRate: 0.28,
     holdDurationMs: [700, 1100],
     anyRate: 0.45,
@@ -75,6 +82,17 @@ function reachableLanes(dtMs: number): number {
 /** 노트가 손을 붙잡고 있는 마지막 시각 */
 function endTimeOf(note: RingNote): number {
   return note.timeMs + (note.durationMs ?? 0)
+}
+
+/** 슬라이드가 지나가는 레인 전부 — 그 위에 다른 노트를 놓으면 못 친다 */
+function sweptLanes(note: RingNote): number[] {
+  const delta = note.laneDelta ?? 0
+  const step = delta >= 0 ? 1 : -1
+  const lanes: number[] = []
+  for (let i = 0; i !== delta + step; i += step) {
+    lanes.push((((note.lane + i) % LANE_COUNT) + LANE_COUNT) % LANE_COUNT)
+  }
+  return lanes
 }
 
 /** 홀드가 끝나는 레인(슬라이드면 이동한 자리) */
@@ -111,6 +129,10 @@ export function generateRingChart(
   const notes: GeneratedRingNote[] = []
   const lastByHand: Record<Hand, GeneratedRingNote | null> = { left: null, right: null }
   let nextHand: Hand = rng() < 0.5 ? 'left' : 'right'
+  /** 진행 중인 슬라이드가 점유한 구간 — 그 위엔 노트를 놓지 않는다 */
+  const slideBlocks: { fromMs: number; toMs: number; lanes: number[] }[] = []
+  /** 손 상관없이 직전 노트 — 짧은 간격 판정용 */
+  let lastAny: GeneratedRingNote | null = null
 
   for (let timeMs = LEAD_IN_MS; timeMs <= durationMs; timeMs += SLOT_MS) {
     if (rng() >= preset.density) continue
@@ -118,6 +140,14 @@ export function generateRingChart(
     const simultaneous = rng() < preset.simultaneous
     const owners: Hand[] = simultaneous ? ['left', 'right'] : [nextHand]
     const takenLanes: number[] = []
+
+    // 지나간 슬라이드 구간은 버린다(시간순 생성이라 앞에서부터 만료)
+    while (slideBlocks.length && slideBlocks[0]!.toMs < timeMs) slideBlocks.shift()
+    const blocked = new Set(
+      slideBlocks.filter((b) => timeMs >= b.fromMs && timeMs <= b.toMs).flatMap((b) => b.lanes),
+    )
+    // ★ 짧은 간격이면 양손 가능 + 가까운 레인으로만 — 이 조건이 있어야 밀도를 올릴 수 있다
+    const tight = lastAny !== null && timeMs - lastAny.timeMs < TIGHT_GAP_MS
 
     for (const owner of owners) {
       const prev = lastByHand[owner]
@@ -131,34 +161,45 @@ export function generateRingChart(
       for (let lane = 0; lane < LANE_COUNT; lane++) {
         if (takenLanes.some((t) => laneDistance(t, lane) < 2)) continue // 동시 노트끼리 붙지 않게
         if (prev && laneDistance(from, lane) > maxStep) continue
+        // ★ 슬라이드가 지나가는 레인 위엔 놓지 않는다 (슬라이드 중인 손이 못 친다)
+        if (blocked.has(lane)) continue
+        // ★ 빠른 구간은 직전 노트 근처로만
+        if (tight && laneDistance(lastAny!.lane, lane) > TIGHT_MAX_LANE_STEP) continue
         candidates.push(lane)
       }
       if (candidates.length === 0) continue
       const lane = candidates[Math.floor(rng() * candidates.length)]!
 
-      const hand: NoteHand = rng() < preset.anyRate ? 'any' : owner
-      const isHold = rng() < preset.holdRate
+      // 빠른 구간은 손을 지정하지 않는다 — 지정하면 물리적으로 못 친다
+      const hand: NoteHand = tight || rng() < preset.anyRate ? 'any' : owner
+      // 빠른 구간에 슬라이드가 끼면 손이 묶여 다음 노트를 놓친다
+      const isHold = !tight && rng() < preset.holdRate
 
-      const note: GeneratedRingNote = {
-        timeMs,
-        lane,
-        hand,
-        type: isHold ? 'hold' : 'tap',
-        owner,
-      }
+      const note: GeneratedRingNote = { timeMs, lane, hand, type: 'tap', owner }
+
       if (isHold) {
         const [lo, hi] = preset.holdDurationMs
-        note.durationMs = Math.round(lo + rng() * (hi - lo))
+        const durationMs = Math.round(lo + rng() * (hi - lo))
         // ★ 제자리 홀드(laneDelta 0)는 만들지 않는다.
         // 호 길이가 0이라 화면에선 점 하나가 멈춰 있는 걸로만 보여 "이게 뭐지"가 된다.
-        // 슬라이드는 **반드시 최소 1레인 이상 움직인다**.
-        const maxSlide = Math.max(1, Math.floor(reachableLanes(note.durationMs)))
+        const maxSlide = Math.max(1, Math.floor(reachableLanes(durationMs)))
         const steps = 1 + Math.floor(rng() * maxSlide)
-        note.laneDelta = rng() < 0.5 ? -steps : steps
-      }
+        const laneDelta = rng() < 0.5 ? -steps : steps
+        const lanes = sweptLanes({ ...note, laneDelta })
 
+        // ★ 경로가 **이 슬롯에 이미 놓인 노트**를 관통하면 슬라이드를 포기하고 탭으로 둔다.
+        // (거꾸로 나중 노트가 경로를 밟는 건 아래 blocked 집합이 막는다)
+        if (!lanes.some((l) => takenLanes.includes(l))) {
+          note.type = 'hold'
+          note.durationMs = durationMs
+          note.laneDelta = laneDelta
+          slideBlocks.push({ fromMs: timeMs, toMs: timeMs + durationMs, lanes })
+          for (const l of lanes) blocked.add(l)
+        }
+      }
       notes.push(note)
       lastByHand[owner] = note
+      lastAny = note
       takenLanes.push(lane)
     }
 
