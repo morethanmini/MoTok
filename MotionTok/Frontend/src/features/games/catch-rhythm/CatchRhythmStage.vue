@@ -78,10 +78,10 @@ const remainingSec = ref(0)
 const lateStart = ref(0)
 
 const landmarker = useHandLandmarker()
-const isRing = props.mode === 'ring'
+const isRing = props.mode === 'ring' || props.mode === 'ringTap'
 const chart = shallowRef(
   isRing
-    ? generateRingChart(props.seed, props.difficulty, props.durationMs)
+    ? generateRingChart(props.seed, props.difficulty, props.durationMs, props.mode === 'ring')
     : generateBattleChart(props.seed, props.difficulty, props.durationMs),
 )
 

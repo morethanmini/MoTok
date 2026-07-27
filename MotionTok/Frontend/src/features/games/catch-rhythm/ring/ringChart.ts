@@ -118,12 +118,26 @@ function other(hand: Hand): Hand {
  * seed + 난이도 + 라운드 길이 → 링 채보.
  * 캐치 생성기와 같은 슬롯 격자·같은 유예를 쓴다(두 모드의 리듬 감각을 맞추기 위해).
  */
+/**
+ * @param slides 슬라이드 노트를 낼지. false면 탭만 나오는 대신 **밀도를 확 올린다**
+ *               — 손이 묶이지 않으니 훨씬 빠른 패턴을 칠 수 있다.
+ */
 export function generateRingChart(
   seed: number | string,
   difficulty: Difficulty,
   durationMs: number,
+  slides = true,
 ): GeneratedRingChart {
-  const preset = RING_PRESETS[difficulty]
+  const base = RING_PRESETS[difficulty]
+  const preset: RingPreset = slides
+    ? base
+    : {
+        ...base,
+        holdRate: 0,
+        density: Math.min(0.95, base.density * 1.55),
+        simultaneous: Math.min(0.5, base.simultaneous + 0.22),
+        minSameHandGapMs: Math.round(base.minSameHandGapMs * 0.8),
+      }
   const rng = mulberry32(foldSeed(seed))
 
   const notes: GeneratedRingNote[] = []

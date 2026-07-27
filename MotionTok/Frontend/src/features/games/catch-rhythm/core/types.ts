@@ -26,4 +26,4 @@ export type NoteKind = 'swipe' | 'trail' | 'catch'
  * - catch: 화면 아무 곳에나 뜨는 노트를 손으로 잡는다(기본)
  * - ring: 마이마이식 — 중심에서 링으로 밀려 나오는 노트를 레인 위치에서 받는다
  */
-export type GameMode = 'catch' | 'ring'
+export type GameMode = 'catch' | 'ring' | 'ringTap'

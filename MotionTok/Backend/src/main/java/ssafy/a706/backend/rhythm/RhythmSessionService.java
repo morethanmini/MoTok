@@ -68,7 +68,7 @@ public class RhythmSessionService {
     private static final Set<String> DIFFICULTIES = Set.of("EASY", "NORMAL", "HARD");
     private static final String DEFAULT_DIFFICULTY = "NORMAL";
     /** 캐치 = 기본 모드, 링 = 마이마이 */
-    private static final Set<String> MODES = Set.of("catch", "ring");
+    private static final Set<String> MODES = Set.of("catch", "ring", "ringTap");
     private static final String DEFAULT_MODE = "catch";
 
     private final RoomMembershipReader membershipReader;

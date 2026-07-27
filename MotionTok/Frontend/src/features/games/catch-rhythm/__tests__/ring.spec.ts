@@ -370,3 +370,44 @@ describe('링 채보 생성기', () => {
     expect(count('NORMAL')).toBeLessThan(count('HARD'))
   })
 })
+
+describe('링 · 탭만 모드 (슬라이드 끄기)', () => {
+  it('슬라이드가 하나도 안 나온다', () => {
+    for (const d of DIFFICULTIES) {
+      const notes = SEEDS.flatMap((s) => generateRingChart(s, d, ROUND_MS, false).notes)
+      expect(notes.every((n) => n.type === 'tap')).toBe(true)
+    }
+  })
+
+  it('★ 대신 밀도가 확 올라가고 2동타도 나온다', () => {
+    for (const d of DIFFICULTIES) {
+      const withSlides = SEEDS.map((s) => generateRingChart(s, d, ROUND_MS).notes.length)
+      const tapOnly = SEEDS.map((s) => generateRingChart(s, d, ROUND_MS, false).notes.length)
+      const avg = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length
+      expect(avg(tapOnly)).toBeGreaterThan(avg(withSlides) * 1.25)
+
+      // 같은 시각에 두 개가 뜨는 구간(2동타)이 실제로 존재해야 한다
+      const notes = generateRingChart(7, d, ROUND_MS, false).notes
+      const byTime = new Map<number, number>()
+      for (const n of notes) byTime.set(n.timeMs, (byTime.get(n.timeMs) ?? 0) + 1)
+      expect([...byTime.values()].some((c) => c === 2)).toBe(true)
+    }
+  })
+
+  it('슬라이드가 없어도 도달 가능성은 지킨다', () => {
+    for (const d of DIFFICULTIES) {
+      for (const seed of SEEDS) {
+        const last: Record<string, { lane: number; t: number } | undefined> = {}
+        for (const n of generateRingChart(seed, d, ROUND_MS, false).notes) {
+          const prev = last[n.owner]
+          if (prev) {
+            const raw = Math.abs(n.lane - prev.lane) % LANE_COUNT
+            const arc = RING_RADIUS * Math.min(raw, LANE_COUNT - raw) * ((Math.PI * 2) / LANE_COUNT)
+            expect(arc).toBeLessThanOrEqual(RING_HAND_SPEED * ((n.timeMs - prev.t) / 1000) + 1e-9)
+          }
+          last[n.owner] = { lane: n.lane, t: n.timeMs }
+        }
+      }
+    }
+  })
+})

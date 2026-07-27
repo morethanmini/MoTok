@@ -26,6 +26,8 @@ import CreateRoomModal, { type NewRoom } from '@/features/lobby/components/Creat
 const FingerStarGame = defineAsyncComponent(
   () => import('@/features/games/finger-star/FingerStarGame.vue'),
 )
+import { useRhythmAutoJoin } from '@/features/games/catch-rhythm/useRhythmAutoJoin'
+
 const CatchRhythmGame = defineAsyncComponent(
   () => import('@/features/games/catch-rhythm/CatchRhythmGame.vue'),
 )
@@ -516,6 +518,13 @@ function applyGameEvent(e: GameEvent) {
   }
 }
 
+// 방장이 리듬 라운드를 시작하면 방 전원이 자동 입장한다.
+// (비방장은 게임 화면을 열 이유가 없어 스스로 구독하지 못한다 — 그래서 여기서 듣는다)
+useRhythmAutoJoin(roomChat, roomCode, () => {
+  const entry = GAME_CATALOG.find((g) => g.id === 'rhythm')
+  if (entry) activeGame.value = entry
+})
+
 function openPicker() {
   picker.value = true
 }
@@ -523,7 +532,8 @@ function launch(g: GameEntry) {
   picker.value = false
   // 캐치캐치리듬은 전용 STOMP 채널을 쓴다 — 공용 게임 세션(GAME_START) 경로를 타지 않고
   // 컴포넌트가 자기 생명주기를 소유한다. 난이도 선택·시작은 컴포넌트 안에서.
-  if (g.id === 'rhythm') {
+  // 비방장은 여기로 새면 안 된다 — 아래 게임 제안 경로를 그대로 타야 한다.
+  if (g.id === 'rhythm' && (selfIsHost.value || !roomChat.connected.value)) {
     if (!captureOn.value) {
       flash('카메라를 켜고 시작해 주세요')
       return
