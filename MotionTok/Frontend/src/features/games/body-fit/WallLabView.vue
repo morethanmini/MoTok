@@ -87,7 +87,7 @@ const WALL_START_Z = -12
 
 function initThree(canvas: HTMLCanvasElement) {
   // 공용 무대(stage.ts) — 조명·IBL·포디움·안개는 랩과 본 게임이 공유한다
-  stage = createStage(canvas)
+  stage = createStage(canvas, cfg)
   scene = stage.scene
   camera = stage.camera
 
@@ -95,7 +95,7 @@ function initThree(canvas: HTMLCanvasElement) {
   scene.add(rig.group)
   stage.setFloorY(rig.floorY)
 
-  wall = createWall()
+  wall = createWall(cfg)
   scene.add(wall.mesh)
 }
 

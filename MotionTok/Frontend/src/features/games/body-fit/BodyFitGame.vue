@@ -210,11 +210,11 @@ const PIP_BONES: [number, number][] = [
 ]
 
 function initThree(canvas: HTMLCanvasElement) {
-  stage = createStage(canvas)
+  stage = createStage(canvas, cfg)
   rig = new AvatarRig(cfg.avatar)
   stage.scene.add(rig.group)
   stage.setFloorY(rig.floorY)
-  wall = createWall()
+  wall = createWall(cfg)
   stage.scene.add(wall.mesh)
 }
 
