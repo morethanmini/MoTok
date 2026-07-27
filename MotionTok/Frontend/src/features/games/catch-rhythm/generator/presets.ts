@@ -54,7 +54,7 @@ export const PRESETS: Record<Difficulty, Preset> = {
     crossRate: 0,
     anyRate: 0.75,
     kinds: { swipe: 0.72, trail: 0.22, catch: 0.06 },
-    trailDurationMs: [700, 1100],
+    trailDurationMs: [1100, 1700],
     minSameHandGapMs: 500,
     crossMinGapMs: 900,
     approachTimeMs: 1500,
@@ -65,7 +65,7 @@ export const PRESETS: Record<Difficulty, Preset> = {
     crossRate: 0.16,
     anyRate: 0.6,
     kinds: { swipe: 0.66, trail: 0.24, catch: 0.1 },
-    trailDurationMs: [600, 1000],
+    trailDurationMs: [1000, 1500],
     minSameHandGapMs: 380,
     crossMinGapMs: 800,
     approachTimeMs: 1300,
@@ -76,7 +76,7 @@ export const PRESETS: Record<Difficulty, Preset> = {
     crossRate: 0.3,
     anyRate: 0.45,
     kinds: { swipe: 0.62, trail: 0.25, catch: 0.13 },
-    trailDurationMs: [500, 900],
+    trailDurationMs: [850, 1300],
     minSameHandGapMs: 300,
     crossMinGapMs: 700,
     approachTimeMs: 1100,
@@ -116,7 +116,10 @@ export const PLACEMENT_CANDIDATES = 24
 export const HAND_SHUFFLE_RATE = 0.25
 
 /** 연결 노트 경로의 꺾임 개수 범위 (시작점 제외한 추가 점 개수) */
-export const TRAIL_SEGMENTS: readonly [number, number] = [1, 3]
+/** 어떤 난이도에서도 연결 노트가 이보다 길지 않다 — 장애물 스캔 범위 계산에 쓴다 */
+export const MAX_TRAIL_MS = 1700
+
+export const TRAIL_SEGMENTS: readonly [number, number] = [2, 4]
 /**
  * 구간 길이를 "지속 시간이 허락하는 예산"의 몇 배로 잡을지.
  * 너무 짧으면 인식 반경 안에 경로가 통째로 들어와 **가만히 있어도 통과**한다 —

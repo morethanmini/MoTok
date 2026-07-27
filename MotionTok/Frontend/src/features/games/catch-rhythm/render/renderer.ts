@@ -8,7 +8,7 @@
  */
 
 import { NOTE_RADIUS, HAND_RADIUS } from '../core/config'
-import { noteProgress, trailPointAt, type TrackedNote } from '../logic/catchLogic'
+import { noteProgress, trailPointAt, hitReadiness, type TrackedNote } from '../logic/catchLogic'
 import type { Hand, Judgement } from '../core/types'
 import type { CatchSkin, HitFxView } from './skins/types'
 
@@ -167,6 +167,7 @@ export class Renderer {
           path,
           head,
           tracing: note.status === 'tracing',
+          readiness: note.status === 'tracing' ? 0 : hitReadiness(note, frame.tMs),
         },
         frame.tMs,
       )

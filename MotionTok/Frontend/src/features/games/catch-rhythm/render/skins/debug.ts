@@ -27,6 +27,15 @@ function rings(ctx: CanvasRenderingContext2D, note: NoteView) {
   ctx.arc(note.x, note.y, note.judgeRadius, 0, Math.PI * 2)
   ctx.stroke()
   ctx.setLineDash([])
+  // 판정창 신호 — 창 안이면 흰 링
+  if (note.readiness > 0) {
+    ctx.globalAlpha = note.readiness
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 3
+    ctx.beginPath()
+    ctx.arc(note.x, note.y, note.judgeRadius * 1.3, 0, Math.PI * 2)
+    ctx.stroke()
+  }
   // 접근 링
   if (note.progress < 1) {
     ctx.globalAlpha = 0.5
@@ -99,6 +108,12 @@ export const debugSkin: CatchSkin = {
       ctx.lineTo(note.x + d, note.y)
       ctx.lineTo(note.x + d * 0.3, note.y + d * 0.5)
       ctx.stroke()
+    }
+    if (note.hand !== 'any') {
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.font = `900 ${Math.round(note.radius)}px monospace`
+      ctx.fillText(note.hand === 'left' ? 'L' : 'R', note.x, note.y)
     }
     if (note.cross) {
       // 크로스 = X
