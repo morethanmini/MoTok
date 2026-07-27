@@ -1,110 +1,111 @@
 /**
  * 기본 스킨 「캣캔디」 — 파스텔 피치 픽셀아트 톤(catchcatchrhythm.png).
- *
  * 1차는 전부 절차 드로잉이다 — 스프라이트·음원 에셋이 나오면 이 파일만 갈아끼우면 된다.
  *
- * 타이밍 가독성(2026-07-27 피드백):
- *  - **판정 링**: 판정 크기 그대로인 고정 점선 원. "여기까지 오면 친다"의 기준선.
- *  - **접근 링**: 바깥에서 판정 링으로 조여든다. 두 원이 겹치는 순간이 PERFECT.
- * 커서는 발바닥 대신 **손 골격 그대로** 그린다 — 내 손이라는 감각이 훨씬 낫다.
+ * 실플레이 피드백으로 정착한 규칙:
+ *  - 왼손/오른손은 **색 + L/R 글자**로 구분한다 (색만으로는 헷갈린다)
+ *  - 판정 시점은 **접근 링 + 판정창 진입 시 번쩍이는 신호**로 알린다
+ *  - 스와이프는 기본 노트라 아무 표시도 얹지 않는다 (>> 마크 제거)
+ *  - 커서는 고양이 발바닥. 손 골격은 화면을 너무 덮어서 되돌렸다
  */
 
-import { HAND_BONES, type CatchSkin, type HandView, type HitFxView, type NoteView } from './types'
+import type { CatchSkin, HandView, HitFxView, NoteView } from './types'
 import type { Hand, NoteHand } from '../../core/types'
 
+/** 왼손 = 바이올렛, 오른손 = 로즈핑크, 아무 손 = 민트. 명도·색상 모두 벌려 놓았다. */
 const PALETTE: Record<NoteHand, { body: string; edge: string; glow: string }> = {
-  left: { body: '#b9a8ff', edge: '#7a63e0', glow: '#e3dcff' }, // 파스텔 퍼플
-  right: { body: '#ffb38a', edge: '#e07a4f', glow: '#ffe2cf' }, // 코랄
-  any: { body: '#9fe6c8', edge: '#3fa87e', glow: '#dcf7ec' }, // 민트 — 아무 손이나
+  left: { body: '#a78bfa', edge: '#5b21b6', glow: '#ede9fe' },
+  right: { body: '#fb7185', edge: '#9f1239', glow: '#ffe4e6' },
+  any: { body: '#6ee7b7', edge: '#047857', glow: '#d1fae5' },
 }
-const HAND_COLOR: Record<Hand, string> = { left: '#7a63e0', right: '#e07a4f' }
+const HAND_COLOR: Record<Hand, string> = { left: '#5b21b6', right: '#9f1239' }
+/** 노트 안에 찍는 손 표시 — 색맹·저대비 환경에서도 확실하다 */
+const HAND_MARK: Record<NoteHand, string> = { left: 'L', right: 'R', any: '' }
 
-const JUDGE_TEXT: Record<string, string> = {
-  perfect: 'PERFECT!',
-  good: 'GOOD',
-  miss: 'MISS',
-}
+const CATCH_GOLD = '#ffb32e'
+const CATCH_DEEP = '#a4530b'
+
+const JUDGE_TEXT: Record<string, string> = { perfect: 'PERFECT!', good: 'GOOD', miss: 'MISS' }
 const JUDGE_COLOR: Record<string, string> = {
   perfect: '#ff9e3d',
-  good: '#3fa87e',
+  good: '#047857',
   miss: '#b3402a',
 }
 
-/** 연결 노트 경로 리본 + 따라가는 헤드 */
-function trailRibbon(ctx: CanvasRenderingContext2D, note: NoteView) {
-  const path = note.path
-  if (!path || path.length < 2) return
-  const c = PALETTE[note.hand]
-  const width = note.judgeRadius * (note.tracing ? 1.5 : 1.15)
+// ── 타이밍 표시 ────────────────────────────────────────────
 
-  ctx.save()
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  ctx.globalAlpha = note.tracing ? 0.9 : 0.35 + 0.45 * Math.min(1, note.scale)
-
-  // 바깥 테두리 → 안쪽 채움 순으로 두 번 그어 리본처럼 보이게
-  for (const [w, color] of [
-    [width, c.edge],
-    [width * 0.62, c.glow],
-  ] as const) {
-    ctx.lineWidth = w
-    ctx.strokeStyle = color
-    ctx.beginPath()
-    ctx.moveTo(path[0]!.x, path[0]!.y)
-    for (let i = 1; i < path.length; i++) ctx.lineTo(path[i]!.x, path[i]!.y)
-    ctx.stroke()
-  }
-
-  // 끝점 표시 — 어디까지 가야 하는지
-  const end = path[path.length - 1]!
-  ctx.globalAlpha = 1
-  ctx.fillStyle = c.edge
-  ctx.beginPath()
-  ctx.arc(end.x, end.y, width * 0.42, 0, Math.PI * 2)
-  ctx.fill()
-
-  // 따라가야 할 지점
-  if (note.head) {
-    ctx.fillStyle = '#fff'
-    ctx.strokeStyle = c.edge
-    ctx.lineWidth = Math.max(2, width * 0.18)
-    ctx.beginPath()
-    ctx.arc(note.head.x, note.head.y, note.judgeRadius * 0.62, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.stroke()
-  }
-  ctx.restore()
-}
-
-/** 판정 링 + 접근 링 — 노트보다 먼저(아래에) 그린다. */
+/**
+ * 판정 링(고정) + 접근 링(수렴) + **판정창 진입 신호**.
+ * readiness는 창 밖 0 → 정확한 판정 시점 1. 이 값으로 "지금!"을 번쩍인다.
+ */
 function timingRings(ctx: CanvasRenderingContext2D, note: NoteView) {
-  const { x, y, judgeRadius, progress } = note
+  const { x, y, judgeRadius, progress, readiness } = note
   const c = PALETTE[note.hand]
 
   ctx.save()
-  // 판정 링 — 고정. 접근 중에는 은은하게, 판정 순간에 또렷해진다.
-  const near = Math.max(0, 1 - Math.abs(1 - progress) * 3)
-  ctx.globalAlpha = 0.3 + 0.55 * near
-  ctx.strokeStyle = c.edge
-  ctx.lineWidth = Math.max(1.5, judgeRadius * 0.1)
-  ctx.setLineDash([judgeRadius * 0.45, judgeRadius * 0.35])
+
+  // 판정 링 — 고정 크기. 창에 들어오면 점선이 실선으로 바뀌며 또렷해진다.
+  ctx.globalAlpha = 0.28 + 0.6 * readiness
+  ctx.strokeStyle = readiness > 0 ? '#ffffff' : c.edge
+  ctx.lineWidth = Math.max(1.5, judgeRadius * (0.09 + 0.12 * readiness))
+  if (readiness <= 0) ctx.setLineDash([judgeRadius * 0.45, judgeRadius * 0.35])
   ctx.beginPath()
   ctx.arc(x, y, judgeRadius, 0, Math.PI * 2)
   ctx.stroke()
   ctx.setLineDash([])
 
-  // 접근 링 — 바깥에서 판정 링으로 수렴. 판정선을 지나면 안 그린다.
+  // 접근 링 — 바깥에서 판정 링으로 수렴. 겹치는 순간이 판정 시점.
   if (progress < 1) {
     const outer = judgeRadius * (1 + 2.4 * (1 - progress))
     ctx.globalAlpha = 0.25 + 0.5 * progress
+    ctx.strokeStyle = c.edge
     ctx.lineWidth = Math.max(1.5, judgeRadius * 0.13)
     ctx.beginPath()
     ctx.arc(x, y, outer, 0, Math.PI * 2)
     ctx.stroke()
   }
+
+  // ★ 판정창 신호 — 창 안에서만 퍼지는 흰 링. 이게 보이면 지금 치면 된다.
+  if (readiness > 0) {
+    ctx.globalAlpha = readiness * 0.85
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = Math.max(2, judgeRadius * 0.22 * readiness)
+    ctx.beginPath()
+    ctx.arc(x, y, judgeRadius * (1.35 - 0.3 * readiness), 0, Math.PI * 2)
+    ctx.stroke()
+
+    // 후광까지 얹어 시선을 확실히 끈다
+    const halo = ctx.createRadialGradient(x, y, judgeRadius * 0.5, x, y, judgeRadius * 2)
+    halo.addColorStop(0, `rgba(255,255,255,${0.32 * readiness})`)
+    halo.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.globalAlpha = 1
+    ctx.fillStyle = halo
+    ctx.beginPath()
+    ctx.arc(x, y, judgeRadius * 2, 0, Math.PI * 2)
+    ctx.fill()
+  }
   ctx.restore()
 }
 
+// ── 노트 본체 ──────────────────────────────────────────────
+
+/** 손 표시(L/R) — 아무 손 노트에는 찍지 않는다 */
+function handMark(ctx: CanvasRenderingContext2D, note: NoteView, color: string) {
+  const mark = HAND_MARK[note.hand]
+  if (!mark || note.radius < 11) return
+  ctx.save()
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = `900 ${Math.round(note.radius * 1.05)}px system-ui, sans-serif`
+  ctx.lineWidth = Math.max(2, note.radius * 0.16)
+  ctx.strokeStyle = 'rgba(255,255,255,0.95)'
+  ctx.fillStyle = color
+  ctx.strokeText(mark, note.x, note.y)
+  ctx.fillText(mark, note.x, note.y)
+  ctx.restore()
+}
+
+/** 기본 노트(스와이프) — 손만 닿으면 되는 노트라 장식을 얹지 않는다 */
 function bubble(ctx: CanvasRenderingContext2D, note: NoteView) {
   const { x, y, radius } = note
   const c = PALETTE[note.hand]
@@ -124,50 +125,46 @@ function bubble(ctx: CanvasRenderingContext2D, note: NoteView) {
   ctx.arc(x, y, radius, 0, Math.PI * 2)
   ctx.fill()
 
-  ctx.lineWidth = Math.max(1.5, radius * 0.12)
+  ctx.lineWidth = Math.max(1.5, radius * 0.14)
   ctx.strokeStyle = c.edge
   ctx.stroke()
 
-  ctx.fillStyle = 'rgba(255,255,255,0.75)'
+  ctx.fillStyle = 'rgba(255,255,255,0.7)'
   ctx.beginPath()
   ctx.ellipse(
-    x - radius * 0.32,
-    y - radius * 0.38,
-    radius * 0.2,
-    radius * 0.13,
+    x - radius * 0.34,
+    y - radius * 0.4,
+    radius * 0.18,
+    radius * 0.11,
     -0.6,
     0,
     Math.PI * 2,
   )
   ctx.fill()
+
+  handMark(ctx, note, c.edge)
 }
 
-const CATCH_GOLD = '#ffb32e'
-const CATCH_DEEP = '#c9700f'
-
 /**
- * 주먹 노트 — 다른 노트와 **한눈에 구분돼야 한다**(가장 드물고 가장 준비가 필요한 노트).
- * 둥근 버블 대신 각진 육각 코어 + 조여드는 집게 + 회전 스파이크 링으로 그린다.
+ * 주먹 노트 — 가장 드물고 준비가 필요한 노트라 **한눈에 달라 보여야 한다**.
+ * 육각 코어 + 회전 스파이크 + 조여드는 집게 + 금색 후광.
  */
 function grabNote(ctx: CanvasRenderingContext2D, note: NoteView, tMs: number) {
-  const { x, y, radius, progress } = note
+  const { x, y, radius, progress, readiness } = note
   const spin = tMs / 420
-  // 판정이 가까울수록 맥동이 빨라진다 — "이제 쥐어라"
-  const pulse = 1 + 0.14 * Math.sin(tMs / (progress > 0.75 ? 70 : 160))
+  const pulse = 1 + 0.14 * Math.sin(tMs / (readiness > 0 ? 60 : 160))
 
   ctx.save()
   ctx.translate(x, y)
 
-  // 후광 — 멀리서도 눈에 띈다
   const halo = ctx.createRadialGradient(0, 0, radius * 0.2, 0, 0, radius * 2.1 * pulse)
-  halo.addColorStop(0, 'rgba(255,179,46,0.42)')
+  halo.addColorStop(0, `rgba(255,179,46,${0.4 + 0.35 * readiness})`)
   halo.addColorStop(1, 'rgba(255,179,46,0)')
   ctx.fillStyle = halo
   ctx.beginPath()
   ctx.arc(0, 0, radius * 2.1 * pulse, 0, Math.PI * 2)
   ctx.fill()
 
-  // 회전 스파이크 링
   ctx.rotate(spin)
   ctx.fillStyle = CATCH_GOLD
   const spikes = 8
@@ -184,7 +181,6 @@ function grabNote(ctx: CanvasRenderingContext2D, note: NoteView, tMs: number) {
   }
   ctx.rotate(-spin)
 
-  // 육각 코어 — 각진 형태라 원형 노트와 확실히 구분된다
   const grad = ctx.createLinearGradient(0, -radius, 0, radius)
   grad.addColorStop(0, '#ffe6a8')
   grad.addColorStop(1, CATCH_GOLD)
@@ -203,7 +199,7 @@ function grabNote(ctx: CanvasRenderingContext2D, note: NoteView, tMs: number) {
   ctx.fill()
   ctx.stroke()
 
-  // 조여드는 집게 — 판정이 가까울수록 안쪽으로 모인다("쥐어라"는 신호)
+  // 조여드는 집게 — 판정이 가까울수록 안쪽으로 모인다("쥐어라")
   const grip = radius * (1.5 - 0.45 * Math.min(1, progress))
   ctx.strokeStyle = CATCH_DEEP
   ctx.lineWidth = Math.max(2, radius * 0.2)
@@ -214,85 +210,101 @@ function grabNote(ctx: CanvasRenderingContext2D, note: NoteView, tMs: number) {
     ctx.stroke()
   }
   ctx.restore()
+
+  handMark(ctx, note, CATCH_DEEP)
 }
 
-/** swipe 노트 — 쥐지 않고 스쳐도 되는 노트라 '통과' 느낌의 이중 갈매기로 구분한다 */
-function swipeMark(ctx: CanvasRenderingContext2D, note: NoteView) {
-  const { x, y, radius } = note
-  if (radius < 10) return
-  const s = radius * 0.55
+/** 연결 노트 경로 리본 + 따라가는 헤드 */
+function trailRibbon(ctx: CanvasRenderingContext2D, note: NoteView) {
+  const path = note.path
+  if (!path || path.length < 2) return
+  const c = PALETTE[note.hand]
+  const width = note.judgeRadius * (note.tracing ? 1.5 : 1.15)
+
   ctx.save()
-  ctx.strokeStyle = PALETTE[note.hand].edge
-  ctx.lineWidth = Math.max(2, radius * 0.16)
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
-  for (const off of [-s * 0.45, s * 0.35]) {
+  ctx.globalAlpha = note.tracing ? 0.9 : 0.35 + 0.45 * Math.min(1, note.scale)
+
+  for (const [w, color] of [
+    [width, c.edge],
+    [width * 0.62, c.glow],
+  ] as const) {
+    ctx.lineWidth = w
+    ctx.strokeStyle = color
     ctx.beginPath()
-    ctx.moveTo(x + off - s * 0.3, y - s * 0.55)
-    ctx.lineTo(x + off + s * 0.3, y)
-    ctx.lineTo(x + off - s * 0.3, y + s * 0.55)
+    ctx.moveTo(path[0]!.x, path[0]!.y)
+    for (let i = 1; i < path.length; i++) ctx.lineTo(path[i]!.x, path[i]!.y)
+    ctx.stroke()
+  }
+
+  const end = path[path.length - 1]!
+  ctx.globalAlpha = 1
+  ctx.fillStyle = c.edge
+  ctx.beginPath()
+  ctx.arc(end.x, end.y, width * 0.42, 0, Math.PI * 2)
+  ctx.fill()
+
+  if (note.head) {
+    ctx.fillStyle = '#fff'
+    ctx.strokeStyle = c.edge
+    ctx.lineWidth = Math.max(2, width * 0.18)
+    ctx.beginPath()
+    ctx.arc(note.head.x, note.head.y, note.judgeRadius * 0.62, 0, Math.PI * 2)
+    ctx.fill()
     ctx.stroke()
   }
   ctx.restore()
 }
 
-/** 손 골격 — 뼈대 + 관절. 쥐면 색이 진해지고 굵어진다. */
-function handSkeleton(ctx: CanvasRenderingContext2D, hand: HandView) {
-  const { landmarks, isFist, side, radius } = hand
+// ── 커서 ───────────────────────────────────────────────────
+
+/**
+ * 고양이 발바닥 커서. 손 골격은 화면을 너무 많이 덮어서 되돌렸다(실플레이 피드백).
+ * 판정 반경보다 작게 그려 노트를 가리지 않는다.
+ */
+function paw(ctx: CanvasRenderingContext2D, hand: HandView) {
+  const { x, y, radius, isFist, side } = hand
   const color = HAND_COLOR[side]
+  const r = radius * 0.8
+  const squeeze = isFist ? 0.68 : 1
+  const spread = isFist ? 0.74 : 1
 
   ctx.save()
-  if (landmarks.length < 21) {
-    // 트래킹이 불완전하면 손바닥 위치만이라도 표시
-    ctx.globalAlpha = 0.8
-    ctx.strokeStyle = color
-    ctx.lineWidth = 3
-    ctx.beginPath()
-    ctx.arc(hand.x, hand.y, radius, 0, Math.PI * 2)
-    ctx.stroke()
-    ctx.restore()
-    return
-  }
-
-  const bone = Math.max(2, radius * 0.32) * (isFist ? 1.4 : 1)
-  ctx.globalAlpha = isFist ? 1 : 0.8
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-
-  // 흰 외곽선을 깔아 배경과 상관없이 손이 보이게 한다
-  for (const [width, stroke] of [
-    [bone + 3, 'rgba(255,255,255,0.85)'],
-    [bone, color],
-  ] as const) {
-    ctx.lineWidth = width
-    ctx.strokeStyle = stroke
-    ctx.beginPath()
-    for (const [a, b] of HAND_BONES) {
-      const p = landmarks[a]
-      const q = landmarks[b]
-      if (!p || !q) continue
-      ctx.moveTo(p.x, p.y)
-      ctx.lineTo(q.x, q.y)
-    }
-    ctx.stroke()
-  }
-
-  // 손끝 관절 강조 — 손 방향을 읽기 쉽게
+  ctx.lineWidth = Math.max(1.5, r * 0.18)
+  ctx.strokeStyle = 'rgba(255,255,255,0.92)'
   ctx.fillStyle = color
-  for (const i of [4, 8, 12, 16, 20]) {
-    const p = landmarks[i]
-    if (!p) continue
+
+  ctx.beginPath()
+  ctx.ellipse(x, y + r * 0.18, r * 0.7 * squeeze, r * 0.58 * squeeze, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+
+  for (const [tx, ty] of [
+    [-0.62, -0.5],
+    [-0.22, -0.78],
+    [0.22, -0.78],
+    [0.62, -0.5],
+  ] as const) {
     ctx.beginPath()
-    ctx.arc(p.x, p.y, bone * 0.7, 0, Math.PI * 2)
+    ctx.ellipse(
+      x + tx * r * spread,
+      y + ty * r * spread,
+      r * 0.24 * squeeze,
+      r * 0.28 * squeeze,
+      tx * 0.5,
+      0,
+      Math.PI * 2,
+    )
     ctx.fill()
+    ctx.stroke()
   }
 
-  // 쥔 상태 표시 — 판정 반경을 채운 원
+  // 쥔 상태 — 판정 반경을 옅게 채워 알린다
   if (isFist) {
-    ctx.globalAlpha = 0.22
-    ctx.fillStyle = color
+    ctx.globalAlpha = 0.2
     ctx.beginPath()
-    ctx.arc(hand.x, hand.y, radius, 0, Math.PI * 2)
+    ctx.arc(x, y, radius, 0, Math.PI * 2)
     ctx.fill()
   }
   ctx.restore()
@@ -345,23 +357,16 @@ export const catCandySkin: CatchSkin = {
     timingRings(ctx, note)
     ctx.save()
     ctx.globalAlpha = 0.4 + 0.6 * Math.min(1, note.scale)
-    if (note.kind === 'catch') {
-      grabNote(ctx, note, tMs)
-    } else {
-      bubble(ctx, note)
-      if (note.kind === 'swipe') swipeMark(ctx, note)
-    }
+    if (note.kind === 'catch') grabNote(ctx, note, tMs)
+    else bubble(ctx, note)
     ctx.restore()
   },
 
-  /**
-   * 타격감 — "쳤다"가 확실히 느껴져야 한다(실플레이 피드백).
-   * 이중 충격파 + 방사 파티클 + 판정 문구를 한꺼번에 띄운다.
-   */
+  /** 타격감 — 이중 충격파 + 방사 파티클 + 판정 문구를 한꺼번에 띄운다. */
   drawHitFx(ctx, fx) {
     const t = fx.elapsedMs / fx.lifeMs
     if (t >= 1) return false
-    const ease = 1 - Math.pow(1 - t, 3) // 초반에 확 퍼지고 끝에서 잦아든다
+    const ease = 1 - Math.pow(1 - t, 3)
     const c = PALETTE[fx.hand]
     const color = JUDGE_COLOR[fx.judgement] ?? c.edge
     ctx.save()
@@ -369,7 +374,6 @@ export const catCandySkin: CatchSkin = {
     ctx.textBaseline = 'middle'
 
     if (fx.judgement === 'miss') {
-      // 미스 — 붉은 링이 안으로 조여들며 X. 화면 흔들림은 렌더러가 같이 준다
       ctx.globalAlpha = 1 - t
       ctx.strokeStyle = color
       ctx.lineWidth = Math.max(2, fx.radius * 0.2 * (1 - t))
@@ -394,14 +398,12 @@ export const catCandySkin: CatchSkin = {
     const isPerfect = fx.judgement === 'perfect'
     const power = isPerfect ? 1 : 0.7
 
-    // ① 중심 섬광 — 터지는 순간의 코어
     ctx.globalAlpha = Math.max(0, 1 - t * 2.4)
     ctx.fillStyle = '#fff'
     ctx.beginPath()
     ctx.arc(fx.x, fx.y, fx.radius * (0.9 + ease * 1.4) * power, 0, Math.PI * 2)
     ctx.fill()
 
-    // ② 이중 충격파
     ctx.globalAlpha = (1 - t) * 0.95
     for (const [mul, widthMul] of [
       [2.6, 0.26],
@@ -414,7 +416,6 @@ export const catCandySkin: CatchSkin = {
       ctx.stroke()
     }
 
-    // ③ 방사 파티클 — 콤보가 쌓일수록 많아진다
     const count = (isPerfect ? 10 : 6) + Math.min(6, Math.floor(fx.combo / 12))
     ctx.fillStyle = isPerfect ? '#ffd66b' : c.glow
     for (let i = 0; i < count; i++) {
@@ -424,7 +425,6 @@ export const catCandySkin: CatchSkin = {
       star(ctx, fx.x + Math.cos(a) * d, fx.y + Math.sin(a) * d, fx.radius * 0.3 * (1 - t) * power)
     }
 
-    // ④ 판정 문구 — 위로 떠오르며 사라진다
     ctx.globalAlpha = Math.max(0, 1 - t * 1.3)
     ctx.fillStyle = color
     ctx.strokeStyle = 'rgba(255,255,255,0.95)'
@@ -440,7 +440,7 @@ export const catCandySkin: CatchSkin = {
   },
 
   drawCursor(ctx, hand) {
-    handSkeleton(ctx, hand)
+    paw(ctx, hand)
   },
 
   sfx: {

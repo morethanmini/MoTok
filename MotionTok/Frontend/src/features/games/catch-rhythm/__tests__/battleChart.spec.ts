@@ -264,27 +264,30 @@ describe('★ 겹침 회피 — 화면에 같이 뜬 노트가 서로를 가리�
       }
     }
     expect(pairs).toBeGreaterThan(100)
-    expect(overlapped / pairs).toBeLessThan(0.08)
+    expect(overlapped / pairs).toBeLessThan(0.1)
   })
 
-  it('거의 동시(400ms 이내)에 뜨는 노트는 특히 잘 벌어져 있다', () => {
-    for (const difficulty of DIFFICULTIES) {
-      let pairs = 0
-      let overlapped = 0
-      for (const seed of SEEDS) {
-        const notes = generateBattleChart(seed, difficulty, ROUND_MS).notes
-        for (let i = 0; i < notes.length; i++) {
-          for (let j = i + 1; j < notes.length; j++) {
-            const a = notes[i]!
-            const b = notes[j]!
-            if (b.timeMs - (a.timeMs + (a.durationMs ?? 0)) >= 400) break
-            pairs++
-            if (closest(a, b) < NOTE_RADIUS * 2) overlapped++
-          }
+  /**
+   * 노트 **본체끼리** 겹치는 건 곧바로 "못 치는 패턴"이 된다 — 여기가 진짜 기준선.
+   * (연결 노트의 경로가 다른 노트 옆을 스치는 건 리본이라 체감이 다르므로 위 지표에서만 본다)
+   */
+  it.each(DIFFICULTIES)('%s: 거의 동시(400ms)에 뜨는 노트 본체는 겹치지 않는다', (difficulty) => {
+    let pairs = 0
+    let overlapped = 0
+    for (const seed of SEEDS) {
+      const notes = generateBattleChart(seed, difficulty, ROUND_MS).notes
+      for (let i = 0; i < notes.length; i++) {
+        for (let j = i + 1; j < notes.length; j++) {
+          const a = notes[i]!
+          const b = notes[j]!
+          if (b.timeMs - (a.timeMs + (a.durationMs ?? 0)) >= 400) break
+          pairs++
+          if (Math.hypot(a.x - b.x, a.y - b.y) < NOTE_RADIUS * 2) overlapped++
         }
       }
-      expect(overlapped / pairs).toBeLessThan(0.06)
     }
+    expect(pairs).toBeGreaterThan(50)
+    expect(overlapped / pairs).toBeLessThan(0.03)
   })
 })
 

@@ -20,6 +20,7 @@ import {
   Y_RANGE,
   MIN_GAP,
   OVERLAP_WINDOW_MS,
+  MAX_TRAIL_MS,
   PLACEMENT_CANDIDATES,
   SLOT_MS,
   LEAD_IN_MS,
@@ -125,9 +126,11 @@ function occupiedPoints(notes: GeneratedNote[], timeMs: number): Obstacle[] {
   const out: Obstacle[] = []
   for (let i = notes.length - 1; i >= 0; i--) {
     const n = notes[i]!
-    // 시간순 생성이라 창을 벗어나면 그 앞은 볼 필요가 없다
+    // 노트는 timeMs 순이지만 **끝나는 시각은 순서가 다르다**(긴 연결 노트가 뒤 노트보다 늦게 끝난다).
+    // 그래서 종료 시각으로 break하면 아직 살아 있는 장애물을 건너뛴다 — 시작 시각으로 끊는다.
+    if (timeMs - n.timeMs > OVERLAP_WINDOW_MS + MAX_TRAIL_MS) break
     const dt = timeMs - endTimeOf(n)
-    if (dt > OVERLAP_WINDOW_MS) break
+    if (dt > OVERLAP_WINDOW_MS) continue
     const needGap = requiredGap(Math.max(0, dt))
     out.push({ x: n.x, y: n.y, needGap })
     if (n.path) for (const p of n.path) out.push({ x: p.x, y: p.y, needGap })

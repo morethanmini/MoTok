@@ -31,6 +31,11 @@ export interface NoteView {
   head?: { x: number; y: number }
   /** trail 전용 — 헤드를 잡고 따라가는 중인가 */
   tracing?: boolean
+  /**
+   * 판정창에 얼마나 들어와 있는가. 0 = 창 밖, 1 = 정확히 판정 시점.
+   * **지금 치라는 신호**를 그리는 데 쓴다 — 이게 없으면 언제 쳐야 할지 안 보인다.
+   */
+  readiness: number
 }
 
 export interface HitFxView {

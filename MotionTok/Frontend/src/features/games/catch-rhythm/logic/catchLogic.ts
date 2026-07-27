@@ -12,12 +12,13 @@ import {
   NOTE_RADIUS,
   HAND_RADIUS,
   CATCH_REACH_SCALE,
+  CATCH_WINDOW_SCALE,
   SWIPE_REACH_SCALE,
   TRAIL_REACH_SCALE,
   TRAIL_PERFECT_COVERAGE,
   TRAIL_GOOD_COVERAGE,
 } from '../core/config'
-import { judgeHit, isMissed } from '../core/judge'
+import { judgeHit, isMissed, windowCloseness } from '../core/judge'
 import type { Beatmap, CatchNote, PathPoint } from '../core/beatmap'
 import type { Hand, HitJudgement, Judgement } from '../core/types'
 
@@ -65,6 +66,16 @@ export function approachOf(note: CatchNote, fallbackMs: number): number {
 /** 노트 접근 진행도 0(스폰)→1(판정 시점). 도달 후에는 1 초과. */
 export function noteProgress(note: CatchNote, tMs: number, approachTimeMs: number): number {
   return 1 - (note.timeMs - tMs) / approachOf(note, approachTimeMs)
+}
+
+/** 판정창 배율 — 주먹 노트만 넉넉하게 잡는다. */
+export function windowScaleOf(note: CatchNote): number {
+  return note.kind === 'catch' ? CATCH_WINDOW_SCALE : 1
+}
+
+/** 지금 판정창에 얼마나 들어와 있는가(0~1). 화면에 '지금!'을 표시하는 데 쓴다. */
+export function hitReadiness(note: CatchNote, tMs: number): number {
+  return windowCloseness(tMs - note.timeMs, windowScaleOf(note))
 }
 
 function reachOf(note: CatchNote): number {
@@ -174,7 +185,7 @@ export class CatchLogic {
       if (note.status !== 'active') continue
 
       const delta = tMs - note.timeMs
-      if (isMissed(delta)) {
+      if (isMissed(delta, windowScaleOf(note))) {
         note.status = 'miss'
         events.push({ type: 'miss', note })
         continue
@@ -189,8 +200,10 @@ export class CatchLogic {
         if (note.kind !== 'swipe' && note.kind !== 'trail' && !hand.grabbed) continue
         if (!isInReach(hand, note)) continue
 
-        const judgement = judgeHit(delta) // 이른 히트(delta<0)도 창 내면 인정
-        if (!judgement) continue
+        const graded = judgeHit(delta, windowScaleOf(note)) // 이른 히트(delta<0)도 창 내면 인정
+        if (!graded) continue
+        // 스와이프는 기본 노트라 타이밍을 따지지 않는다 — 손만 닿으면 PERFECT(실플레이 결정)
+        const judgement: HitJudgement = note.kind === 'swipe' ? 'perfect' : graded
 
         usedHands.add(side)
         if (note.kind === 'trail') {

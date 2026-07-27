@@ -91,9 +91,10 @@ describe('캐치(그랩) 판정', () => {
     expect(hits[0]).toMatchObject({ judgement: 'perfect', hand: 'right', deltaMs: 0 })
   })
 
-  it('이른 grab(−100ms)도 판정창 안이면 인정 → Good', () => {
+  it('이른 grab도 판정창 안이면 인정 → Good (주먹은 창이 1.75배 넓다)', () => {
     const logic = new CatchLogic(bm([note()]))
-    const events = logic.update(1900, { left: null, right: grabbing() })
+    // PERFECT ±140 / GOOD ±280 — 200ms 이르면 GOOD
+    const events = logic.update(1800, { left: null, right: grabbing() })
     const hit = events.find((e) => e.type === 'hit')
     expect(hit).toMatchObject({ judgement: 'good' })
   })
@@ -113,7 +114,7 @@ describe('캐치(그랩) 판정', () => {
       [2000, at(true)], // 전환 → 노트1 히트
       [2100, at(false)], // 쥔 상태 유지(전환 아님)
       [2400, at(false)], // 노트2 도달 — 전환 없음
-      [2561, at(false)], // 노트2 Miss 확정
+      [2700, at(false)], // 노트2 Miss 확정(주먹 창 ±280)
     ])
     expect(events.filter((e) => e.type === 'hit')).toHaveLength(1)
     expect(events.filter((e) => e.type === 'miss')).toHaveLength(1)
@@ -152,11 +153,11 @@ describe('캐치(그랩) 판정', () => {
     expect(hits.map((h) => h.hand).sort()).toEqual(['left', 'right'])
   })
 
-  it('손이 안 오면 +160ms 초과 시 Miss', () => {
+  it('손이 안 오면 판정창을 지나 Miss', () => {
     const logic = new CatchLogic(bm([note()]))
     const events = runFrames(logic, [
       [2000, NO_HANDS],
-      [2161, NO_HANDS],
+      [2300, NO_HANDS],
     ])
     expect(events.filter((e) => e.type === 'miss')).toHaveLength(1)
     expect(logic.isFinished()).toBe(true)

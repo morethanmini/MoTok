@@ -36,8 +36,15 @@ export const TRAIL_REACH_SCALE = 2.2
 /**
  * 주먹 노트는 "쥘 준비"가 필요하다 — 다른 노트보다 이만큼 먼저 등장한다.
  * 판정 시각은 그대로고 접근 시간만 길어진다.
+ * 너무 키우면 혼자만 느리게 떠다녀서 오히려 타이밍이 헷갈린다(실플레이 피드백) → 적당히.
  */
-export const CATCH_APPROACH_BONUS_MS = 800
+export const CATCH_APPROACH_BONUS_MS = 500
+
+/**
+ * 주먹 노트 판정창 배율 — 쥐는 동작 자체가 3프레임 확정을 거치므로 태생적으로 느리다.
+ * ±140 / ±280ms로 넓혀 준다.
+ */
+export const CATCH_WINDOW_SCALE = 1.75
 
 // ── 연결(trail) 노트 ───────────────────────────────────────
 /** 경로를 이 비율 이상 따라가면 PERFECT */
