@@ -9,11 +9,12 @@
  */
 
 import { DEFAULT_APPROACH_TIME_MS } from './config'
-import type { NoteHand } from './types'
+import type { NoteHand, NoteKind } from './types'
 
 export class BeatmapError extends Error {}
 
 const HANDS: NoteHand[] = ['left', 'right', 'any']
+const KINDS: NoteKind[] = ['catch', 'swipe']
 
 export interface CatchNote {
   timeMs: number
@@ -21,6 +22,8 @@ export interface CatchNote {
   x: number
   y: number
   hand: NoteHand
+  /** catch = 주먹 쥐기, swipe = 손이 지나가기만 해도 됨 */
+  kind: NoteKind
 }
 
 export interface Beatmap {
@@ -83,7 +86,18 @@ export function parseBeatmap(json: unknown): Beatmap {
         `notes[${i}].hand은(는) ${HANDS.join('/')} 중 하나여야 합니다 (현재: ${JSON.stringify(note.hand)})`,
       )
     }
-    return { timeMs, x, y, hand: (note.hand as NoteHand) ?? 'any' }
+    if (note.kind !== undefined && !KINDS.includes(note.kind as NoteKind)) {
+      fail(
+        `notes[${i}].kind은(는) ${KINDS.join('/')} 중 하나여야 합니다 (현재: ${JSON.stringify(note.kind)})`,
+      )
+    }
+    return {
+      timeMs,
+      x,
+      y,
+      hand: (note.hand as NoteHand) ?? 'any',
+      kind: (note.kind as NoteKind) ?? 'catch',
+    }
   })
   notes.sort((a, b) => a.timeMs - b.timeMs)
 

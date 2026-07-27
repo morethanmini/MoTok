@@ -21,6 +21,8 @@ export interface RenderHand {
   x: number
   y: number
   isFist: boolean
+  /** 게임 좌표 랜드마크 21개 — 손 모양을 그대로 그린다 */
+  landmarks: { x: number; y: number }[]
 }
 
 export interface RenderFrame {
@@ -98,6 +100,7 @@ export class Renderer {
     const ctx = this.canvas.getContext('2d')
     if (!ctx) return
     const { w, h, unit } = this.metrics()
+    const judgeRadius = NOTE_RADIUS * unit
 
     ctx.clearRect(0, 0, w, h)
     this.skin.drawBackground?.(ctx, w, h, frame.tMs)
@@ -115,9 +118,12 @@ export class Renderer {
       this.skin.drawNote(ctx, {
         x,
         y,
-        radius: NOTE_RADIUS * unit * scale,
+        radius: judgeRadius * scale,
+        judgeRadius,
         scale,
-        hand: note.hand === 'any' ? 'right' : note.hand,
+        progress,
+        hand: note.hand,
+        kind: note.kind,
         cross: (note as TrackedNote & { cross?: boolean }).cross === true,
       })
     }
@@ -145,6 +151,7 @@ export class Renderer {
         radius: HAND_RADIUS * unit,
         isFist: hand.isFist,
         side,
+        landmarks: hand.landmarks.map((p) => this.toPixels(p.x, p.y)),
       })
     }
   }

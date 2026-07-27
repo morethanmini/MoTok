@@ -113,10 +113,20 @@ function withoutGrab(hands: Hands): Hands {
 function renderHands(): Partial<Record<'left' | 'right', RenderHand | null>> {
   return {
     left: latestHands.left
-      ? { x: latestHands.left.x, y: latestHands.left.y, isFist: input.isFisted.left }
+      ? {
+          x: latestHands.left.x,
+          y: latestHands.left.y,
+          isFist: input.isFisted.left,
+          landmarks: input.landmarks.left,
+        }
       : null,
     right: latestHands.right
-      ? { x: latestHands.right.x, y: latestHands.right.y, isFist: input.isFisted.right }
+      ? {
+          x: latestHands.right.x,
+          y: latestHands.right.y,
+          isFist: input.isFisted.right,
+          landmarks: input.landmarks.right,
+        }
       : null,
   }
 }

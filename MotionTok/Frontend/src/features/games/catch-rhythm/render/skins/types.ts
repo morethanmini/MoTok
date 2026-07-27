@@ -2,20 +2,27 @@
  * 스킨 인터페이스 — 노트 모양 / 터지는 모션 / 커서 / 효과음을 게임 로직과 완전히 분리한다.
  * 로직은 스킨을 모른다. 렌더러가 현재 스킨의 메서드를 호출할 뿐이다.
  *
- * 새 스킨 = 파일 하나 추가 + 레지스트리 등록. 시즌·이벤트 스킨, 상점 아이템 연동(-56)까지 열린다.
  * 좌표는 전부 캔버스 픽셀 — 게임 좌표 변환은 렌더러가 끝내고 넘긴다.
  */
 
-import type { Hand, Judgement } from '../../core/types'
+import type { Hand, Judgement, NoteHand, NoteKind } from '../../core/types'
 
 export interface NoteView {
   x: number
   y: number
-  /** 판정 크기 기준 반지름(px). scale이 이미 반영된 값. */
+  /** 지금 그릴 노트 본체 반지름(px) — scale이 반영된 값 */
   radius: number
-  /** 0(원경) → 1(판정 지점) */
+  /**
+   * 판정 시점의 반지름(px). 고정값이라 "여기까지 오면 치는 것"을 보여주는 기준선이 된다.
+   * 접근 링은 이 크기로 수렴한다.
+   */
+  judgeRadius: number
+  /** 0(원경) → 1(판정 지점). 1을 넘으면 판정선을 지난 것 */
   scale: number
-  hand: Hand
+  /** 진행도 그대로 — 접근 링 계산용(1에서 판정) */
+  progress: number
+  hand: NoteHand
+  kind: NoteKind
   /** 반대편 영역에서 온 크로스 노트인가 (기본 스킨은 시각 구분하지 않는다) */
   cross: boolean
 }
@@ -26,16 +33,22 @@ export interface HitFxView {
   radius: number
   judgement: Judgement
   hand: Hand
-  /** 이펙트 시작 후 경과 시간 */
   elapsedMs: number
 }
 
 export interface HandView {
+  /** 손바닥 중심(px) */
   x: number
   y: number
+  /** 판정 반경(px) */
   radius: number
   isFist: boolean
   side: Hand
+  /**
+   * MediaPipe 21개 랜드마크를 캔버스 픽셀로 옮긴 것. 손 전체를 그리는 데 쓴다.
+   * 트래킹이 불완전하면 빈 배열일 수 있다.
+   */
+  landmarks: { x: number; y: number }[]
 }
 
 /** 절차 합성 효과음 스펙 — 음원 파일 없이 WebAudio로 만든다. */
@@ -61,3 +74,28 @@ export interface CatchSkin {
   drawCursor(ctx: CanvasRenderingContext2D, hand: HandView): void
   sfx: Record<Judgement, ToneSpec | null>
 }
+
+/** MediaPipe 손 랜드마크 연결(뼈대) — 스킨이 손을 그릴 때 공용으로 쓴다. */
+export const HAND_BONES: readonly [number, number][] = [
+  [0, 1],
+  [1, 2],
+  [2, 3],
+  [3, 4], // 엄지
+  [0, 5],
+  [5, 6],
+  [6, 7],
+  [7, 8], // 검지
+  [5, 9],
+  [9, 10],
+  [10, 11],
+  [11, 12], // 중지
+  [9, 13],
+  [13, 14],
+  [14, 15],
+  [15, 16], // 약지
+  [13, 17],
+  [17, 18],
+  [18, 19],
+  [19, 20], // 새끼
+  [0, 17], // 손바닥 아래
+]
