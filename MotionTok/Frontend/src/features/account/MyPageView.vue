@@ -1,11 +1,14 @@
 <script setup lang="ts">
 /** 마이페이지 — 프로필·포인트·포인트내역·내 전적 (API §2 /users/me, /users/me/points/history, /users/me/records). */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { usersApi, type GameRecord, type PointHistory, type PointType, type UserProfile } from '@/api'
 import { useAsyncData } from '@/composables/useAsyncData'
+import { useUpload } from '@/composables/useUpload'
+import { useToast } from '@/composables/useToast'
 import PixelCard from '@/components/common/PixelCard.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
+import PixelToast from '@/components/common/PixelToast.vue'
 import CoinIcon from '@/components/common/CoinIcon.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import { RouteName } from '@/router/routeNames'
@@ -33,23 +36,78 @@ const POINT_TYPE_LABEL: Record<PointType, string> = {
   GUEST_MIGRATE: '게스트 이전',
 }
 
-const { data: me } = useAsyncData(() => usersApi.getMe(), MOCK_ME)
+const { data: me, reload: reloadMe } = useAsyncData(() => usersApi.getMe(), MOCK_ME)
 const { data: records } = useAsyncData(() => usersApi.getRecords(), MOCK_RECORDS)
 const { data: history } = useAsyncData(() => usersApi.getPointHistory(0, 20).then((p) => p.content), MOCK_HISTORY)
 
 const fmtDate = (iso: string) => iso.slice(0, 10)
 
-// 프로필 사진 변경 (클라이언트 로컬 미리보기, 백엔드 업로드 API 없음)
-const avatarUrl = ref<string | null>(null)
+/**
+ * 프로필 사진 변경.
+ *
+ * 업로드는 서버를 거치지 않는다 — presigned URL을 받아 브라우저가 S3로 직접 PUT하고,
+ * 끝난 뒤 key만 서버에 알려 확정한다(useUpload 주석 참고).
+ *
+ * 표시할 URL은 서버가 준 me.avatarUrl 이 원본이고, localPreview 는 업로드 중에만 쓰는
+ * 임시 미리보기다. 확정 후 프로필을 다시 불러오면서 미리보기를 버린다 —
+ * 남겨 두면 새로고침 시 사라져서 "저장 안 된 것처럼" 보인다.
+ */
+const { message: toast, flash } = useToast()
+const { upload, uploading } = useUpload('AVATAR')
+
 const avatarInput = ref<HTMLInputElement | null>(null)
+const localPreview = ref<string | null>(null)
+const shownAvatar = computed(() => localPreview.value ?? me.value.avatarUrl ?? null)
+
 function pickAvatar() {
+  if (uploading.value) return
   avatarInput.value?.click()
 }
-function onAvatarChange(e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0]
+
+function clearPreview() {
+  if (localPreview.value) {
+    URL.revokeObjectURL(localPreview.value)
+    localPreview.value = null
+  }
+}
+
+async function onAvatarChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  // 같은 파일을 다시 골라도 change 가 발생하도록 값을 비운다(업로드 실패 후 재시도에 필요).
+  input.value = ''
   if (!file) return
-  if (avatarUrl.value) URL.revokeObjectURL(avatarUrl.value)
-  avatarUrl.value = URL.createObjectURL(file)
+
+  clearPreview()
+  localPreview.value = URL.createObjectURL(file)
+
+  const key = await upload(file)
+  if (!key) {
+    clearPreview() // 실패했으면 원래 사진으로 되돌린다 — 바뀐 것처럼 보이면 안 된다
+    return
+  }
+
+  try {
+    await usersApi.updateAvatar(key)
+    await reloadMe()
+    clearPreview()
+    flash('프로필 사진을 변경했어요')
+  } catch {
+    clearPreview()
+    flash('사진을 저장하지 못했어요')
+  }
+}
+
+async function removeAvatar() {
+  if (uploading.value || !me.value.avatarUrl) return
+  try {
+    await usersApi.updateAvatar(null)
+    await reloadMe()
+    clearPreview()
+    flash('기본 아바타로 변경했어요')
+  } catch {
+    flash('변경하지 못했어요')
+  }
 }
 </script>
 
@@ -59,21 +117,32 @@ function onAvatarChange(e: Event) {
       <!-- 프로필 -->
       <PixelCard title="프로필">
         <div class="profile">
-          <button class="avatar" title="프로필 사진 변경" @click="pickAvatar">
-            <img v-if="avatarUrl" :src="avatarUrl" alt="내 프로필 사진" />
+          <button
+            class="avatar"
+            :class="{ busy: uploading }"
+            :disabled="uploading"
+            :title="uploading ? '올리는 중…' : '프로필 사진 변경'"
+            @click="pickAvatar"
+          >
+            <img v-if="shownAvatar" :src="shownAvatar" alt="내 프로필 사진" />
             <template v-else>😎</template>
-            <span class="avatar-edit">📷</span>
+            <span class="avatar-edit">{{ uploading ? '⏳' : '📷' }}</span>
           </button>
+          <!-- accept 는 서버 UploadPurpose.AVATAR 의 허용 MIME 과 같게 유지한다.
+               파일 선택창에서 미리 걸러 주는 편의일 뿐이고, 실제 방어는 서버·S3 서명이 한다. -->
           <input
             ref="avatarInput"
             type="file"
-            accept="image/*"
+            accept="image/png,image/jpeg,image/webp"
             class="avatar-input"
             @change="onAvatarChange"
           />
           <div class="info">
             <div class="nick">{{ me.nickname }}</div>
             <div class="meta">가입일 {{ fmtDate(me.createdAt) }} · {{ me.role }}</div>
+            <button v-if="me.avatarUrl" class="avatar-remove" :disabled="uploading" @click="removeAvatar">
+              사진 삭제
+            </button>
           </div>
         </div>
         <div class="point">
@@ -126,6 +195,7 @@ function onAvatarChange(e: Event) {
         </tbody>
       </table>
     </PixelCard>
+    <PixelToast :message="toast" />
   </AppPage>
 </template>
 
@@ -150,6 +220,20 @@ function onAvatarChange(e: Event) {
   cursor: pointer;
 }
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar:disabled { cursor: default; }
+/* 업로드 중임을 이미지 위에 표시 — 스피너를 따로 두지 않고 흐리게만 처리한다 */
+.avatar.busy img { opacity: 0.45; }
+.avatar-remove {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 9px;
+  color: var(--c-muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.avatar-remove:disabled { cursor: default; opacity: 0.5; }
 .avatar-edit {
   position: absolute;
   right: -4px;
