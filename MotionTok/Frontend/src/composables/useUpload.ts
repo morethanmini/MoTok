@@ -45,7 +45,9 @@ export function useUpload(purpose: UploadPurpose) {
    */
   function validate(file: File): string | null {
     if (!limits.accept.includes(file.type)) {
-      const kinds = limits.accept.map((t) => t.split('/')[1].toUpperCase()).join(', ')
+      // MIME의 서브타입만 뽑아 "PNG, JPEG, WEBP" 형태로 안내한다.
+      // 인덱스 접근(split('/')[1])은 noUncheckedIndexedAccess에서 undefined가 섞여 타입 에러가 나므로 replace를 쓴다.
+      const kinds = limits.accept.map((t) => t.replace(/^[^/]+\//, '').toUpperCase()).join(', ')
       return `${kinds} 파일만 올릴 수 있어요`
     }
     if (file.size > limits.maxBytes) {
