@@ -10,15 +10,17 @@
  */
 
 import type { CatchSkin, HandView, HitFxView, NoteView } from './types'
-import type { Hand, NoteHand } from '../../core/types'
+import type { NoteHand } from '../../core/types'
 
-/** 왼손 = 바이올렛, 오른손 = 로즈핑크, 아무 손 = 민트. 명도·색상 모두 벌려 놓았다. */
+/**
+ * 왼손 = 파랑, 오른손 = 빨강, 아무 손 = 보라. 전부 파스텔.
+ * body = 채움(연함) / edge = 테두리·글자(진함) / glow = 하이라이트.
+ */
 const PALETTE: Record<NoteHand, { body: string; edge: string; glow: string }> = {
-  left: { body: '#a78bfa', edge: '#5b21b6', glow: '#ede9fe' },
-  right: { body: '#fb7185', edge: '#9f1239', glow: '#ffe4e6' },
-  any: { body: '#6ee7b7', edge: '#047857', glow: '#d1fae5' },
+  left: { body: '#9ec5fe', edge: '#1d4ed8', glow: '#e0edff' },
+  right: { body: '#ffa8a8', edge: '#c92a2a', glow: '#ffe8e8' },
+  any: { body: '#c3aefc', edge: '#6d28d9', glow: '#efe7ff' },
 }
-const HAND_COLOR: Record<Hand, string> = { left: '#5b21b6', right: '#9f1239' }
 /** 노트 안에 찍는 손 표시 — 색맹·저대비 환경에서도 확실하다 */
 const HAND_MARK: Record<NoteHand, string> = { left: 'L', right: 'R', any: '' }
 
@@ -260,26 +262,37 @@ function trailRibbon(ctx: CanvasRenderingContext2D, note: NoteView) {
 // ── 커서 ───────────────────────────────────────────────────
 
 /**
- * 고양이 발바닥 커서. 손 골격은 화면을 너무 많이 덮어서 되돌렸다(실플레이 피드백).
- * 판정 반경보다 작게 그려 노트를 가리지 않는다.
+ * 고양이 발바닥 커서 — 최초 버전 그대로. 파스텔 채움 + 진한 테두리라
+ * 오므렸을 때도 형태가 잘 보인다. 판정 반경 그대로 그린다(축소하지 않는다).
+ * 손 골격 렌더는 화면을 너무 덮어서 폐기했다.
  */
 function paw(ctx: CanvasRenderingContext2D, hand: HandView) {
   const { x, y, radius, isFist, side } = hand
-  const color = HAND_COLOR[side]
-  const r = radius * 0.8
-  const squeeze = isFist ? 0.68 : 1
-  const spread = isFist ? 0.74 : 1
+  const c = PALETTE[side]
+  const squeeze = isFist ? 0.62 : 1
+  const spread = isFist ? 0.72 : 1
 
   ctx.save()
-  ctx.lineWidth = Math.max(1.5, r * 0.18)
-  ctx.strokeStyle = 'rgba(255,255,255,0.92)'
-  ctx.fillStyle = color
+  ctx.globalAlpha = 0.92
+  ctx.fillStyle = c.body
+  ctx.strokeStyle = c.edge
+  ctx.lineWidth = Math.max(1.5, radius * 0.14)
 
+  // 발바닥 젤리
   ctx.beginPath()
-  ctx.ellipse(x, y + r * 0.18, r * 0.7 * squeeze, r * 0.58 * squeeze, 0, 0, Math.PI * 2)
+  ctx.ellipse(
+    x,
+    y + radius * 0.18,
+    radius * 0.72 * squeeze,
+    radius * 0.6 * squeeze,
+    0,
+    0,
+    Math.PI * 2,
+  )
   ctx.fill()
   ctx.stroke()
 
+  // 발가락 4개
   for (const [tx, ty] of [
     [-0.62, -0.5],
     [-0.22, -0.78],
@@ -288,24 +301,16 @@ function paw(ctx: CanvasRenderingContext2D, hand: HandView) {
   ] as const) {
     ctx.beginPath()
     ctx.ellipse(
-      x + tx * r * spread,
-      y + ty * r * spread,
-      r * 0.24 * squeeze,
-      r * 0.28 * squeeze,
+      x + tx * radius * spread,
+      y + ty * radius * spread,
+      radius * 0.24 * squeeze,
+      radius * 0.28 * squeeze,
       tx * 0.5,
       0,
       Math.PI * 2,
     )
     ctx.fill()
     ctx.stroke()
-  }
-
-  // 쥔 상태 — 판정 반경을 옅게 채워 알린다
-  if (isFist) {
-    ctx.globalAlpha = 0.2
-    ctx.beginPath()
-    ctx.arc(x, y, radius, 0, Math.PI * 2)
-    ctx.fill()
   }
   ctx.restore()
 }

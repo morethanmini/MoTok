@@ -8,11 +8,11 @@ import { HAND_BONES, type CatchSkin, type NoteView } from './types'
 import type { Hand, NoteHand } from '../../core/types'
 
 const COLOR: Record<NoteHand, string> = {
-  left: '#4aa3ff',
-  right: '#ff6b6b',
-  any: '#5ce68a',
+  left: '#6aa9ff',
+  right: '#ff7a7a',
+  any: '#b79bff',
 }
-const HAND_COLOR: Record<Hand, string> = { left: '#4aa3ff', right: '#ff6b6b' }
+const HAND_COLOR: Record<Hand, string> = { left: '#6aa9ff', right: '#ff7a7a' }
 const FX_MS = 300
 
 function rings(ctx: CanvasRenderingContext2D, note: NoteView) {
