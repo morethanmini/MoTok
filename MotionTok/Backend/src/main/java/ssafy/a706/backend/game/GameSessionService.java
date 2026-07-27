@@ -140,6 +140,11 @@ public class GameSessionService {
                     .sorted(Comparator.comparingLong(LiveRoomMemberValue::joinedAt))
                     .map(LiveRoomMemberValue::userId)
                     .toList();
+            // 게임④(-9): 출제자는 관전하는 룰 — 1인 방이면 플레이어가 0명이라 라운드가
+            // 성립하지 않는다. FE가 혼자일 땐 로컬 연습 모드로 돌리므로 여기 도달은 레이스뿐.
+            if (setterOrder.size() < 2) {
+                throw new BusinessException(ErrorCode.GAME_NEED_MORE_PLAYERS);
+            }
             setterUserId = setterOrder.isEmpty() ? sender.userId() : setterOrder.get(0);
             endAt = startAt + BODY_FIT_SETTING_MILLIS + BODY_FIT_APPROACH_MILLIS.get(difficulty);
             sessionRepository.clearTotals(roomId);

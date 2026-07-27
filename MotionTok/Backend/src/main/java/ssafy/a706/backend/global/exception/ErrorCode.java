@@ -68,6 +68,7 @@ public enum ErrorCode {
     GAME_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "GAME_NOT_IN_ROOM", "방 참가자만 게임에 참여할 수 있습니다."),
     GAME_SESSION_ALREADY_ACTIVE(HttpStatus.CONFLICT, "GAME_SESSION_ALREADY_ACTIVE", "이미 게임이 진행 중입니다."),
     GAME_NOT_SETTER(HttpStatus.FORBIDDEN, "GAME_NOT_SETTER", "출제자만 포즈를 제출할 수 있습니다."),
+    GAME_NEED_MORE_PLAYERS(HttpStatus.CONFLICT, "GAME_NEED_MORE_PLAYERS", "이 게임은 2명 이상부터 시작할 수 있습니다."),
     GAME_POSE_INVALID(HttpStatus.BAD_REQUEST, "GAME_POSE_INVALID", "포즈 데이터가 올바르지 않습니다."),
 
     // signal
