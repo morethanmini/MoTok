@@ -523,6 +523,8 @@ function applyGameEvent(e: GameEvent) {
 useRhythmAutoJoin(roomChat, roomCode, () => {
   const entry = GAME_CATALOG.find((g) => g.id === 'rhythm')
   if (entry) activeGame.value = entry
+  picker.value = false
+  if (!captureOn.value) flash('카메라를 켜면 게임에 참여할 수 있어요')
 })
 
 function openPicker() {

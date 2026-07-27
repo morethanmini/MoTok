@@ -10,7 +10,7 @@
  */
 
 import { onScopeDispose, ref, shallowRef, watch, type Ref } from 'vue'
-import type { RhythmEvent, RhythmLiveRow, RhythmResultEntry } from './rhythmTypes'
+import type { RhythmEvent, RhythmLiveRow, RhythmResultEntry, RhythmStartEvent } from './rhythmTypes'
 import type { Difficulty } from './generator/presets'
 import type { GameMode } from './core/types'
 
@@ -35,6 +35,21 @@ export interface RhythmRound {
   durationMs: number
 }
 
+/**
+ * 게임 화면이 뜨기 **전에** 도착한 RHYTHM_START 버퍼.
+ *
+ * 비방장은 시작 신호를 받고 나서야 게임 화면을 여는데(자동 입장), STOMP 토픽은 지나간
+ * 프레임을 재전송하지 않는다 — 화면이 열린 뒤에 구독한 세션은 그 신호를 영영 못 받고
+ * "방장이 시작하기를 기다리는 중"에 멈춘다. 그래서 방에 있는 동안 항상 듣고 있는
+ * 감시자(useRhythmAutoJoin)가 여기에 이벤트를 맡겨 두고, 세션이 만들어질 때
+ * 같은 방 + 아직 진행 중인 라운드면 꺼내 쓴다.
+ */
+let stashedStart: { roomId: string; event: RhythmStartEvent; receivedAtMs: number } | null = null
+
+export function stashRhythmStart(roomId: string, event: RhythmStartEvent): void {
+  stashedStart = { roomId, event, receivedAtMs: Date.now() }
+}
+
 export function useRhythmSession(roomChat: StompLike, roomId: Ref<string>) {
   const round = shallowRef<RhythmRound | null>(null)
   const results = shallowRef<RhythmResultEntry[] | null>(null)
@@ -50,9 +65,13 @@ export function useRhythmSession(roomChat: StompLike, roomId: Ref<string>) {
     live.value = {}
   }
 
-  function handle(event: RhythmEvent) {
+  /**
+   * @param receivedAtMs 이벤트를 **수신한** 로컬 시각. 버퍼에서 꺼낸 이벤트를 지금 시각으로
+   *        처리하면 화면이 늦게 열린 만큼 t=0이 밀려 전원의 노트 타이밍이 어긋난다.
+   */
+  function handle(event: RhythmEvent, receivedAtMs = Date.now()) {
     if (event.type === 'RHYTHM_START') {
-      clockOffset.value = event.serverNow - Date.now()
+      clockOffset.value = event.serverNow - receivedAtMs
       results.value = null
       live.value = {}
       round.value = {
@@ -60,9 +79,9 @@ export function useRhythmSession(roomChat: StompLike, roomId: Ref<string>) {
         seed: event.seed,
         difficulty: event.difficulty,
         mode: event.mode ?? 'catch',
-        // 서버의 serverNow 시점을 t=0으로 잡는다 — 카운트다운(서버 countdownSec)과
-        // 채보 앞 유예(LEAD_IN)가 같은 3초라 자연스럽게 맞물린다.
-        epochZeroMs: event.serverNow - clockOffset.value,
+        // 서버의 serverNow 시점을 t=0으로 잡는다(로컬로는 수신 시각). 채보 앞 유예
+        // LEAD_IN이 카운트다운을 겸하므로 전원이 같은 순간에 첫 노트를 본다.
+        epochZeroMs: receivedAtMs,
         durationMs: event.endAt - event.serverNow,
       }
       return
@@ -128,6 +147,15 @@ export function useRhythmSession(roomChat: StompLike, roomId: Ref<string>) {
     sub?.unsubscribe()
     sub = null
   })
+
+  // 구독 전에 도착해 놓친 RHYTHM_START가 있으면 그걸로 라운드를 연다.
+  // 수신 시각 기준으로 시계를 보정하므로 화면이 늦게 열려도 t=0이 어긋나지 않고,
+  // 라운드 중간이면 Stage가 그 시각부터 이어서 진행한다.
+  if (stashedStart && stashedStart.roomId === roomId.value) {
+    const { event, receivedAtMs } = stashedStart
+    const stillRunning = Date.now() < receivedAtMs + (event.endAt - event.serverNow)
+    if (stillRunning) handle(event, receivedAtMs)
+  }
 
   // ── 발행 ──────────────────────────────────────────────
 

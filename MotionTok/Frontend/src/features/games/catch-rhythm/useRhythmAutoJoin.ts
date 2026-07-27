@@ -10,6 +10,8 @@
  */
 
 import { onScopeDispose, watch, type Ref } from 'vue'
+import { stashRhythmStart } from './useRhythmSession'
+import type { RhythmEvent } from './rhythmTypes'
 
 interface StompLike {
   connected: Readonly<Ref<boolean>>
@@ -30,7 +32,12 @@ export function useRhythmAutoJoin(
     sub?.unsubscribe()
     sub = roomChat.subscribeRaw(`/topic/rooms/${roomId.value}/rhythm`, (body) => {
       try {
-        if ((JSON.parse(body) as { type?: string }).type === 'RHYTHM_START') onRoundStart()
+        const event = JSON.parse(body) as RhythmEvent
+        if (event.type !== 'RHYTHM_START') return
+        // 게임 화면은 이 신호를 받고 나서야 열리므로 이 프레임을 직접 받을 수 없다.
+        // 마운트된 세션이 꺼내 쓰도록 맡겨 둔 **뒤에** 화면을 연다(순서 중요).
+        stashRhythmStart(roomId.value, event)
+        onRoundStart()
       } catch {
         /* 손상된 프레임 무시 */
       }
