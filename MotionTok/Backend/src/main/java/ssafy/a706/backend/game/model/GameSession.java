@@ -14,6 +14,8 @@ public record GameSession(
         String sessionId,
         long gameId,
         String challenge,
+        /** 출제자 userId — 출제 페이즈가 있는 게임(게임④, S15P11A706-86)만. 게임①은 null */
+        String setterUserId,
         long startAt,
         long endAt,
         String status

@@ -27,8 +27,15 @@ public class GameCatalogSeeder implements ApplicationRunner {
 
     private final GameRepository gameRepository;
 
+    private static final String BODY_FIT_RULES =
+            "한 사람이 취한 포즈가 그대로 벽의 구멍이 되고, 나머지 전원이 자기 아바타를 그 구멍에 "
+                    + "끼워 맞추는 게임이에요. 구멍에 못 들어가면 벽에 밀려 떨어져요!";
+    private static final String BODY_FIT_CONTROLS =
+            "카메라에 상반신이 잘 보이게 앉고, 벽이 다가오면 구멍 모양과 같은 포즈를 취해요.";
+
     @Override
     public void run(ApplicationArguments args) {
+        seedBodyFit();
         Game existing = gameRepository.findById(1L).orElse(null);
         if (existing == null) {
             gameRepository.save(Game.builder()
@@ -52,5 +59,27 @@ public class GameCatalogSeeder implements ApplicationRunner {
             gameRepository.save(existing);
             log.info("game catalog backfilled: id=1 rules/controls");
         }
+    }
+
+    /** 게임④ 몸 끼워 맞추기(S15P11A706-9) 시드 — 라운드 길이는 난이도별로 서버가 계산하므로 기준값만 둔다. */
+    private void seedBodyFit() {
+        if (gameRepository.findById(4L).isPresent()) {
+            return;
+        }
+        gameRepository.save(Game.builder()
+                .id(4L)
+                .name("몸 끼워 맞추기")
+                .mode("VERSUS")
+                .minPlayers(1)
+                .maxPlayers(8)
+                .roundDurationSec(12)
+                .countdownSec(3)
+                .supportsBot(false)
+                .active(true)
+                .category("MOTION")
+                .rules(BODY_FIT_RULES)
+                .controls(BODY_FIT_CONTROLS)
+                .build());
+        log.info("game catalog seeded: id=4 몸 끼워 맞추기");
     }
 }

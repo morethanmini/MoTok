@@ -82,7 +82,7 @@ class GameSessionServiceTest {
     void 방장이_아니면_게임을_시작할_수_없다() {
         givenRoomWithHost();
 
-        assertThatThrownBy(() -> service.start(ROOM_ID, new GameStartRequest(1L, null), member))
+        assertThatThrownBy(() -> service.start(ROOM_ID, new GameStartRequest(1L, null, null), member))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.NOT_ROOM_HOST);
@@ -96,7 +96,7 @@ class GameSessionServiceTest {
                 .thenReturn(mock(ScheduledFuture.class));
         givenGame1();
 
-        service.start(ROOM_ID, new GameStartRequest(1L, "orion"), host);
+        service.start(ROOM_ID, new GameStartRequest(1L, "orion", null), host);
 
         verify(liveRoomRepository).updateStatus(ROOM_ID, "PLAYING");
         verify(gameTaskScheduler).schedule(any(Runnable.class), any(Instant.class));
@@ -119,12 +119,50 @@ class GameSessionServiceTest {
         when(gameRepository.findById(4L)).thenReturn(Optional.of(Game.builder()
                 .id(4L).name("몸 끼워 맞추기").roundDurationSec(15).countdownSec(3).active(true).build()));
 
-        service.start(ROOM_ID, new GameStartRequest(4L, null), host);
+        service.start(ROOM_ID, new GameStartRequest(4L, null, "hard"), host);
 
         verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
         GameEventResponse event = eventCaptor.getValue();
         assertThat(event.challenge()).isNull();
         assertThat(event.constellationKey()).isNull();
+        // 게임④(-86): 출제자 = 방장, 난이도 릴레이, 라운드 = 출제 5s + 접근 5s(hard)
+        assertThat(event.setterUserId()).isEqualTo("1");
+        assertThat(event.difficulty()).isEqualTo("hard");
+        assertThat(event.endAt() - event.startAt()).isEqualTo(10_000);
+    }
+
+    /** 게임④ 출제 페이즈(-86): 출제자 포즈 제출 → challenge 저장 + POSE_SET 배포. */
+    @Test
+    void 출제자가_포즈를_제출하면_POSE_SET을_배포한다() {
+        when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
+        when(membershipReader.isMember(eq(ROOM_ID), any())).thenReturn(true);
+        long now = System.currentTimeMillis();
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(
+                new GameSession("s4", 4L, null, "1", now - 1_000, now + 11_000, GameSession.STATUS_PLAYING)));
+
+        service.submitPose(ROOM_ID, new ssafy.a706.backend.game.dto.PoseSubmitRequest("[[0.5,0.5,1]]"), host);
+
+        verify(sessionRepository).updateChallenge(ROOM_ID, "[[0.5,0.5,1]]");
+        verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
+        GameEventResponse event = eventCaptor.getValue();
+        assertThat(event.type()).isEqualTo(GameEventResponse.EventType.POSE_SET);
+        assertThat(event.challenge()).isEqualTo("[[0.5,0.5,1]]");
+        assertThat(event.setterUserId()).isEqualTo("1");
+    }
+
+    @Test
+    void 출제자가_아니면_포즈_제출이_거부된다() {
+        when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
+        when(membershipReader.isMember(eq(ROOM_ID), any())).thenReturn(true);
+        long now = System.currentTimeMillis();
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(
+                new GameSession("s4", 4L, null, "1", now - 1_000, now + 11_000, GameSession.STATUS_PLAYING)));
+
+        assertThatThrownBy(() -> service.submitPose(
+                ROOM_ID, new ssafy.a706.backend.game.dto.PoseSubmitRequest("[[0.5,0.5,1]]"), member))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.GAME_NOT_SETTER);
     }
 
     @Test
@@ -132,10 +170,10 @@ class GameSessionServiceTest {
         givenRoomWithHost();
         long now = System.currentTimeMillis();
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(
-                new GameSession("s1", 1L, "orion", now, now + 30_000, GameSession.STATUS_PLAYING)));
+                new GameSession("s1", 1L, "orion", null, now, now + 30_000, GameSession.STATUS_PLAYING)));
         givenGame1();
 
-        assertThatThrownBy(() -> service.start(ROOM_ID, new GameStartRequest(1L, null), host))
+        assertThatThrownBy(() -> service.start(ROOM_ID, new GameStartRequest(1L, null, null), host))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.GAME_SESSION_ALREADY_ACTIVE);
@@ -147,7 +185,7 @@ class GameSessionServiceTest {
         when(membershipReader.isMember(eq(ROOM_ID), any())).thenReturn(true);
         long now = System.currentTimeMillis();
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(
-                new GameSession("s1", 1L, "orion", now - 5_000, now + 25_000, GameSession.STATUS_PLAYING)));
+                new GameSession("s1", 1L, "orion", null, now - 5_000, now + 25_000, GameSession.STATUS_PLAYING)));
         when(sessionRepository.saveScoreIfAbsent(eq(ROOM_ID), any())).thenReturn(false);
 
         service.finish(ROOM_ID, new GameFinishRequest(95, 5), member);
@@ -161,7 +199,7 @@ class GameSessionServiceTest {
         when(membershipReader.isMember(eq(ROOM_ID), any())).thenReturn(true);
         long now = System.currentTimeMillis();
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(
-                new GameSession("s1", 1L, "orion", now - 5_000, now + 25_000, GameSession.STATUS_PLAYING)));
+                new GameSession("s1", 1L, "orion", null, now - 5_000, now + 25_000, GameSession.STATUS_PLAYING)));
         ArgumentCaptor<GamePlayerScore> scoreCaptor = ArgumentCaptor.forClass(GamePlayerScore.class);
         when(sessionRepository.saveScoreIfAbsent(eq(ROOM_ID), scoreCaptor.capture())).thenReturn(true);
         when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
@@ -183,14 +221,14 @@ class GameSessionServiceTest {
                 .thenReturn(mock(ScheduledFuture.class));
         givenGame1();
 
-        service.start(ROOM_ID, new GameStartRequest(1L, "gemini"), host);
+        service.start(ROOM_ID, new GameStartRequest(1L, "gemini", null), host);
         verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
         String sessionId = eventCaptor.getValue().sessionId();
 
         // 라운드 종료 시각 도달 — 예약된 정산 실행
         when(sessionRepository.tryAcquireEndGuard(ROOM_ID, sessionId)).thenReturn(true);
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(
-                new GameSession(sessionId, 1L, "gemini", 0, 1, GameSession.STATUS_PLAYING)));
+                new GameSession(sessionId, 1L, "gemini", null, 0, 1, GameSession.STATUS_PLAYING)));
         when(sessionRepository.findScores(ROOM_ID)).thenReturn(Map.of(
                 "2", new GamePlayerScore("2", "참가자", 88, Map.of("starsHit", 5), 1000)));
         when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
