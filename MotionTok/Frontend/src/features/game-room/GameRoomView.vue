@@ -249,15 +249,13 @@ watch(roomChat.messages, (all, prev) => {
       kind: m.type,
       gameName: m.gameName,
     })
-    // 게임 제안 카드는 계속 보이게 두고, 일반 채팅만 잠시 후 사라진다.
+    // 게임 제안 카드도 일반 채팅과 동일하게 잠시 후 사라진다.
     // (6개 초과로 밀려날 때는 그대로 바로 사라지고, 시간이 지나 사라질 때만 흐려지며 사라진다)
-    if (m.type === 'TALK') {
-      setTimeout(() => {
-        const target = bubbles.value.find((b) => b.id === id)
-        if (target) target.fading = true
-      }, BUBBLE_LIFETIME_MS - BUBBLE_FADE_MS)
-      setTimeout(() => (bubbles.value = bubbles.value.filter((b) => b.id !== id)), BUBBLE_LIFETIME_MS)
-    }
+    setTimeout(() => {
+      const target = bubbles.value.find((b) => b.id === id)
+      if (target) target.fading = true
+    }, BUBBLE_LIFETIME_MS - BUBBLE_FADE_MS)
+    setTimeout(() => (bubbles.value = bubbles.value.filter((b) => b.id !== id)), BUBBLE_LIFETIME_MS)
   }
 })
 watch(
@@ -853,13 +851,13 @@ const startHint = computed(() =>
               class="px bubble"
               :class="{ me: b.me, suggest: b.kind === 'GAME_SUGGEST', fading: b.fading }"
             >
-              <button v-if="!b.me && isMember" class="bubble-report" title="신고" @click="openReport(b)">
+              <button v-if="!b.me && isMember && b.kind !== 'GAME_SUGGEST'" class="bubble-report" title="신고" @click="openReport(b)">
                 <ReportIcon />
               </button>
               <template v-if="b.kind === 'GAME_SUGGEST'">
                 <span class="bubble-name">🎮 {{ b.nickname }}</span> {{ b.text }}
                 <button v-if="amRoomHost" class="px suggest-pick" @click="selectSuggested(b.gameName)">
-                  이 게임으로 선택
+                  &gt; 플레이
                 </button>
               </template>
               <template v-else>
@@ -905,7 +903,7 @@ const startHint = computed(() =>
                 class="px bubble full"
                 :class="{ me: b.me, suggest: b.kind === 'GAME_SUGGEST' }"
               >
-                <button v-if="!b.me && isMember" class="bubble-report" title="신고" @click="openReport(b)">
+                <button v-if="!b.me && isMember && b.kind !== 'GAME_SUGGEST'" class="bubble-report" title="신고" @click="openReport(b)">
                   <ReportIcon />
                 </button>
                 <template v-if="b.kind === 'GAME_SUGGEST'">
@@ -1227,7 +1225,7 @@ const startHint = computed(() =>
 .bubble.suggest { background: var(--c-mint-soft); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .bubble-name { display: block; margin-bottom: 3px; font-size: 10px; font-weight: 800; color: #2f9e3d; }
 .bubble-name.me { color: #c97e00; }
-.suggest-pick { border: 2px solid var(--c-ink-soft); border-radius: 8px; background: var(--c-yellow); padding: 5px 8px; font-size: 8px; font-weight: 700; }
+.suggest-pick { align-self: flex-end; border: 2px solid var(--c-ink-soft); border-radius: 8px; background: var(--c-yellow); padding: 5px 8px; font-size: 8px; font-weight: 700; }
 
 /* 메시지 신고 버튼 — 말풍선 안쪽 우상단, 테두리 없이 아이콘만 */
 .bubble-report {
