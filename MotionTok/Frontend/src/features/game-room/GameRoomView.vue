@@ -26,6 +26,9 @@ import CreateRoomModal, { type NewRoom } from '@/features/lobby/components/Creat
 const FingerStarGame = defineAsyncComponent(
   () => import('@/features/games/finger-star/FingerStarGame.vue'),
 )
+const BodyFitGame = defineAsyncComponent(
+  () => import('@/features/games/body-fit/BodyFitGame.vue'),
+)
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -418,6 +421,8 @@ const suggestCooldown = ref(false)
 const activeGame = ref<GameEntry | null>(null)
 const activeSession = ref<ActiveGameSession | null>(null)
 const gameResults = ref<GameResultEntry[] | null>(null)
+/** 게임④(-86): POSE_SET으로 도착한 출제 포즈(랜드마크 JSON) — 벽 생성 입력 */
+const poseChallenge = ref<string | null>(null)
 
 // ── 게임 화면 송출 — 게임 중에는 카메라와 함께 게임 캔버스를 화면공유 트랙으로 발행한다.
 // 다른 참가자는 타일마다 게임 화면 ↔ 카메라를 토글로 골라 본다(ParticipantTile).
@@ -472,12 +477,15 @@ function applyGameEvent(e: GameEvent) {
     if (!entry) return
     gameResults.value = null
     liveScores.value = {}
+    poseChallenge.value = null
     activeSession.value = {
       sessionId: e.sessionId,
       constellationKey: e.constellationKey,
       startAt: e.startAt,
       endAt: e.endAt,
       clockOffset: e.serverNow - Date.now(),
+      setterUserId: e.setterUserId ?? null,
+      difficulty: e.difficulty ?? null,
     }
     activeGame.value = entry
     picker.value = false
@@ -486,6 +494,10 @@ function applyGameEvent(e: GameEvent) {
   }
   // 이하 이벤트는 현재 세션 것만 반영(닫은 뒤 늦게 도착한 프레임 방어)
   if (activeSession.value?.sessionId !== e.sessionId) return
+  if (e.type === 'POSE_SET') {
+    poseChallenge.value = e.challenge
+    return
+  }
   if (e.type === 'PROGRESS') {
     const row = liveScores.value[e.userId]
     if (row?.finished) return // 완주 확정 후의 늦은 진행 프레임은 무시
@@ -562,12 +574,27 @@ function onGameFinished(r: { constellation: string; score: number; starsHit: num
   flash(`✨ ${r.score}점 · 별 ${r.starsHit}/${r.starsTotal}`)
 }
 
+/** 게임④(-86): 출제자가 캡처한 포즈(랜드마크 JSON)를 서버로 — POSE_SET이 방 전체에 돌아온다 */
+function onPoseSubmit(pose: string) {
+  if (activeSession.value && !gameResults.value) roomChat.sendPoseSubmit(pose)
+}
+
+function onBodyFitFinished(r: { score: number; grade: string; iou: number }) {
+  if (activeSession.value) {
+    // 서버가 최초 1회만 수리하고 PLAYER_FINISHED → (전원 완주 시) GAME_END를 배포한다.
+    roomChat.sendGameFinish(r.score, 0)
+    return
+  }
+  flash(`🧱 ${r.grade} · 일치율 ${Math.round(r.iou)}%`)
+}
+
 function closeGame() {
   void lk.unpublishGameScreen()
   activeGame.value = null
   activeSession.value = null
   gameResults.value = null
   liveScores.value = {}
+  poseChallenge.value = null
 }
 
 function copyCode() {
@@ -787,6 +814,19 @@ const startHint = computed(() =>
             @close="closeGame"
             @progress="onGameProgress"
             @finished="onGameFinished"
+          />
+          <!-- 게임④ 몸 끼워 맞추기(S15P11A706-9) — 출제 포즈(POSE_SET)는 challenge로 내려준다 -->
+          <BodyFitGame
+            v-else-if="activeGame?.id === 'shape'"
+            ref="gameComp"
+            :video="selfVideoEl ?? null"
+            :session="activeSession"
+            :results="gameResults"
+            :my-user-id="myParticipantId"
+            :challenge="poseChallenge"
+            @close="closeGame"
+            @pose-submit="onPoseSubmit"
+            @finished="onBodyFitFinished"
           />
           <div class="self-label">
             <span class="c-g">{{ selfIsHost ? 'YOU · HOST' : 'YOU' }}</span>

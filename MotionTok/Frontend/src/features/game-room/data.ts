@@ -37,9 +37,9 @@ export const GAME_CATALOG: GameEntry[] = [
     howToPlay: ['카메라에 상반신 전체가 나오도록 물러서요', '화면 속 실루엣과 같은 자세를 비트에 맞춰 취해요', '정확도가 높을수록 더 높은 점수를 받아요'],
   },
   {
-    id: 'shape', gameId: 4, name: 'SHAPE MATCH', tag: '제시된 포즈 따라하기', emoji: '🤸', thumb: '#f6e6fb', playable: false,
-    description: '화면에 제시되는 포즈 실루엣을 몸으로 똑같이 만들어 맞추는 게임이에요.',
-    howToPlay: ['카메라에 몸 전체가 보이게 서요', '제시된 실루엣과 같은 포즈를 취해요', '일치율이 높을수록 점수가 올라가요'],
+    id: 'shape', gameId: 4, name: 'BODY FIT', tag: '몸으로 벽 구멍 통과하기', emoji: '🧱', thumb: '#f6e6fb', playable: true,
+    description: '출제자가 취한 포즈가 그대로 벽의 구멍이 되고, 다가오는 벽의 구멍에 아바타를 끼워 맞추는 게임이에요. 못 맞추면 벽에 밀려 떨어져요!',
+    howToPlay: ['카메라에 상반신이 잘 보이게 앉아요', '출제자가 3초 뒤 포즈를 취하면 그 모양이 벽 구멍이 돼요', '벽이 도착하기 전에 구멍과 같은 포즈로 맞추세요 — 유령 실루엣에 맞추면 PERFECT!'],
   },
   {
     id: 'punch', gameId: 5, name: 'RHYTHM PUNCH', tag: '비트에 맞춰 펀치', emoji: '🥊', thumb: '#fbe2e2', playable: false,

@@ -474,9 +474,22 @@ export type GameEvent =
       sessionId: string
       gameId: number
       constellationKey: string
+      /** 게임별 과제 payload(-137) — 게임④는 출제 후 POSE_SET으로 도착하므로 시작 시 null */
+      challenge?: string | null
+      /** 게임④ 출제자 userId(-86) — 그 외 게임은 null */
+      setterUserId?: string | null
+      /** 게임④ 난이도(easy/normal/hard, -86) */
+      difficulty?: string | null
       serverNow: number
       startAt: number
       endAt: number
+    }
+  | {
+      /** 게임④ 출제자 포즈 확정(-86) — challenge는 정규화 랜드마크 JSON */
+      type: 'POSE_SET'
+      sessionId: string
+      challenge: string
+      setterUserId: string
     }
   | {
       type: 'PROGRESS'

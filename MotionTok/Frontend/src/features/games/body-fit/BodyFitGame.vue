@@ -9,19 +9,50 @@
  * 서버 타이머)는 -86/-48에서 세션 이벤트에 연결한다. 화면 구성 요소(게이지·타이머·
  * 썸네일·접근 바·등급 팝업·캠 스켈레톤 PiP)는 멀티에서도 그대로 쓰인다.
  */
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import type { GameResultEntry } from '@/api/types'
 import { usePoseLandmarker, type PoseLandmarkerResult } from '@/composables/usePoseLandmarker'
+import type { ActiveGameSession } from '../session'
 import { defaultConfig, type DifficultyKey, type Grade } from './config'
 import { PoseSmoother } from './oneEuro'
 import { AvatarRig } from './avatarRig'
-import { normalizePose, type LandmarkPoint, type SolvedSkeleton } from './skeleton'
+import {
+  createSkeletonState,
+  normalizePose,
+  solveSkeleton,
+  type LandmarkPoint,
+  type SolvedSkeleton,
+} from './skeleton'
 import { drawSilhouette } from './silhouette'
 import { holeMarginFor, judgeRound, type RoundJudgment } from './judge'
 import { createStage, type Stage } from './stage'
 import { createWall, type WallHandle } from './wall'
 
+const props = defineProps<{
+  /** 게임룸 셀프 타일의 <video> — 있으면 카메라를 새로 열지 않고 재사용한다 (게임① 패턴) */
+  video?: HTMLVideoElement | null
+  /** 멀티플레이 세션(GAME_START). null이면 솔로 모드(개발 라우트) */
+  session?: ActiveGameSession | null
+  /** GAME_END 순위 — 도착 전까지 "집계 중" 표시 */
+  results?: GameResultEntry[] | null
+  myUserId?: string | null
+  /** POSE_SET으로 도착한 출제 포즈(랜드마크 JSON) — 벽 생성 입력 */
+  challenge?: string | null
+}>()
+const emit = defineEmits<{
+  close: []
+  /** 멀티: 내가 출제자일 때 캡처한 포즈(랜드마크 JSON) → 부모가 STOMP 발신 */
+  'pose-submit': [pose: string]
+  /** 멀티: 판정 확정 → 부모가 finish 발신. 솔로: 토스트용 */
+  finished: [payload: { score: number; grade: Grade; iou: number }]
+}>()
+
 const cfg = reactive(defaultConfig())
 const pose = usePoseLandmarker()
+const isMultiplayer = computed(() => !!props.session)
+const isSetter = computed(
+  () => !!props.session?.setterUserId && props.session.setterUserId === props.myUserId,
+)
 
 const videoRef = ref<HTMLVideoElement>()
 const glCanvasRef = ref<HTMLCanvasElement>()
@@ -29,7 +60,7 @@ const viewportRef = ref<HTMLDivElement>()
 const pipOverlayRef = ref<HTMLCanvasElement>()
 const thumbRef = ref<HTMLCanvasElement>()
 
-type Phase = 'idle' | 'setting' | 'incoming' | 'result'
+type Phase = 'idle' | 'wait' | 'setting' | 'incoming' | 'result'
 const phase = ref<Phase>('idle')
 const round = ref(0)
 const timerSec = ref(0)
@@ -65,9 +96,13 @@ function setDifficulty(key: DifficultyKey) {
 }
 
 const phaseLabel = computed(() => {
-  if (phase.value === 'setting') return '포즈를 취하세요!'
+  if (phase.value === 'wait') return '곧 시작합니다 — 카메라 앞에 준비!'
+  if (phase.value === 'setting') {
+    if (!isMultiplayer.value || isSetter.value) return '포즈를 취하세요! 이 포즈가 벽 구멍이 됩니다'
+    return '출제자가 포즈를 만드는 중 — 따라할 준비!'
+  }
   if (phase.value === 'incoming') return '벽이 다가옵니다 — 구멍에 맞추세요!'
-  if (phase.value === 'result') return '판정!'
+  if (phase.value === 'result') return isMultiplayer.value && !props.results ? '집계 중…' : '판정!'
   return tracked.value ? '시작을 누르면 3초 뒤 내 포즈가 벽이 됩니다' : '카메라 앞에 서주세요'
 })
 
@@ -105,6 +140,35 @@ let approachStart = 0
 let resultAt = 0
 let lastLiveJudge = 0
 const WALL_START_Z = -12
+
+// ── 멀티 라운드 상태 (서버 타임라인 기반, -86) ──
+/** 출제 페이즈 길이 — 서버 BODY_FIT_SETTING_MILLIS와 동기화 */
+const SETTING_MS = 5000
+/** 필터 통과된 마지막 랜드마크 — 출제 캡처(전송) 원본 */
+let lastSmoothed: LandmarkPoint[] | null = null
+let poseSubmitted = false
+let finishedSent = false
+
+/** 멀티: 서버 보정 시각 (게임① 패턴) */
+function serverNow(): number {
+  return Date.now() + (props.session?.clockOffset ?? 0)
+}
+
+/** 랜드마크 → 전송 포맷: [[x,y,z,visibility]×33], 소수 4자리 (~2KB, §9-2) */
+function serializePose(lm: LandmarkPoint[]): string {
+  const r = (v: number) => Math.round(v * 10000) / 10000
+  return JSON.stringify(lm.map((p) => [r(p.x), r(p.y), r(p.z ?? 0), r(p.visibility ?? 0)]))
+}
+
+function parsePose(json: string): LandmarkPoint[] {
+  const raw = JSON.parse(json) as number[][]
+  return raw.map((p) => ({ x: p[0] ?? 0, y: p[1] ?? 0, z: p[2], visibility: p[3] }))
+}
+
+function applyDifficulty(key: string | null | undefined) {
+  const k = (key ?? 'easy') as DifficultyKey
+  if (cfg.difficulty[k]) setDifficulty(k)
+}
 /** 캠 PiP 스켈레톤 연결선 (상반신 + 힙 라인) */
 const PIP_BONES: [number, number][] = [
   [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24],
@@ -144,7 +208,29 @@ function drawThumbnail(setter: SolvedSkeleton) {
   drawSilhouette(ctx, setter, cfg, 0)
 }
 
-function tick(now: number) {
+/** 실시간 판정(4Hz) — 게이지 갱신 + 삐져나온 세그먼트 즉시 빨강 (§7-4) */
+function liveJudge(now: number) {
+  if (setterPose && rig.lastSolved && now - lastLiveJudge > 250) {
+    lastLiveJudge = now
+    const live = judgeRound(rig.lastSolved, setterPose, holeMargin, cfg)
+    liveIou.value = live.iou
+    rig.setOverflow(live.overflow)
+  }
+}
+
+function finalizeJudgment(): RoundJudgment {
+  const result =
+    setterPose && rig.lastSolved
+      ? judgeRound(rig.lastSolved, setterPose, holeMargin, cfg)
+      : { outsideRatio: 1, passed: false, iou: 0, grade: 'FAIL' as Grade, overflow: [] }
+  judgment.value = result
+  liveIou.value = result.iou
+  rig.setOverflow(result.overflow)
+  return result
+}
+
+/** 솔로 모드(개발 라우트) — 로컬 타이머 루프 */
+function tickSolo(now: number) {
   if (phase.value === 'setting') {
     timerSec.value = Math.max(0, Math.ceil((captureAt - now) / 1000))
     if (now >= captureAt && rig.lastSolved) {
@@ -163,22 +249,13 @@ function tick(now: number) {
     timerSec.value = Math.max(0, Math.ceil((cfg.wall.approachMs - (now - approachStart)) / 1000))
     approachPct.value = Math.round(t * 100)
     wall.mesh.position.z = WALL_START_Z * (1 - easeIn(t))
-
-    // 실시간 판정(4Hz) — 게이지 갱신 + 삐져나온 세그먼트 즉시 빨강 (§7-4)
-    if (setterPose && rig.lastSolved && now - lastLiveJudge > 250) {
-      lastLiveJudge = now
-      const live = judgeRound(rig.lastSolved, setterPose, holeMargin, cfg)
-      liveIou.value = live.iou
-      rig.setOverflow(live.overflow)
-    }
+    liveJudge(now)
 
     if (t >= 1 && setterPose && rig.lastSolved) {
-      const result = judgeRound(rig.lastSolved, setterPose, holeMargin, cfg)
-      judgment.value = result
-      liveIou.value = result.iou
-      rig.setOverflow(result.overflow)
+      const result = finalizeJudgment()
       totalScore.value += GRADE_POINTS[result.grade]
       history.value.unshift({ round: round.value, grade: result.grade, iou: result.iou })
+      emit('finished', { score: GRADE_POINTS[result.grade], grade: result.grade, iou: result.iou })
       resultAt = now
       phase.value = 'result'
     }
@@ -194,15 +271,98 @@ function tick(now: number) {
   }
 }
 
+/** 멀티 모드 — 서버 타임라인(startAt=출제 시작, endAt=벽 도착)에 페이즈를 맞춘다 */
+function tickMulti(now: number) {
+  const s = props.session!
+  const srv = serverNow()
+  const settingEnd = s.startAt + SETTING_MS
+
+  if (srv < s.startAt) {
+    phase.value = 'wait'
+    timerSec.value = Math.max(0, Math.ceil((s.startAt - srv) / 1000))
+    return
+  }
+  if (srv < settingEnd) {
+    phase.value = 'setting'
+    timerSec.value = Math.max(0, Math.ceil((settingEnd - srv) / 1000))
+    // 출제자: 마감 직전 프레임을 캡처해 전송 — 서버가 POSE_SET으로 전원에게 재방송
+    if (isSetter.value && !poseSubmitted && srv >= settingEnd - 150 && lastSmoothed) {
+      poseSubmitted = true
+      emit('pose-submit', serializePose(lastSmoothed))
+    }
+    return
+  }
+  if (srv < s.endAt) {
+    phase.value = 'incoming'
+    timerSec.value = Math.max(0, Math.ceil((s.endAt - srv) / 1000))
+    const t = Math.min(1, (srv - settingEnd) / Math.max(1, s.endAt - settingEnd))
+    approachPct.value = Math.round(t * 100)
+    if (wall.mesh.visible) wall.mesh.position.z = WALL_START_Z * (1 - easeIn(t))
+    liveJudge(now)
+    return
+  }
+  // 벽 도착 — 프레임 1장 판정, 1회만 제출 (서버도 최초 1회만 수리)
+  if (!finishedSent) {
+    finishedSent = true
+    const result = finalizeJudgment()
+    emit('finished', { score: GRADE_POINTS[result.grade], grade: result.grade, iou: result.iou })
+  }
+  phase.value = 'result'
+  if (judgment.value?.passed && wall.mesh.visible) {
+    wall.mesh.position.z += 0.12
+    if (wall.mesh.position.z > 4) wall.mesh.visible = false
+  }
+}
+
 function renderLoop() {
   rafId = requestAnimationFrame(renderLoop)
   if (!stage) return
-  tick(performance.now())
+  if (isMultiplayer.value && props.session) tickMulti(performance.now())
+  else tickSolo(performance.now())
   const camera = stage.camera
   camera.position.x += (rig.group.position.x * 0.35 - camera.position.x) * 0.06
   camera.lookAt(0, -0.5, 0)
   stage.render()
 }
+
+// 멀티: 세션 시작 → 난이도 적용 + 라운드 상태 초기화
+watch(
+  () => props.session,
+  (s) => {
+    if (!s) return
+    applyDifficulty(s.difficulty)
+    judgment.value = null
+    liveIou.value = 0
+    setterPose = null
+    poseSubmitted = false
+    finishedSent = false
+    round.value = 1
+    if (wall) wall.mesh.visible = false
+    rig?.setOverflow([])
+  },
+  { immediate: true },
+)
+
+// 멀티: POSE_SET 도착 → 전원이 같은 렌더 함수로 같은 벽을 만든다 (§9-2)
+watch(
+  () => props.challenge,
+  (ch) => {
+    if (!ch || !isMultiplayer.value || !wall) return
+    try {
+      const normalized = normalizePose(parsePose(ch), true)
+      if (!normalized) return
+      setterPose = solveSkeleton(normalized, cfg.avatar, createSkeletonState())
+      holeMargin = holeMarginFor(setterPose, cfg)
+      wall.build(setterPose, holeMargin, cfg)
+      wall.mesh.position.z = WALL_START_Z
+      wall.mesh.visible = true
+      drawThumbnail(setterPose)
+      lastLiveJudge = 0
+    } catch {
+      /* 손상된 포즈 payload — 벽 없이 진행되면 도착 시 FAIL 처리된다 */
+    }
+  },
+)
 
 /** 캠 PiP 스켈레톤 오버레이 — "내 몸 → 인식 → 아바타" 인과 증명 (§6-3) */
 function drawPip(lm: LandmarkPoint[] | null) {
@@ -240,6 +400,7 @@ function onPose(result: PoseLandmarkerResult) {
   drawPip(lm ?? null)
   if (!lm) return
   const smoothed = smoother.apply(lm, performance.now())
+  lastSmoothed = smoothed
   const normalized = normalizePose(smoothed, true) // 셀프뷰 표준 — 미러 고정
   if (normalized) rig.updatePose(normalized)
 }
@@ -260,6 +421,15 @@ onMounted(async () => {
   resize()
   renderLoop()
 
+  // 멀티(게임룸): 셀프 타일 비디오를 재사용 — 카메라를 새로 열지 않는다 (S15P11A706-33 패턴)
+  if (props.video && isMultiplayer.value) {
+    const pip = videoRef.value!
+    pip.srcObject = props.video.srcObject
+    pip.play().catch(() => {})
+    await pose.start(props.video, onPose)
+    return
+  }
+
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       video: { width: 640, height: 480 },
@@ -275,6 +445,9 @@ onMounted(async () => {
   await pose.start(video, onPose)
 })
 
+/** 게임룸이 게임 화면을 captureStream으로 송출할 수 있게 3D 캔버스를 노출 (게임① 패턴) */
+defineExpose({ canvas: glCanvasRef })
+
 onBeforeUnmount(() => {
   cancelAnimationFrame(rafId)
   stream?.getTracks().forEach((t) => t.stop())
@@ -287,17 +460,19 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="game">
+  <div class="game" :class="{ embedded: isMultiplayer }">
     <header class="topbar">
       <span class="pill round-pill">{{ round }} 라운드</span>
       <span class="pill phase-pill">{{ camError ?? phaseLabel }}</span>
       <span
-        v-if="phase === 'setting' || phase === 'incoming'"
+        v-if="phase === 'wait' || phase === 'setting' || phase === 'incoming'"
         class="pill timer-pill"
         :class="{ urgent: phase === 'incoming' && timerSec <= 2 }"
         >00:{{ String(timerSec).padStart(2, '0') }}</span
       >
-      <span class="pill setter-pill">👑 출제자 나 (솔로)</span>
+      <span class="pill setter-pill">
+        👑 출제자 {{ isMultiplayer ? (isSetter ? '나!' : '상대') : '나 (솔로)' }}
+      </span>
     </header>
 
     <div class="main">
@@ -370,6 +545,7 @@ onBeforeUnmount(() => {
         </div>
 
         <button
+          v-if="!isMultiplayer"
           class="btn-start"
           :disabled="!tracked || phase === 'setting' || phase === 'incoming'"
           @click="startRound"
@@ -377,7 +553,7 @@ onBeforeUnmount(() => {
           ▶ {{ round === 0 ? '시작' : '다음 라운드' }}
         </button>
 
-        <div class="card diff-card">
+        <div v-if="!isMultiplayer" class="card diff-card">
           <h3>난이도</h3>
           <div class="diff-buttons">
             <button
@@ -393,6 +569,21 @@ onBeforeUnmount(() => {
         </div>
       </aside>
     </div>
+
+    <!-- 멀티: GAME_END 순위 오버레이 -->
+    <div v-if="results" class="results-overlay">
+      <div class="results-card">
+        <h2>🏁 라운드 결과</h2>
+        <ol class="results-list">
+          <li v-for="r in results" :key="r.userId" :class="{ me: r.userId === myUserId }">
+            <span class="rank">{{ r.rank }}위</span>
+            <span class="name">{{ r.nickname }}</span>
+            <b class="pts">{{ r.score }}점</b>
+          </li>
+        </ol>
+        <button class="btn-start" @click="emit('close')">닫기</button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -406,6 +597,67 @@ onBeforeUnmount(() => {
   background: var(--c-cream);
   color: var(--c-ink);
   font-family: var(--font-pixel);
+}
+/* 게임룸 셀프 타일 위 오버레이(멀티) — 자체 페이지가 아니라 타일을 채운다 */
+.game.embedded {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  z-index: 5;
+  border-radius: inherit;
+}
+.results-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  background: rgba(56, 38, 61, 0.45);
+}
+.results-card {
+  min-width: 300px;
+  padding: 20px;
+  background: var(--c-paper);
+  border: var(--border-thick);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.results-card h2 {
+  font-size: 18px;
+  font-weight: 800;
+}
+.results-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.results-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--c-paper);
+  font-size: 14px;
+}
+.results-list li.me {
+  background: var(--c-mint-soft);
+}
+.results-list .rank {
+  font-weight: 800;
+  width: 34px;
+}
+.results-list .name {
+  flex: 1;
+}
+.results-list .pts {
+  font-variant-numeric: tabular-nums;
 }
 .topbar {
   display: flex;

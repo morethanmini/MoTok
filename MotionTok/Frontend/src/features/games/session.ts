@@ -7,4 +7,8 @@ export interface ActiveGameSession {
   endAt: number
   /** serverNow - Date.now() — 클라이언트 시계 보정값 */
   clockOffset: number
+  /** 게임④(-86): 출제자 userId — 내가 출제자면 출제 페이즈에 포즈를 제출한다 */
+  setterUserId?: string | null
+  /** 게임④(-86): 난이도(easy/normal/hard) — 벽 접근 시간·구멍 여유 */
+  difficulty?: string | null
 }
