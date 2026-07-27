@@ -60,6 +60,8 @@ export type RhythmEvent =
       results: RhythmResultEntry[]
     }
 
+export type RhythmStartEvent = Extract<RhythmEvent, { type: 'RHYTHM_START' }>
+
 /** 라운드 진행 중 화면에 띄우는 상대 점수 한 줄 */
 export interface RhythmLiveRow {
   userId: string
