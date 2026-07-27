@@ -97,6 +97,23 @@ turn:
   secret: ${TURN_SECRET:}
   credential-ttl-seconds: ${TURN_CREDENTIAL_TTL:600}
 
+# S3 스토리지. endpoint 미설정 시 실제 AWS로 붙는다(설정 시 MinIO 등 S3 호환 서버).
+# public-base-url은 조립하지 않고 그대로 쓴다 — path-style ↔ virtual-hosted 주소 방식이 달라
+# 코드에서 문자열로 만들면 로컬(MinIO)과 운영(AWS)에서 다르게 깨진다.
+# bucket/public-base-url 에 기본값(빈 값)을 두는 이유 — 미설정 시 '업로드 기능만' 비활성으로
+# degrade 시키기 위해서다. 기본값이 없으면 CI 변수를 등록하기 전에 배포가 나가는 순간
+# 플레이스홀더 해석 실패로 앱 전체가 기동하지 못한다(LIVEKIT_*·TURN_SECRET 과 같은 정책).
+# 대신 미설정 상태로 업로드를 호출하면 STORAGE_UNAVAILABLE 로 명확히 실패한다.
+storage:
+  bucket: ${S3_BUCKET:}
+  region: ${S3_REGION:ap-northeast-2}
+  endpoint: ${S3_ENDPOINT:}
+  path-style: ${S3_PATH_STYLE:false}
+  access-key: ${S3_ACCESS_KEY:}
+  secret-key: ${S3_SECRET_KEY:}
+  public-base-url: ${S3_PUBLIC_BASE_URL:}
+  presign-ttl: ${S3_PRESIGN_TTL:3m}
+
 app:
   # Frontend dev origin(s) for CORS (Vite default 5173)
   cors:

@@ -99,6 +99,9 @@ public class SecurityConfig {
                             .requestMatchers("/api/invitations/**").hasRole("USER")
                             // 회원 전용 — 접속 상태는 친구에게 보여주기 위한 것이라 친구를 가질 수 없는 게스트는 대상이 아니다
                             .requestMatchers("/api/presence/**").hasRole("USER")
+                            // 회원 전용 — 업로드 key가 userId로 갈리므로(public/avatars/{userId}/) 게스트는 대상이 아니다.
+                            // 용도별 권한(SONG은 ADMIN)은 한 엔드포인트 안에서 갈려 경로 규칙으로 표현할 수 없어 컨트롤러가 확인한다.
+                            .requestMatchers("/api/uploads/**").hasRole("USER")
                             // 관리자 전용(-133) — role claim이 ADMIN인 토큰만(JwtAuthenticationFilter가 ROLE_ADMIN 부여)
                             .requestMatchers("/api/admin/**", "/api/v1/admin/**").hasRole("ADMIN")
                             // 나머지(개별 방 조회·나가기·화상 토큰·ICE·로그아웃 등)는 회원+게스트 공통 — 유효한 JWT 필수
