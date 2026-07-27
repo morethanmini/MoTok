@@ -9,12 +9,14 @@
  */
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
 import { VignetteShader } from 'three/addons/shaders/VignetteShader.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
+import type { BodyFitConfig } from './config'
 
 export interface Stage {
   renderer: THREE.WebGLRenderer
@@ -28,7 +30,19 @@ export interface Stage {
   dispose(): void
 }
 
-export function createStage(canvas: HTMLCanvasElement): Stage {
+/** GLB 하위 메시 자원 해제 — geometry + material(+map) */
+export function disposeObject(root: THREE.Object3D) {
+  root.traverse((o) => {
+    if (!(o as THREE.Mesh).isMesh) return
+    const mesh = o as THREE.Mesh
+    mesh.geometry.dispose()
+    const mat = mesh.material as THREE.MeshStandardMaterial
+    mat.map?.dispose()
+    mat.dispose()
+  })
+}
+
+export function createStage(canvas: HTMLCanvasElement, cfg: BodyFitConfig): Stage {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
   const pixelRatio = Math.min(window.devicePixelRatio, 2)
   renderer.setPixelRatio(pixelRatio)
@@ -79,15 +93,28 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   spot.target.position.set(0, -0.8, 0)
   scene.add(spot, spot.target)
 
-  const podium = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.35, 1.55, 0.22, 48),
-    new THREE.MeshStandardMaterial({ color: 0x191734, roughness: 0.9, metalness: 0 }),
-  )
-  podium.receiveShadow = true
+  // 2단 원형 석재 포디움(podium.glb) — 그룹 원점이 포디움 윗면이 되도록 자식을
+  // 내려 앉혀서, setFloorY(y)가 "윗면 = 발바닥" 계약을 그대로 지킨다
+  const podium = new THREE.Group()
   scene.add(podium)
+  new GLTFLoader().load('/assets/games/body-fit/podium.glb', (gltf) => {
+    const model = gltf.scene
+    const box = new THREE.Box3().setFromObject(model)
+    const size = box.getSize(new THREE.Vector3())
+    const center = box.getCenter(new THREE.Vector3())
+    const { diameter, height } = cfg.stage.podium
+    const sXZ = diameter / Math.max(size.x, size.z)
+    const sY = height / size.y
+    model.scale.set(sXZ, sY, sXZ)
+    model.position.set(-center.x * sXZ, -box.max.y * sY, -center.z * sXZ)
+    model.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) o.receiveShadow = true
+    })
+    podium.add(model)
+  })
 
   const setFloorY = (y: number) => {
-    podium.position.y = y - 0.11 // 윗면이 발바닥에 오도록
+    podium.position.y = y
   }
   setFloorY(-2.3)
 
@@ -130,8 +157,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     setFloorY,
     dispose() {
       composer.dispose()
-      podium.geometry.dispose()
-      ;(podium.material as THREE.Material).dispose()
+      disposeObject(podium)
       scene.environment?.dispose()
       renderer.dispose()
     },

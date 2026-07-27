@@ -7,11 +7,17 @@
  * 정사각형이라 구멍과 아바타가 정확히 정렬된다.
  */
 import * as THREE from 'three'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import type { BodyFitConfig } from './config'
 import type { SolvedSkeleton } from './skeleton'
 import { VIEW, VIEW_SIZE, drawSilhouette } from './silhouette'
+import { disposeObject } from './stage'
 
 const TEX_SIZE = 512
+
+// 석판 albedo — 모듈 로드 시 한 번만 받아서 매 라운드 build()가 재사용한다
+const stoneImg = new Image()
+stoneImg.src = '/assets/games/body-fit/wall-stone.jpg'
 
 export interface WallHandle {
   mesh: THREE.Mesh
@@ -20,7 +26,7 @@ export interface WallHandle {
   dispose(): void
 }
 
-export function createWall(): WallHandle {
+export function createWall(cfg: BodyFitConfig): WallHandle {
   const mapCanvas = document.createElement('canvas')
   mapCanvas.width = mapCanvas.height = TEX_SIZE
   const alphaCanvas = document.createElement('canvas')
@@ -41,6 +47,34 @@ export function createWall(): WallHandle {
   mesh.position.set(0, (VIEW.top + VIEW.bottom) / 2, 0)
   mesh.visible = false
 
+  // 석판 프레임(wall-slab.glb) — 구멍 평면 둘레 4개 바. mesh의 자식이라
+  // 접근 z 애니메이션·visible 토글을 그대로 상속하고, 평면(정사각 뷰포트)
+  // 바깥에만 놓여 구멍·아바타 정렬에는 관여하지 않는다.
+  new GLTFLoader().load('/assets/games/body-fit/wall-slab.glb', (gltf) => {
+    const src = gltf.scene
+    const box = new THREE.Box3().setFromObject(src)
+    const size = box.getSize(new THREE.Vector3())
+    const center = box.getCenter(new THREE.Vector3())
+    const { barWidth: w, depth, inset } = cfg.stage.slabFrame
+    const half = VIEW_SIZE / 2 + w / 2 - inset // 바 중심까지 거리 — inset만큼 평면 위로 겹쳐 깨진 모서리 틈을 가린다
+    const long = VIEW_SIZE + 2 * w // 세로 바가 네 모서리까지 덮는다
+    const bars: [number, number, number, number][] = [
+      [-half, 0, w, long],
+      [half, 0, w, long],
+      [0, half, VIEW_SIZE, w],
+      [0, -half, VIEW_SIZE, w],
+    ]
+    for (const [cx, cy, sx, sy] of bars) {
+      const bar = src.clone()
+      const kx = sx / size.x
+      const ky = sy / size.y
+      const kz = depth / size.z
+      bar.scale.set(kx, ky, kz)
+      bar.position.set(cx - center.x * kx, cy - center.y * ky, -center.z * kz)
+      mesh.add(bar)
+    }
+  })
+
   function build(setter: SolvedSkeleton, margin: number, cfg: BodyFitConfig) {
     const a = alphaCanvas.getContext('2d')!
     a.fillStyle = '#fff' // alphaMap: 흰색 = 불투명 벽
@@ -52,18 +86,24 @@ export function createWall(): WallHandle {
     a.strokeStyle = '#555'
     drawSilhouette(a, setter, cfg, 0)
 
-    // 어두운 석판 — 수직 그라데이션 + 노이즈 얼룩 (컨셉 목업의 돌벽 질감 근사)
+    // 어두운 석판 — wall-stone.jpg albedo (컨셉 키비주얼의 인디고 화강암)
     const m = mapCanvas.getContext('2d')!
-    const grad = m.createLinearGradient(0, 0, 0, TEX_SIZE)
-    grad.addColorStop(0, '#2e2a58')
-    grad.addColorStop(0.5, '#242047')
-    grad.addColorStop(1, '#181532')
-    m.fillStyle = grad
-    m.fillRect(0, 0, TEX_SIZE, TEX_SIZE)
-    for (let i = 0; i < 700; i++) {
-      m.fillStyle = `rgba(${Math.random() < 0.5 ? '0,0,0' : '255,255,255'},${(Math.random() * 0.04).toFixed(3)})`
-      const w = 2 + Math.random() * 26
-      m.fillRect(Math.random() * TEX_SIZE, Math.random() * TEX_SIZE, w, w * (0.2 + Math.random()))
+    if (stoneImg.complete && stoneImg.naturalWidth) {
+      m.drawImage(stoneImg, 0, 0, TEX_SIZE, TEX_SIZE)
+      // albedo가 unlit 재질에 그대로 얹히면 밝은 라벤더로 떠서, 어둡게 눌러
+      // 석판 프레임(GLB, 어두운 씬 조명)과 한 덩어리 톤으로 맞춘다 (2026-07-28 실기)
+      m.globalCompositeOperation = 'multiply'
+      m.fillStyle = '#57527f'
+      m.fillRect(0, 0, TEX_SIZE, TEX_SIZE)
+      m.globalCompositeOperation = 'source-over'
+    } else {
+      // 이미지가 아직이면 기존 그라데이션으로 폴백 — 첫 라운드는 캡처 3초 뒤라 사실상 안 탄다
+      const grad = m.createLinearGradient(0, 0, 0, TEX_SIZE)
+      grad.addColorStop(0, '#2e2a58')
+      grad.addColorStop(0.5, '#242047')
+      grad.addColorStop(1, '#181532')
+      m.fillStyle = grad
+      m.fillRect(0, 0, TEX_SIZE, TEX_SIZE)
     }
     // 림 글로우 — 캔버스 shadowBlur 페인트 발광. alpha가 마진 안쪽을 도려내 링만 남는다
     m.shadowColor = '#7fdcff'
@@ -86,8 +126,7 @@ export function createWall(): WallHandle {
     dispose() {
       map.dispose()
       alpha.dispose()
-      mesh.geometry.dispose()
-      ;(mesh.material as THREE.Material).dispose()
+      disposeObject(mesh) // 평면 + 석판 프레임 바 전부
     },
   }
 }

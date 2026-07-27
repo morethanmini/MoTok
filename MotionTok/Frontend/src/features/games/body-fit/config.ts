@@ -62,6 +62,13 @@ export interface BodyFitConfig {
     /** 벽 접근 시간(ms) — UI 스펙 §7 */
     approachMs: number
   }
+  /** 3D 에셋 리스킨 배치 치수 (S15P11A706-9) — 아바타 공간(어깨너비=1) 단위 */
+  stage: {
+    /** podium.glb 정규화 목표 — 지름·높이 (원본 bbox 0.98×0.24×1.00) */
+    podium: { diameter: number; height: number }
+    /** wall-slab.glb 프레임 바 — 폭·두께·평면 겹침폭 (원본 bbox 0.89×1.00×0.26) */
+    slabFrame: { barWidth: number; depth: number; inset: number }
+  }
 }
 
 export type Grade = 'PERFECT' | 'GREAT' | 'PASS' | 'FAIL'
@@ -97,6 +104,11 @@ export function defaultConfig(): BodyFitConfig {
     },
     wall: {
       approachMs: 7000,
+    },
+    stage: {
+      // 기존 실린더 포디움(반경 1.35~1.55) 발자국 유지, 높이만 석재 질감이 보이게 살짝 키움
+      podium: { diameter: 3.0, height: 0.35 },
+      slabFrame: { barWidth: 0.8, depth: 0.5, inset: 0.1 },
     },
   }
 }

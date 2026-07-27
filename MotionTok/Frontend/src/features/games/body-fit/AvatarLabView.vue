@@ -92,7 +92,7 @@ let lastReplayT = Infinity
 
 function initThree(canvas: HTMLCanvasElement) {
   // 공용 무대(stage.ts) — 조명·IBL·포디움·안개는 랩과 본 게임이 공유한다
-  stage = createStage(canvas)
+  stage = createStage(canvas, cfg)
   scene = stage.scene
   camera = stage.camera
 
