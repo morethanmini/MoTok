@@ -801,11 +801,16 @@ const startHint = computed(() =>
             @progress="onGameProgress"
             @finished="onGameFinished"
           />
-          <!-- 캐치캐치리듬 — 전용 채널이라 activeSession을 쓰지 않는다(자기 생명주기 소유) -->
+          <!-- 캐치캐치리듬 — 전용 STOMP 채널이라 activeSession을 쓰지 않는다(자기 생명주기 소유).
+               roomChat은 구독/발행 구멍만 쓰고 리듬 도메인 지식은 컴포넌트 안에 있다. -->
           <CatchRhythmGame
             v-if="activeGame?.id === 'rhythm'"
             ref="gameComp"
             :video="selfVideoEl ?? null"
+            :room-id="roomCode"
+            :is-host="selfIsHost"
+            :my-user-id="myParticipantId"
+            :room-chat="roomChat"
             @close="closeGame"
           />
           <div class="self-label">

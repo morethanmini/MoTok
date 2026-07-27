@@ -31,8 +31,14 @@ const props = withDefaults(
      * 없으면 개발 페이지처럼 자체적으로 getUserMedia 한다.
      */
     video?: HTMLVideoElement | null
+    /**
+     * 게임 시각 t=0에 해당하는 **로컬** 타임스탬프.
+     * 대전에서는 서버가 준 시각(clockOffset 보정 후)을 넣어 전원의 t=0을 맞춘다.
+     * 없으면 마운트 시점이 t=0 — 솔로는 이걸로 충분하다.
+     */
+    epochZeroMs?: number | null
   }>(),
-  { durationMs: 90_000, skinId: 'cat-candy', video: null },
+  { durationMs: 90_000, skinId: 'cat-candy', video: null, epochZeroMs: null },
 )
 
 const emit = defineEmits<{
@@ -245,7 +251,10 @@ async function boot() {
       return
     }
 
-    clock.start() // t=0 시작, LEAD_IN_MS 동안 카운트다운 오버레이
+    // 대전이면 서버가 정한 t=0에 맞춰 예약 시작한다(이미 지났으면 즉시 = 늦게 들어온 참가자).
+    // 솔로는 지금이 t=0. 어느 쪽이든 LEAD_IN_MS 동안 카운트다운 오버레이가 뜬다.
+    const skewSec = props.epochZeroMs == null ? 0 : (props.epochZeroMs - Date.now()) / 1000
+    clock.start(audioCtx.currentTime + skewSec)
     phase.value = 'countdown'
     loop()
   } catch (err) {
