@@ -38,7 +38,10 @@ public class GameSessionRepository {
         Map<String, String> fields = new LinkedHashMap<>();
         fields.put("sessionId", session.sessionId());
         fields.put("gameId", String.valueOf(session.gameId()));
-        fields.put("constellationKey", session.constellationKey());
+        // 그림으로 말해요(게임 10)는 별자리가 없다 — Redis 해시에 null을 넣을 수 없어 건너뛴다
+        if (session.constellationKey() != null) {
+            fields.put("constellationKey", session.constellationKey());
+        }
         fields.put("startAt", String.valueOf(session.startAt()));
         fields.put("endAt", String.valueOf(session.endAt()));
         fields.put("status", session.status());
