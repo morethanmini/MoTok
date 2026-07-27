@@ -15,7 +15,8 @@ import {
   LANE_COUNT,
   RING_RADIUS,
   HIT_ZONE_ANGLE_DEG,
-  HIT_ZONE_RADIUS_TOL,
+  HIT_ZONE_INNER_TOL,
+  HIT_ZONE_OUTER_TOL,
   HOLD_GRACE_MS,
   HOLD_KEEP_RATIO,
   CAMP_TIMEOUT_MS,
@@ -118,7 +119,9 @@ export function holdBearingDeg(note: RingNote, tMs: number): number {
 function inZoneAt(pos: { x: number; y: number } | null, targetDeg: number): boolean {
   if (!pos) return false
   const r = Math.hypot(pos.x, pos.y)
-  if (Math.abs(r - RING_RADIUS) > HIT_ZONE_RADIUS_TOL) return false
+  // 바깥으로 뻗는 건 실수가 아니다 — 안쪽으로 들어온 것만 존 이탈로 본다
+  if (r < RING_RADIUS - HIT_ZONE_INNER_TOL) return false
+  if (r > RING_RADIUS + HIT_ZONE_OUTER_TOL) return false
   const b = bearingDeg(pos.x, pos.y)
   if (b === null) return false
   return angleDiffDeg(b, targetDeg) <= HIT_ZONE_ANGLE_DEG

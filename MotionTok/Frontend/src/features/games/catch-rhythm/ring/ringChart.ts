@@ -15,7 +15,10 @@ import { LANE_COUNT, RING_RADIUS, RING_HAND_SPEED, RING_REACH_SAFETY } from './r
 
 export interface RingPreset {
   density: number
-  /** 노트가 생겼을 때 홀드(슬라이드)가 될 확률 */
+  /**
+   * 홀드(슬라이드) 비율. **현재 전 난이도 0** — 실플레이에서 "이게 뭔지 모르겠다"는
+   * 피드백을 받아 뺐다. 판정 로직은 남아 있으니 이 값만 올리면 되살아난다.
+   */
   holdRate: number
   /** 홀드 길이 범위(ms) */
   holdDurationMs: readonly [number, number]
@@ -33,7 +36,7 @@ export interface RingPreset {
 export const RING_PRESETS: Record<Difficulty, RingPreset> = {
   EASY: {
     density: 0.18,
-    holdRate: 0.22,
+    holdRate: 0,
     holdDurationMs: [900, 1400],
     slideRate: 0.35,
     anyRate: 0.75,
@@ -43,7 +46,7 @@ export const RING_PRESETS: Record<Difficulty, RingPreset> = {
   },
   NORMAL: {
     density: 0.3,
-    holdRate: 0.25,
+    holdRate: 0,
     holdDurationMs: [800, 1300],
     slideRate: 0.5,
     anyRate: 0.6,
@@ -53,7 +56,7 @@ export const RING_PRESETS: Record<Difficulty, RingPreset> = {
   },
   HARD: {
     density: 0.44,
-    holdRate: 0.28,
+    holdRate: 0,
     holdDurationMs: [700, 1100],
     slideRate: 0.65,
     anyRate: 0.45,
