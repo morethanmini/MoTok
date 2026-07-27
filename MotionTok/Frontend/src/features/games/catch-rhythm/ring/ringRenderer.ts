@@ -287,6 +287,21 @@ export class RingRenderer {
     )
     ctx.stroke()
 
+    // 진행 방향 화살촉 — 어느 쪽으로 돌려야 하는지 한눈에 보이게
+    const dirSign = (note.laneDelta ?? 0) >= 0 ? 1 : -1
+    const tipDeg = endDeg
+    const tip = this.polarToPixels(tipDeg, RING_RADIUS)
+    const back1 = this.polarToPixels(tipDeg - dirSign * 9, RING_RADIUS * 1.12)
+    const back2 = this.polarToPixels(tipDeg - dirSign * 9, RING_RADIUS * 0.88)
+    ctx.globalAlpha = tracing ? 1 : 0.4 + 0.6 * near
+    ctx.fillStyle = color.edge
+    ctx.beginPath()
+    ctx.moveTo(tip.x, tip.y)
+    ctx.lineTo(back1.x, back1.y)
+    ctx.lineTo(back2.x, back2.y)
+    ctx.closePath()
+    ctx.fill()
+
     // head 노트
     if (!tracing) {
       const dir = laneDirection(note.lane)
