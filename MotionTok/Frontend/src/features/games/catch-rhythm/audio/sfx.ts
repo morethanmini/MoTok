@@ -23,17 +23,25 @@ export class SfxPlayer {
     this.bus.gain.value = Math.max(0, Math.min(1, v))
   }
 
-  play(spec: ToneSpec | null): void {
+  /**
+   * @param spec  스킨이 정한 음색
+   * @param combo 현재 콤보 — 쌓일수록 음이 올라가 "타고 있다"는 감각을 준다(리듬게임 관례).
+   *              반음 단위로 최대 한 옥타브까지만 올린다. 그 이상은 귀에 거슬린다.
+   */
+  play(spec: ToneSpec | null, combo = 0): void {
     if (!spec || this.ctx.state === 'closed') return
     const now = this.ctx.currentTime
     const dur = spec.durationMs / 1000
+    // 12콤보마다 반음(2^(1/12)), 최대 +12반음(한 옥타브)
+    const steps = Math.min(12, Math.floor(combo / 12))
+    const pitch = Math.pow(2, steps / 12)
 
     const osc = this.ctx.createOscillator()
     osc.type = spec.type
-    osc.frequency.setValueAtTime(spec.freq, now)
+    osc.frequency.setValueAtTime(spec.freq * pitch, now)
     if (spec.sweepTo !== undefined) {
       // 0Hz로는 못 가므로 하한을 둔다(exponentialRamp 제약)
-      osc.frequency.exponentialRampToValueAtTime(Math.max(1, spec.sweepTo), now + dur)
+      osc.frequency.exponentialRampToValueAtTime(Math.max(1, spec.sweepTo * pitch), now + dur)
     }
 
     // 클릭 노이즈 방지용 짧은 어택 + 지수 감쇠

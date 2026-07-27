@@ -19,6 +19,7 @@ const { message: toast, flash } = useToast()
 const EMOJI: Record<string, string> = {
   '핑거 스타': '✨', '리듬 펀치': '🥊', '모션 피싱': '🎣',
   '드로잉 릴레이': '🎨', '포즈 매치': '🤸', '버블 팝': '🫧',
+  '캐치캐치리듬': '🐾',
 }
 const ART: Record<string, string> = {
   '핑거 스타': '/assets/intro/constellation.png',

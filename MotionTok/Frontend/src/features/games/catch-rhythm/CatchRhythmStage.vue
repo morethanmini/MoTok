@@ -85,6 +85,27 @@ const accuracy = computed(() => {
   return total === 0 ? 0 : Math.round(((counts.value.perfect + counts.value.good) / total) * 100)
 })
 
+/** 노트를 하나도 놓치지 않았는가 — 리듬게임에서 제일 자랑스러운 결과 */
+const fullCombo = computed(
+  () => counts.value.miss === 0 && counts.value.perfect + counts.value.good > 0,
+)
+
+/**
+ * 결과 등급 — 점수가 아니라 **정확도** 기준이다.
+ * 난이도마다 만점이 다르므로(EASY ~7천 / HARD ~19천) 점수로 등급을 매기면
+ * 쉬운 난이도가 영원히 낮은 등급이 된다.
+ */
+const TIERS = [
+  { min: 98, grade: 'SS', label: '완벽해요!', color: '#ff9e3d' },
+  { min: 93, grade: 'S', label: '훌륭해요', color: '#f0803c' },
+  { min: 85, grade: 'A', label: '잘했어요', color: '#3fa87e' },
+  { min: 70, grade: 'B', label: '좋아요', color: '#4a90d9' },
+  { min: 50, grade: 'C', label: '괜찮아요', color: '#8b7fd4' },
+  { min: 0, grade: 'D', label: '다시 도전!', color: '#9b8f88' },
+] as const
+
+const tier = computed(() => TIERS.find((t) => accuracy.value >= t.min) ?? TIERS[TIERS.length - 1]!)
+
 /** 판정 파이프 — 입력 콜백과 렌더 루프 양쪽에서 부른다. */
 function pumpLogic(hands: Hands, tMs: number) {
   if (!logic || !scorer || !renderer) return
@@ -101,7 +122,8 @@ function pumpLogic(hands: Hands, tMs: number) {
         : event.note
     // 콤보를 넘겨 이펙트 크기를 키운다 — 잘 치고 있다는 감각
     renderer.spawnFx(at.x, at.y, judgement, hand, tMs, scorer.combo)
-    sfx?.play(renderer.skin.sfx[judgement])
+    // 콤보를 같이 넘긴다 — 히트음이 반음씩 올라가 "타고 있다"는 감각을 만든다
+    sfx?.play(renderer.skin.sfx[judgement], scorer.combo)
   }
   score.value = scorer.score
   combo.value = scorer.combo
@@ -306,12 +328,14 @@ defineExpose({ canvas: canvasEl })
     <p v-if="phase === 'playing' && !handsSeen" class="hand-lost">손이 보이지 않아요</p>
 
     <div v-if="phase === 'result'" class="overlay result">
-      <p class="title">RESULT</p>
+      <p class="tier" :style="{ color: tier.color }">{{ tier.grade }}</p>
+      <p class="tier-label">{{ tier.label }}</p>
       <p class="final">{{ score.toLocaleString() }}</p>
       <p class="detail">
         PERFECT {{ counts.perfect }} · GOOD {{ counts.good }} · MISS {{ counts.miss }}
       </p>
       <p class="detail">최대 콤보 {{ maxCombo }} · 정확도 {{ accuracy }}%</p>
+      <p v-if="fullCombo" class="full-combo">FULL COMBO!</p>
       <slot name="result-actions" />
     </div>
   </div>
@@ -392,10 +416,22 @@ defineExpose({ canvas: canvasEl })
   color: #fff;
   font-size: 0.85rem;
 }
-.result .title {
-  font-size: 1.1rem;
-  letter-spacing: 0.2em;
+.result .tier {
+  font-size: clamp(3rem, 13vh, 6rem);
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.05em;
+}
+.result .tier-label {
+  font-size: 1rem;
   color: #7a6a60;
+  margin-top: -0.2rem;
+}
+.result .full-combo {
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #ff9e3d;
 }
 .result .final {
   font-size: clamp(2.5rem, 10vh, 4.5rem);
