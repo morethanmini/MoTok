@@ -480,6 +480,10 @@ export type GameEvent =
       setterUserId?: string | null
       /** 게임④ 난이도(easy/normal/hard, -86) */
       difficulty?: string | null
+      /** 게임④ 출제자 로테이션(-48) — 1-based 현재 라운드. 로테이션 없는 게임은 null */
+      roundNo?: number | null
+      /** 게임④ 로테이션(-48) — 전체 라운드 수(참가자 수). 로테이션 없는 게임은 null */
+      totalRounds?: number | null
       serverNow: number
       startAt: number
       endAt: number

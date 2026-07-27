@@ -101,10 +101,22 @@ const phaseLabel = computed(() => {
     if (!isMultiplayer.value || isSetter.value) return '포즈를 취하세요! 이 포즈가 벽 구멍이 됩니다'
     return '출제자가 포즈를 만드는 중 — 따라할 준비!'
   }
-  if (phase.value === 'incoming') return '벽이 다가옵니다 — 구멍에 맞추세요!'
-  if (phase.value === 'result') return isMultiplayer.value && !props.results ? '집계 중…' : '판정!'
+  if (phase.value === 'incoming') {
+    // 게임④(-9) 룰: 출제자는 이번 라운드에 플레이하지 않고 관전만 한다
+    if (isMultiplayer.value && isSetter.value) return '출제자는 관전 중 — 다른 사람들이 통과하는 걸 지켜보세요'
+    return '벽이 다가옵니다 — 구멍에 맞추세요!'
+  }
+  if (phase.value === 'result') {
+    if (isMultiplayer.value && isSetter.value) return '라운드 종료 — 다음 출제자를 기다립니다'
+    return isMultiplayer.value && !props.results ? '집계 중…' : '판정!'
+  }
   return tracked.value ? '시작을 누르면 3초 뒤 내 포즈가 벽이 됩니다' : '카메라 앞에 서주세요'
 })
+
+/** 게임④ 출제자 로테이션(-48): "N/전체" 라운드 표시 — 로테이션 없는 세션(솔로 등)은 숫자만 */
+const totalRoundsLabel = computed(() =>
+  isMultiplayer.value && props.session?.totalRounds ? `/${props.session.totalRounds}` : '',
+)
 
 const gaugeGrade = computed<Grade>(() => {
   const iou = liveIou.value
@@ -139,7 +151,13 @@ let captureAt = 0
 let approachStart = 0
 let resultAt = 0
 let lastLiveJudge = 0
-const WALL_START_Z = -12
+// -12에서 시작하면 접근 시간의 대부분을 안개(fog far=18) 속 먼 거리에 있다가 easeIn 곡선
+// 막판에만 훅 커져서, 그동안은 화면을 채운 아바타에 가려 구멍 모양이 거의 안 보였다(실기 피드백).
+// -6으로 당겨 더 일찍·더 크게 보이게 한다.
+const WALL_START_Z = -6
+/** 벽이 아바타(z=0)와 같은 깊이까지 오면 평면이 3D 아바타 몸통을 그대로 관통해 실루엣이
+ * 안 보인다 — 판정은 2D 마스크라 3D 정지 위치와 무관하니, 살짝 앞에서 멈춰 겹침을 피한다. */
+const WALL_STOP_Z = -1
 
 // ── 멀티 라운드 상태 (서버 타임라인 기반, -86) ──
 /** 출제 페이즈 길이 — 서버 BODY_FIT_SETTING_MILLIS와 동기화 */
@@ -248,7 +266,7 @@ function tickSolo(now: number) {
     const t = Math.min(1, (now - approachStart) / cfg.wall.approachMs)
     timerSec.value = Math.max(0, Math.ceil((cfg.wall.approachMs - (now - approachStart)) / 1000))
     approachPct.value = Math.round(t * 100)
-    wall.mesh.position.z = WALL_START_Z * (1 - easeIn(t))
+    wall.mesh.position.z = WALL_START_Z + (WALL_STOP_Z - WALL_START_Z) * easeIn(t)
     liveJudge(now)
 
     if (t >= 1 && setterPose && rig.lastSolved) {
@@ -297,18 +315,21 @@ function tickMulti(now: number) {
     timerSec.value = Math.max(0, Math.ceil((s.endAt - srv) / 1000))
     const t = Math.min(1, (srv - settingEnd) / Math.max(1, s.endAt - settingEnd))
     approachPct.value = Math.round(t * 100)
-    if (wall.mesh.visible) wall.mesh.position.z = WALL_START_Z * (1 - easeIn(t))
-    liveJudge(now)
+    if (wall.mesh.visible) wall.mesh.position.z = WALL_START_Z + (WALL_STOP_Z - WALL_START_Z) * easeIn(t)
+    // 게임④(-9) 룰: 출제자는 이번 라운드에 플레이하지 않는다 — 판정도 제출도 하지 않는다
+    if (!isSetter.value) liveJudge(now)
     return
   }
-  // 벽 도착 — 프레임 1장 판정, 1회만 제출 (서버도 최초 1회만 수리)
+  // 벽 도착 — 프레임 1장 판정, 1회만 제출 (서버도 최초 1회만 수리, 출제자는 애초에 안 보냄)
   if (!finishedSent) {
     finishedSent = true
-    const result = finalizeJudgment()
-    emit('finished', { score: GRADE_POINTS[result.grade], grade: result.grade, iou: result.iou })
+    if (!isSetter.value) {
+      const result = finalizeJudgment()
+      emit('finished', { score: GRADE_POINTS[result.grade], grade: result.grade, iou: result.iou })
+    }
   }
   phase.value = 'result'
-  if (judgment.value?.passed && wall.mesh.visible) {
+  if (!isSetter.value && judgment.value?.passed && wall.mesh.visible) {
     wall.mesh.position.z += 0.12
     if (wall.mesh.position.z > 4) wall.mesh.visible = false
   }
@@ -336,7 +357,7 @@ watch(
     setterPose = null
     poseSubmitted = false
     finishedSent = false
-    round.value = 1
+    round.value = s.roundNo ?? 1
     if (wall) wall.mesh.visible = false
     rig?.setOverflow([])
   },
@@ -462,7 +483,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="game" :class="{ embedded: isMultiplayer }">
     <header class="topbar">
-      <span class="pill round-pill">{{ round }} 라운드</span>
+      <span class="pill round-pill">{{ round }}{{ totalRoundsLabel }} 라운드</span>
       <span class="pill phase-pill">{{ camError ?? phaseLabel }}</span>
       <span
         v-if="phase === 'wait' || phase === 'setting' || phase === 'incoming'"
@@ -502,7 +523,11 @@ onBeforeUnmount(() => {
       </div>
 
       <aside class="side">
-        <div class="card gauge-card">
+        <div v-if="isMultiplayer && isSetter" class="card gauge-card">
+          <h3>상태</h3>
+          <p class="spectate">👀 관전 중 — 이번 라운드는 안 뛰어요</p>
+        </div>
+        <div v-else class="card gauge-card">
           <h3>통과율</h3>
           <svg viewBox="0 0 120 120" class="gauge">
             <circle cx="60" cy="60" :r="GAUGE_R" class="track" />
@@ -870,6 +895,12 @@ onBeforeUnmount(() => {
   text-align: center;
   font-size: 11px;
   color: var(--c-muted);
+}
+.spectate {
+  text-align: center;
+  font-size: 12px;
+  color: var(--c-muted);
+  padding: 20px 0;
 }
 .score {
   font-size: 30px;
