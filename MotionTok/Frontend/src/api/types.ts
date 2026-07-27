@@ -515,15 +515,28 @@ export interface GameResultEntry {
   /** false = 미제출(중도 이탈·타임아웃) — 0점 처리 */
   finished: boolean
 }
+/** 그림으로 말해요 획 연산(명세 v0.2.20) — trim은 x=남길 점 수(펜 놓기 꼬리 삭제 동기화) */
+export interface DrawOp {
+  type: 'begin' | 'point' | 'end' | 'trim'
+  tool?: 'pen' | 'erase' | null
+  x?: number | null
+  y?: number | null
+}
+
 export type GameEvent =
   | {
       type: 'GAME_START'
       sessionId: string
       gameId: number
-      constellationKey: string
+      constellationKey: string | null
       serverNow: number
       startAt: number
       endAt: number
+      /** 그림으로 말해요(게임 10) 전용 — 주제어·화가 순서·인당 그리기 초·교대 초. 핑거 스타는 null */
+      topicWord?: string | null
+      turnOrder?: string[] | null
+      turnDurationSec?: number | null
+      handoverSec?: number | null
     }
   | {
       type: 'PROGRESS'
@@ -542,6 +555,23 @@ export type GameEvent =
       starsHit: number
     }
   | { type: 'GAME_END'; sessionId: string; results: GameResultEntry[] }
+  | {
+      /** 그리기 릴레이(게임 10) — 화가의 획 연산 배치 재방송. 발신자는 자기 에코 무시 */
+      type: 'DRAW'
+      sessionId: string
+      userId: string
+      seq: number | null
+      ops: DrawOp[]
+    }
+  | {
+      /** AI 채점 결과(게임 10) — score는 순위 점수(1위 100 … 5위 20). 직후 협동 GAME_END가 온다 */
+      type: 'DRAW_RESULT'
+      sessionId: string
+      userId: string
+      guesses: string[]
+      answerRank: number
+      score: number
+    }
 
 // ── 관리자 ────────────────────────────────
 export interface ReportedUser {
