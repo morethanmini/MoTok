@@ -20,6 +20,7 @@ import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
 import ReportIcon from './components/ReportIcon.vue'
 import HostWaitingOverlay from './components/HostWaitingOverlay.vue'
+import InviteFriendsModal from './components/InviteFriendsModal.vue'
 // 방 정보 수정 모달(-130) — 입력 필드가 방 생성과 동일 규격(명세 §4)이라 로비 모달을 그대로 재사용한다.
 import CreateRoomModal, { type NewRoom } from '@/features/lobby/components/CreateRoomModal.vue'
 // MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
@@ -64,6 +65,8 @@ const shareCode = computed(() => inviteCode.value ?? roomCode.value)
 // 방 설정 수정(-130) 프리필용 — 공개여부와 현재 인원은 상세 조회로만 알 수 있다.
 const roomVisibility = ref<Visibility>('PUBLIC')
 const participantCount = ref(1)
+/** 이미 방에 있는 참가자 — 친구 초대(-100) 목록에서 빼려고 들고 있는다. */
+const memberIds = ref<string[]>([])
 
 /**
  * 방장 판정 — <b>이 화면의 유일한 방장 판별 근거</b>다. 상세 조회의 hostUserId와 내 토큰 sub를 직접 비교한다.
@@ -87,6 +90,7 @@ function applyDetail(d: LiveRoomDetail) {
   inviteCode.value = d.inviteCode
   roomVisibility.value = d.visibility
   participantCount.value = d.participantCount
+  memberIds.value = d.members.map((m) => m.userId)
 }
 
 // ── 실시간 참가자 → 슬롯 매핑 ────────────────
@@ -705,6 +709,19 @@ async function leave() {
   router.push({ name: RouteName.Lobby })
 }
 
+// ── 친구 초대 (-100, 대기실 전용) ─────────────
+// 방 설정과 같은 이유로 열 때 상세를 다시 조회한다 — 그 사이 들어온 사람을 초대 목록에서 빼려면
+// memberIds가 최신이어야 한다. 조회에 실패해도 화면에 들고 있던 값으로 연다(서버가 다시 검증한다).
+const inviteOpen = ref(false)
+async function openInvite() {
+  try {
+    applyDetail(await roomsApi.detail(roomCode.value))
+  } catch {
+    // 목록에 이미 방에 있는 친구가 잠깐 남을 뿐이다 — 눌러도 서버가 판정한다
+  }
+  inviteOpen.value = true
+}
+
 const startLabel = computed(() => (amRoomHost.value ? 'START' : '제안'))
 const startHint = computed(() =>
   !detailLoaded.value
@@ -727,6 +744,13 @@ const startHint = computed(() =>
       <!-- 유저 신고 (방 코드 왼쪽) -->
       <button class="ribbon-report" title="유저 신고" @click="openUserReport">
         <ReportIcon :width="16" :height="20" />
+      </button>
+
+      <!-- 친구 초대 (-100) — 참가자 누구나, 대기실에서만. 게임 중엔 서버도 409로 거부한다. -->
+      <button v-if="!activeGame" class="ribbon-invite" title="친구 초대" @click="openInvite">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">
+          <circle cx="9" cy="8" r="3.6" /><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" /><path d="M18.5 8v6M15.5 11h6" />
+        </svg>
       </button>
 
       <!-- 방 설정 (-130) — 방장만, 대기실에서만. 게임 중엔 서버도 거부하므로 버튼을 숨긴다. -->
@@ -930,6 +954,14 @@ const startHint = computed(() =>
 
     <!-- 게임 선택 모달 -->
     <GamePicker v-if="picker" @close="picker = false" @launch="launch" />
+
+    <!-- 친구 초대 (-100) -->
+    <InviteFriendsModal
+      v-if="inviteOpen"
+      :room-id="roomCode"
+      :member-ids="memberIds"
+      @close="inviteOpen = false"
+    />
 
     <!-- 토스트 -->
     <Transition name="toast">
@@ -1175,6 +1207,14 @@ const startHint = computed(() =>
   background: #fff; box-shadow: var(--shadow-sm);
 }
 .ribbon-report:hover { background: #ffe9ea; }
+/* 친구 초대(-100) — 신고 버튼과 같은 규격. margin-left:auto는 신고 버튼이 이미 갖고 있어 생략. */
+.ribbon-invite {
+  flex: none; width: 34px; height: 34px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid var(--c-ink); border-radius: 10px;
+  background: #fff; box-shadow: var(--shadow-sm);
+}
+.ribbon-invite:hover { background: var(--c-mint-soft); }
 /* 방 설정(-130) — 신고 버튼과 같은 규격. margin-left:auto는 신고 버튼이 이미 갖고 있어 생략. */
 .ribbon-settings {
   flex: none; width: 34px; height: 34px; padding: 0;

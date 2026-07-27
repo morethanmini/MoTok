@@ -18,12 +18,9 @@ export interface Room {
 }
 
 export interface Friend {
-  /** 친구방 조회(-98) API 호출에 필요 */
-  userId: number
   name: string
   face: string
   game: string
   bg: string
   online: boolean
-  playing: boolean
 }
