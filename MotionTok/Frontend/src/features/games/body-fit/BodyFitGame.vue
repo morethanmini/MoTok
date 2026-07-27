@@ -360,6 +360,13 @@ function renderLoop() {
   if (!stage) return
   if (isMultiplayer.value && props.session) tickMulti(performance.now())
   else tickSolo(performance.now())
+  // 게임④(-9) 룰: 출제자는 관전 — 벽 접근·결과 동안 내 아바타를 무대에서 치워
+  // "내가 플레이 중"처럼 보이지 않게 한다 (판정·제출 스킵은 tickMulti에서 이미 처리)
+  rig.group.visible = !(
+    isMultiplayer.value &&
+    isSetter.value &&
+    (phase.value === 'incoming' || phase.value === 'result')
+  )
   const camera = stage.camera
   camera.position.x += (rig.group.position.x * 0.35 - camera.position.x) * 0.06
   camera.lookAt(0, -0.5, 0)
