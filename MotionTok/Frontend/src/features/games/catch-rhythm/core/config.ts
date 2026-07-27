@@ -15,10 +15,22 @@ export const COMBO_MULT_INC = 0.1 // 배율 +0.1
 export const COMBO_MULT_MAX = 2.0 // 최대 2.0
 
 // ── 판정 반경 ──────────────────────────────────────────────
-export const NOTE_RADIUS = 0.12 // 노트 판정 반지름 (게임 좌표)
-export const HAND_RADIUS = 0.08 // 손 커서 판정 반지름
-/** 스와이프는 스치듯 지나가므로 캐치보다 넉넉하게 잡는다 */
-export const SWIPE_REACH_SCALE = 1.35
+/**
+ * 실플레이 결론: 손 트래킹이 흔들려서 인식이 빡빡하면 게임이 안 된다.
+ * 전반적으로 후하게 잡는다 — 어려움은 채보 밀도로 만들지 판정 반경으로 만들지 않는다.
+ */
+export const NOTE_RADIUS = 0.15 // 노트 판정 반지름 (게임 좌표)
+export const HAND_RADIUS = 0.11 // 손 커서 판정 반지름
+/** 스와이프는 스치듯 지나가므로 더 넉넉하게 */
+export const SWIPE_REACH_SCALE = 1.6
+/** 연결 노트는 경로를 따라가는 중 흔들림이 크므로 가장 넉넉하게 */
+export const TRAIL_REACH_SCALE = 1.9
+
+// ── 연결(trail) 노트 ───────────────────────────────────────
+/** 경로를 이 비율 이상 따라가면 PERFECT */
+export const TRAIL_PERFECT_COVERAGE = 0.65
+/** 이 비율 이상이면 GOOD, 미만이면 MISS */
+export const TRAIL_GOOD_COVERAGE = 0.35
 
 // ── 제스처 ─────────────────────────────────────────────────
 export const FIST_RATIO = 1.1 // TIP-손목 평균 < MCP-손목 평균 × 1.1

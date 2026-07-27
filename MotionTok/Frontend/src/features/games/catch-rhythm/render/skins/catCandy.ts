@@ -19,7 +19,62 @@ const PALETTE: Record<NoteHand, { body: string; edge: string; glow: string }> = 
 }
 const HAND_COLOR: Record<Hand, string> = { left: '#7a63e0', right: '#e07a4f' }
 
-const FX_MS = 420
+const JUDGE_TEXT: Record<string, string> = {
+  perfect: 'PERFECT!',
+  good: 'GOOD',
+  miss: 'MISS',
+}
+const JUDGE_COLOR: Record<string, string> = {
+  perfect: '#ff9e3d',
+  good: '#3fa87e',
+  miss: '#b3402a',
+}
+
+/** 연결 노트 경로 리본 + 따라가는 헤드 */
+function trailRibbon(ctx: CanvasRenderingContext2D, note: NoteView) {
+  const path = note.path
+  if (!path || path.length < 2) return
+  const c = PALETTE[note.hand]
+  const width = note.judgeRadius * (note.tracing ? 1.5 : 1.15)
+
+  ctx.save()
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.globalAlpha = note.tracing ? 0.9 : 0.35 + 0.45 * Math.min(1, note.scale)
+
+  // 바깥 테두리 → 안쪽 채움 순으로 두 번 그어 리본처럼 보이게
+  for (const [w, color] of [
+    [width, c.edge],
+    [width * 0.62, c.glow],
+  ] as const) {
+    ctx.lineWidth = w
+    ctx.strokeStyle = color
+    ctx.beginPath()
+    ctx.moveTo(path[0]!.x, path[0]!.y)
+    for (let i = 1; i < path.length; i++) ctx.lineTo(path[i]!.x, path[i]!.y)
+    ctx.stroke()
+  }
+
+  // 끝점 표시 — 어디까지 가야 하는지
+  const end = path[path.length - 1]!
+  ctx.globalAlpha = 1
+  ctx.fillStyle = c.edge
+  ctx.beginPath()
+  ctx.arc(end.x, end.y, width * 0.42, 0, Math.PI * 2)
+  ctx.fill()
+
+  // 따라가야 할 지점
+  if (note.head) {
+    ctx.fillStyle = '#fff'
+    ctx.strokeStyle = c.edge
+    ctx.lineWidth = Math.max(2, width * 0.18)
+    ctx.beginPath()
+    ctx.arc(note.head.x, note.head.y, note.judgeRadius * 0.62, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+  }
+  ctx.restore()
+}
 
 /** 판정 링 + 접근 링 — 노트보다 먼저(아래에) 그린다. */
 function timingRings(ctx: CanvasRenderingContext2D, note: NoteView) {
@@ -228,46 +283,100 @@ export const catCandySkin: CatchSkin = {
   },
 
   drawNote(ctx, note) {
+    if (note.kind === 'trail') trailRibbon(ctx, note)
+    // 추적 중인 연결 노트는 헤드가 본체 역할을 하므로 버블을 다시 그리지 않는다
+    if (note.tracing) return
+
     timingRings(ctx, note)
     ctx.save()
     ctx.globalAlpha = 0.4 + 0.6 * Math.min(1, note.scale)
     bubble(ctx, note)
     if (note.kind === 'swipe') swipeMark(ctx, note)
-    else musicNote(ctx, note)
+    else if (note.kind === 'catch') musicNote(ctx, note)
     ctx.restore()
   },
 
+  /**
+   * 타격감 — "쳤다"가 확실히 느껴져야 한다(실플레이 피드백).
+   * 이중 충격파 + 방사 파티클 + 판정 문구를 한꺼번에 띄운다.
+   */
   drawHitFx(ctx, fx) {
-    const t = fx.elapsedMs / FX_MS
+    const t = fx.elapsedMs / fx.lifeMs
     if (t >= 1) return false
+    const ease = 1 - Math.pow(1 - t, 3) // 초반에 확 퍼지고 끝에서 잦아든다
     const c = PALETTE[fx.hand]
+    const color = JUDGE_COLOR[fx.judgement] ?? c.edge
     ctx.save()
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
 
     if (fx.judgement === 'miss') {
-      ctx.globalAlpha = (1 - t) * 0.5
-      ctx.strokeStyle = '#9b8f88'
-      ctx.lineWidth = 2
+      // 미스 — 붉은 링이 안으로 조여들며 X. 화면 흔들림은 렌더러가 같이 준다
+      ctx.globalAlpha = 1 - t
+      ctx.strokeStyle = color
+      ctx.lineWidth = Math.max(2, fx.radius * 0.2 * (1 - t))
       ctx.beginPath()
-      ctx.arc(fx.x, fx.y, fx.radius * (1 + t * 0.3), 0, Math.PI * 2)
+      ctx.arc(fx.x, fx.y, fx.radius * (2.2 - 1.2 * ease), 0, Math.PI * 2)
       ctx.stroke()
+      const d = fx.radius * 0.5
+      ctx.beginPath()
+      ctx.moveTo(fx.x - d, fx.y - d)
+      ctx.lineTo(fx.x + d, fx.y + d)
+      ctx.moveTo(fx.x + d, fx.y - d)
+      ctx.lineTo(fx.x - d, fx.y + d)
+      ctx.stroke()
+      ctx.globalAlpha = (1 - t) * 0.9
+      ctx.fillStyle = color
+      ctx.font = `bold ${Math.round(fx.radius * 0.78)}px system-ui, sans-serif`
+      ctx.fillText(JUDGE_TEXT.miss!, fx.x, fx.y - fx.radius * (1.5 + ease * 0.8))
       ctx.restore()
       return true
     }
 
-    ctx.globalAlpha = 1 - t
-    ctx.strokeStyle = c.edge
-    ctx.lineWidth = Math.max(1.5, fx.radius * 0.16 * (1 - t))
-    ctx.beginPath()
-    ctx.arc(fx.x, fx.y, fx.radius * (1 + t * 1.1), 0, Math.PI * 2)
-    ctx.stroke()
+    const isPerfect = fx.judgement === 'perfect'
+    const power = isPerfect ? 1 : 0.7
 
-    const count = fx.judgement === 'perfect' ? 6 : 3
-    ctx.fillStyle = fx.judgement === 'perfect' ? '#ffd66b' : c.glow
-    for (let i = 0; i < count; i++) {
-      const a = (Math.PI * 2 * i) / count + t * 0.8
-      const d = fx.radius * (0.6 + t * 1.6)
-      star(ctx, fx.x + Math.cos(a) * d, fx.y + Math.sin(a) * d, fx.radius * 0.22 * (1 - t))
+    // ① 중심 섬광 — 터지는 순간의 코어
+    ctx.globalAlpha = Math.max(0, 1 - t * 2.4)
+    ctx.fillStyle = '#fff'
+    ctx.beginPath()
+    ctx.arc(fx.x, fx.y, fx.radius * (0.9 + ease * 1.4) * power, 0, Math.PI * 2)
+    ctx.fill()
+
+    // ② 이중 충격파
+    ctx.globalAlpha = (1 - t) * 0.95
+    for (const [mul, widthMul] of [
+      [2.6, 0.26],
+      [1.6, 0.14],
+    ] as const) {
+      ctx.strokeStyle = mul > 2 ? color : c.glow
+      ctx.lineWidth = Math.max(2, fx.radius * widthMul * (1 - t))
+      ctx.beginPath()
+      ctx.arc(fx.x, fx.y, fx.radius * (0.8 + ease * mul) * power, 0, Math.PI * 2)
+      ctx.stroke()
     }
+
+    // ③ 방사 파티클 — 콤보가 쌓일수록 많아진다
+    const count = (isPerfect ? 10 : 6) + Math.min(6, Math.floor(fx.combo / 12))
+    ctx.fillStyle = isPerfect ? '#ffd66b' : c.glow
+    for (let i = 0; i < count; i++) {
+      const a = (Math.PI * 2 * i) / count + t * 1.1
+      const d = fx.radius * (0.7 + ease * 2.7) * power
+      ctx.globalAlpha = (1 - t) * (isPerfect ? 1 : 0.8)
+      star(ctx, fx.x + Math.cos(a) * d, fx.y + Math.sin(a) * d, fx.radius * 0.3 * (1 - t) * power)
+    }
+
+    // ④ 판정 문구 — 위로 떠오르며 사라진다
+    ctx.globalAlpha = Math.max(0, 1 - t * 1.3)
+    ctx.fillStyle = color
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)'
+    ctx.lineWidth = Math.max(2, fx.radius * 0.14)
+    const size = Math.round(fx.radius * (isPerfect ? 1.0 : 0.8))
+    ctx.font = `bold ${size}px system-ui, sans-serif`
+    const ty = fx.y - fx.radius * (1.4 + ease * 1.2)
+    ctx.strokeText(JUDGE_TEXT[fx.judgement]!, fx.x, ty)
+    ctx.fillText(JUDGE_TEXT[fx.judgement]!, fx.x, ty)
+
     ctx.restore()
     return true
   },

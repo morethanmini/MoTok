@@ -13,6 +13,13 @@ export function isDifficulty(value: unknown): value is Difficulty {
   return typeof value === 'string' && (DIFFICULTIES as string[]).includes(value)
 }
 
+/** 노트 종류 가중치 — 합이 1이 아니어도 되고, 비율로 정규화된다. */
+export interface KindWeights {
+  swipe: number
+  trail: number
+  catch: number
+}
+
 export interface Preset {
   /** 슬롯마다 노트가 생길 확률 */
   density: number
@@ -20,10 +27,12 @@ export interface Preset {
   simultaneous: number
   /** 반대편 영역에서 스폰될 확률 (팔이 꼬이는 재미) */
   crossRate: number
-  /** 아무 손으로나 잡을 수 있는 노트의 비율 — 숨돌릴 틈을 준다 */
+  /** 아무 손으로나 잡을 수 있는 노트의 비율 — 주력이다 */
   anyRate: number
-  /** 스와이프(지나가기만 해도 되는) 노트의 비율 */
-  swipeRate: number
+  /** 노트 종류 분포 */
+  kinds: KindWeights
+  /** 연결 노트 길이 범위(ms) */
+  trailDurationMs: readonly [number, number]
   /** 같은 손 노트 사이 최소 간격 — 물리적 연타 한계 */
   minSameHandGapMs: number
   /** 크로스는 반대편까지 가야 하므로 이만큼 여유가 있을 때만 만든다 */
@@ -33,36 +42,41 @@ export interface Preset {
 }
 
 /**
- * 실플레이 피드백(2026-07-27) 반영해 전반적으로 낮췄다.
- * 이전 값(0.20/0.38/0.55 + 손 전용 노트만)은 손이 물리적으로 못 따라갔다.
+ * 실플레이 피드백(2026-07-27) 2차 반영.
+ * - **스와이프가 주력**. 주먹(catch)은 인식률·피로도 문제로 특수 노트로 내렸다
+ * - **양손 인식(any)이 기본** — 손을 지정하면 급격히 어려워진다
+ * - 크로스는 "스와이프인데 손이 꼬이는" 재미 요소로만 남긴다
  */
 export const PRESETS: Record<Difficulty, Preset> = {
   EASY: {
-    density: 0.16,
+    density: 0.18,
     simultaneous: 0,
     crossRate: 0,
-    anyRate: 0.5,
-    swipeRate: 0.25,
+    anyRate: 0.75,
+    kinds: { swipe: 0.72, trail: 0.22, catch: 0.06 },
+    trailDurationMs: [700, 1100],
     minSameHandGapMs: 500,
     crossMinGapMs: 900,
     approachTimeMs: 1500,
   },
   NORMAL: {
-    density: 0.28,
+    density: 0.32,
     simultaneous: 0.08,
-    crossRate: 0.12,
-    anyRate: 0.3,
-    swipeRate: 0.3,
-    minSameHandGapMs: 400,
+    crossRate: 0.16,
+    anyRate: 0.6,
+    kinds: { swipe: 0.66, trail: 0.24, catch: 0.1 },
+    trailDurationMs: [600, 1000],
+    minSameHandGapMs: 380,
     crossMinGapMs: 800,
     approachTimeMs: 1300,
   },
   HARD: {
-    density: 0.42,
+    density: 0.48,
     simultaneous: 0.2,
-    crossRate: 0.28,
-    anyRate: 0.15,
-    swipeRate: 0.35,
+    crossRate: 0.3,
+    anyRate: 0.45,
+    kinds: { swipe: 0.62, trail: 0.25, catch: 0.13 },
+    trailDurationMs: [500, 900],
     minSameHandGapMs: 300,
     crossMinGapMs: 700,
     approachTimeMs: 1100,
@@ -92,3 +106,12 @@ export const MAX_RESAMPLE = 10
 
 /** 좌우 교대를 기본으로 하되 이 확률로 한 번 더 뒤집어 단조로움을 깬다 */
 export const HAND_SHUFFLE_RATE = 0.25
+
+/** 연결 노트 경로의 꺾임 개수 범위 (시작점 제외한 추가 점 개수) */
+export const TRAIL_SEGMENTS: readonly [number, number] = [1, 3]
+/**
+ * 구간 길이를 "지속 시간이 허락하는 예산"의 몇 배로 잡을지.
+ * 너무 짧으면 인식 반경 안에 경로가 통째로 들어와 **가만히 있어도 통과**한다 —
+ * 판정을 후하게 가져가는 대신 경로는 반드시 손을 움직여야 하는 길이여야 한다.
+ */
+export const TRAIL_SEG_BUDGET: readonly [number, number] = [0.6, 1.0]

@@ -12,7 +12,7 @@
 
 import { mulberry32, foldSeed, type Rng } from '../core/rng'
 import { HAND_MAX_SPEED, REACH_SAFETY } from '../core/config'
-import type { Beatmap, CatchNote } from '../core/beatmap'
+import type { Beatmap, CatchNote, PathPoint } from '../core/beatmap'
 import type { Hand, NoteHand, NoteKind } from '../core/types'
 import {
   PRESETS,
@@ -24,6 +24,9 @@ import {
   LEAD_IN_MS,
   CHART_BPM,
   HAND_SHUFFLE_RATE,
+  TRAIL_SEGMENTS,
+  TRAIL_SEG_BUDGET,
+  type KindWeights,
   type Difficulty,
 } from './presets'
 
@@ -80,6 +83,63 @@ function samplePlacement(rng: Rng, spawnSide: Hand, avoid: Point[]): Point {
   return point
 }
 
+/** 전체 스폰 영역(좌우 합집합)으로 점을 밀어 넣는다. */
+function clampToField(p: Point): Point {
+  const lo = X_RANGE.left[0]
+  const hi = X_RANGE.right[1]
+  return {
+    x: Math.min(hi, Math.max(lo, p.x)),
+    y: Math.min(Y_RANGE[1], Math.max(Y_RANGE[0], p.y)),
+  }
+}
+
+function pickKind(rng: Rng, weights: KindWeights): NoteKind {
+  const total = weights.swipe + weights.trail + weights.catch
+  const r = rng() * total
+  if (r < weights.swipe) return 'swipe'
+  if (r < weights.swipe + weights.trail) return 'trail'
+  return 'catch'
+}
+
+/**
+ * 연결 노트 경로 — 시작점에서 이어지는 꺾인 선.
+ * durationMs 동안 등속으로 훑으므로 **전체 길이가 손 속도 한계를 넘으면 안 된다**.
+ */
+function makeTrailPath(rng: Rng, start: Point, durationMs: number): PathPoint[] {
+  const [segLo, segHi] = TRAIL_SEGMENTS
+  const segments = segLo + Math.floor(rng() * (segHi - segLo + 1))
+  // 경로 전체를 durationMs 안에 훑어야 하므로 구간당 예산을 나눠 갖는다
+  const budgetPerSeg = (HAND_MAX_SPEED * (durationMs / 1000) * REACH_SAFETY) / segments
+
+  const path: PathPoint[] = []
+  let cur = start
+  let angle = rng() * Math.PI * 2
+  const [fracLo, fracHi] = TRAIL_SEG_BUDGET
+  for (let i = 0; i < segments; i++) {
+    // 급격히 꺾이면 못 따라가므로 ±60° 안에서만 방향을 튼다
+    angle += (rng() - 0.5) * (Math.PI / 1.5)
+    const len = budgetPerSeg * (fracLo + rng() * (fracHi - fracLo))
+    const next = clampToField({
+      x: cur.x + Math.cos(angle) * len,
+      y: cur.y + Math.sin(angle) * len,
+    })
+    path.push(next)
+    cur = next
+  }
+  return path
+}
+
+/** 경로의 마지막 점 — 다음 노트의 도달 계산은 여기서 출발한다. */
+function endOf(note: GeneratedNote): Point {
+  const last = note.path?.[note.path.length - 1]
+  return last ?? { x: note.x, y: note.y }
+}
+
+/** 노트가 손을 붙잡고 있는 마지막 시각 */
+function endTimeOf(note: GeneratedNote): number {
+  return note.timeMs + (note.durationMs ?? 0)
+}
+
 /**
  * seed + 난이도 + 라운드 길이 → 채보.
  * 같은 인자면 언제 어디서 호출해도 완전히 같은 결과가 나온다.
@@ -106,7 +166,8 @@ export function generateBattleChart(
     const placedThisSlot: Point[] = []
     for (const owner of owners) {
       const prev = lastByHand[owner]
-      const dtMs = prev ? timeMs - prev.timeMs : Infinity
+      // 연결 노트는 끝날 때까지 손을 붙잡으므로 "끝난 시각"부터 계산한다
+      const dtMs = prev ? timeMs - endTimeOf(prev) : Infinity
 
       // ① 연타 한계 — 이 손이 아직 못 돌아왔으면 이 슬롯은 건너뛴다
       if (dtMs < preset.minSameHandGapMs) continue
@@ -116,16 +177,21 @@ export function generateBattleChart(
       const spawnSide = cross ? other(owner) : owner
 
       const avoid: Point[] = [...placedThisSlot]
-      if (prev) avoid.push(prev)
+      if (prev) avoid.push(endOf(prev))
 
       // ③ 도달 보정 — 시간 안에 갈 수 있는 거리로 당긴다
       const sampled = samplePlacement(rng, spawnSide, avoid)
-      const { x, y } = clampReach(sampled, prev, dtMs)
+      const { x, y } = clampReach(sampled, prev ? endOf(prev) : null, dtMs)
 
       const hand: NoteHand = rng() < preset.anyRate ? 'any' : owner
-      const kind: NoteKind = rng() < preset.swipeRate ? 'swipe' : 'catch'
+      const kind = pickKind(rng, preset.kinds)
 
       const note: GeneratedNote = { timeMs, x, y, hand, kind, cross, owner }
+      if (kind === 'trail') {
+        const [durLo, durHi] = preset.trailDurationMs
+        note.durationMs = Math.round(durLo + rng() * (durHi - durLo))
+        note.path = makeTrailPath(rng, { x, y }, note.durationMs)
+      }
       notes.push(note)
       lastByHand[owner] = note
       placedThisSlot.push(note)

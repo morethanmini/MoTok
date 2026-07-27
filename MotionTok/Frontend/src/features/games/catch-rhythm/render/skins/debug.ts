@@ -56,6 +56,28 @@ export const debugSkin: CatchSkin = {
   },
 
   drawNote(ctx, note) {
+    if (note.path && note.path.length >= 2) {
+      ctx.save()
+      ctx.strokeStyle = COLOR[note.hand]
+      ctx.globalAlpha = note.tracing ? 0.9 : 0.4
+      ctx.lineWidth = note.judgeRadius * 0.5
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.beginPath()
+      ctx.moveTo(note.path[0]!.x, note.path[0]!.y)
+      for (let i = 1; i < note.path.length; i++) ctx.lineTo(note.path[i]!.x, note.path[i]!.y)
+      ctx.stroke()
+      if (note.head) {
+        ctx.globalAlpha = 1
+        ctx.fillStyle = '#fff'
+        ctx.beginPath()
+        ctx.arc(note.head.x, note.head.y, note.judgeRadius * 0.5, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      ctx.restore()
+    }
+    if (note.tracing) return
+
     rings(ctx, note)
     ctx.save()
     ctx.fillStyle = COLOR[note.hand]
@@ -91,16 +113,22 @@ export const debugSkin: CatchSkin = {
   },
 
   drawHitFx(ctx, fx) {
-    const t = fx.elapsedMs / FX_MS
+    const t = fx.elapsedMs / fx.lifeMs
     if (t >= 1) return false
+    const color =
+      fx.judgement === 'perfect' ? '#7dff9b' : fx.judgement === 'good' ? '#ffe066' : '#ff5c5c'
     ctx.save()
     ctx.globalAlpha = 1 - t
-    ctx.fillStyle =
-      fx.judgement === 'perfect' ? '#7dff9b' : fx.judgement === 'good' ? '#ffe066' : '#ff5c5c'
+    ctx.strokeStyle = color
+    ctx.lineWidth = 3 * (1 - t)
+    ctx.beginPath()
+    ctx.arc(fx.x, fx.y, fx.radius * (0.8 + t * 2.4), 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.fillStyle = color
     ctx.font = `bold ${Math.round(fx.radius * 0.9)}px monospace`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(fx.judgement.toUpperCase(), fx.x, fx.y - t * fx.radius)
+    ctx.fillText(fx.judgement.toUpperCase(), fx.x, fx.y - t * fx.radius * 2)
     ctx.restore()
     return true
   },

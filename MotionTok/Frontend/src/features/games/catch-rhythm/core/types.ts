@@ -12,8 +12,11 @@ export type Hand = 'left' | 'right'
 export type NoteHand = Hand | 'any'
 
 /**
- * 노트 종류.
- * - catch: 노트 위에서 **주먹을 쥐어야** 한다(펴짐→쥠 전환 순간만 인정)
+ * 노트 종류. **swipe가 주력**이고 catch는 가끔 나오는 특수 노트다
+ * (주먹 쥐기를 주력으로 두면 인식률·피로도 때문에 게임이 안 된다 — 실플레이 결론).
+ *
  * - swipe: 손이 **지나가기만 해도** 된다(쥠 여부 무관). 판정창 안에 손이 들어오면 히트
+ * - trail: 경로를 **손으로 쭉 따라 그리는** 노트. 커버리지 비율로 판정
+ * - catch: 노트 위에서 **주먹을 쥐어야** 한다(펴짐→쥠 전환 순간만 인정) — 특수 노트
  */
-export type NoteKind = 'catch' | 'swipe'
+export type NoteKind = 'swipe' | 'trail' | 'catch'
