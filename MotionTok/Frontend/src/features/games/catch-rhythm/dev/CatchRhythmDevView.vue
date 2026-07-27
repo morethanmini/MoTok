@@ -60,7 +60,8 @@ function onError(message: string) {
         모드
         <select v-model="mode" :disabled="running">
           <option value="catch">캐치</option>
-          <option value="ring">링 모드</option>
+          <option value="ring">링 · 슬라이드</option>
+          <option value="ringTap">링 · 탭만</option>
         </select>
       </label>
 

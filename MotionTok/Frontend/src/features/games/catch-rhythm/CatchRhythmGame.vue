@@ -56,7 +56,8 @@ const playing = computed(() => session.round.value !== null || soloSeed.value !=
 
 const MODES: { id: GameMode; label: string; hint: string }[] = [
   { id: 'catch', label: '캐치', hint: '화면 곳곳의 음표를 손으로 잡아요' },
-  { id: 'ring', label: '링 모드', hint: '가장자리 링에서 받아쳐요' },
+  { id: 'ring', label: '링 · 슬라이드', hint: '링에서 받아치고, 가끔 화살표 방향으로 돌려요' },
+  { id: 'ringTap', label: '링 · 탭만', hint: '슬라이드 없이 빠르게 — 밀도가 훨씬 높아요' },
 ]
 
 const DIFFICULTY_LABEL: Record<Difficulty, string> = {
