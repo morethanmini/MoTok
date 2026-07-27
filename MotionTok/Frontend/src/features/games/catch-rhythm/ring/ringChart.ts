@@ -15,15 +15,10 @@ import { LANE_COUNT, RING_RADIUS, RING_HAND_SPEED, RING_REACH_SAFETY } from './r
 
 export interface RingPreset {
   density: number
-  /**
-   * 홀드(슬라이드) 비율. **현재 전 난이도 0** — 실플레이에서 "이게 뭔지 모르겠다"는
-   * 피드백을 받아 뺐다. 판정 로직은 남아 있으니 이 값만 올리면 되살아난다.
-   */
+  /** 노트가 생겼을 때 슬라이드가 될 확률 */
   holdRate: number
   /** 홀드 길이 범위(ms) */
   holdDurationMs: readonly [number, number]
-  /** 홀드가 회전 슬라이드가 될 확률(아니면 제자리 유지) */
-  slideRate: number
   /** 아무 손이나 가능한 노트 비율 — 캐치와 마찬가지로 이게 기본이다 */
   anyRate: number
   /** 좌+우 동시 노트 확률 */
@@ -36,9 +31,8 @@ export interface RingPreset {
 export const RING_PRESETS: Record<Difficulty, RingPreset> = {
   EASY: {
     density: 0.18,
-    holdRate: 0,
+    holdRate: 0.22,
     holdDurationMs: [900, 1400],
-    slideRate: 0.35,
     anyRate: 0.75,
     simultaneous: 0,
     minSameHandGapMs: 500,
@@ -46,9 +40,8 @@ export const RING_PRESETS: Record<Difficulty, RingPreset> = {
   },
   NORMAL: {
     density: 0.3,
-    holdRate: 0,
+    holdRate: 0.25,
     holdDurationMs: [800, 1300],
-    slideRate: 0.5,
     anyRate: 0.6,
     simultaneous: 0.08,
     minSameHandGapMs: 400,
@@ -56,9 +49,8 @@ export const RING_PRESETS: Record<Difficulty, RingPreset> = {
   },
   HARD: {
     density: 0.44,
-    holdRate: 0,
+    holdRate: 0.28,
     holdDurationMs: [700, 1100],
-    slideRate: 0.65,
     anyRate: 0.45,
     simultaneous: 0.2,
     minSameHandGapMs: 320,
@@ -157,14 +149,12 @@ export function generateRingChart(
       if (isHold) {
         const [lo, hi] = preset.holdDurationMs
         note.durationMs = Math.round(lo + rng() * (hi - lo))
-        if (rng() < preset.slideRate) {
-          // 슬라이드 — 지속 시간 안에 돌 수 있는 만큼만 돌린다
-          const maxSlide = Math.max(1, Math.floor(reachableLanes(note.durationMs)))
-          const steps = 1 + Math.floor(rng() * maxSlide)
-          note.laneDelta = rng() < 0.5 ? -steps : steps
-        } else {
-          note.laneDelta = 0
-        }
+        // ★ 제자리 홀드(laneDelta 0)는 만들지 않는다.
+        // 호 길이가 0이라 화면에선 점 하나가 멈춰 있는 걸로만 보여 "이게 뭐지"가 된다.
+        // 슬라이드는 **반드시 최소 1레인 이상 움직인다**.
+        const maxSlide = Math.max(1, Math.floor(reachableLanes(note.durationMs)))
+        const steps = 1 + Math.floor(rng() * maxSlide)
+        note.laneDelta = rng() < 0.5 ? -steps : steps
       }
 
       notes.push(note)

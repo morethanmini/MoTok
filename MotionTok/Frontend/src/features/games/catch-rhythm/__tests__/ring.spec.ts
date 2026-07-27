@@ -291,11 +291,39 @@ describe('링 채보 생성기', () => {
     }
   })
 
-  it('★ 홀드는 현재 생성하지 않는다 (실플레이 피드백으로 제외)', () => {
+  it('슬라이드가 프리셋 비율만큼 섞인다', () => {
     for (const difficulty of DIFFICULTIES) {
       const notes = SEEDS.flatMap((s) => generateRingChart(s, difficulty, ROUND_MS).notes)
-      expect(notes.every((n) => n.type === 'tap')).toBe(true)
-      expect(RING_PRESETS[difficulty].holdRate).toBe(0)
+      const holds = notes.filter((n) => n.type === 'hold').length / notes.length
+      expect(holds).toBeGreaterThan(RING_PRESETS[difficulty].holdRate - 0.08)
+      expect(holds).toBeLessThan(RING_PRESETS[difficulty].holdRate + 0.08)
+    }
+  })
+
+  it('★ 제자리 슬라이드(laneDelta 0)는 생성하지 않는다', () => {
+    // 호 길이가 0이면 화면에선 멈춘 점으로만 보여 무슨 노트인지 읽히지 않는다
+    for (const difficulty of DIFFICULTIES) {
+      const holds = SEEDS.flatMap((s) =>
+        generateRingChart(s, difficulty, ROUND_MS).notes.filter((n) => n.type === 'hold'),
+      )
+      expect(holds.length).toBeGreaterThan(0)
+      for (const n of holds) {
+        expect(n.laneDelta).toBeDefined()
+        expect(Math.abs(n.laneDelta!)).toBeGreaterThanOrEqual(1)
+      }
+    }
+  })
+
+  it('★ 슬라이드도 지속 시간 안에 돌 수 있는 만큼만 돈다', () => {
+    for (const difficulty of DIFFICULTIES) {
+      const slides = SEEDS.flatMap((s) =>
+        generateRingChart(s, difficulty, ROUND_MS).notes.filter((n) => (n.laneDelta ?? 0) !== 0),
+      )
+      expect(slides.length).toBeGreaterThan(0)
+      for (const n of slides) {
+        const arc = RING_RADIUS * Math.abs(n.laneDelta!) * ((Math.PI * 2) / LANE_COUNT)
+        expect(arc).toBeLessThanOrEqual(RING_HAND_SPEED * ((n.durationMs ?? 0) / 1000) + 1e-9)
+      }
     }
   })
 
