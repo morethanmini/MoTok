@@ -9,6 +9,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { useSessionStore } from '@/stores/session'
 import BrandLogo from './BrandLogo.vue'
+import UserAvatar from './UserAvatar.vue'
 import BgmToggle from './BgmToggle.vue'
 import CoinIcon from './CoinIcon.vue'
 import ChargePointsModal from './ChargePointsModal.vue'
@@ -85,6 +86,8 @@ const accountMenuRef = ref<HTMLElement | null>(null)
 const nickname = computed(() =>
   session.isGuest ? (session.guestNickname ?? '게스트') : (session.profile?.nickname ?? '…'),
 )
+// 게스트에게는 프로필 자체가 없다(사진을 올릴 경로도 없다) — 기본 이모지로 둔다.
+const avatarUrl = computed(() => (session.isGuest ? null : (session.profile?.avatarUrl ?? null)))
 
 function toggleAccountMenu() {
   showAccountMenu.value = !showAccountMenu.value
@@ -132,7 +135,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
       <div class="avatar-wrap" ref="accountMenuRef">
         <button class="avatar-pill" title="계정 메뉴" @click="toggleAccountMenu">
           <span class="nickname">{{ nickname }}</span>
-          <span class="avatar-circle">😎</span>
+          <UserAvatar class="avatar-circle" :src="avatarUrl" :alt="`${nickname} 프로필 사진`" />
         </button>
         <div v-if="showAccountMenu" class="account-menu">
           <div class="menu-head">

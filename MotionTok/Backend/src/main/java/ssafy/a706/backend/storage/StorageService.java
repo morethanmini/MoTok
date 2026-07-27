@@ -40,6 +40,19 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class StorageService {
 
+    /**
+     * 업로드하는 모든 객체에 붙이는 캐시 정책 — <b>S3 GET 요청 수를 줄이는 유일한 지렛대</b>다.
+     *
+     * <p>객체 key는 매 업로드마다 새 UUID다({@link UploadPurpose#newKey}). 즉 <b>같은 URL의 내용은
+     * 절대 바뀌지 않는다</b> — 사진을 바꾸면 URL 자체가 바뀌고 DB의 avatarUrl이 새 주소를 가리킨다.
+     * 그래서 1년 + immutable을 붙여도 낡은 사진이 보일 위험이 없다.</p>
+     *
+     * <p>이 헤더가 없으면 S3는 캐시 지시자 없이 응답하고, 브라우저는 휴리스틱(대개 Last-Modified 기준)
+     * 으로 판단한다. 방금 올라온 객체는 그 값이 0에 가까워 <b>화면을 열 때마다 재검증 요청이 나간다</b> —
+     * 304로 끝나도 S3 요청 수는 그대로 늘어난다.</p>
+     */
+    private static final String CACHE_CONTROL = "public, max-age=31536000, immutable";
+
     private final S3Client s3;
     private final S3Presigner presigner;
     private final StorageProperties props;
@@ -73,6 +86,9 @@ public class StorageService {
                                 // 이 두 값이 서명에 들어가야 S3가 MIME·용량을 강제한다.
                                 .contentType(contentType)
                                 .contentLength(contentLength)
+                                // 객체에 캐시 정책을 심는다. 서명에 포함되므로 requiredHeaders 로 내려가고,
+                                // 브라우저는 그대로 되보낸다(putToPresignedUrl 이 헤더를 그대로 전달).
+                                .cacheControl(CACHE_CONTROL)
                                 .build())
                         .build());
 
@@ -117,6 +133,7 @@ public class StorageService {
                             .key(key)
                             .contentType(contentType)
                             .contentLength((long) body.length)
+                            .cacheControl(CACHE_CONTROL)
                             .build(),
                     RequestBody.fromBytes(body));
         } catch (SdkException e) {

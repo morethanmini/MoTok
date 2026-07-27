@@ -102,6 +102,8 @@ export interface PublicUserProfile {
   id: number
   nickname: string
   createdAt: string
+  /** 프로필 사진 URL. 공개 정보라 랭킹 등에서 함께 보여준다. null이면 기본 아바타 */
+  avatarUrl?: string | null
 }
 
 /**
@@ -321,6 +323,8 @@ export interface Friend {
   nickname: string
   presence: Presence
   currentRoomId: string | null
+  /** 친구 프로필 사진 URL. null이면 기본 아바타(이모지)를 그린다. */
+  avatarUrl?: string | null
 }
 export type FriendRequestStatus = 'PENDING' | 'ACCEPTED'
 export interface FriendRequestItem {
