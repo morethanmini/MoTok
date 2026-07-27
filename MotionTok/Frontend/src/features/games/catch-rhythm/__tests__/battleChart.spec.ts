@@ -146,20 +146,27 @@ describe('노트 다양성', () => {
     const notes = allNotes(difficulty)
     const w = PRESETS[difficulty].kinds
     const total = w.swipe + w.trail + w.catch
-    for (const kind of ['swipe', 'trail', 'catch'] as const) {
+    for (const kind of ['swipe', 'trail'] as const) {
       const ratio = notes.filter((n) => n.kind === kind).length / notes.length
       expect(ratio).toBeGreaterThanOrEqual(w[kind] / total - 0.06)
       expect(ratio).toBeLessThanOrEqual(w[kind] / total + 0.06)
     }
   })
 
-  it('★ 스와이프가 주력이다 — 주먹(catch)은 특수 노트로만 나온다', () => {
+  it('★ 주먹(catch) 노트는 생성하지 않는다 — 손 트래킹으로 쥠 구분이 느리고 부정확', () => {
+    for (const difficulty of DIFFICULTIES) {
+      const notes = allNotes(difficulty)
+      expect(notes.some((n) => n.kind === 'catch')).toBe(false)
+      expect(PRESETS[difficulty].kinds.catch).toBe(0)
+    }
+  })
+
+  it('★ 스와이프가 주력이고 나머지는 연결 노트다', () => {
     for (const difficulty of DIFFICULTIES) {
       const notes = allNotes(difficulty)
       const swipe = notes.filter((n) => n.kind === 'swipe').length / notes.length
-      const grab = notes.filter((n) => n.kind === 'catch').length / notes.length
-      expect(swipe).toBeGreaterThan(0.55)
-      expect(grab).toBeLessThan(0.2)
+      expect(swipe).toBeGreaterThan(0.6)
+      expect(notes.every((n) => n.kind === 'swipe' || n.kind === 'trail')).toBe(true)
     }
   })
 
@@ -171,10 +178,10 @@ describe('노트 다양성', () => {
     }
   })
 
-  it('세 종류가 모두 나온다', () => {
+  it('스와이프·연결 두 종류가 나온다', () => {
     for (const difficulty of DIFFICULTIES) {
       const kinds = new Set(allNotes(difficulty).map((n) => n.kind))
-      expect(kinds).toEqual(new Set(['swipe', 'trail', 'catch']))
+      expect(kinds).toEqual(new Set(['swipe', 'trail']))
     }
   })
 
