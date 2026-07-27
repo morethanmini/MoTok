@@ -21,6 +21,7 @@ import { API_BASE } from '@/api/http'
 import { getAccessToken } from '@/api/token'
 import type {
   ChatMessage,
+  DrawOp,
   GameEvent,
   LiveRoomHostChangedEvent,
   LiveRoomUpdatedEvent,
@@ -211,6 +212,25 @@ export function useRoomChat() {
     })
   }
 
+  // ── 그림으로 말해요(게임 10, 명세 v0.2.20) ──
+  /** 획 연산 배치 발신 — 자기 차례(화가)에만, 100~150ms 배치로. 서버가 DRAW로 재방송한다. */
+  function sendGameDraw(seq: number, ops: DrawOp[]) {
+    if (!client?.connected || !currentRoomId) return
+    client.publish({
+      destination: `/app/rooms/${currentRoomId}/game/draw`,
+      body: JSON.stringify({ seq, ops }),
+    })
+  }
+
+  /** AI 채점 결과 발신 — 최초 1회만 수리(SETNX). DRAW_RESULT + 협동 GAME_END가 돌아온다. */
+  function sendGameDrawResult(guesses: string[], answerRank: number, score: number) {
+    if (!client?.connected || !currentRoomId) return
+    client.publish({
+      destination: `/app/rooms/${currentRoomId}/game/draw-result`,
+      body: JSON.stringify({ guesses, answerRank, score }),
+    })
+  }
+
   onScopeDispose(disconnect)
 
   return {
@@ -227,5 +247,7 @@ export function useRoomChat() {
     startGame,
     sendGameProgress,
     sendGameFinish,
+    sendGameDraw,
+    sendGameDrawResult,
   }
 }
