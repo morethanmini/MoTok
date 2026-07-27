@@ -1,9 +1,8 @@
 <script setup lang="ts">
-/** 접속 친구 한 명. 방에 있으면 따라 들어가는 '참가' 버튼, 온라인이면 상태 점. */
+/** 접속 친구 한 명. 이름·현재 상태 문구와 온라인 여부 점만 보여준다(읽기 전용). */
 import type { Friend } from '../data'
 
 defineProps<{ friend: Friend }>()
-defineEmits<{ join: [] }>()
 </script>
 
 <template>
@@ -13,7 +12,6 @@ defineEmits<{ join: [] }>()
       <b>{{ friend.name }}</b>
       <small>{{ friend.game }}</small>
     </div>
-    <button v-if="friend.playing" class="invite" @click="$emit('join')">참가</button>
     <i class="status" :class="{ offline: !friend.online }" />
   </div>
 </template>
@@ -56,14 +54,6 @@ defineEmits<{ join: [] }>()
   background: #b3aab3;
   box-shadow: 0 0 0 3px #ece6ec;
 }
-.invite {
-  margin-left: 8px;
-  border: 2px solid var(--c-ink);
-  border-radius: 8px;
-  background: #fff;
-  padding: 5px 7px;
-  font-size: 8px;
-}
 
 .friend {
   margin-bottom: 8px;
@@ -79,5 +69,4 @@ defineEmits<{ join: [] }>()
 .friend-info small { margin-top: 4px; color: #897460; font-size: 10px; }
 .status { width: 10px; height: 10px; border: 2px solid #60945b; border-radius: 3px; background: #82bd74; box-shadow: none; }
 .status.offline { border-color: #998d85; background: #b7aaa2; box-shadow: none; }
-.invite { border-color: #8d704e; border-radius: 5px; background: #e6efc7; color: #5d4c36; box-shadow: 2px 2px 0 #c2aa82; }
 </style>

@@ -67,6 +67,34 @@ export interface UserProfile {
   nicknamePending?: boolean
   /** 비밀번호가 없는 소셜 전용 계정 — 비밀번호 변경 불가, 탈퇴 시 소셜 재인증 필요 (-111) */
   socialOnly?: boolean
+  /** 프로필 사진 URL. null이면 기본 아바타를 그린다. */
+  avatarUrl?: string | null
+}
+
+/** 업로드 용도. 서버 UploadPurpose enum과 값이 일치해야 한다. */
+export type UploadPurpose = 'AVATAR' | 'AI_ITEM' | 'SONG'
+
+/** POST /uploads/presign 요청 — key·파일명은 보내지 않는다(서버가 정한다). */
+export interface PresignUploadRequest {
+  purpose: UploadPurpose
+  contentType: string
+  contentLength: number
+}
+
+/**
+ * POST /uploads/presign 응답.
+ *
+ * requiredHeaders는 반드시 그대로 PUT에 실어야 한다 — 서명에 포함된 헤더라
+ * 하나라도 빠지거나 다르면 S3가 SignatureDoesNotMatch로 거부한다.
+ * 프론트에 상수로 박지 않고 서버가 내려주는 이유는 SDK 버전에 따라 서명 대상이 달라질 수 있어서다.
+ */
+export interface PresignUploadResponse {
+  uploadUrl: string
+  key: string
+  /** 업로드 성공 시 갖게 될 주소. 낙관적 프리뷰용이고, DB에 남는 값은 서버가 다시 계산한다. */
+  publicUrl: string
+  expiresInSeconds: number
+  requiredHeaders: Record<string, string>
 }
 
 /** GET /users/{userId} — 랭킹 등에서 보는 다른 사용자의 공개 프로필 (-96) */
@@ -306,6 +334,25 @@ export interface FriendRoomResponse {
   roomId: string | null
 }
 
+// ── 방 초대 (-100) ─────────────────────────
+/** POST /v1/live-rooms/{roomId}/invitations 요청 (CreateInvitationRequest) */
+export interface CreateInvitationRequest {
+  friendId: number
+}
+/**
+ * GET /invitations 응답 항목 (InvitationItem).
+ * inviteCode가 실려 있어 수락 시 join-by-invite-code로 바로 입장한다(비밀방 비밀번호 면제).
+ */
+export interface InvitationItem {
+  invitationId: string
+  roomId: string
+  roomTitle: string
+  inviteCode: string
+  fromNickname: string
+  createdAt: string
+  expiresAt: string
+}
+
 // ── 신고 ──────────────────────────────────
 export interface ReportRequest {
   reportedUserId: number
@@ -468,15 +515,28 @@ export interface GameResultEntry {
   /** false = 미제출(중도 이탈·타임아웃) — 0점 처리 */
   finished: boolean
 }
+/** 그림으로 말해요 획 연산(명세 v0.2.20) — trim은 x=남길 점 수(펜 놓기 꼬리 삭제 동기화) */
+export interface DrawOp {
+  type: 'begin' | 'point' | 'end' | 'trim'
+  tool?: 'pen' | 'erase' | null
+  x?: number | null
+  y?: number | null
+}
+
 export type GameEvent =
   | {
       type: 'GAME_START'
       sessionId: string
       gameId: number
-      constellationKey: string
+      constellationKey: string | null
       serverNow: number
       startAt: number
       endAt: number
+      /** 그림으로 말해요(게임 10) 전용 — 주제어·화가 순서·인당 그리기 초·교대 초. 핑거 스타는 null */
+      topicWord?: string | null
+      turnOrder?: string[] | null
+      turnDurationSec?: number | null
+      handoverSec?: number | null
     }
   | {
       type: 'PROGRESS'
@@ -495,6 +555,23 @@ export type GameEvent =
       starsHit: number
     }
   | { type: 'GAME_END'; sessionId: string; results: GameResultEntry[] }
+  | {
+      /** 그리기 릴레이(게임 10) — 화가의 획 연산 배치 재방송. 발신자는 자기 에코 무시 */
+      type: 'DRAW'
+      sessionId: string
+      userId: string
+      seq: number | null
+      ops: DrawOp[]
+    }
+  | {
+      /** AI 채점 결과(게임 10) — score는 순위 점수(1위 100 … 5위 20). 직후 협동 GAME_END가 온다 */
+      type: 'DRAW_RESULT'
+      sessionId: string
+      userId: string
+      guesses: string[]
+      answerRank: number
+      score: number
+    }
 
 // ── 관리자 ────────────────────────────────
 export interface ReportedUser {
