@@ -1,6 +1,8 @@
 package ssafy.a706.backend.liveroom.repository;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Repository;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
@@ -10,6 +12,8 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Duration;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -86,6 +90,11 @@ public class LiveRoomRepository {
         redisTemplate.opsForZSet().remove(ROOM_INDEX_KEY, roomId);
     }
 
+    /** 로비 목록에 노출되는 방인가 — 게스트 1인방은 인덱스에 없어 false다(-148 알림 대상 판정). */
+    public boolean isIndexed(String roomId) {
+        return redisTemplate.opsForZSet().score(ROOM_INDEX_KEY, roomId) != null;
+    }
+
     public Optional<Map<Object, Object>> findRoomFields(String roomId) {
         Map<Object, Object> fields = redisTemplate.opsForHash().entries(roomKey(roomId));
         return fields.isEmpty() ? Optional.empty() : Optional.of(fields);
@@ -95,6 +104,58 @@ public class LiveRoomRepository {
         return redisTemplate.opsForHash().entries(membersKey(roomId)).values().stream()
                 .map(v -> decodeMember((String) v))
                 .toList();
+    }
+
+    /**
+     * 여러 방을 <b>한 번의 왕복</b>으로 읽는다(방 정보 + 참가자).
+     *
+     * <p>방 목록은 인덱스에서 최대 50개를 훑는데, 방마다 {@code findRoomFields} +
+     * {@code findMembers}를 따로 부르면 왕복이 101번이다(ZREVRANGE 1 + 방당 2). 응답의
+     * 거의 전부가 "직전과 같음"인 목록 조회에 그 비용을 매번 치르고 있었다. 파이프라인으로 묶으면
+     * 명령 수는 같지만 네트워크 왕복이 1번으로 줄어 목록 지연이 왕복 수에 비례하지 않게 된다.</p>
+     *
+     * @return 살아 있는 방만. TTL로 사라진 방은 결과에 없다(호출부가 인덱스를 정리할 근거)
+     */
+    public Map<String, RawRoom> findRoomsInBulk(Collection<String> roomIds) {
+        List<String> ids = roomIds.stream().distinct().toList();
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+
+        List<Object> results = redisTemplate.executePipelined(new SessionCallback<Object>() {
+            @Override
+            public Object execute(RedisOperations operations) {
+                for (String roomId : ids) {
+                    operations.opsForHash().entries(roomKey(roomId));
+                    operations.opsForHash().entries(membersKey(roomId));
+                }
+                return null; // 파이프라인에서는 개별 반환값을 쓰지 않는다
+            }
+        });
+
+        Map<String, RawRoom> rooms = new LinkedHashMap<>();
+        for (int i = 0; i < ids.size(); i++) {
+            Map<Object, Object> fields = asHash(results, i * 2);
+            if (fields.isEmpty()) {
+                continue; // 인덱스에는 있는데 해시가 없다 = TTL로 사라진 방
+            }
+            rooms.put(ids.get(i), new RawRoom(fields, decodeMembers(asHash(results, i * 2 + 1))));
+        }
+        return rooms;
+    }
+
+    /** 파이프라인으로 함께 읽어 온 방 한 채의 원시 형태. */
+    public record RawRoom(Map<Object, Object> fields, List<LiveRoomMemberValue> members) {
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<Object, Object> asHash(List<Object> results, int index) {
+        Object raw = index < results.size() ? results.get(index) : null;
+        return raw instanceof Map<?, ?> map ? (Map<Object, Object>) map : Map.of();
+    }
+
+    private List<LiveRoomMemberValue> decodeMembers(Map<Object, Object> hash) {
+        return hash.values().stream().map(v -> decodeMember((String) v)).toList();
     }
 
     /** rooms:index ZSET에서 최신순(score 내림차순) roomId 목록(공개방·비공개방 모두 포함). */
