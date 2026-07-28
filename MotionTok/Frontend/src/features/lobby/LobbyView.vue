@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 메인 로비 — 방 목록(공개방·비밀방), 친구, 빠른 메뉴, 방 만들기/코드 참가, 스플래시, BGM. */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import {
@@ -12,10 +12,12 @@ import {
   type Friend as ApiFriend,
   type InvitationItem,
   type KickReason,
+  type LobbyRoomEvent,
+  type Presence,
 } from '@/api'
 import { useSessionStore } from '@/stores/session'
 import { useAsyncData } from '@/composables/useAsyncData'
-import { useAutoReload } from '@/composables/useAutoReload'
+import { useLobbyLive } from '@/composables/useLobbyLive'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
 import { useUserProfile } from '@/composables/useUserProfile'
@@ -89,14 +91,15 @@ function toFriend(f: ApiFriend): Friend {
     face: FACES[slot] ?? '🐰',
     bg: FACE_BGS[slot] ?? '#ffe2e3',
     avatarUrl: f.avatarUrl ?? null,
-    game:
-      f.presence === 'IN_ROOM'
-        ? '게임방에 참가중'
-        : f.presence === 'ONLINE'
-          ? '로비에서 둘러보는 중'
-          : '오프라인',
+    game: presenceLabel(f.presence),
     online: f.presence !== 'OFFLINE',
   }
+}
+
+/** 실시간 델타(-149)와 최초 목록이 같은 문구를 쓰도록 한 곳에 둔다. */
+function presenceLabel(presence: Presence): string {
+  if (presence === 'IN_ROOM') return '게임방에 참가중'
+  return presence === 'ONLINE' ? '로비에서 둘러보는 중' : '오프라인'
 }
 
 const NO_FRIENDS: Friend[] = []
@@ -113,8 +116,8 @@ const { data: pendingRequests, reload: reloadRequests } = useAsyncData(
 )
 
 // 받은 방 초대 (GET /invitations, -100)
-// 게임룸에서만 STOMP가 연결되므로 로비에는 푸시받을 통로가 없다 — 초대는 서버에 5분간 저장되고
-// 이 폴링이 가져온다. 즉 최대 한 주기(12초)만큼 늦게 뜬다.
+// 이제 전역 STOMP 개인 큐로 즉시 도착한다(-142). 이 조회는 진입·재연결 시의 스냅샷 역할만 한다 —
+// 푸시는 상대가 재연결 중이면 유실되므로 저장(TTL 5m)과 조회를 함께 남긴다.
 const NO_INVITATIONS: InvitationItem[] = []
 const { data: invitations, reload: reloadInvitations } = useAsyncData(
   () => invitationsApi.received(),
@@ -133,13 +136,15 @@ function toRoom(s: LiveRoomSummary): Room {
     max: s.maxPlayers,
     state: s.status === 'WAITING' ? '대기 중' : '게임 중',
     visibility: s.visibility === 'PUBLIC' ? '공개' : '비공개',
-    disabled: s.status === 'IN_GAME' || s.participantCount >= s.maxPlayers,
+    disabled: s.status === 'PLAYING' || s.participantCount >= s.maxPlayers,
     hasPassword: s.hasPassword,
   }
 }
 // 방 목록 (GET /v1/live-rooms?page=, 페이지당 6개 · 최신순)
 // 실패 시 목업 대신 빈 목록을 보여준다 — 가짜 방이 뜨면 입장을 시도하다 실패하고, API 장애를 알아챌 수도 없다.
 // hasNext는 응답이 알려주지만, 이전 페이지 여부는 백엔드가 안 알려줘서 page > 1로 프론트에서 직접 판단한다.
+/** 서버 페이지 크기와 같아야 한다(-124). 델타로 목록을 기울 때 자르는 기준. */
+const PAGE_SIZE = 6
 const page = ref(1)
 const hasNext = ref(false)
 const NO_ROOMS: Room[] = []
@@ -243,23 +248,85 @@ const pwTarget = ref<Room | null>(null)
 const pwError = ref('')
 const pwBusy = ref(false)
 /**
- * 로비 자동 갱신 — 방 목록·친구 목록·친구 요청·받은 방 초대는 남이 바꾸는 데이터라 가만히 두면 낡는다.
- * 방이 새로 생기거나 정원이 차는 것, 친구가 접속하는 것, 요청·초대가 들어오는 것을
- * 새로고침 없이 따라간다.
+ * 로비 실시간 갱신 (-148/-149) — 12초 폴링 4종(방 목록·친구·친구요청·초대)을 걷어낸 자리.
  *
- * 모달이 열려 있거나 스플래시 중에는 건너뛴다 — 목록이 밀려서 방금 본 것과 다른 방을 누르게 되면
- * 그게 더 나쁜 경험이다. 지금 보고 있는 페이지를 그대로 다시 불러오므로 페이지네이션도 유지된다.
+ * 폴링은 "남이 바꾸는 데이터"를 따라잡는 유일한 방법이었지만, 응답의 거의 전부가
+ * "아무것도 안 바뀜"이었고 부하가 접속자 수에 비례했다. 이제 서버가 바뀐 순간에만 알려 준다.
+ *
+ * 화면 진입 시의 REST 1회 조회(useAsyncData)는 그대로 남는다 — 실시간 채널은 델타만 주므로
+ * 시작점은 여전히 스냅샷이 필요하고, 연결이 끊겼다 붙을 때도 한 번 다시 받아야 한다.
  */
-useAutoReload(
-  () => Promise.all([reloadRooms(), reloadFriends(), reloadRequests(), reloadInvitations()]),
-  {
-    // 친구 화면(20초)보다 짧게 — 방은 만들어지고 정원이 차는 속도가 빨라서 낡은 목록이 더 잘 티가 난다.
-    // 대기 중으로 보이는 방에 들어갔더니 이미 꽉 찬 상황을 줄이는 게 목적이다.
-    intervalMs: 12_000,
-    shouldSkip: () =>
-      showSplash.value || showJoin.value || showCreate.value || pwTarget.value !== null,
-  },
+/** 상호작용 중에 도착한 변화를 쌓아 뒀다가 모달이 닫히면 반영한다. */
+const roomsDirty = ref(false)
+/** 모달이 열려 있으면 목록이 밀려 방금 본 것과 다른 방을 누르게 된다 — 그게 더 나쁜 경험이다. */
+const interacting = computed(
+  () => showSplash.value || showJoin.value || showCreate.value || pwTarget.value !== null,
 )
+/** 델타를 그대로 기워도 되는 건 1페이지·검색 없음일 때뿐(그 밖은 서버가 모르는 상태다). */
+const canPatchRooms = computed(() => page.value === 1 && query.value.trim() === '')
+
+watch(interacting, (busy) => {
+  if (busy || !roomsDirty.value) return
+  roomsDirty.value = false
+  void reloadRooms()
+})
+
+function applyRoomEvents(events: LobbyRoomEvent[]) {
+  if (interacting.value || !canPatchRooms.value) {
+    roomsDirty.value = true
+    return
+  }
+  let next = rooms.value
+  let shrank = false
+  for (const event of events) {
+    if (event.type === 'ROOM_CLOSED') {
+      const before = next.length
+      next = next.filter((r) => r.roomId !== event.roomId)
+      shrank ||= next.length < before
+      continue
+    }
+    if (!event.room) continue
+    const card = toRoom(event.room)
+    const index = next.findIndex((r) => r.roomId === event.roomId)
+    if (index >= 0) {
+      next = next.map((r, i) => (i === index ? card : r))
+    } else if (event.type === 'ROOM_CREATED') {
+      next = [card, ...next] // 최신순이라 새 방은 맨 위
+    }
+  }
+  // 한 페이지는 6개다. 방이 닫혀 자리가 비면 다음 방이 올라와야 하는데 그 데이터가 여기 없다.
+  if (shrank && next.length < PAGE_SIZE) {
+    void reloadRooms()
+    return
+  }
+  rooms.value = next.slice(0, PAGE_SIZE)
+}
+
+useLobbyLive({
+  onRoomEvents: applyRoomEvents,
+  onFriendPresence: ({ userId, presence }) => {
+    // 목록 전체를 다시 받지 않고 그 친구 한 명의 상태만 고쳐 그린다.
+    const state = presence as Presence
+    friends.value = friends.value.map((f) =>
+      f.userId === userId
+        ? { ...f, game: presenceLabel(state), online: state !== 'OFFLINE' }
+        : f,
+    )
+  },
+  onNotification: (notification) => {
+    if (notification.type === 'ROOM_INVITATION') {
+      const invitation = notification.payload as InvitationItem | null
+      if (invitation) invitations.value = [invitation, ...invitations.value]
+      return
+    }
+    // 친구 요청 도착·수락·거절·해제 — 배지와 목록을 함께 맞춘다.
+    void Promise.all([reloadRequests(), reloadFriends()])
+  },
+  onResync: () => {
+    // 끊겨 있던 동안의 이벤트는 되돌아오지 않는다. 폴링이 부수적으로 해 주던 "놓친 것 메우기".
+    void Promise.all([reloadRooms(), reloadFriends(), reloadRequests(), reloadInvitations()])
+  },
+})
 
 /**
  * 초대 수락 (-100) — 초대에 실린 초대코드로 기존 입장 흐름을 탄다.
