@@ -68,6 +68,12 @@ public class GameSessionService {
     private static final long BODY_FIT_GAME_ID = 4L;
     /** 게임④ 출제 페이즈 길이 — FE config·기획 §3과 동기화. */
     private static final long BODY_FIT_SETTING_MILLIS = 5_000;
+    /**
+     * 게임④ 라운드 간 휴식(ms) — 벽 도착 후 다음 출제 포즈까지의 텀.
+     * 이전에는 다음 라운드 startAt이 곧 now였고, 벽 통과 직후 바로 카운트다운이 다시 시작돼
+     * 쉴 틈이 없었다(실기 피드백). FE는 startAt 전 구간을 'wait' 페이즈로 그린다.
+     */
+    private static final long BODY_FIT_ROUND_BREAK_MILLIS = 6_000;
     /** 게임④ 난이도 → 벽 접근 시간(ms) — FE config.difficulty와 동기화. */
     private static final Map<String, Long> BODY_FIT_APPROACH_MILLIS =
             Map.of("easy", 6_000L, "normal", 5_000L, "hard", 4_000L);
@@ -442,7 +448,7 @@ public class GameSessionService {
     private void startNextRound(String roomId, GameSession prev, int roundIndex) {
         String setterUserId = prev.setterOrder().get(roundIndex);
         long now = System.currentTimeMillis();
-        long startAt = now;
+        long startAt = now + BODY_FIT_ROUND_BREAK_MILLIS;
         long endAt = startAt + BODY_FIT_SETTING_MILLIS + BODY_FIT_APPROACH_MILLIS.get(prev.difficulty());
         GameSession next = new GameSession(prev.sessionId(), prev.gameId(), null, setterUserId,
                 startAt, endAt, GameSession.STATUS_PLAYING, prev.setterOrder(), roundIndex, prev.difficulty());
