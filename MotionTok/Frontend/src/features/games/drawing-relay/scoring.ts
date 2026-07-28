@@ -4,8 +4,9 @@
  * 완성 그림(PNG data URL)을 비전 모델에 보내 "무엇을 그린 것인지" 5개 추측을 받는다.
  * 주제어는 프롬프트에 절대 넣지 않는다 — 블라인드 채점이 게임의 핵심 규칙.
  *
- * 폴백 없음: VITE_GMS_KEY가 없으면 즉시 에러를 던진다 — 실패를 드러내야
- * "채점이 실제 AI로 도는지"를 어느 환경에서든 바로 판별할 수 있다.
+ * 폴백 없음: VITE_GMS_KEY·VITE_GMS_MODEL 중 하나라도 없으면 즉시 에러를 던진다 —
+ * 기본 모델로 조용히 대체하지 않아야 "어떤 모델로 실제 채점되는지"를 어느 환경에서든
+ * 바로 판별할 수 있다.
  * 주의: VITE_* 값은 번들에 노출되는 공개값 — 키 직접 호출은 로컬/팀 테스트 전용이며,
  * 배포 시에는 백엔드 프록시 엔드포인트로 옮겨야 한다.
  */
@@ -18,7 +19,6 @@ import { parseGuesses } from './logic'
  * 배포 환경은 리버스 프록시에 같은 /gmsapi 규칙이 있어야 한다.
  */
 const DEFAULT_GMS_API_URL = '/gmsapi/api.openai.com/v1/chat/completions'
-const DEFAULT_GMS_MODEL = 'gpt-4o'
 
 /** 사용자 확정 프롬프트 + 파싱용 형식 지시(주제어 미포함) */
 const JUDGE_PROMPT =
@@ -37,9 +37,12 @@ export async function judgeDrawing(imageDataUrl: string): Promise<JudgeResult> {
   if (!key) {
     throw new Error('GMS 키(VITE_GMS_KEY)가 설정되지 않아 AI 채점을 진행할 수 없어요')
   }
+  const model = import.meta.env.VITE_GMS_MODEL
+  if (!model) {
+    throw new Error('GMS 모델(VITE_GMS_MODEL)이 설정되지 않아 AI 채점을 진행할 수 없어요')
+  }
 
   const url = import.meta.env.VITE_GMS_API_URL || DEFAULT_GMS_API_URL
-  const model = import.meta.env.VITE_GMS_MODEL || DEFAULT_GMS_MODEL
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
