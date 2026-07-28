@@ -25,6 +25,13 @@ const conversations = reactive(new Map<number, WhisperMessage[]>())
 const unread = reactive(new Map<number, number>())
 /** 지금 열려 있는 대화창의 상대. 열려 있는 대화는 도착 즉시 읽음 처리한다. */
 const openWith = ref<number | null>(null)
+/**
+ * 방금 도착한 <b>안 읽은</b> 귓속말 — 앱 전역 알림(토스트)이 이걸 지켜본다.
+ *
+ * 화면에 이미 떠 있는 대화는 알릴 이유가 없으므로 열려 있는 상대의 말과 내 에코는 담지 않는다.
+ * 수신함과 마찬가지로 모듈 수명에 둔다 — 어느 화면에 있든 알림은 떠야 한다.
+ */
+const incoming = ref<WhisperMessage | null>(null)
 const loadedHistory = new Set<number>()
 let started = false
 
@@ -36,6 +43,7 @@ function append(message: WhisperMessage) {
   conversations.set(peer, [...thread, message])
   if (message.mine || openWith.value === peer) return
   unread.set(peer, (unread.get(peer) ?? 0) + 1)
+  incoming.value = message
 }
 
 /** App 수명 동안 한 번만 구독한다. */
@@ -70,6 +78,7 @@ export function useWhisper() {
   async function open(userId: number) {
     openWith.value = userId
     unread.set(userId, 0)
+    if (incoming.value?.conversationWith === userId) incoming.value = null
     if (loadedHistory.has(userId)) return
     loadedHistory.add(userId)
     try {
@@ -100,6 +109,9 @@ export function useWhisper() {
 
   return {
     openWith: readonly(openWith),
+    /** 전역 알림용 — App.vue가 지켜보고 토스트를 띄운다. 소비 후 clearIncoming()으로 비운다. */
+    incoming: readonly(incoming),
+    clearIncoming: () => (incoming.value = null),
     totalUnread,
     messagesWith,
     unreadWith,
