@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import {
   FAIL_MAX_SCORE,
   GRADE_POINTS,
+  MIN_ROUND_SCORE,
   countMask,
   countOutside,
   findMarginForArea,
@@ -155,9 +156,22 @@ describe('점수 산정 (실패해도 일치율만큼 부분 점수)', () => {
   })
 
   it('실패해도 일치율에 비례해 점수를 준다', () => {
-    expect(scoreFor(judgment('FAIL', 0))).toBe(0)
-    expect(scoreFor(judgment('FAIL', 60))).toBe(30)
+    expect(scoreFor(judgment('FAIL', 0))).toBe(MIN_ROUND_SCORE)
+    expect(scoreFor(judgment('FAIL', 50))).toBe(30)
     expect(scoreFor(judgment('FAIL', 100))).toBe(FAIL_MAX_SCORE)
+  })
+
+  it('어떤 판정에서도 0점은 나오지 않는다', () => {
+    const grades: Grade[] = ['PERFECT', 'GREAT', 'PASS', 'FAIL']
+    for (const grade of grades) {
+      for (const iou of [0, 1, 25, 50, 75, 99, 100]) {
+        expect(scoreFor(judgment(grade, iou))).toBeGreaterThanOrEqual(MIN_ROUND_SCORE)
+      }
+    }
+    // 인식이 아예 안 돼 iou 0으로 떨어지는 경로(finalizeJudgment 폴백)도 포함
+    expect(scoreFor({ outsideRatio: 1, passed: false, iou: 0, grade: 'FAIL', overflow: [] })).toBe(
+      MIN_ROUND_SCORE,
+    )
   })
 
   it('일치율이 높을수록 실패 점수도 높다(단조 증가)', () => {
@@ -168,7 +182,7 @@ describe('점수 산정 (실패해도 일치율만큼 부분 점수)', () => {
 
   it('삐져나오진 않았지만 모양이 안 맞아 FAIL인 경우에도 부분 점수', () => {
     // passed=true인데 IoU가 낮아 등급만 FAIL — 0점 경로가 둘이라 grade로 갈라야 한다
-    expect(scoreFor(judgment('FAIL', 50, true))).toBe(25)
+    expect(scoreFor(judgment('FAIL', 50, true))).toBe(30)
   })
 
   it('실패 점수는 어떤 등급 점수와도 겹치지 않는다 — 겹치면 등급 배지가 오표시된다', () => {
