@@ -19,7 +19,7 @@
  * 방이 닫혀 카드가 한 장 모자라게 되면 그때만 재조회한다(그 시점의 로비 체류자만,
  * 그것도 서버가 1초로 모아 보낸 뒤라 몰려도 감당 가능한 양이다).
  */
-import { onBeforeUnmount } from 'vue'
+import { onBeforeUnmount, onMounted } from 'vue'
 import type {
   LobbyRoomEvent,
   PresenceQueueMessage,
@@ -30,6 +30,9 @@ import { isMemberSession, onStompConnected, subscribeGlobal } from './useGlobalS
 const LOBBY_ROOMS_TOPIC = '/topic/lobby/rooms'
 const PRESENCE_QUEUE = '/user/queue/presence'
 const NOTIFICATIONS_QUEUE = '/user/queue/notifications'
+
+/** 복귀 재조회의 최소 간격. focus와 visibilitychange가 거의 동시에 오는 브라우저가 있다. */
+const RESYNC_MIN_GAP_MS = 10_000
 
 export interface LobbyLiveHandlers {
   /** 방 변화 배치 한 묶음. 서버가 1초 창으로 모아 보내므로 배열이다. */
@@ -100,7 +103,33 @@ export function useLobbyLive(handlers: LobbyLiveHandlers) {
   }
 
   if (handlers.onResync) {
-    disposers.push(onStompConnected(handlers.onResync))
+    const resync = handlers.onResync
+    disposers.push(onStompConnected(resync))
+
+    // 탭이 다시 보일 때 한 번 — 폴링이 아니라 <b>구멍 메우기</b>다.
+    //
+    // 델타만으로 목록을 유지하면 서버가 이벤트를 못 낸 구간이 영구히 남는다. 대표적으로
+    // presence 키가 TTL로 조용히 사라지는 경우(친구가 절전에 들어가거나 탭이 백그라운드로
+    // 오래 있거나 망이 끊긴 경우)에는 발행할 주체가 아무도 없어 그 친구는 접속 중으로 박제된다.
+    // 예전 폴링이 visibilitychange·focus에서 겸하던 일이 정확히 이것이라, 주기는 버리고
+    // 이 한 조각만 되살린다 — 사용자가 화면으로 돌아오는 순간에만 1회.
+    let lastResyncAt = 0
+    const resyncIfStale = () => {
+      if (document.visibilityState !== 'visible') return
+      const now = Date.now()
+      if (now - lastResyncAt < RESYNC_MIN_GAP_MS) return
+      lastResyncAt = now
+      resync()
+    }
+
+    onMounted(() => {
+      document.addEventListener('visibilitychange', resyncIfStale)
+      window.addEventListener('focus', resyncIfStale)
+    })
+    disposers.push(() => {
+      document.removeEventListener('visibilitychange', resyncIfStale)
+      window.removeEventListener('focus', resyncIfStale)
+    })
   }
 
   onBeforeUnmount(() => disposers.forEach((dispose) => dispose()))
