@@ -13,13 +13,15 @@ defineEmits<{ open: [] }>()
 <template>
   <div class="friend" role="button" tabindex="0" @click="$emit('open')" @keydown.enter="$emit('open')">
     <!-- 사진이 없거나 못 불러온 친구는 이모지 얼굴로 떨어진다(UserAvatar가 처리). -->
-    <UserAvatar
+    <div class="face-frame">
+      <UserAvatar
       class="face"
       :style="{ background: friend.bg }"
       :src="friend.avatarUrl"
       :fallback="friend.face"
       :alt="`${friend.name} 프로필 사진`"
-    />
+      />
+    </div>
     <div class="friend-info">
       <b>{{ friend.name }}</b>
       <small>{{ friend.game }}</small>
@@ -32,56 +34,67 @@ defineEmits<{ open: [] }>()
 .friend {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 0;
-  border-bottom: 2px dashed #eaddea;
+  gap: 13px;
+  padding: 14px 2px;
+  border: 0;
+  border-bottom: 2px dashed #eadcc6;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
 }
 .friend:last-child { border: 0; }
-.face {
-  width: 38px;
-  height: 38px;
-  border: 2px solid var(--c-ink);
-  border-radius: 50%;
+.face-frame {
+  flex: none;
+  width: 50px;
+  height: 50px;
+  box-sizing: border-box;
   display: grid;
   place-items: center;
-  font-size: 17px;
+  padding: 2px;
+  border: 2px solid #8e714e;
+  border-radius: 50%;
+  background: #fff0b9;
+  box-shadow: none;
+  transform: none;
+  transition: transform .15s ease, filter .15s ease;
 }
-.friend-info { min-width: 0; }
-.friend-info b { display: block; font-size: 10px; }
+.face {
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #e8e3d9;
+  font-size: 22px;
+}
+.friend-info { min-width: 0; margin: -3px -6px; padding: 3px 6px; border-radius: 6px; transition: background .15s ease; }
+.friend-info b { display: block; color: #443127; font-size: 17px; line-height: 1.1; }
 .friend-info small {
   display: block;
-  font-size: 8px;
-  color: var(--c-muted);
-  margin-top: 3px;
+  margin-top: 5px;
+  color: #897460;
+  font-size: 12px;
+  line-height: 1.1;
 }
 .status {
   margin-left: auto;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--c-mint);
-  box-shadow: 0 0 0 3px var(--c-mint-soft);
+  margin-right: 16px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #5f9057;
+  border-radius: 3px;
+  background: #a8d97c;
+  box-shadow: inset 2px 2px 0 rgba(255, 255, 255, .45);
+  clip-path: polygon(25% 0, 75% 0, 100% 25%, 100% 75%, 75% 100%, 25% 100%, 0 75%, 0 25%);
 }
 .status.offline {
-  background: #b3aab3;
-  box-shadow: 0 0 0 3px #ece6ec;
+  border-color: #998d85;
+  background: #b7aaa2;
+  box-shadow: none;
 }
-
-.friend {
-  margin-bottom: 8px;
-  padding: 9px 8px;
-  border: 2px solid #ead8ba;
-  border-radius: 9px;
-  background: #fffaf0;
-  box-shadow: 2px 2px 0 #eadcc6;
-}
-.friend:last-child { border-bottom: 2px solid #ead8ba; }
-.friend { cursor: pointer; }
-.friend:hover { border-color: #b98e5e; background: #fff3dc; }
+.friend:hover { background: transparent; }
+.friend:hover .face-frame { filter: brightness(1.12); transform: scale(.98); }
 .friend:focus-visible { outline: 2px solid var(--c-ink); outline-offset: 2px; }
-.face { width: 44px; height: 44px; border-color: #b98e5e; border-radius: 9px; box-shadow: 2px 2px 0 #ead8bd; }
-.friend-info b { color: #443127; font-size: 14px; }
-.friend-info small { margin-top: 4px; color: #897460; font-size: 10px; }
-.status { width: 10px; height: 10px; border: 2px solid #60945b; border-radius: 3px; background: #82bd74; box-shadow: none; }
-.status.offline { border-color: #998d85; background: #b7aaa2; box-shadow: none; }
 </style>

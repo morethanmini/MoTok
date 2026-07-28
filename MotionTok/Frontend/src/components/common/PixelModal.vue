@@ -3,12 +3,13 @@
  * 픽셀 모달 오버레이. 배경 클릭 시 close 이벤트, 내부 클릭은 전파 차단.
  * <PixelModal @close="..."> ...내용... </PixelModal>
  */
+withDefaults(defineProps<{ variant?: 'default' | 'lobby' }>(), { variant: 'default' })
 defineEmits<{ close: [] }>()
 </script>
 
 <template>
   <div class="modal-wrap" @click="$emit('close')">
-    <div class="modal" @click.stop>
+    <div class="modal" :class="variant" @click.stop>
       <slot />
     </div>
   </div>
@@ -35,5 +36,13 @@ defineEmits<{ close: [] }>()
   box-shadow: var(--shadow-xl);
   /* 창만 팝업 애니메이션 */
   animation: px-pop 0.16s ease;
+}
+.modal.lobby {
+  width: 430px;
+  padding: 30px;
+  border: 3px solid #d9b77f;
+  border-radius: 16px;
+  background: #fffdf7;
+  box-shadow: 5px 5px 0 #dfcdb0;
 }
 </style>

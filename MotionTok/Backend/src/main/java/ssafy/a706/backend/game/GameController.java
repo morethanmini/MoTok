@@ -14,6 +14,8 @@ import ssafy.a706.backend.game.dto.GameDrawResultRequest;
 import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameProgressRequest;
 import ssafy.a706.backend.game.dto.GameStartRequest;
+import ssafy.a706.backend.game.dto.GameTurnSkipRequest;
+import ssafy.a706.backend.game.dto.PoseSubmitRequest;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.global.response.ErrorResponse;
@@ -37,6 +39,12 @@ public class GameController {
         gameSessionService.start(roomId, request, extractSender(principal));
     }
 
+    /** 게임④ 출제자 포즈 제출(-86) — 서버가 challenge 저장 후 POSE_SET을 방 전체에 배포한다. */
+    @MessageMapping("/rooms/{roomId}/game/pose-submit")
+    public void poseSubmit(@DestinationVariable String roomId, PoseSubmitRequest request, Principal principal) {
+        gameSessionService.submitPose(roomId, request, extractSender(principal));
+    }
+
     @MessageMapping("/rooms/{roomId}/game/progress")
     public void progress(@DestinationVariable String roomId, GameProgressRequest request, Principal principal) {
         gameSessionService.progress(roomId, request, extractSender(principal));
@@ -51,6 +59,11 @@ public class GameController {
     @MessageMapping("/rooms/{roomId}/game/draw")
     public void draw(@DestinationVariable String roomId, GameDrawRequest request, Principal principal) {
         gameSessionService.draw(roomId, request, extractSender(principal));
+    }
+
+    @MessageMapping("/rooms/{roomId}/game/turn-skip")
+    public void turnSkip(@DestinationVariable String roomId, GameTurnSkipRequest request, Principal principal) {
+        gameSessionService.turnSkip(roomId, request, extractSender(principal));
     }
 
     @MessageMapping("/rooms/{roomId}/game/draw-result")

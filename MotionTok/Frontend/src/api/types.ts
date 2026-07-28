@@ -289,6 +289,22 @@ export interface LiveRoomHostChangedEvent {
   hostDisplayName: string
 }
 
+/**
+ * /topic/rooms/{roomId}/members 로 오는 퇴장·강퇴 알림.
+ * type 필드가 없어 userId와 participantCount 조합으로 식별한다.
+ * 대상 본인은 이 이벤트를 받으면 즉시 방 연결을 정리하고 로비로 이동해야 한다.
+ */
+export interface LiveRoomMemberRemovedEvent {
+  userId: string
+  participantCount: number
+}
+
+/** /topic/rooms/{roomId}/members 로 오는 강퇴 알림(-73). */
+export interface LiveRoomMemberKickedEvent extends LiveRoomMemberRemovedEvent {
+  displayName: string
+  reason: 'MANNER_VIOLATION' | 'INAPPROPRIATE_PROFILE' | 'GAME_DISRUPTION' | 'SPAM_AD' | 'OTHER'
+}
+
 /** POST /v1/live-rooms/{id}/join 요청 (JoinLiveRoomRequest). 비공개방(hasPassword)이면 password 필요 */
 export interface JoinLiveRoomRequest {
   password?: string
@@ -559,7 +575,18 @@ export type GameEvent =
       type: 'GAME_START'
       sessionId: string
       gameId: number
+      /** 게임⑩(그림으로 말해요)은 별자리가 없어 null이 온다 */
       constellationKey: string | null
+      /** 게임별 과제 payload(-137) — 게임④는 출제 후 POSE_SET으로 도착하므로 시작 시 null */
+      challenge?: string | null
+      /** 게임④ 출제자 userId(-86) — 그 외 게임은 null */
+      setterUserId?: string | null
+      /** 게임④ 난이도(easy/normal/hard, -86) */
+      difficulty?: string | null
+      /** 게임④ 출제자 로테이션(-48) — 1-based 현재 라운드. 로테이션 없는 게임은 null */
+      roundNo?: number | null
+      /** 게임④ 로테이션(-48) — 전체 라운드 수(참가자 수). 로테이션 없는 게임은 null */
+      totalRounds?: number | null
       serverNow: number
       startAt: number
       endAt: number
@@ -568,6 +595,13 @@ export type GameEvent =
       turnOrder?: string[] | null
       turnDurationSec?: number | null
       handoverSec?: number | null
+    }
+  | {
+      /** 게임④ 출제자 포즈 확정(-86) — challenge는 정규화 랜드마크 JSON */
+      type: 'POSE_SET'
+      sessionId: string
+      challenge: string
+      setterUserId: string
     }
   | {
       type: 'PROGRESS'
@@ -593,6 +627,14 @@ export type GameEvent =
       userId: string
       seq: number | null
       ops: DrawOp[]
+    }
+  | {
+      /** 조기 차례 넘기기(게임 10) — 전원이(발신자 포함, 에코 기준) remainingMs만큼 스케줄을 앞당긴다 */
+      type: 'TURN_SKIPPED'
+      sessionId: string
+      userId: string
+      turnIndex: number
+      remainingMs: number
     }
   | {
       /** AI 채점 결과(게임 10) — score는 순위 점수(1위 100 … 5위 20). 직후 협동 GAME_END가 온다 */
