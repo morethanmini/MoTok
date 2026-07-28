@@ -17,6 +17,7 @@ import ssafy.a706.backend.auth.principal.MemberPrincipal;
 import ssafy.a706.backend.user.service.UserService;
 import ssafy.a706.backend.user.controller.dto.ChangePasswordRequest;
 import ssafy.a706.backend.user.controller.dto.PublicUserProfileResponse;
+import ssafy.a706.backend.user.controller.dto.UpdateAvatarRequest;
 import ssafy.a706.backend.user.controller.dto.UpdateProfileRequest;
 import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
 import ssafy.a706.backend.user.controller.dto.WithdrawRequest;
@@ -43,6 +44,19 @@ public class UserController {
     public UserProfileResponse update(@AuthenticationPrincipal MemberPrincipal principal,
                                       @Valid @RequestBody UpdateProfileRequest req) {
         return userService.updateNickname(principal.id(), req.nickname());
+    }
+
+    /**
+     * PATCH /users/me/avatar — 프로필 사진 확정(명세 확장).
+     * 업로드는 POST /uploads/presign 으로 받은 URL에 브라우저가 직접 하고, 여기엔 그 결과 key만 보낸다.
+     * 기본 프로필 아이콘을 고른 경우엔 key 대신 preset(파일명)을 보낸다.
+     * 둘 다 생략하면 아바타를 해제한다.
+     */
+    @PatchMapping("/me/avatar")
+    public UserProfileResponse updateAvatar(@AuthenticationPrincipal MemberPrincipal principal,
+                                            @RequestBody(required = false) UpdateAvatarRequest req) {
+        return userService.updateAvatar(principal.id(),
+                req == null ? new UpdateAvatarRequest(null, null) : req);
     }
 
     /** PATCH /users/me/password — 비밀번호 변경(현재 비밀번호 확인) */

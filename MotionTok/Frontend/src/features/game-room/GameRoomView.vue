@@ -6,7 +6,7 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
 import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason } from '@/api'
-import type { GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
+import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { useCamera } from '@/composables/useCamera'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
@@ -20,17 +20,20 @@ import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
 import ReportIcon from './components/ReportIcon.vue'
 import HostWaitingOverlay from './components/HostWaitingOverlay.vue'
+import InviteFriendsModal from './components/InviteFriendsModal.vue'
 // 방 정보 수정 모달(-130) — 입력 필드가 방 생성과 동일 규격(명세 §4)이라 로비 모달을 그대로 재사용한다.
 import CreateRoomModal, { type NewRoom } from '@/features/lobby/components/CreateRoomModal.vue'
 // MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
 const FingerStarGame = defineAsyncComponent(
   () => import('@/features/games/finger-star/FingerStarGame.vue'),
 )
-import { useRhythmAutoJoin } from '@/features/games/catch-rhythm/useRhythmAutoJoin'
-
+const DrawingRelayGame = defineAsyncComponent(
+  () => import('@/features/games/drawing-relay/DrawingRelayGame.vue'),
+)
 const CatchRhythmGame = defineAsyncComponent(
   () => import('@/features/games/catch-rhythm/CatchRhythmGame.vue'),
 )
+import { useRhythmAutoJoin } from '@/features/games/catch-rhythm/useRhythmAutoJoin'
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -69,6 +72,8 @@ const shareCode = computed(() => inviteCode.value ?? roomCode.value)
 // 방 설정 수정(-130) 프리필용 — 공개여부와 현재 인원은 상세 조회로만 알 수 있다.
 const roomVisibility = ref<Visibility>('PUBLIC')
 const participantCount = ref(1)
+/** 이미 방에 있는 참가자 — 친구 초대(-100) 목록에서 빼려고 들고 있는다. */
+const memberIds = ref<string[]>([])
 
 /**
  * 방장 판정 — <b>이 화면의 유일한 방장 판별 근거</b>다. 상세 조회의 hostUserId와 내 토큰 sub를 직접 비교한다.
@@ -92,6 +97,7 @@ function applyDetail(d: LiveRoomDetail) {
   inviteCode.value = d.inviteCode
   roomVisibility.value = d.visibility
   participantCount.value = d.participantCount
+  memberIds.value = d.members.map((m) => m.userId)
 }
 
 // ── 실시간 참가자 → 슬롯 매핑 ────────────────
@@ -254,15 +260,13 @@ watch(roomChat.messages, (all, prev) => {
       kind: m.type,
       gameName: m.gameName,
     })
-    // 게임 제안 카드는 계속 보이게 두고, 일반 채팅만 잠시 후 사라진다.
+    // 게임 제안 카드도 일반 채팅과 동일하게 잠시 후 사라진다.
     // (6개 초과로 밀려날 때는 그대로 바로 사라지고, 시간이 지나 사라질 때만 흐려지며 사라진다)
-    if (m.type === 'TALK') {
-      setTimeout(() => {
-        const target = bubbles.value.find((b) => b.id === id)
-        if (target) target.fading = true
-      }, BUBBLE_LIFETIME_MS - BUBBLE_FADE_MS)
-      setTimeout(() => (bubbles.value = bubbles.value.filter((b) => b.id !== id)), BUBBLE_LIFETIME_MS)
-    }
+    setTimeout(() => {
+      const target = bubbles.value.find((b) => b.id === id)
+      if (target) target.fading = true
+    }, BUBBLE_LIFETIME_MS - BUBBLE_FADE_MS)
+    setTimeout(() => (bubbles.value = bubbles.value.filter((b) => b.id !== id)), BUBBLE_LIFETIME_MS)
   }
 })
 watch(
@@ -326,6 +330,7 @@ async function submitReport() {
 }
 
 // ── 유저 신고 (방 코드 왼쪽 버튼 — 현재 접속한 참가자 중에서 고르거나, 목록에 없으면 닉네임 직접 입력) ──
+// 참가자 목록에서 '다른 유저'를 고른 상태를 나타내는 화면 전용 값 — 서버 사유 코드가 아니다.
 const USER_REPORT_OTHER = 'OTHER'
 const userReportOpen = ref(false)
 // 참가자를 고르면 identity, 목록에 없는 다른 유저를 고르면 USER_REPORT_OTHER
@@ -360,7 +365,8 @@ async function submitUserReport() {
   try {
     await reportsApi.report({
       reportedUserId,
-      reasonType: USER_REPORT_OTHER,
+      // 서버 ReportReason 에 OTHER 는 없다(ETC). 이 화면은 사유를 고르지 않고 자유 입력만 받으므로 ETC로 보낸다.
+      reasonType: 'ETC',
       reasonText: `[닉네임: ${nickname}] ${content}`,
     })
     flash('신고가 접수됐어요')
@@ -423,6 +429,8 @@ const suggestCooldown = ref(false)
 const activeGame = ref<GameEntry | null>(null)
 const activeSession = ref<ActiveGameSession | null>(null)
 const gameResults = ref<GameResultEntry[] | null>(null)
+/** 그림으로 말해요(게임 10) — DRAW/DRAW_RESULT 릴레이를 게임 컴포넌트로 전달하는 피드 */
+const drawFeed = ref<GameEvent[]>([])
 
 // ── 게임 화면 송출 — 게임 중에는 카메라와 함께 게임 캔버스를 화면공유 트랙으로 발행한다.
 // 다른 참가자는 타일마다 게임 화면 ↔ 카메라를 토글로 골라 본다(ParticipantTile).
@@ -480,20 +488,30 @@ function applyGameEvent(e: GameEvent) {
     if (!entry) return
     gameResults.value = null
     liveScores.value = {}
+    drawFeed.value = []
     activeSession.value = {
       sessionId: e.sessionId,
-      constellationKey: e.constellationKey,
+      constellationKey: e.constellationKey ?? '',
       startAt: e.startAt,
       endAt: e.endAt,
       clockOffset: e.serverNow - Date.now(),
+      topicWord: e.topicWord ?? null,
+      turnOrder: e.turnOrder ?? null,
+      turnDurationSec: e.turnDurationSec ?? null,
+      handoverSec: e.handoverSec ?? null,
     }
     activeGame.value = entry
     picker.value = false
-    if (!captureOn.value) flash('카메라를 켜면 게임에 참여할 수 있어요')
+    if (!captureOn.value && !entry.cameraOptional) flash('카메라를 켜면 게임에 참여할 수 있어요')
     return
   }
   // 이하 이벤트는 현재 세션 것만 반영(닫은 뒤 늦게 도착한 프레임 방어)
   if (activeSession.value?.sessionId !== e.sessionId) return
+  // 그리기 릴레이 — 게임 컴포넌트가 피드를 watch로 소비한다(자기 에코 무시 포함)
+  if (e.type === 'DRAW' || e.type === 'DRAW_RESULT') {
+    drawFeed.value = [...drawFeed.value, e]
+    return
+  }
   if (e.type === 'PROGRESS') {
     const row = liveScores.value[e.userId]
     if (row?.finished) return // 완주 확정 후의 늦은 진행 프레임은 무시
@@ -548,7 +566,7 @@ function launch(g: GameEntry) {
   }
   // 방장 + 서버 연결 + 플레이 가능 → 서버에 시작 요청. GAME_START가 방 전체에 돌아와 마운트된다.
   if (g.playable && roomChat.connected.value && selfIsHost.value) {
-    if (!captureOn.value) {
+    if (!captureOn.value && !g.cameraOptional) {
       flash('카메라를 켜고 시작해 주세요')
       return
     }
@@ -557,7 +575,7 @@ function launch(g: GameEntry) {
   }
   // 서버 미연동 데모 — 로컬 솔로 플레이 폴백
   if (g.playable && !roomChat.connected.value) {
-    if (!captureOn.value) {
+    if (!captureOn.value && !g.cameraOptional) {
       flash('카메라를 켜야 게임을 플레이할 수 있어요')
       return
     }
@@ -597,6 +615,7 @@ function closeGame() {
   gameResults.value = null
   liveScores.value = {}
   rhythmEnded.value = false
+  drawFeed.value = []
 }
 
 function copyCode() {
@@ -734,13 +753,34 @@ async function leave() {
   router.push({ name: RouteName.Lobby })
 }
 
+// ── 친구 초대 (-100, 대기실 전용) ─────────────
+// 방 설정과 같은 이유로 열 때 상세를 다시 조회한다 — 그 사이 들어온 사람을 초대 목록에서 빼려면
+// memberIds가 최신이어야 한다. 조회에 실패해도 화면에 들고 있던 값으로 연다(서버가 다시 검증한다).
+const inviteOpen = ref(false)
+async function openInvite() {
+  try {
+    applyDetail(await roomsApi.detail(roomCode.value))
+  } catch {
+    // 목록에 이미 방에 있는 친구가 잠깐 남을 뿐이다 — 눌러도 서버가 판정한다
+  }
+  inviteOpen.value = true
+}
+
 const startLabel = computed(() => (amRoomHost.value ? 'START' : '제안'))
+/**
+ * 게임 선택 버튼 잠금 — 서버 연결 중에는 방장 여부를 알기 전까지 잠근다(제안 오발신 방지).
+ * STOMP 미연결(백엔드 미연동 로컬 데모)에서는 상세 조회가 영영 안 끝나므로 잠그지 않는다 —
+ * 이때 열리는 게임은 로컬 솔로 폴백뿐이고 제안 발신은 useRoomChat이 미연결 시 무시한다.
+ */
+const pickerLocked = computed(() => roomChat.connected.value && !detailLoaded.value)
 const startHint = computed(() =>
-  !detailLoaded.value
-    ? '방 정보를 불러오는 중…'
-    : amRoomHost.value
-      ? '게임을 선택하고 시작!'
-      : '하고 싶은 게임을 제안해보세요',
+  !roomChat.connected.value
+    ? '오프라인 — 로컬 게임을 플레이할 수 있어요'
+    : !detailLoaded.value
+      ? '방 정보를 불러오는 중…'
+      : amRoomHost.value
+        ? '게임을 선택하고 시작!'
+        : '하고 싶은 게임을 제안해보세요',
 )
 </script>
 
@@ -758,6 +798,13 @@ const startHint = computed(() =>
         <ReportIcon :width="16" :height="20" />
       </button>
 
+      <!-- 친구 초대 (-100) — 참가자 누구나, 대기실에서만. 게임 중엔 서버도 409로 거부한다. -->
+      <button v-if="!activeGame" class="ribbon-invite" title="친구 초대" @click="openInvite">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">
+          <circle cx="9" cy="8" r="3.6" /><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" /><path d="M18.5 8v6M15.5 11h6" />
+        </svg>
+      </button>
+
       <!-- 방 설정 (-130) — 방장만, 대기실에서만. 게임 중엔 서버도 거부하므로 버튼을 숨긴다. -->
       <button
         v-if="amRoomHost && !activeGame"
@@ -772,7 +819,7 @@ const startHint = computed(() =>
       <button
         class="px start-btn"
         :class="{ suggest: !amRoomHost }"
-        :disabled="!detailLoaded || (!amRoomHost && suggestCooldown)"
+        :disabled="pickerLocked || (detailLoaded && !amRoomHost && suggestCooldown)"
         :title="startHint"
         @click="openPicker"
       >
@@ -816,6 +863,22 @@ const startHint = computed(() =>
             @close="closeGame"
             @progress="onGameProgress"
             @finished="onGameFinished"
+          />
+          <!-- 그림으로 말해요 — 솔로(session=null)·멀티(명세 v0.2.20 턴 릴레이) -->
+          <DrawingRelayGame
+            v-else-if="activeGame?.id === 'draw'"
+            ref="gameComp"
+            :video="selfVideoEl ?? null"
+            :session="activeSession"
+            :results="gameResults"
+            :my-user-id="myParticipantId"
+            :draw-events="drawFeed"
+            @close="closeGame"
+            @draw="(seq: number, ops: DrawOp[]) => roomChat.sendGameDraw(seq, ops)"
+            @draw-result="
+              (r: { guesses: string[]; answerRank: number; score: number }) =>
+                roomChat.sendGameDrawResult(r.guesses, r.answerRank, r.score)
+            "
           />
           <!-- 캐치캐치리듬 — 전용 STOMP 채널이라 activeSession을 쓰지 않는다(자기 생명주기 소유).
                roomChat은 구독/발행 구멍만 쓰고 리듬 도메인 지식은 컴포넌트 안에 있다. -->
@@ -896,13 +959,13 @@ const startHint = computed(() =>
               class="px bubble"
               :class="{ me: b.me, suggest: b.kind === 'GAME_SUGGEST', fading: b.fading }"
             >
-              <button v-if="!b.me && isMember" class="bubble-report" title="신고" @click="openReport(b)">
+              <button v-if="!b.me && isMember && b.kind !== 'GAME_SUGGEST'" class="bubble-report" title="신고" @click="openReport(b)">
                 <ReportIcon />
               </button>
               <template v-if="b.kind === 'GAME_SUGGEST'">
                 <span class="bubble-name">🎮 {{ b.nickname }}</span> {{ b.text }}
                 <button v-if="amRoomHost" class="px suggest-pick" @click="selectSuggested(b.gameName)">
-                  이 게임으로 선택
+                  &gt; 플레이
                 </button>
               </template>
               <template v-else>
@@ -948,7 +1011,7 @@ const startHint = computed(() =>
                 class="px bubble full"
                 :class="{ me: b.me, suggest: b.kind === 'GAME_SUGGEST' }"
               >
-                <button v-if="!b.me && isMember" class="bubble-report" title="신고" @click="openReport(b)">
+                <button v-if="!b.me && isMember && b.kind !== 'GAME_SUGGEST'" class="bubble-report" title="신고" @click="openReport(b)">
                   <ReportIcon />
                 </button>
                 <template v-if="b.kind === 'GAME_SUGGEST'">
@@ -973,6 +1036,14 @@ const startHint = computed(() =>
 
     <!-- 게임 선택 모달 -->
     <GamePicker v-if="picker" @close="picker = false" @launch="launch" />
+
+    <!-- 친구 초대 (-100) -->
+    <InviteFriendsModal
+      v-if="inviteOpen"
+      :room-id="roomCode"
+      :member-ids="memberIds"
+      @close="inviteOpen = false"
+    />
 
     <!-- 토스트 -->
     <Transition name="toast">
@@ -1218,6 +1289,14 @@ const startHint = computed(() =>
   background: #fff; box-shadow: var(--shadow-sm);
 }
 .ribbon-report:hover { background: #ffe9ea; }
+/* 친구 초대(-100) — 신고 버튼과 같은 규격. margin-left:auto는 신고 버튼이 이미 갖고 있어 생략. */
+.ribbon-invite {
+  flex: none; width: 34px; height: 34px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid var(--c-ink); border-radius: 10px;
+  background: #fff; box-shadow: var(--shadow-sm);
+}
+.ribbon-invite:hover { background: var(--c-mint-soft); }
 /* 방 설정(-130) — 신고 버튼과 같은 규격. margin-left:auto는 신고 버튼이 이미 갖고 있어 생략. */
 .ribbon-settings {
   flex: none; width: 34px; height: 34px; padding: 0;
@@ -1270,7 +1349,7 @@ const startHint = computed(() =>
 .bubble.suggest { background: var(--c-mint-soft); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .bubble-name { display: block; margin-bottom: 3px; font-size: 10px; font-weight: 800; color: #2f9e3d; }
 .bubble-name.me { color: #c97e00; }
-.suggest-pick { border: 2px solid var(--c-ink-soft); border-radius: 8px; background: var(--c-yellow); padding: 5px 8px; font-size: 8px; font-weight: 700; }
+.suggest-pick { align-self: flex-end; border: 2px solid var(--c-ink-soft); border-radius: 8px; background: var(--c-yellow); padding: 5px 8px; font-size: 8px; font-weight: 700; }
 
 /* 메시지 신고 버튼 — 말풍선 안쪽 우상단, 테두리 없이 아이콘만 */
 .bubble-report {

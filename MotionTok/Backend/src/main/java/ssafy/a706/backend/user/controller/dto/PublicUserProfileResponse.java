@@ -11,9 +11,12 @@ import java.time.LocalDateTime;
 public record PublicUserProfileResponse(
         Long id,
         String nickname,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        /** 프로필 사진은 공개 정보다 — 랭킹·친구 목록에서 보여준다. */
+        String avatarUrl
 ) {
     public static PublicUserProfileResponse from(User user) {
-        return new PublicUserProfileResponse(user.getId(), user.getNickname(), user.getCreatedAt());
+        return new PublicUserProfileResponse(
+                user.getId(), user.getNickname(), user.getCreatedAt(), user.getAvatarUrl());
     }
 }

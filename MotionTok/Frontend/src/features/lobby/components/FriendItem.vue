@@ -1,19 +1,29 @@
 <script setup lang="ts">
-/** 접속 친구 한 명. 방에 있으면 따라 들어가는 '참가' 버튼, 온라인이면 상태 점. */
+/**
+ * 접속 친구 한 명. 이름·현재 상태 문구와 온라인 여부 점.
+ * 박스를 누르면 공개 프로필을 열도록 open을 올린다 — 조회는 LobbyView가 한다(친구 화면과 같은 컴포저블).
+ */
 import type { Friend } from '../data'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 
 defineProps<{ friend: Friend }>()
-defineEmits<{ join: [] }>()
+defineEmits<{ open: [] }>()
 </script>
 
 <template>
-  <div class="friend">
-    <div class="face" :style="{ background: friend.bg }">{{ friend.face }}</div>
+  <div class="friend" role="button" tabindex="0" @click="$emit('open')" @keydown.enter="$emit('open')">
+    <!-- 사진이 없거나 못 불러온 친구는 이모지 얼굴로 떨어진다(UserAvatar가 처리). -->
+    <UserAvatar
+      class="face"
+      :style="{ background: friend.bg }"
+      :src="friend.avatarUrl"
+      :fallback="friend.face"
+      :alt="`${friend.name} 프로필 사진`"
+    />
     <div class="friend-info">
       <b>{{ friend.name }}</b>
       <small>{{ friend.game }}</small>
     </div>
-    <button v-if="friend.playing" class="invite" @click="$emit('join')">참가</button>
     <i class="status" :class="{ offline: !friend.online }" />
   </div>
 </template>
@@ -56,12 +66,22 @@ defineEmits<{ join: [] }>()
   background: #b3aab3;
   box-shadow: 0 0 0 3px #ece6ec;
 }
-.invite {
-  margin-left: 8px;
-  border: 2px solid var(--c-ink);
-  border-radius: 8px;
-  background: #fff;
-  padding: 5px 7px;
-  font-size: 8px;
+
+.friend {
+  margin-bottom: 8px;
+  padding: 9px 8px;
+  border: 2px solid #ead8ba;
+  border-radius: 9px;
+  background: #fffaf0;
+  box-shadow: 2px 2px 0 #eadcc6;
 }
+.friend:last-child { border-bottom: 2px solid #ead8ba; }
+.friend { cursor: pointer; }
+.friend:hover { border-color: #b98e5e; background: #fff3dc; }
+.friend:focus-visible { outline: 2px solid var(--c-ink); outline-offset: 2px; }
+.face { width: 44px; height: 44px; border-color: #b98e5e; border-radius: 9px; box-shadow: 2px 2px 0 #ead8bd; }
+.friend-info b { color: #443127; font-size: 14px; }
+.friend-info small { margin-top: 4px; color: #897460; font-size: 10px; }
+.status { width: 10px; height: 10px; border: 2px solid #60945b; border-radius: 3px; background: #82bd74; box-shadow: none; }
+.status.offline { border-color: #998d85; background: #b7aaa2; box-shadow: none; }
 </style>

@@ -9,10 +9,15 @@ import { useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { useSessionStore } from '@/stores/session'
 import BrandLogo from './BrandLogo.vue'
+import UserAvatar from './UserAvatar.vue'
 import BgmToggle from './BgmToggle.vue'
 import CoinIcon from './CoinIcon.vue'
 import ChargePointsModal from './ChargePointsModal.vue'
 import LoginRequiredModal from './LoginRequiredModal.vue'
+import lobbyIcon from '@/assets/header/nav-lobby.png'
+import gamesIcon from '@/assets/header/nav-games.png'
+import rankingIcon from '@/assets/header/nav-ranking.png'
+import shopIcon from '@/assets/header/nav-shop.png'
 
 const router = useRouter()
 const route = useRoute()
@@ -20,10 +25,10 @@ const session = useSessionStore()
 
 // 로비 헤더와 동일한 nav 구성
 const NAV = [
-  { name: RouteName.Lobby, label: '로비' },
-  { name: RouteName.GamesCatalog, label: '게임' },
-  { name: RouteName.Ranking, label: '랭킹' },
-  { name: RouteName.Shop, label: '상점' },
+  { name: RouteName.Lobby, label: '로비', icon: lobbyIcon },
+  { name: RouteName.GamesCatalog, label: '게임', icon: gamesIcon },
+  { name: RouteName.Ranking, label: '랭킹', icon: rankingIcon },
+  { name: RouteName.Shop, label: '상점', icon: shopIcon },
 ] as const
 
 const current = computed(() => route.name)
@@ -81,6 +86,8 @@ const accountMenuRef = ref<HTMLElement | null>(null)
 const nickname = computed(() =>
   session.isGuest ? (session.guestNickname ?? '게스트') : (session.profile?.nickname ?? '…'),
 )
+// 게스트에게는 프로필 자체가 없다(사진을 올릴 경로도 없다) — 기본 이모지로 둔다.
+const avatarUrl = computed(() => (session.isGuest ? null : (session.profile?.avatarUrl ?? null)))
 
 function toggleAccountMenu() {
   showAccountMenu.value = !showAccountMenu.value
@@ -115,7 +122,8 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
         :class="{ active: current === item.name }"
         @click="onNav(item.name)"
       >
-        {{ item.label }}
+        <img class="nav-icon" :src="item.icon" alt="" aria-hidden="true" />
+        <span>{{ item.label }}</span>
       </button>
     </nav>
 
@@ -127,7 +135,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
       <div class="avatar-wrap" ref="accountMenuRef">
         <button class="avatar-pill" title="계정 메뉴" @click="toggleAccountMenu">
           <span class="nickname">{{ nickname }}</span>
-          <span class="avatar-circle">😎</span>
+          <UserAvatar class="avatar-circle" :src="avatarUrl" :alt="`${nickname} 프로필 사진`" />
         </button>
         <div v-if="showAccountMenu" class="account-menu">
           <div class="menu-head">
@@ -174,8 +182,35 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 .brand { min-width: 228px; }
 
 .nav { display: flex; gap: 8px; }
-.nav button { border: 0; background: transparent; padding: 11px 15px; border-radius: 12px; font-weight: 700; }
-.nav button.active { background: var(--c-yellow); border: 2px solid var(--c-ink); box-shadow: var(--shadow-sm); }
+.nav button { display: inline-flex; align-items: center; gap: 8px; border: 0; background: transparent; padding: 11px 15px; border-radius: 12px; font-weight: 700; }
+.nav-icon { width: 27px; height: 27px; object-fit: contain; image-rendering: pixelated; image-rendering: crisp-edges; }
+.nav button.active {
+  position: relative;
+  isolation: isolate;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 0;
+  background: #bb804d;
+  color: #2d211b !important;
+  box-shadow: 3px 3px 0 #e5cca0;
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
+}
+.nav button.active::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  inset: 3px;
+  background: linear-gradient(135deg, #fff2be 0%, #ffe89a 55%, #f7d979 100%);
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%, 6px 100%, 0 calc(100% - 6px), 0 6px);
+  box-shadow: inset 2px 2px 0 rgba(255,255,255,.75), inset -2px -2px 0 #e9c668;
+  pointer-events: none;
+}
+.nav button.active .nav-icon,
+.nav button.active span {
+  position: relative;
+  z-index: 1;
+  color: #2d211b !important;
+}
 
 .account { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .coin { height: 39px; padding: 0 12px; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; display: flex; align-items: center; gap: 7px; font-weight: 700; }
@@ -245,5 +280,24 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   .top { gap: 14px; }
   .brand { min-width: 0; }
   .user-pill, .coin { display: none; }
+}
+
+/* Header remains shared, with the lobby's cream-and-gold game navigation language. */
+.top { min-height: 78px; background: rgba(255, 250, 240, .97); border-bottom-color: #bd6d45; }
+.nav button { color: #443127; border: 2px solid transparent; border-radius: 9px; font-size: 15px; }
+.coin { border-color: #d4b17a; border-radius: 9px; box-shadow: 2px 2px 0 #ead8b9; }
+.avatar-circle { border-color: #d4b17a; background: #f8dca5; }
+@media (max-width: 850px) {
+  .top { height: auto; min-height: 68px; padding: 10px 16px; gap: 12px; flex-wrap: wrap; }
+  .brand { min-width: 125px; }
+  .nav { order: 3; width: 100%; justify-content: space-between; }
+  .nav button { flex: 1; padding: 8px 6px; font-size: 12px; }
+  .account { gap: 6px; }
+}
+@media (max-width: 480px) {
+  .top { padding: 8px 12px; }
+  .brand :deep(.name) { font-size: 16px; }
+  .brand :deep(.mark) { width: 38px; height: 38px; font-size: 19px; }
+  .account .coin, .nickname { display: none; }
 }
 </style>
