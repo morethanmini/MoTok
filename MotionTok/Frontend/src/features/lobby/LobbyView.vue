@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 메인 로비 — 방 목록(공개방·비밀방), 친구, 빠른 메뉴, 방 만들기/코드 참가, 스플래시, BGM. */
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import {
   roomsApi,
@@ -11,6 +11,7 @@ import {
   type LiveRoomSummary,
   type Friend as ApiFriend,
   type InvitationItem,
+  type KickReason,
 } from '@/api'
 import { useSessionStore } from '@/stores/session'
 import { useAsyncData } from '@/composables/useAsyncData'
@@ -23,6 +24,7 @@ import type { Friend, Room } from './data'
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
+import PixelModal from '@/components/common/PixelModal.vue'
 import UserProfileModal from '@/components/common/UserProfileModal.vue'
 import RoomCard from './components/RoomCard.vue'
 import FriendItem from './components/FriendItem.vue'
@@ -43,6 +45,7 @@ import lobbyEmptyCatTuna from '@/assets/lobby/lobby-empty-cat-tuna.png'
 import lobbyEmptyCatToys from '@/assets/lobby/lobby-empty-cat-toys.png'
 
 const router = useRouter()
+const route = useRoute()
 const session = useSessionStore()
 const bgm = useBgm()
 const { message: toast, flash } = useToast()
@@ -55,6 +58,22 @@ const showSplash = ref(sessionStorage.getItem(SPLASH_SEEN_KEY) !== '1')
 const query = ref('')
 const showJoin = ref(false)
 const showCreate = ref(false)
+
+const KICK_REASON_LABELS: Record<KickReason, string> = {
+  MANNER_VIOLATION: '비매너 행위',
+  INAPPROPRIATE_PROFILE: '부적절한 프로필',
+  GAME_DISRUPTION: '게임 진행 방해',
+  SPAM_AD: '도배·광고',
+  OTHER: '기타',
+}
+function readKickReason(value: unknown): KickReason | null {
+  return typeof value === 'string' && value in KICK_REASON_LABELS ? value as KickReason : null
+}
+const kickedReason = ref<KickReason | null>(readKickReason(route.query.kickedReason))
+function closeKickedNotice() {
+  kickedReason.value = null
+  void router.replace({ query: { ...route.query, kickedReason: undefined } })
+}
 
 // 사이드바 친구 목록 (GET /friends, -57). 사진(avatarUrl)이 있으면 그걸 그리고, 없는 친구만
 // 이모지로 채운다. 이모지·배경색은 API에 없는 값이라 userId로 팔레트를 골라
@@ -464,6 +483,16 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
     />
     <CreateRoomModal v-if="showCreate" :busy="creating" @close="showCreate = false" @create="createRoom" />
 
+    <PixelModal v-if="kickedReason" variant="lobby" @close="closeKickedNotice">
+      <div class="kick-notice">
+        <span class="kick-notice-icon" aria-hidden="true">⚠️</span>
+        <p class="kick-notice-kicker">ROOM NOTICE</p>
+        <h3>방에서 강퇴되었어요</h3>
+        <p class="kick-notice-desc">강퇴 사유: <strong>{{ KICK_REASON_LABELS[kickedReason] }}</strong><br />이 방이 유지되는 동안 다시 입장할 수 없어요.</p>
+        <PixelButton class="kick-notice-confirm" block @click="closeKickedNotice">확인</PixelButton>
+      </div>
+    </PixelModal>
+
     <!-- 받은 방 초대 (-100) — 모달이 아니라 쌓이는 카드. 배경 조작을 막지 않는다. -->
     <InviteCardStack
       :invitations="invitations"
@@ -498,6 +527,12 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   position: relative;
   overflow: hidden;
 }
+.kick-notice { text-align: center; color: #403124; }
+.kick-notice-icon { display: grid; place-items: center; width: 54px; height: 54px; margin: 0 auto 12px; border: 3px solid #b78d5d; border-radius: 12px; background: #fff0b9; box-shadow: 3px 3px 0 #e2d0b5; font-size: 26px; }
+.kick-notice-kicker { margin: 0 0 7px; color: #9e6b43; font-size: 9px; letter-spacing: 1px; }
+.kick-notice h3 { margin: 0 0 10px; font-size: 19px; }
+.kick-notice-desc { margin: 0 0 22px; color: #806e5e; font-size: 11px; line-height: 1.6; }
+.kick-notice-confirm { height: 46px; border: 3px solid #925c47; border-radius: 7px; background: #ef7775; color: #fff; box-shadow: inset 2px 2px 0 rgba(255, 255, 255, .42), inset -2px -3px 0 rgba(120, 58, 47, .18), 3px 3px 0 #a66b50; font-size: 12px; }
 /* 상단 무지개 스트라이프 */
 .shell::before {
   content: '';
