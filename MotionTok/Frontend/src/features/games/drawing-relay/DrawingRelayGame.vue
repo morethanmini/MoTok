@@ -950,29 +950,40 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
   object-fit: contain;
 }
 
+/* 상단바 — 주제어는 게임 내내 필요한 핵심 정보라 오버레이 위(z-index)에 항상 보이게 둔다 */
 .dr-topbar {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  background: linear-gradient(rgba(239, 233, 220, 0.95), rgba(239, 233, 220, 0));
+  gap: 14px;
+  padding: 14px 18px;
+  background: linear-gradient(rgba(239, 233, 220, 0.96), rgba(239, 233, 220, 0));
   pointer-events: none;
 }
 .dr-topbar button {
   pointer-events: auto;
 }
-.dr-topic { font-size: 10px; color: #b0452b; white-space: nowrap; }
-.dr-painter { font-size: 9px; color: #6b6455; white-space: nowrap; }
-.dr-time-track { flex: 1; height: 8px; background: rgba(43, 43, 51, 0.12); border-radius: 6px; overflow: hidden; }
+.dr-topic {
+  font-size: 26px; font-weight: 700; white-space: nowrap;
+  padding: 6px 16px; border-radius: 12px;
+  background: #ffd23f; color: #3a2c05; border: 3px solid #2b2b33;
+  box-shadow: 2px 2px 0 rgba(43, 43, 51, 0.35);
+}
+/* 멀티에서 "OO님이 그리고 있어요!"가 길어질 수 있어 좁은 화면에서는 말줄임으로 우아하게 줄인다 */
+.dr-painter {
+  font-size: 18px; color: #5c5546; white-space: nowrap;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+.dr-time-track { flex: 1; min-width: 60px; height: 14px; background: rgba(43, 43, 51, 0.15); border-radius: 8px; overflow: hidden; }
 .dr-time-fill { height: 100%; background: linear-gradient(90deg, #7fbf6c, #ffd23f); transition: width 0.1s linear; }
-.dr-timer { font-size: 11px; min-width: 44px; text-align: right; color: #b0452b; }
+.dr-timer { font-size: 26px; font-weight: 700; min-width: 88px; text-align: right; color: #b0452b; }
 .dr-close {
-  width: 26px; height: 26px; border: 2px solid rgba(43, 43, 51, 0.35); border-radius: 8px;
-  background: rgba(239, 233, 220, 0.8); color: #2b2b33; font-size: 10px; cursor: pointer;
+  width: 44px; height: 44px; border: 3px solid rgba(43, 43, 51, 0.4); border-radius: 10px;
+  background: rgba(239, 233, 220, 0.85); color: #2b2b33; font-size: 18px; cursor: pointer;
 }
 
 .dr-bottombar {
@@ -982,81 +993,87 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
   right: 0;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 10px 14px;
-  font-size: 8px;
-  color: #8a8272;
-  background: linear-gradient(rgba(239, 233, 220, 0), rgba(239, 233, 220, 0.95));
+  gap: 18px;
+  padding: 14px 18px;
+  font-size: 16px;
+  color: #6d6555;
+  background: linear-gradient(rgba(239, 233, 220, 0), rgba(239, 233, 220, 0.96));
   pointer-events: none;
 }
 .dr-bottombar button {
   pointer-events: auto;
 }
-.dr-bottombar .on { color: #3f7d2f; }
+.dr-bottombar .on { color: #3f7d2f; font-weight: 700; }
 .dr-hint { color: #b0452b; }
 .dr-pass {
   margin-left: auto;
-  padding: 8px 14px; font-family: inherit; font-size: 9px; font-weight: 700; cursor: pointer;
-  background: #2b2b33; color: #f6f1e5; border: none; border-radius: 10px;
+  padding: 14px 22px; font-family: inherit; font-size: 17px; font-weight: 700; cursor: pointer;
+  background: #2b2b33; color: #f6f1e5; border: none; border-radius: 12px;
 }
 .dr-pass:disabled { opacity: 0.5; cursor: default; }
 
+/* 오버레이 — 상단바(z-index 2) 아래에 깔린다. 큰 폰트가 넘칠 수 있어 상단 여백 + 스크롤 허용 */
 .dr-overlay {
   position: absolute;
   inset: 0;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 12px;
   background: rgba(43, 39, 30, 0.78);
   color: #f6f1e5;
   text-align: center;
-  padding: 20px;
+  padding: 84px 24px 24px;
+  overflow-y: auto;
 }
 .dr-overlay-light { background: rgba(43, 39, 30, 0.55); }
-.dr-guide { font-size: 10px; line-height: 2; margin: 0; }
+.dr-guide { font-size: 21px; line-height: 1.8; margin: 0; }
 .dr-guide b { color: #ffd23f; }
-.dr-countdown { font-size: 56px; color: #ffd23f; margin: 0; }
-.dr-players { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.dr-countdown { font-size: 88px; color: #ffd23f; margin: 0; line-height: 1; }
+.dr-players { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
 .dr-players button {
-  padding: 8px 12px; font-family: inherit; font-size: 9px; cursor: pointer;
+  padding: 12px 18px; font-family: inherit; font-size: 16px; cursor: pointer;
   background: rgba(255, 255, 255, 0.08); color: #d8d0be;
-  border: 2px solid rgba(255, 255, 255, 0.18); border-radius: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.18); border-radius: 12px;
 }
 .dr-players button.on { background: #ffd23f; color: #3a2c05; border-color: #ffd23f; }
-.dr-warn { font-size: 8px; color: #ffd3b8; margin: 0; }
+.dr-warn { font-size: 15px; color: #ffd3b8; margin: 0; }
 .dr-swap {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 8px; color: #cfc6b2; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 15px; color: #cfc6b2; cursor: pointer;
 }
-.dr-swap input { accent-color: #ffd23f; }
+.dr-swap input { accent-color: #ffd23f; width: 18px; height: 18px; }
 .dr-start {
-  padding: 12px 20px; font-family: inherit; font-size: 10px; font-weight: 700; cursor: pointer;
-  background: #e0642f; color: #fff4e8; border: none; border-radius: 12px;
+  padding: 16px 28px; font-family: inherit; font-size: 18px; font-weight: 700; cursor: pointer;
+  background: #e0642f; color: #fff4e8; border: none; border-radius: 14px;
 }
 .dr-start:disabled { opacity: 0.45; cursor: not-allowed; }
 .dr-quit {
-  padding: 12px 20px; font-family: inherit; font-size: 10px; cursor: pointer;
-  background: transparent; color: #f6f1e5; border: 2px solid rgba(255, 255, 255, 0.3); border-radius: 12px;
+  padding: 16px 28px; font-family: inherit; font-size: 18px; cursor: pointer;
+  background: transparent; color: #f6f1e5; border: 2px solid rgba(255, 255, 255, 0.3); border-radius: 14px;
 }
-.dr-actions { display: flex; gap: 10px; }
-.dr-tier { font-size: 12px; margin: 0; line-height: 1.8; }
-.dr-score { font-size: 40px; color: #ffd23f; margin: 0; }
-.dr-score small { font-size: 12px; margin-left: 4px; }
-.dr-sub { font-size: 8px; color: #cfc6b2; margin: 0; }
+.dr-actions { display: flex; gap: 14px; }
+.dr-tier { font-size: 24px; margin: 0; line-height: 1.6; }
+.dr-score { font-size: 64px; color: #ffd23f; margin: 0; line-height: 1.1; }
+.dr-score small { font-size: 20px; margin-left: 6px; }
+.dr-sub { font-size: 15px; color: #cfc6b2; margin: 0; }
 
+/* 결과 — 큰 폰트에서도 안 넘치게 줄바꿈 허용 */
 .dr-result-body {
   display: flex;
   align-items: center;
-  gap: 16px;
-  max-width: 90%;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 20px;
+  max-width: 92%;
 }
 .dr-preview {
-  width: 220px;
-  max-width: 40vw;
+  width: 270px;
+  max-width: 42vw;
   border: 3px solid #f6f1e5;
-  border-radius: 8px;
+  border-radius: 10px;
   background: #fdfdf8;
 }
 .dr-guesses {
@@ -1065,17 +1082,17 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   text-align: left;
 }
 .dr-guesses li {
-  font-size: 9px;
-  padding: 6px 10px;
+  font-size: 17px;
+  padding: 8px 14px;
   background: rgba(255, 255, 255, 0.07);
   border: 2px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
+  border-radius: 10px;
 }
 .dr-guesses li.hit { border-color: #ffd23f; background: rgba(255, 210, 63, 0.15); color: #ffd23f; }
-.dr-rank { color: #ffd23f; margin-right: 6px; }
+.dr-rank { color: #ffd23f; margin-right: 8px; }
 .dr-guesses li.hit .dr-rank { color: inherit; }
 </style>
