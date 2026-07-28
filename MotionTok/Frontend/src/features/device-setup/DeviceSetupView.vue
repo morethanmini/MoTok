@@ -9,7 +9,7 @@ import { EQUIP_LIMIT, useDecoration } from '@/composables/useDecoration'
 import { useMediaPermissionStore } from '@/stores/mediaPermission'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
-import { getLoadedImage, scaleLimits } from '@/features/decor/sticker'
+
 import PixelButton from '@/components/common/PixelButton.vue'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import inventoryChest from '@/assets/device-setup/inventory-chest.png'
@@ -71,10 +71,19 @@ function flashDecorMessage(text: string) {
   decorMessageTimer = setTimeout(() => (decorMessage.value = ''), 2600)
 }
 
+// 크기·삭제는 프리뷰의 선택 상자 핸들로 한다(별도 슬라이더 없음).
 const selectedId = ref<number | null>(null)
-const selected = computed(
-  () => decor.placements.value.find((p) => p.itemId === selectedId.value) ?? null,
-)
+/** 프리뷰 프레임의 실제 픽셀 — 오버레이가 크기 상한(원본 이상 확대 금지)을 계산하는 데 쓴다. */
+const framePixels = computed(() => ({ w: frameW.value, h: frameH.value }))
+
+/** 선택 상자의 ✕ — 장착 해제와 같다(해제하면 배치에서도 빠진다). */
+async function removeSticker(itemId: number) {
+  if (await decor.setEquipped(itemId, false)) {
+    if (selectedId.value === itemId) selectedId.value = null
+  } else if (decor.error.value) {
+    flashDecorMessage(decor.error.value)
+  }
+}
 
 const busyItemId = ref<number | null>(null)
 async function toggleItem(item: InventoryItem) {
@@ -90,17 +99,6 @@ async function toggleItem(item: InventoryItem) {
     flashDecorMessage(decor.error.value)
   }
   busyItemId.value = null
-}
-
-/** 슬라이더 범위는 스티커마다 다르다 — 상한은 원본 이미지 크기, 하한은 최소 표시 픽셀. */
-const scaleRange = computed(() => {
-  const sprite = decor.sprites.value.find((s) => s.itemId === selectedId.value)
-  const natural = sprite ? (getLoadedImage(sprite.imageUrl)?.naturalWidth ?? 0) : 0
-  return scaleLimits(frameW.value, frameH.value, natural)
-})
-
-function onScale(value: number) {
-  if (selectedId.value !== null) decor.setScale(selectedId.value, value)
 }
 
 async function saveDecor() {
@@ -176,8 +174,11 @@ async function cancel() { await notifyLeave(); router.push({ name: RouteName.Lob
             editable
             fit="cover"
             :frame-aspect="previewAspect"
+            :frame-pixels="framePixels"
             :selected-id="selectedId"
             @move="decor.move"
+            @scale="decor.setScale"
+            @remove="removeSticker"
             @select="selectedId = $event"
           />
           <div v-if="!isOn" class="camera-empty">
@@ -214,22 +215,11 @@ async function cancel() { await notifyLeave(); router.push({ name: RouteName.Lob
               <span>{{ decor.loading.value ? '불러오는 중…' : '현재 적용할 수 있는 꾸미기 아이템이 없어요.' }}</span>
             </div>
 
-            <!-- 배치 편집 — 프리뷰에서 끌어 옮기고, 고른 스티커의 크기를 여기서 조절한다 -->
+            <!-- 배치 편집 — 크기·삭제는 프리뷰의 선택 상자 핸들이 맡는다 -->
             <div v-if="decor.placements.value.length" class="mini-inventory-edit">
-              <p class="decor-hint">프리뷰에서 스티커를 끌어 자리를 정하세요.</p>
-              <div v-if="selected" class="size-row">
-                <label for="decor-scale">크기</label>
-                <input
-                  id="decor-scale"
-                  type="range"
-                  :min="scaleRange.min"
-                  :max="scaleRange.max"
-                  step="0.005"
-                  :value="Math.min(selected.scale, scaleRange.max)"
-                  @input="onScale(Number(($event.target as HTMLInputElement).value))"
-                />
-                <span>{{ Math.round((Math.min(selected.scale, scaleRange.max) / scaleRange.max) * 100) }}%</span>
-              </div>
+              <p class="decor-hint">
+                프리뷰에서 끌어 자리를 정하세요. 스티커를 고르면 점선 상자의 ⤡로 크기 조절, ✕로 뗍니다.
+              </p>
               <button type="button" class="decor-save" :disabled="decor.saving.value" @click="saveDecor">
                 {{ decor.saving.value ? '저장 중…' : decor.dirty.value ? '꾸미기 저장 *' : '꾸미기 저장' }}
               </button>
@@ -291,8 +281,8 @@ async function cancel() { await notifyLeave(); router.push({ name: RouteName.Lob
 .decor-item:disabled { opacity: .55; }
 .mini-inventory-edit { padding: 0 10px 10px; border-top: 2px dashed #dec79e; }
 .decor-hint { margin: 8px 0 0; color: #8f7868; font-size: 9px; line-height: 1.4; }
-.size-row { display: flex; align-items: center; gap: 6px; margin-top: 7px; color: #79553d; font-size: 9px; font-weight: 700; }
-.size-row input[type='range'] { flex: 1; min-width: 0; }
+
+
 .decor-save { width: 100%; height: 30px; margin-top: 8px; border: 2px solid #9a694d; border-radius: 6px; background: #edc66e; color: #543a29; font-size: 10px; font-weight: 700; }
 .decor-save:disabled { opacity: .6; }
 .decor-msg { margin: 0; padding: 8px 10px; border-top: 2px dashed #dec79e; color: #5d7f5e; font-size: 9px; line-height: 1.4; }

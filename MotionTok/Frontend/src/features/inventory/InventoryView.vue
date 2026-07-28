@@ -14,7 +14,7 @@ import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import { useToast } from '@/composables/useToast'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
-import { getLoadedImage, scaleLimits } from '@/features/decor/sticker'
+
 
 const { message: toast, flash } = useToast()
 
@@ -83,18 +83,18 @@ async function startCamera() {
 onBeforeUnmount(() => camera.stop())
 
 // ── 편집 ────────────────────────────────────────────────
+// 크기·삭제는 미리보기의 선택 상자 핸들로 한다(별도 슬라이더 없음).
 const selectedId = ref<number | null>(null)
-const selected = computed(() => placements.value.find((p) => p.itemId === selectedId.value) ?? null)
+/** 미리보기 프레임의 실제 픽셀 — 오버레이가 크기 상한(원본 이상 확대 금지)을 계산하는 데 쓴다. */
+const framePixels = computed(() => ({ w: frameW.value, h: frameH.value }))
 
-/** 슬라이더 범위는 스티커마다 다르다 — 상한은 원본 이미지 크기, 하한은 최소 표시 픽셀. */
-const scaleRange = computed(() => {
-  const sprite = sprites.value.find((s) => s.itemId === selectedId.value)
-  const natural = sprite ? (getLoadedImage(sprite.imageUrl)?.naturalWidth ?? 0) : 0
-  return scaleLimits(frameW.value, frameH.value, natural)
-})
-
-function onScale(value: number) {
-  if (selectedId.value !== null) setScale(selectedId.value, value)
+/** 선택 상자의 ✕ — 장착 해제와 같다(해제하면 배치에서도 빠진다). */
+async function removeSticker(itemId: number) {
+  if (!(await setEquipped(itemId, false))) {
+    flash(error.value ?? '해제하지 못했어요')
+    return
+  }
+  if (selectedId.value === itemId) selectedId.value = null
 }
 
 async function toggle(item: InventoryItem) {
@@ -147,27 +147,18 @@ async function saveDecoration() {
               :sprites="sprites"
               editable
               :selected-id="selectedId"
+              :frame-pixels="framePixels"
               @move="move"
+              @scale="setScale"
+              @remove="removeSticker"
               @select="selectedId = $event"
             />
           </div>
 
-          <p class="hint">스티커를 끌어 자리를 정하세요. 상대에게 보이는 방향 그대로입니다.</p>
-
-          <div v-if="selected" class="size-row">
-            <label for="scale">크기</label>
-            <input
-              id="scale"
-              type="range"
-              :min="scaleRange.min"
-              :max="scaleRange.max"
-              step="0.005"
-              :value="Math.min(selected.scale, scaleRange.max)"
-              @input="onScale(Number(($event.target as HTMLInputElement).value))"
-            />
-            <!-- 원본 크기가 상한이라 100%는 "원본 그대로"를 뜻한다 -->
-            <span class="size-val">{{ Math.round((Math.min(selected.scale, scaleRange.max) / scaleRange.max) * 100) }}%</span>
-          </div>
+          <p class="hint">
+            스티커를 끌어 자리를 정하세요. 스티커를 고르면 점선 상자의 ⤡로 크기를 조절하고
+            ✕로 뗄 수 있어요. 상대에게 보이는 방향 그대로입니다.
+          </p>
 
           <div class="equipped">
             <button
@@ -237,9 +228,8 @@ async function saveDecoration() {
 .cam-placeholder img { width: 55%; opacity: 0.5; }
 .hint { margin: 10px 0 0; font-size: 9px; color: var(--c-muted); line-height: 1.6; }
 
-.size-row { display: flex; align-items: center; gap: 9px; margin-top: 10px; font-size: 10px; }
-.size-row input { flex: 1; }
-.size-val { min-width: 34px; font-weight: 700; }
+
+
 
 .equipped { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 12px; }
 .badge { font-size: 9px; padding: 5px 8px; border: 2px solid var(--c-ink); border-radius: 999px; background: var(--c-mint-soft); }
