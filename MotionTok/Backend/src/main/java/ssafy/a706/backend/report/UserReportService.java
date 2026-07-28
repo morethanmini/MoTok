@@ -1,12 +1,16 @@
 package ssafy.a706.backend.report;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.report.dto.UserReportCreateRequest;
 import ssafy.a706.backend.report.dto.UserReportCreateResponse;
+import ssafy.a706.backend.report.dto.UserReportListResponse;
 import ssafy.a706.backend.report.enums.ReportStatus;
 import ssafy.a706.backend.user.entity.User;
 import ssafy.a706.backend.user.repository.UserRepository;
@@ -62,6 +66,26 @@ public class UserReportService {
                 .build());
 
         return new UserReportCreateResponse(saved.getId());
+    }
+
+    /** GET /v1/admin/user-reports — 관리자 목록(최신순). status 생략 시 전체. */
+    @Transactional(readOnly = true)
+    public UserReportListResponse list(ReportStatus status, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id"));
+        return UserReportListResponse.from(status == null
+                ? userReportRepository.findAll(pageable)
+                : userReportRepository.findByStatus(status, pageable));
+    }
+
+    /** 관리자 처리 상태 전이 — 채팅 신고(-133)와 같은 규칙으로 RECEIVED로는 되돌리지 못한다. */
+    @Transactional
+    public void updateStatus(Long reportId, ReportStatus status) {
+        if (status == ReportStatus.RECEIVED) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        userReportRepository.findById(reportId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_REPORT_NOT_FOUND))
+                .updateStatus(status);
     }
 
     private User activeUser(Long userId) {
