@@ -11,8 +11,22 @@ import BrandLogo from '@/components/common/BrandLogo.vue'
 
 const route = useRoute()
 const router = useRouter()
-const { stream, isOn, error, camOn, micOn, videoDevices, videoDeviceId, start, toggleCam, toggleMic, selectVideoDevice } =
-  useCamera()
+const {
+  stream,
+  isOn,
+  error,
+  camOn,
+  micOn,
+  videoDevices,
+  audioDevices,
+  videoDeviceId,
+  audioDeviceId,
+  start,
+  toggleCam,
+  toggleMic,
+  selectVideoDevice,
+  selectAudioDevice,
+} = useCamera()
 
 const game = computed(() => (route.query.game as string) || '게임 선택 중')
 const room = computed(() => (route.query.room as string) || 'MP4X9K')
@@ -35,6 +49,10 @@ async function allow() {
 /** 카메라 선택 — 프리뷰가 바로 그 카메라로 바뀌고, 고른 장치는 게임룸까지 이어진다. */
 function pickCamera(e: Event) {
   void selectVideoDevice((e.target as HTMLSelectElement).value)
+}
+/** 마이크 선택 — 고른 장치는 게임룸 LiveKit 발행까지 이어진다. */
+function pickMic(e: Event) {
+  void selectAudioDevice((e.target as HTMLSelectElement).value)
 }
 
 // 게임룸으로 넘어가는 건 이탈이 아니라 계속 진행이므로 퇴장 통보를 건너뛴다.
@@ -162,9 +180,11 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
         </label>
         <label class="field">
           마이크
-          <select>
-            <option>기본 마이크</option>
-            <option>헤드셋 마이크</option>
+          <select :disabled="!isOn" :value="audioDeviceId ?? ''" @change="pickMic">
+            <option v-if="!isOn" value="">권한을 허용하면 마이크를 고를 수 있어요</option>
+            <option v-for="(d, i) in audioDevices" :key="d.deviceId" :value="d.deviceId">
+              {{ d.label || `마이크 ${i + 1}` }}
+            </option>
           </select>
         </label>
         <!-- 권한 오류는 위 안내 박스가 이미 말해주므로, 여기선 장치 전환 실패만 알린다. -->

@@ -8,7 +8,7 @@ import { RouteName } from '@/router/routeNames'
 import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason } from '@/api'
 import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
-import { useCamera } from '@/composables/useCamera'
+import { preferredAudioDeviceId, useCamera } from '@/composables/useCamera'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
 import { useRoomChat } from '@/composables/useRoomChat'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
@@ -267,6 +267,8 @@ onMounted(async () => {
   const ok = await lk.connect(roomCode.value, {
     cameraTrack: initialCamOn.value ? (stream?.getVideoTracks()[0] ?? null) : null,
     microphone: initialMicOn.value,
+    // 카메라는 로컬 캡처(camera.start)가 이미 고른 장치를 쓰지만, 마이크는 LiveKit이 직접 잡는다.
+    microphoneDeviceId: preferredAudioDeviceId(),
   })
   if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
 
