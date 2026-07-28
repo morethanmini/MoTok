@@ -15,6 +15,7 @@ import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameProgressRequest;
 import ssafy.a706.backend.game.dto.GameResultEntry;
 import ssafy.a706.backend.game.dto.GameStartRequest;
+import ssafy.a706.backend.game.dto.GameTurnSkipRequest;
 import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.model.GamePlayerScore;
 import ssafy.a706.backend.game.model.GameSession;
@@ -194,6 +195,31 @@ public class GameSessionService {
             ops = ops.subList(0, DRAW_MAX_OPS);
         }
         broadcast(roomId, GameEventResponse.draw(session.sessionId(), sender.userId(), request.seq(), ops));
+    }
+
+    /**
+     * 조기 차례 넘기기(게임 10) — 남은 그리기 시간을 클램프해 TURN_SKIPPED로 재방송하고,
+     * 전체 스케줄이 그만큼 당겨지므로 세션 endAt과 타임아웃 예약도 함께 앞당긴다.
+     * 차례(발신자가 현재 화가인지) 강제는 클라이언트 몫 — draw 릴레이와 같은 신뢰 모델.
+     */
+    public void turnSkip(String roomId, GameTurnSkipRequest request, AuthPrincipal sender) {
+        requireMembership(roomId, sender);
+        GameSession session = requireActiveSession(roomId);
+        if (session.gameId() != DRAW_GAME_ID) {
+            throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
+        }
+        long now = System.currentTimeMillis();
+        long requested = request.remainingMs() == null ? 0 : request.remainingMs();
+        long remaining = Math.max(0, Math.min(requested, session.endAt() - now));
+        int turnIndex = Math.max(0, request.turnIndex() == null ? 0 : request.turnIndex());
+
+        long newEndAt = session.endAt() - remaining;
+        sessionRepository.updateEndAt(roomId, newEndAt);
+        scheduleEnd(roomId, session.sessionId(), newEndAt + DRAW_JUDGE_WINDOW_MILLIS);
+        broadcast(roomId, GameEventResponse.turnSkipped(
+                session.sessionId(), sender.userId(), turnIndex, remaining));
+        log.info("draw turn skipped: room={} session={} turn={} remainingMs={}",
+                roomId, session.sessionId(), turnIndex, remaining);
     }
 
     /**

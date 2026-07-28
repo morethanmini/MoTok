@@ -60,6 +60,8 @@ const emit = defineEmits<{
   close: []
   /** 멀티: 내 차례의 획 연산 배치(100ms 플러시) — 부모가 STOMP /game/draw로 발신 */
   draw: [seq: number, ops: DrawOp[]]
+  /** 멀티: 조기 차례 넘기기 — 부모가 STOMP /game/turn-skip으로 발신, 에코로 전원 스케줄 당김 */
+  turnSkip: [turnIndex: number, remainingMs: number]
   /** 멀티: AI 채점 결과 — 부모가 STOMP /game/draw-result로 발신 */
   drawResult: [payload: { guesses: string[]; answerRank: number; score: number }]
 }>()
@@ -141,6 +143,8 @@ const amLastPainter = computed(() => {
 })
 /** 채점 대기 경과(초) — 관전자 폴백 채점 버튼 노출 판단 */
 const resultWaitSec = ref(0)
+/** 조기 차례 넘기기 요청 후 에코 대기 — 연타로 다음 화가 시간까지 깎는 것 방지 */
+const skipRequested = ref(false)
 const showJudgeFallback = computed(
   () => isMultiplayer.value && !amLastPainter.value && resultWaitSec.value >= 20,
 )
@@ -203,6 +207,10 @@ let drawSeq = 0
 /** drawEvents 피드에서 처리한 위치 */
 let lastAppliedDrawIndex = 0
 let mpJudgingStarted = false
+/** 조기 차례 넘기기 누적(ms) — TURN_SKIPPED 에코마다 더해 전원이 같은 스케줄을 당긴다 */
+let skippedMs = 0
+/** 같은 턴의 중복 TURN_SKIPPED(연타·중복 프레임) 이중 적용 방지 */
+let lastSkippedTurn = -1
 /** 원격 화가별 진행 중/직전 획 — trim(꼬리 삭제) 적용 대상 추적 */
 interface RemoteSource extends StrokeSource {
   lastEnded: Stroke | null
@@ -279,6 +287,9 @@ watch(
     drawSeq = 0
     lastAppliedDrawIndex = 0
     mpJudgingStarted = false
+    skippedMs = 0
+    lastSkippedTurn = -1
+    skipRequested.value = false
     judgeResult.value = null
     judgeError.value = null
     answerRank.value = 0
@@ -299,7 +310,8 @@ function mpTick() {
   const h = mpHandoverSec.value * 1000
   const slot = h + turnSeconds.value * 1000
   const n = s.turnOrder.length
-  const elapsed = now - s.startAt
+  // 조기 차례 넘기기 누적만큼 스케줄이 앞당겨진다(전원 동일 — TURN_SKIPPED 에코 기준)
+  const elapsed = now - s.startAt + skippedMs
   if (phase.value === 'judging') {
     resultWaitSec.value = Math.max(0, Math.round((elapsed - n * slot) / 1000))
     return
@@ -313,6 +325,7 @@ function mpTick() {
     endAllStrokes()
     beep(660)
     turnIndex.value = idx
+    skipRequested.value = false
   }
   const within = elapsed - idx * slot
   if (within < h) {
@@ -353,6 +366,25 @@ function retryJudge() {
   else void judge()
 }
 
+/** 차례 마치기 버튼 — 솔로는 즉시 전환, 멀티는 남은 시간을 서버로 보내 전원 스케줄을 당긴다 */
+function passTurn() {
+  if (!isMultiplayer.value) {
+    endTurn()
+    return
+  }
+  const s = props.session
+  if (!s?.turnOrder?.length || !myTurn.value || phase.value !== 'drawing' || skipRequested.value) return
+  const h = mpHandoverSec.value * 1000
+  const slot = h + turnSeconds.value * 1000
+  const elapsed = serverNow() - s.startAt + skippedMs
+  const remaining = Math.max(0, Math.round(slot - (elapsed - turnIndex.value * slot)))
+  skipRequested.value = true
+  endAllStrokes()
+  flushOutbox()
+  // 스케줄 적용은 TURN_SKIPPED 에코 수신 시 — 전원이 같은 값으로 당긴다
+  emit('turnSkip', turnIndex.value, remaining)
+}
+
 // ── 멀티 릴레이 수신 — DRAW(원격 획 적용)·DRAW_RESULT(결과 화면 전환) ──
 watch(
   () => props.drawEvents?.length ?? 0,
@@ -363,6 +395,14 @@ watch(
       const e = events[lastAppliedDrawIndex]!
       if (e.type === 'DRAW') {
         if (e.userId !== props.myUserId) applyRemoteOps(e.userId, e.ops)
+      } else if (e.type === 'TURN_SKIPPED') {
+        // 같은 턴 중복 이벤트는 한 번만 — 슬롯 길이 클램프로 과도한 당김 방어
+        if (e.turnIndex > lastSkippedTurn) {
+          lastSkippedTurn = e.turnIndex
+          const slot = (mpHandoverSec.value + turnSeconds.value) * 1000
+          skippedMs += Math.max(0, Math.min(e.remainingMs, slot))
+          beep(660)
+        }
       } else if (e.type === 'DRAW_RESULT') {
         applyDrawResult(e.guesses, e.answerRank, e.score)
       }
@@ -831,14 +871,14 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
         🧽 지우개·{{ eraseHandLabel }} {{ eraseDetected ? (erasing ? '지우는 중' : '대기') : '—' }}
       </span>
       <span v-if="!gotFrame" class="dr-hint">카메라가 없어도 마우스로 그릴 수 있어요</span>
-      <!-- 마우스 도구·차례 넘기기 — 멀티 관전자에게는 숨김(입력 불가), 차례 넘기기는 솔로 전용
-           (멀티는 서버 스케줄이 권위라 조기 종료 없음 — 명세 v0.2.20 후속 검토) -->
+      <!-- 마우스 도구·차례 넘기기 — 멀티 관전자에게는 숨김(입력 불가). 멀티 차례 넘기기는
+           TURN_SKIPPED 릴레이로 전원 스케줄을 당긴다(마지막 화가면 곧장 채점으로) -->
       <template v-if="phase === 'drawing' && (!isMultiplayer || myTurn)">
         <span class="dr-tools" :title="`마우스 도구 (손: ${penHandLabel} 핀치=펜 · ${eraseHandLabel} 주먹=지우개)`">
           <button class="dr-tool" :class="{ on: mouseTool === 'pen' }" @click="mouseTool = 'pen'">✏️</button>
           <button class="dr-tool" :class="{ on: mouseTool === 'erase' }" @click="mouseTool = 'erase'">🧽</button>
         </span>
-        <button v-if="!isMultiplayer" class="dr-pass" @click="endTurn">
+        <button class="dr-pass" :disabled="skipRequested" @click="passTurn">
           {{ turnIndex + 1 < playerCount ? '차례 마치기 ▶' : '완성! 채점하기 ▶' }}
         </button>
       </template>
@@ -1022,6 +1062,7 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
   padding: 8px 14px; font-family: inherit; font-size: 9px; font-weight: 700; cursor: pointer;
   background: #2b2b33; color: #f6f1e5; border: none; border-radius: 10px;
 }
+.dr-pass:disabled { opacity: 0.5; cursor: default; }
 
 .dr-overlay {
   position: absolute;

@@ -501,7 +501,7 @@ function applyGameEvent(e: GameEvent) {
   // 이하 이벤트는 현재 세션 것만 반영(닫은 뒤 늦게 도착한 프레임 방어)
   if (activeSession.value?.sessionId !== e.sessionId) return
   // 그리기 릴레이 — 게임 컴포넌트가 피드를 watch로 소비한다(자기 에코 무시 포함)
-  if (e.type === 'DRAW' || e.type === 'DRAW_RESULT') {
+  if (e.type === 'DRAW' || e.type === 'DRAW_RESULT' || e.type === 'TURN_SKIPPED') {
     drawFeed.value = [...drawFeed.value, e]
     return
   }
@@ -847,6 +847,7 @@ const startHint = computed(() =>
             :draw-events="drawFeed"
             @close="closeGame"
             @draw="(seq: number, ops: DrawOp[]) => roomChat.sendGameDraw(seq, ops)"
+            @turn-skip="(turnIdx: number, remainingMs: number) => roomChat.sendGameTurnSkip(turnIdx, remainingMs)"
             @draw-result="
               (r: { guesses: string[]; answerRank: number; score: number }) =>
                 roomChat.sendGameDrawResult(r.guesses, r.answerRank, r.score)
