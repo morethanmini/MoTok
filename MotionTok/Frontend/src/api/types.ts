@@ -271,6 +271,22 @@ export interface LiveRoomHostChangedEvent {
   hostDisplayName: string
 }
 
+/**
+ * /topic/rooms/{roomId}/members 로 오는 퇴장·강퇴 알림.
+ * type 필드가 없어 userId와 participantCount 조합으로 식별한다.
+ * 대상 본인은 이 이벤트를 받으면 즉시 방 연결을 정리하고 로비로 이동해야 한다.
+ */
+export interface LiveRoomMemberRemovedEvent {
+  userId: string
+  participantCount: number
+}
+
+/** /topic/rooms/{roomId}/members 로 오는 강퇴 알림(-73). */
+export interface LiveRoomMemberKickedEvent extends LiveRoomMemberRemovedEvent {
+  displayName: string
+  reason: 'MANNER_VIOLATION' | 'INAPPROPRIATE_PROFILE' | 'GAME_DISRUPTION' | 'SPAM_AD' | 'OTHER'
+}
+
 /** POST /v1/live-rooms/{id}/join 요청 (JoinLiveRoomRequest). 비공개방(hasPassword)이면 password 필요 */
 export interface JoinLiveRoomRequest {
   password?: string

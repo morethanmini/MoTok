@@ -102,6 +102,7 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
 
       <div class="label">
         <span class="name">{{ view?.name }}</span>
+        <button v-if="canKick" class="kick-btn" title="방에서 내보내기" @click.stop="emit('kick')">강퇴</button>
       </div>
       <span class="mic" :class="{ muted: !view?.micOn }">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square">
@@ -110,8 +111,6 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
           <path v-if="!view?.micOn" d="M4 4l16 16" stroke-width="3.4" />
         </svg>
       </span>
-      <button v-if="canKick" class="kick-btn" title="방에서 내보내기" @click.stop="emit('kick')">강퇴</button>
-
       <!-- 게임 송출 중 게임 화면 ↔ 카메라 전환(뷰어별) — 아이콘은 전환될 대상을 보여준다 -->
       <button
         v-if="hasGame"
@@ -198,7 +197,7 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
   border-radius: 6px;
   box-shadow: 2px 2px 0 #e2d0b5;
   color: #403124;
-  pointer-events: none;
+  pointer-events: auto;
 }
 .name { font-size: 9px; }
 .mic {
@@ -211,16 +210,15 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
 }
 .mic.muted { color: #d45c63; }
 .kick-btn {
-  position: absolute;
-  right: 8px;
-  top: 42px;
-  padding: 4px 6px;
-  border: 2px solid #a94d52;
+  margin-left: 5px;
+  padding: 2px 5px;
+  border: 1px solid #a94d52;
   border-radius: 5px;
   background: #ffe2e3;
   color: #a94d52;
   font-family: inherit;
-  font-size: 8px;
+  font-size: 7px;
+  line-height: 1.25;
   cursor: pointer;
 }
 

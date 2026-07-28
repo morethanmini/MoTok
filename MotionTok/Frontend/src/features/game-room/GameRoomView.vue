@@ -826,6 +826,31 @@ watch(
     )
   },
 )
+
+// 강퇴·퇴장 멤버 이벤트(-71, -73)를 즉시 반영한다. 특히 내 ID가 대상이면 REST 요청 성공만으로
+// 화면이 남아 있지 않도록 LiveKit/카메라 연결을 끊고 확인 모달 없이 로비로 이동한다.
+watch(
+  () => roomChat.memberRemoved.value,
+  async (e) => {
+    if (!e) return
+    participantCount.value = e.participantCount
+    memberIds.value = memberIds.value.filter((id) => id !== e.userId)
+  },
+)
+watch(
+  () => roomChat.memberKicked.value,
+  async (e) => {
+    if (!e) return
+    participantCount.value = e.participantCount
+    memberIds.value = memberIds.value.filter((id) => id !== e.userId)
+    if (e.userId !== myParticipantId.value) return
+
+    await lk.disconnect()
+    camera.stop()
+    leavingIntentionally = true
+    await router.replace({ name: RouteName.Lobby, query: { kickedReason: e.reason } })
+  },
+)
 // 헤더 링크·뒤로가기 등으로 방을 벗어나려 하면 확인 모달. "나가기" 같은 의도된 이동은 통과.
 let leavingIntentionally = false
 const showLeaveConfirm = ref(false)
@@ -1296,6 +1321,7 @@ const startHint = computed(() =>
         </div>
       </div>
     </PixelModal>
+
 
     <!-- 채팅 메시지 신고 -->
     <PixelModal v-if="reportTarget" @close="closeReport">
