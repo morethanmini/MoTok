@@ -130,6 +130,15 @@ const liveOverflow = ref<SegmentKey[]>([])
 const overflowWarning = computed(() =>
   liveOverflow.value.length ? SEGMENT_WARNING[liveOverflow.value[0]!] : null,
 )
+/**
+ * FAIL 팝업에 붙일 실패 사유.
+ * 탈락 경로가 둘이다 — ① 구멍 밖으로 삐져나옴(어느 부위인지 말해준다) ② 삐져나오진 않았지만
+ * 모양이 너무 안 맞아 등급만 FAIL. 둘을 구분해줘야 "일치율 80인데 왜 실패냐"가 안 나온다.
+ */
+const failReason = computed(() => {
+  if (judgment.value?.grade !== 'FAIL') return null
+  return overflowWarning.value ?? '포즈가 많이 달라요'
+})
 
 const DIFFICULTIES: { key: DifficultyKey; label: string }[] = [
   { key: 'easy', label: '쉬움' },
@@ -757,6 +766,8 @@ onBeforeUnmount(() => {
             <strong>{{ judgment.grade }}</strong>
             <!-- FAIL도 일치율만큼 점수를 받는다 — 안 보여주면 0점처럼 느껴진다 -->
             <span>일치율 {{ judgment.iou.toFixed(0) }}% · +{{ scoreFor(judgment) }}점</span>
+            <!-- 일치율이 높은데 FAIL이면 이유 없이는 판정을 불신한다 — 어디가 걸렸는지 짚어준다 -->
+            <em v-if="failReason" class="fail-why">{{ failReason }}</em>
           </div>
 
           <div v-if="phase === 'incoming' && !spectating" class="approach-bar" :class="{ urgent: timerSec <= 2 }">
@@ -1265,6 +1276,16 @@ onBeforeUnmount(() => {
   font-size: 14px;
   color: #fff;
   font-variant-numeric: tabular-nums;
+}
+/* 실패 사유 — 등급색(코랄)을 그대로 물려받아 FAIL과 한 덩어리로 읽히게 한다 */
+.fail-why {
+  padding: 4px 12px;
+  background: rgba(26, 20, 17, 0.72);
+  border: 1px solid currentColor;
+  border-radius: var(--bf-radius-sm);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 700;
 }
 .approach-bar {
   position: absolute;
