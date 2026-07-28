@@ -24,6 +24,7 @@ import {
   type SolvedSkeleton,
 } from './skeleton'
 import { drawSilhouette } from './silhouette'
+import { randomPose } from './randomPose'
 import {
   GRADE_POINTS,
   gradeOf as gradeFromIou,
@@ -94,6 +95,20 @@ const approachPct = ref(0)
 const tracked = ref(false)
 const camError = ref<string | null>(null)
 const judgment = ref<RoundJudgment | null>(null)
+/** 이번 라운드를 랜덤 출제로 만들었으면 그 원형 이름 — 사람이 낸 포즈면 null */
+const randomPoseName = ref<string | null>(null)
+/** 연속 랜덤 모드(솔로) — 벽이 끊이지 않고 이어진다. 멈추는 건 중지 버튼뿐이다 */
+const chain = ref(false)
+/** 연속 성공 콤보와 최고 기록 — 실패해도 모드는 계속되고 콤보만 0으로 돌아간다 */
+const combo = ref(0)
+const bestCombo = ref(0)
+/** 연속 모드에서 벽 몇 장을 받을지. 0 = 무한(중지를 누를 때까지) */
+const chainTarget = ref(10)
+const CHAIN_TARGETS = [10, 20, 30, 0]
+/** 아바타 평면에 닿은 벽 수 — 진행 표시(3/10)용 */
+const chainArrived = ref(0)
+/** 연속 모드가 끝난 뒤 한 줄 요약 — 다음 라운드를 시작하면 지워진다 */
+const chainSummary = ref<string | null>(null)
 /** 접근 중 실시간 판정(스로틀) — 게이지·빨강 세그먼트용 */
 const liveIou = ref(0)
 const totalScore = ref(0)
@@ -216,6 +231,11 @@ const phaseLabel = computed(() => {
   if (phase.value === 'incoming') {
     // 게임④(-9) 룰: 출제자는 이번 라운드에 플레이하지 않고 관전만 한다
     if (isMultiplayer.value && isSetter.value) return '출제자는 관전 중 — 다른 사람들이 통과하는 걸 지켜보세요'
+    // 랜덤 출제면 원형 이름을 알려준다 — 사람이 낸 게 아니라는 것과 무슨 모양인지가 같이 붙는다
+    if (randomPoseName.value)
+      return chain.value
+        ? `🎲 연속 랜덤 「${randomPoseName.value}」 — 바로 맞추세요!`
+        : `🎲 랜덤 출제 「${randomPoseName.value}」 — 구멍에 맞추세요!`
     return '벽이 다가옵니다 — 구멍에 맞추세요!'
   }
   if (phase.value === 'result') {
@@ -223,6 +243,8 @@ const phaseLabel = computed(() => {
     return isMultiplayer.value && !props.results ? '집계 중…' : '판정!'
   }
   if (phase.value === 'stale') return '⚠ 라운드 정보를 못 받았어요 — 다음 라운드에 자동 복구됩니다'
+  // 연속 모드를 방금 끝냈으면 성적표가 먼저다
+  if (chainSummary.value) return chainSummary.value
   return tracked.value ? '시작을 누르면 3초 뒤 내 포즈가 벽이 됩니다' : '카메라 앞에 서주세요'
 })
 
@@ -319,15 +341,244 @@ function initThree(canvas: HTMLCanvasElement) {
   stage.scene.add(wall.mesh)
 }
 
-function startRound() {
-  if (!tracked.value || phase.value === 'setting' || phase.value === 'incoming') return
+/** 라운드 진행 중이면 새 라운드를 시작하지 않는다 */
+const roundBusy = () => phase.value === 'setting' || phase.value === 'incoming'
+
+function resetRoundState() {
   judgment.value = null
   liveIou.value = 0
   liveOverflow.value = []
   rig.setOverflow([])
   round.value += 1
+}
+
+function startRound() {
+  if (!tracked.value || roundBusy()) return
+  resetRoundState()
+  randomPoseName.value = null
   captureAt = performance.now() + 3000
   phase.value = 'setting'
+}
+
+/**
+ * 랜덤 출제(솔로 단발) — 코드가 만든 포즈를 그대로 벽으로 세운다.
+ * 3초 카운트다운을 건너뛰는 이유: 사람이 포즈를 잡을 필요가 없으니 기다릴 게 없다.
+ * 카메라는 여전히 필요하다 — 출제는 코드가 하지만 통과는 내가 해야 한다.
+ */
+function startRandomRound() {
+  if (!tracked.value || roundBusy()) return
+  const { name, landmarks } = randomPose()
+  const solved = solveFromLandmarks(landmarks)
+  if (!solved) return
+  resetRoundState()
+  randomPoseName.value = name
+  armWall(solved)
+  approachStart = performance.now()
+  phase.value = 'incoming'
+}
+
+// ── 연속 모드: 벽 컨베이어 ─────────────────────────────────────────
+/**
+ * "끊김없이"의 뜻 — 한 장을 판정하고 다음 장을 만드는 게 아니라, 앞 벽이 아직 날아오는 중에
+ * 다음 벽이 뒤에서 출발한다. 무대에는 항상 2~3장이 서로 다른 깊이에 떠 있고, 도착하는
+ * 순서대로 하나씩 판정된다. 판정된 벽은 멈추지 않고 카메라를 지나쳐 나간다(멈추면 흐름이 끊긴다).
+ *
+ * <p>벽마다 구멍 텍스처가 달라서 메시 하나를 돌려쓸 수 없다. 그래서 핸들 풀을 두고 지나간 벽을
+ * 반납받아 재사용한다 — 벽마다 캔버스 2장 + 텍스처 2장을 새로 만들면 GC가 프레임을 먹는다.
+ * 풀은 연속 모드를 처음 켤 때 필요한 만큼만 만든다(안 쓰는 사람은 비용을 내지 않는다).</p>
+ */
+const POOL_MAX = 4
+/**
+ * 앞 벽이 출발선에서 이만큼(월드 단위) 멀어지면 다음 벽이 출발한다.
+ * 진행률(t)이 아니라 거리로 재는 이유 — 접근 곡선이 easeIn(t^2.5)이라 t=0.5에서도 벽은
+ * 아직 출발선 근처(0.9)에 있다. 진행률로 띄우면 두 장이 안개 속에 겹쳐 보인다.
+ */
+const CHAIN_SPAWN_GAP_Z = 1.8
+/** 첫 벽의 접근 시간 = 난이도 기본값 × 이 비율 */
+const CHAIN_START_RATIO = 0.8
+/** 벽마다 접근 시간을 이 비율로 곱한다(누적) — 갈수록 빨라진다 */
+const CHAIN_SPEEDUP = 0.95
+/** 아무리 빨라져도 이 아래로는 안 내린다 — 포즈를 바꿔 잡을 물리적 최소 시간 */
+const CHAIN_MIN_MS = 2200
+/** 판정 팝업을 띄워두는 시간 — 다음 벽이 닿기 전에 지워야 새 판정으로 읽힌다 */
+const POP_MS = 700
+/** 판정된 벽이 카메라를 지나쳐 나가는 속도(프레임당 월드 단위) */
+const FLY_AWAY_SPEED = 0.16
+
+interface FlyingWall {
+  handle: WallHandle
+  pose: SolvedSkeleton
+  margin: number
+  name: string
+  start: number
+  /** 이 벽 고유의 접근 시간 — 가속 중이라 벽마다 다르다 */
+  approachMs: number
+  judged: boolean
+}
+/** 반납된 재사용 대기 핸들 */
+let pool: WallHandle[] = []
+/** 지금까지 만든 핸들 수 — POOL_MAX까지만 늘린다 */
+let poolCreated = 0
+/** 날아오는 중인 벽 — 먼저 출발한 것이 앞(= 먼저 도착) */
+let flying: FlyingWall[] = []
+/** 연속 모드에서 지금까지 띄운 벽 수 — 가속 곡선의 지수 */
+let chainSpawns = 0
+let popAt = 0
+
+function takeHandle(): WallHandle | null {
+  const free = pool.pop()
+  if (free) return free
+  if (poolCreated >= POOL_MAX || !stage) return null
+  const handle = createWall()
+  stage.scene.add(handle.mesh)
+  poolCreated += 1
+  return handle
+}
+
+/** 새 벽 한 장을 무대 뒤편(WALL_START_Z)에 띄운다 */
+function spawnChainWall(now: number) {
+  const handle = takeHandle()
+  if (!handle) return // 풀 고갈 — 앞 벽이 반납되는 다음 틱에 띄운다
+  const { name, landmarks } = randomPose()
+  const pose = solveFromLandmarks(landmarks)
+  if (!pose) {
+    pool.push(handle)
+    return
+  }
+  const margin = holeMarginFor(pose, cfg)
+  handle.build(pose, margin, cfg)
+  handle.mesh.position.z = WALL_START_Z
+  handle.mesh.visible = true
+  const base = cfg.difficulty[difficulty.value].approachMs * CHAIN_START_RATIO
+  flying.push({
+    handle,
+    pose,
+    margin,
+    name,
+    start: now,
+    approachMs: Math.max(CHAIN_MIN_MS, base * CHAIN_SPEEDUP ** chainSpawns),
+    judged: false,
+  })
+  chainSpawns += 1
+}
+
+/** 벽 하나가 아바타 평면에 닿은 순간 — 그 벽의 포즈로만 판정한다(다음 벽과 섞이면 안 된다) */
+function judgeFlyingWall(w: FlyingWall, now: number) {
+  w.judged = true
+  // 진행 카운트는 인식 여부와 무관하게 올린다 — 안 그러면 카메라가 끊긴 벽 하나 때문에
+  // 진행률이 9/10에서 영원히 멈춘다(벽은 이미 지나갔는데)
+  chainArrived.value += 1
+  if (!rig.lastSolved) return
+  const result = judgeRound(rig.lastSolved, w.pose, w.margin, cfg)
+  judgment.value = result
+  popAt = now
+  liveIou.value = result.iou
+  liveOverflow.value = result.overflow
+  rig.setOverflow(result.overflow)
+  totalScore.value += scoreFor(result)
+  round.value += 1
+  history.value.unshift({ round: round.value, grade: result.grade, iou: result.iou })
+  if (result.passed) {
+    combo.value += 1
+    bestCombo.value = Math.max(bestCombo.value, combo.value)
+  } else {
+    combo.value = 0
+  }
+}
+
+/** 연속 모드 한 틱 — 스폰·이동·판정·반납을 전부 여기서 한다 */
+function chainTick(now: number) {
+  const last = flying[flying.length - 1]
+  const quotaLeft = !chainTarget.value || chainSpawns < chainTarget.value
+  if (quotaLeft && (!last || last.handle.mesh.position.z - WALL_START_Z >= CHAIN_SPAWN_GAP_Z))
+    spawnChainWall(now)
+
+  for (const w of flying) {
+    if (w.judged) {
+      w.handle.mesh.position.z += FLY_AWAY_SPEED
+      continue
+    }
+    const t = Math.min(1, (now - w.start) / w.approachMs)
+    w.handle.mesh.position.z = WALL_START_Z + (WALL_STOP_Z - WALL_START_Z) * easeIn(t)
+    if (t >= 1) judgeFlyingWall(w, now)
+  }
+
+  flying = flying.filter((w) => {
+    if (w.handle.mesh.position.z <= 4) return true
+    w.handle.mesh.visible = false
+    pool.push(w.handle)
+    return false
+  })
+
+  // 게이지·썸네일·구멍·타이머는 "다음에 도착할 벽" 기준 — 판정 대상이 곧 표시 대상이다
+  const next = flying.find((w) => !w.judged)
+  if (next) {
+    if (setterPose !== next.pose) {
+      setterPose = next.pose
+      holeMargin = next.margin
+      randomPoseName.value = next.name
+      adoptSetterPose(next.pose)
+    }
+    const elapsed = now - next.start
+    approachPct.value = Math.round(Math.min(1, elapsed / next.approachMs) * 100)
+    timerSec.value = Math.max(0, Math.ceil((next.approachMs - elapsed) / 1000))
+  }
+  liveJudge(now)
+  if (judgment.value && now - popAt > POP_MS) judgment.value = null
+
+  // 할당량을 다 띄우고 마지막 벽까지 지나가면 끝. 무한(0)이면 이 조건은 성립하지 않는다.
+  if (chainTarget.value && chainSpawns >= chainTarget.value && !flying.length) finishChain()
+}
+
+/** 정해진 장수를 다 받았다 — 요약을 남기고 컨베이어를 접는다 */
+function finishChain() {
+  const walls = chainArrived.value
+  chainSummary.value = `🏁 ${walls}벽 완주 — 최고 ${bestCombo.value}콤보 · ${totalScore.value}점`
+  stopChain()
+}
+
+/** 연속 랜덤 시작/중지 */
+function toggleChain() {
+  if (chain.value) {
+    stopChain()
+    return
+  }
+  chain.value = true
+  chainSpawns = 0
+  chainArrived.value = 0
+  combo.value = 0
+  judgment.value = null
+  chainSummary.value = null
+  wall.mesh.visible = false // 단발 라운드가 남긴 벽은 치운다
+  phase.value = 'incoming' // 컨베이어가 도는 동안은 계속 "벽이 온다" 상태다
+}
+
+function stopChain() {
+  chain.value = false
+  for (const w of flying) {
+    w.handle.mesh.visible = false
+    pool.push(w.handle)
+  }
+  flying = []
+  setterPose = null
+  randomPoseName.value = null
+  approachPct.value = 0
+  judgment.value = null
+  rig.setOverflow([])
+  phase.value = 'idle'
+}
+
+/**
+ * 랜덤 출제(멀티) — 출제자가 누르면 생성 포즈를 바로 서버로 보낸다.
+ * 벽은 여기서 세우지 않는다: POSE_SET 에코가 출제자 포함 전원의 challenge watch를 태우므로,
+ * 사람이 낸 포즈와 완전히 같은 경로로 같은 벽이 만들어진다.
+ */
+function submitRandomPose() {
+  if (poseSubmitted) return
+  const { name, landmarks } = randomPose()
+  poseSubmitted = true
+  randomPoseName.value = name
+  emit('pose-submit', serializePose(landmarks))
 }
 
 function easeIn(t: number): number {
@@ -389,6 +640,27 @@ function adoptSetterPose(solved: SolvedSkeleton) {
   holeStars.value = 1 + Math.round(Math.min(1, poseDifficulty(solved) / DIFFICULTY_FULL) * 4)
 }
 
+/**
+ * 출제 포즈 확정 → 구멍 마진 산출·벽 생성·표시물 갱신.
+ * 출제 경로가 셋(솔로 캡처 · POSE_SET 수신 · 랜덤 출제)인데 전부 이 순서를 그대로 밟아야 해서
+ * 한 함수로 모았다 — 한 곳만 빠지면 그 경로에서만 구멍과 판정이 어긋난다.
+ */
+function armWall(solved: SolvedSkeleton) {
+  setterPose = solved
+  holeMargin = holeMarginFor(solved, cfg)
+  wall.build(solved, holeMargin, cfg)
+  wall.mesh.position.z = WALL_START_Z
+  wall.mesh.visible = true
+  adoptSetterPose(solved)
+  lastLiveJudge = 0
+}
+
+/** 랜드마크(카메라 캡처든 랜덤 생성이든) → 이번 라운드의 출제 골격 */
+function solveFromLandmarks(lm: LandmarkPoint[]): SolvedSkeleton | null {
+  const normalized = normalizePose(lm, true)
+  return normalized ? solveSkeleton(normalized, cfg.avatar, createSkeletonState()) : null
+}
+
 /** 실시간 판정(4Hz) — 게이지 갱신 + 삐져나온 세그먼트 즉시 빨강 (§7-4) */
 function liveJudge(now: number) {
   if (setterPose && rig.lastSolved && now - lastLiveJudge > 250) {
@@ -417,17 +689,16 @@ function finalizeJudgment(): RoundJudgment {
 
 /** 솔로 모드(개발 라우트) — 로컬 타이머 루프 */
 function tickSolo(now: number) {
+  // 연속 모드는 페이즈 기계(출제→접근→결과)를 타지 않는다 — 컨베이어가 자체 시계로 돈다
+  if (chain.value) {
+    chainTick(now)
+    return
+  }
   if (phase.value === 'setting') {
     timerSec.value = Math.max(0, Math.ceil((captureAt - now) / 1000))
     if (now >= captureAt && rig.lastSolved) {
-      setterPose = rig.lastSolved
-      holeMargin = holeMarginFor(setterPose, cfg)
-      wall.build(setterPose, holeMargin, cfg)
-      wall.mesh.position.z = WALL_START_Z
-      wall.mesh.visible = true
-      adoptSetterPose(setterPose)
+      armWall(rig.lastSolved)
       approachStart = now
-      lastLiveJudge = 0
       phase.value = 'incoming'
     }
   } else if (phase.value === 'incoming') {
@@ -471,10 +742,16 @@ function tickMulti(now: number) {
   if (srv < settingEnd) {
     phase.value = 'setting'
     timerSec.value = Math.max(0, Math.ceil((settingEnd - srv) / 1000))
-    // 출제자: 마감 직전 프레임을 캡처해 전송 — 서버가 POSE_SET으로 전원에게 재방송
-    if (isSetter.value && !poseSubmitted && srv >= settingEnd - 150 && lastSmoothed) {
-      poseSubmitted = true
-      emit('pose-submit', serializePose(lastSmoothed))
+    // 출제자: 마감 직전 프레임을 캡처해 전송 — 서버가 POSE_SET으로 전원에게 재방송.
+    // 포즈를 하나도 못 잡았으면(카메라 꺼짐·인식 실패·자리 비움) 랜덤 포즈로 대신 낸다 —
+    // 아무것도 안 보내면 벽이 없어서 그 라운드는 전원 FAIL로 죽는다.
+    if (isSetter.value && !poseSubmitted && srv >= settingEnd - 150) {
+      if (lastSmoothed) {
+        poseSubmitted = true
+        emit('pose-submit', serializePose(lastSmoothed))
+      } else {
+        submitRandomPose()
+      }
     }
     return
   }
@@ -543,6 +820,7 @@ watch(
     liveOverflow.value = []
     setterPose = null
     holeStars.value = 0
+    randomPoseName.value = null
     poseSubmitted = false
     finishedSent = false
     round.value = s.roundNo ?? 1
@@ -558,15 +836,8 @@ watch(
   (ch) => {
     if (!ch || !isMultiplayer.value || !wall) return
     try {
-      const normalized = normalizePose(parsePose(ch), true)
-      if (!normalized) return
-      setterPose = solveSkeleton(normalized, cfg.avatar, createSkeletonState())
-      holeMargin = holeMarginFor(setterPose, cfg)
-      wall.build(setterPose, holeMargin, cfg)
-      wall.mesh.position.z = WALL_START_Z
-      wall.mesh.visible = true
-      adoptSetterPose(setterPose)
-      lastLiveJudge = 0
+      const solved = solveFromLandmarks(parsePose(ch))
+      if (solved) armWall(solved)
     } catch {
       /* 손상된 포즈 payload — 벽 없이 진행되면 도착 시 FAIL 처리된다 */
     }
@@ -582,8 +853,12 @@ watch(phase, (p) => {
   const srv = serverNow()
   if (p === 'wait') audio.play('rest', { tailMs: s ? s.startAt - srv : 3000 })
   else if (p === 'setting') audio.play('setting', { tailMs: s ? s.startAt + SETTING_MS - srv : 3000 })
+  // 연속 모드는 끝나는 시각이 없어서 꼬리를 맞출 수가 없다 — 루프로 계속 깐다
   else if (p === 'incoming')
-    audio.play('approach', { tailMs: s ? s.endAt - srv : cfg.wall.approachMs })
+    audio.play(
+      'approach',
+      chain.value ? { loop: true } : { tailMs: s ? s.endAt - srv : cfg.wall.approachMs },
+    )
   // result에서는 아무것도 틀지 않는다. 중간 라운드의 result는 다음 GAME_START가 올 때까지
   // 0.2~1.5초뿐이라, 여기서 곡을 걸면 시작하자마자 잘려 딸꾹질처럼 들린다.
   // 인게임 곡은 아래 results watch에서 "진짜 끝났을 때"만 튼다.
@@ -630,6 +905,30 @@ watch(spectating, async (on) => {
   await nextTick()
   drawHole()
 })
+
+/**
+ * 캠 PiP 박스 비율 — 스트림 실제 비율을 그대로 쓴다.
+ *
+ * <p>4:3으로 박아두고 object-fit:cover를 걸어놨더니, 16:9 웹캠(getUserMedia의 width·height는
+ * 강제가 아니라 힌트라 640×480을 요청해도 640×360으로 오는 기기가 많다)에서 좌우가 잘려나갔다.
+ * 그런데 오버레이(drawPip)는 잘리지 않은 <b>전체 프레임</b> 기준 정규화 좌표를 박스에 그대로
+ * 곱하므로, 잘린 만큼 스켈레톤이 몸에서 밀린다(가장자리에서 최대 12%).</p>
+ *
+ * <p>박스 비율 = 스트림 비율로 맞추면 crop이 0이 되어 좌표가 정의상 일치한다.</p>
+ */
+const camAspect = ref(4 / 3)
+function syncCamAspect() {
+  const v = videoRef.value
+  if (!v?.videoWidth || !v.videoHeight) return
+  camAspect.value = v.videoWidth / v.videoHeight
+  // 캔버스 백킹도 같은 비율로 — 위치는 어차피 정규화라 맞지만, 비율이 다르면 CSS가 늘려서
+  // 관절 점이 타원이 되고 선 굵기가 축마다 달라진다
+  const c = pipOverlayRef.value
+  if (c && (c.width !== v.videoWidth || c.height !== v.videoHeight)) {
+    c.width = v.videoWidth
+    c.height = v.videoHeight
+  }
+}
 
 /** 캠 PiP 스켈레톤 오버레이 — "내 몸 → 인식 → 아바타" 인과 증명 (§6-3) */
 function drawPip(lm: LandmarkPoint[] | null) {
@@ -731,6 +1030,11 @@ onBeforeUnmount(() => {
   resizeObs?.disconnect()
   rig?.dispose()
   wall?.dispose()
+  // 연속 모드용 풀 — 날아오던 것과 반납된 것 모두 (텍스처 2장 + 캔버스 2장씩 물고 있다)
+  for (const w of flying) w.handle.dispose()
+  for (const h of pool) h.dispose()
+  flying = []
+  pool = []
   stage?.dispose()
   stage = null
 })
@@ -805,7 +1109,10 @@ onBeforeUnmount(() => {
 
           <!-- 게임④(-9) 출제자 관전 화면 — 내가 낸 구멍이 주인공이고, 도전자는 그 옆 링으로 본다 -->
           <div v-if="spectating" class="spectate-panel">
-            <p class="sp-title">🧱 내가 만든 구멍</p>
+            <!-- 랜덤으로 냈으면 "내가 만든"이 거짓이 된다 — 누가 만든 구멍인지는 그대로 말해준다 -->
+            <p class="sp-title">
+              🧱 {{ randomPoseName ? `랜덤 구멍 「${randomPoseName}」` : '내가 만든 구멍' }}
+            </p>
 
             <div class="sp-stage">
               <canvas ref="holeRef" class="sp-hole" width="240" height="240"></canvas>
@@ -845,8 +1152,16 @@ onBeforeUnmount(() => {
 
       <aside ref="sideRef" class="side">
         <!-- 내 캠 — 무대 위 PiP였으나 통과율 위(사이드 최상단)로 옮겼다(실기 피드백) -->
-        <div class="pip">
-          <video ref="videoRef" class="pip-video mirrored" muted playsinline></video>
+        <div class="pip" :style="{ '--cam-aspect': camAspect }">
+          <!-- resize도 듣는다 — 스트림 해상도가 바뀔 때 loadedmetadata는 다시 오지 않는다 -->
+          <video
+            ref="videoRef"
+            class="pip-video mirrored"
+            muted
+            playsinline
+            @loadedmetadata="syncCamAspect"
+            @resize="syncCamAspect"
+          ></video>
           <canvas ref="pipOverlayRef" class="pip-overlay mirrored" width="640" height="480"></canvas>
           <span class="pip-label">● 내 캠 · {{ tracked ? '인식 중' : '인식 안 됨' }}</span>
         </div>
@@ -892,6 +1207,10 @@ onBeforeUnmount(() => {
         <div class="card score-card">
           <h3>내 점수</h3>
           <p class="score">{{ totalScore }}<small>점</small></p>
+          <!-- 연속 모드의 성적 — 이번 콤보와 최고 기록. 모드를 켠 적이 있으면 계속 보여준다 -->
+          <p v-if="chain || bestCombo" class="combo">
+            🔥 {{ combo }}콤보 <small>최고 {{ bestCombo }}</small>
+          </p>
           <ul class="history">
             <li v-for="h in history.slice(0, 5)" :key="h.round">
               <span>{{ h.round }}R</span>
@@ -901,13 +1220,42 @@ onBeforeUnmount(() => {
           </ul>
         </div>
 
-        <button
-          v-if="!isMultiplayer"
-          class="btn-start"
-          :disabled="!tracked || phase === 'setting' || phase === 'incoming'"
-          @click="startRound"
-        >
-          ▶ {{ round === 0 ? '시작' : '다음 라운드' }}
+        <!-- 솔로: 내 포즈로 출제(3초 카운트다운) vs 연속 랜덤(벽이 계속 온다) — 같은 라운드 루프를 탄다 -->
+        <div v-if="!isMultiplayer" class="start-row">
+          <button class="btn-start" :disabled="!tracked || chain || roundBusy()" @click="startRound">
+            ▶ {{ round === 0 ? '시작' : '다음' }}
+          </button>
+          <button
+            class="btn-start btn-random"
+            :class="{ on: chain }"
+            :disabled="chain ? false : !tracked || roundBusy()"
+            :title="chain ? '연속 출제를 멈춥니다' : '코드가 만든 포즈로 벽이 계속 날아옵니다'"
+            @click="toggleChain"
+          >
+            {{ chain ? (chainTarget ? `■ ${chainArrived}/${chainTarget}` : '■ 중지') : '🎲 연속' }}
+          </button>
+        </div>
+
+        <!-- 연속 모드 분량 — 돌고 있는 중에는 못 바꾼다(가속 곡선과 진행률이 중간에 어긋난다) -->
+        <div v-if="!isMultiplayer" class="card diff-card">
+          <h3>연속 벽 수</h3>
+          <div class="diff-buttons">
+            <button
+              v-for="n in CHAIN_TARGETS"
+              :key="n"
+              class="diff-btn"
+              :class="{ active: chainTarget === n }"
+              :disabled="chain"
+              @click="chainTarget = n"
+            >
+              {{ n === 0 ? '∞' : n }}
+            </button>
+          </div>
+        </div>
+
+        <!-- 멀티: 내 출제 차례에 포즈 잡기 대신 코드에 맡긴다. 누르는 즉시 전원에게 벽이 뜬다 -->
+        <button v-if="myPoseTurn && !randomPoseName" class="btn-start" @click="submitRandomPose">
+          🎲 랜덤 포즈로 출제
         </button>
 
         <div v-if="!isMultiplayer" class="card diff-card">
@@ -1151,8 +1499,8 @@ onBeforeUnmount(() => {
 .pip {
   position: relative;
   flex-shrink: 0;
-  /* 스켈레톤 오버레이가 4:3 비디오 위에 1:1로 얹히므로 비율은 건드리지 않고 폭만 줄인다
-     (crop/letterbox를 넣으면 오버레이 좌표가 어긋난다) */
+  /* 오버레이(drawPip)가 잘리지 않은 전체 프레임 기준 좌표를 쓰므로 crop이 생기면 안 된다 —
+     박스 비율을 스트림 비율(--cam-aspect)에 맞춰 crop을 0으로 만든다(syncCamAspect 주석 참고) */
   width: 100%;
   max-width: 200px;
   margin: 0 auto;
@@ -1165,23 +1513,30 @@ onBeforeUnmount(() => {
 .pip-video {
   display: block;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: var(--cam-aspect, 4 / 3);
   object-fit: cover;
 }
+/* 라벨을 흐름에서 빼 절대 배치로 얹는다 — 블록으로 두면 .pip 높이가 라벨만큼 늘어나서
+   오버레이 높이를 calc(100% - 22px)처럼 라벨 높이를 손으로 빼줘야 했다(폰트가 바뀌면 어긋난다) */
 .pip-overlay {
   position: absolute;
   inset: 0;
+  /* canvas의 width·height 속성은 CSS 크기 힌트로도 먹는다 — 명시하지 않으면 백킹 해상도
+     그대로(1280×720 CSS px) 그려져 박스를 넘친다. 라벨이 절대 배치라 100%가 곧 비디오 높이다 */
   width: 100%;
-  height: calc(100% - 22px);
+  height: 100%;
   pointer-events: none;
 }
 .mirrored {
   transform: scaleX(-1);
 }
 .pip-label {
-  display: block;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
   padding: 3px 8px;
-  background: var(--bf-panel);
+  background: rgba(34, 29, 26, 0.82);
   color: var(--bf-muted);
   font-size: 11px;
   font-weight: 700;
@@ -1574,6 +1929,39 @@ onBeforeUnmount(() => {
 .btn-start:disabled {
   opacity: 0.4;
   cursor: default;
+}
+/* 시작 / 랜덤 — 사이드 높이를 한 줄만 쓰도록 나란히 둔다(fitSide가 재는 높이가 그만큼 줄어든다) */
+.start-row {
+  display: flex;
+  gap: 8px;
+}
+.start-row .btn-start {
+  flex: 1;
+  min-width: 0;
+}
+/* 랜덤은 보조 동작 — 골드는 "내 포즈로 출제" 한 곳에만 남긴다 */
+.btn-random {
+  background: var(--bf-panel-2);
+  border-color: var(--bf-border);
+  color: var(--bf-text);
+}
+/* 연속 모드가 돌고 있는 동안은 이 버튼이 "지금 켜져 있음"을 겸한다 */
+.btn-random.on {
+  background: var(--bf-coral);
+  border-color: #8a3f2c;
+  color: #2a1a14;
+}
+.combo {
+  margin-top: 4px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--bf-gold);
+}
+.combo small {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--bf-muted);
 }
 .diff-buttons {
   display: flex;
