@@ -342,7 +342,8 @@ watch(
 }
 .live {
   position: absolute;
-  top: 0.6rem;
+  /* Stage HUD(점수·남은시간)가 상단 줄을 쓰므로 그 아래로 — 겹치면 남은시간이 가려진다 */
+  top: 3.2rem;
   right: 0.6rem;
   display: flex;
   flex-direction: column;

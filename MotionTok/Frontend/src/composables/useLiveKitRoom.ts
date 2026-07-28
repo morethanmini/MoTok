@@ -57,7 +57,14 @@ export function useLiveKitRoom() {
     // 게임 화면(화면공유 소스) 트랙이 추가되면서 kind만으로는 카메라를 못 가리므로 source로 찾는다.
     const videoPub = p.getTrackPublication(Track.Source.Camera)
     const audioPub = p.getTrackPublication(Track.Source.Microphone)
-    const gamePub = p.getTrackPublication(Track.Source.ScreenShare)
+    // 화면공유 발행이 여러 개일 수 있다(비정상 종료가 남긴 잔여 발행 등). 첫 발행이 죽은
+    // 것이면 게임 중인데도 타일이 카메라로 남으므로, 살아 있는(가려지지 않은) 것을 고른다.
+    let gamePub: ReturnType<typeof p.getTrackPublication> | undefined
+    for (const pub of p.trackPublications.values()) {
+      if (pub.source !== Track.Source.ScreenShare) continue
+      gamePub = pub
+      if (!pub.isMuted && pub.track) break
+    }
     return {
       identity: p.identity,
       name: p.name || p.identity,
