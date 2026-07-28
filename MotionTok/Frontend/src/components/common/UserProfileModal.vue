@@ -6,7 +6,11 @@
  * 미리 확보한 같은 상자 안에서만 갈아끼운다. 내용에 따라 모달이 늘었다 줄었다 하면
  * 시선이 계속 끌려다니기 때문.
  *
- * 게임 선택은 카탈로그 썸네일 타일로 한다(랭킹 칩과 같은 노랑 선택 문법).
+ * 게임 선택은 <b>게임 이름이 그대로 보이는 칩</b>이다. 처음에는 44px 썸네일 타일이었는데,
+ * 카탈로그에 썸네일이 없는 게임은 이름 첫 글자로 떨어져 "핑"·"캐" 같은 글자 하나만 남았다 —
+ * 무엇을 고르는지 알 수 없는 UI였다. 썸네일은 있으면 이름 옆에 작게 붙이는 장식으로 내리고,
+ * 판독의 책임은 이름이 진다. 선택 문법(노랑)은 랭킹 칩과 같다.
+ *
  * 전적은 멀티 기록을 보여주고 멀티가 없을 때만 싱글 기록을 쓴다 — 모드 문구는 화면에 내지 않는다.
  *
  * 신고(-112)는 모달이 직접 들고 있되(진입점마다 배선 반복 방지) 하단의 작은 텍스트로 숨긴다 —
@@ -84,8 +88,6 @@ const recordGames = computed(() => {
   return [...seen.values()]
 })
 
-const selectedGame = computed(() => recordGames.value.find((g) => g.gameId === selectedGameId.value) ?? null)
-
 /** 화면에 내는 기록 한 줄 — 멀티 우선, 멀티가 없으면 싱글. 모드 문구는 내지 않는다. */
 const selectedRecord = computed(() => {
   const rows = records.value?.filter((r) => r.gameId === selectedGameId.value) ?? []
@@ -136,22 +138,21 @@ function onReported() {
         <p v-else-if="recordsError" class="records-state err">{{ recordsError }}</p>
         <p v-else-if="!recordGames.length" class="records-state">아직 게임 기록이 없어요.</p>
         <template v-else>
-          <div class="tiles" role="tablist" aria-label="게임 선택">
+          <div class="chips" role="tablist" aria-label="게임 선택">
             <button
               v-for="g in recordGames"
               :key="g.gameId"
               type="button"
-              class="tile"
+              class="chip"
+              role="tab"
+              :aria-selected="selectedGameId === g.gameId"
               :class="{ on: selectedGameId === g.gameId }"
-              :title="g.gameName"
-              :aria-label="g.gameName"
               @click="selectedGameId = g.gameId"
             >
-              <img v-if="g.thumbnailUrl" :src="g.thumbnailUrl" alt="" />
-              <span v-else>{{ g.gameName.charAt(0) }}</span>
+              <img v-if="g.thumbnailUrl" class="chip-thumb" :src="g.thumbnailUrl" alt="" />
+              <span class="chip-name">{{ g.gameName }}</span>
             </button>
           </div>
-          <p class="game-name">{{ selectedGame?.gameName }}</p>
           <dl v-if="selectedRecord" class="stats">
             <div><dt>순위</dt><dd>#{{ selectedRecord.rankNo }}</dd></div>
             <div><dt>최고 점수</dt><dd>{{ selectedRecord.bestScore.toLocaleString() }}</dd></div>
@@ -223,9 +224,9 @@ h3 { margin: 0; font-size: 16px; }
 /* 게임별 전적 — 처음부터 확보된 고정 높이 상자. 내용은 이 안에서만 바뀐다 */
 .records {
   position: relative;
-  height: 158px;
+  height: 152px;
   margin: 0 0 14px;
-  padding: 24px 10px 10px;
+  padding: 26px 10px 12px;
   border: 2px solid var(--c-ink);
   border-radius: 12px;
   background: #fff;
@@ -236,42 +237,52 @@ h3 { margin: 0; font-size: 16px; }
 }
 .records-title {
   position: absolute; top: 7px; left: 12px;
-  font-size: 8px; font-weight: 700; color: var(--c-muted); letter-spacing: 0.06em;
+  font-size: 10px; font-weight: 700; color: var(--c-muted); letter-spacing: 0.06em;
 }
-.records-state { margin: auto 0; font-size: 10px; color: var(--c-muted); }
+.records-state { margin: auto 0; font-size: 12px; color: var(--c-muted); }
 .records-state.err { color: var(--c-coral); }
 
-/* 게임 선택 타일 — 카탈로그 썸네일. 선택은 랭킹 칩과 같은 노랑 문법 */
-.tiles { display: flex; gap: 8px; max-width: 100%; overflow-x: auto; padding: 2px; }
-.tile {
+/* 게임 선택 칩 — 이름이 그대로 보인다. 가로 스크롤이라 개수가 늘어도 상자 높이가 변하지 않는다 */
+.chips {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  overflow-x: auto;
+  padding: 2px 2px 6px;
+  scrollbar-width: thin;
+}
+.chip {
   flex: none;
-  width: 44px; height: 44px;
-  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 10px;
   border: 2px solid var(--c-ink);
-  border-radius: 10px;
+  border-radius: 15px;
   background: var(--c-mint-soft);
   box-shadow: 2px 2px 0 #d8c9d8;
-  overflow: hidden;
   cursor: pointer;
-  display: grid;
-  place-items: center;
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--c-ink);
+  white-space: nowrap;
 }
-.tile img { width: 100%; height: 100%; object-fit: cover; display: block; image-rendering: pixelated; }
-.tile.on { background: var(--c-yellow); box-shadow: var(--shadow-sm); transform: translate(1px, 1px); }
-.tile:hover:not(.on) { background: #fff; }
+.chip-thumb {
+  width: 18px; height: 18px;
+  border-radius: 5px;
+  object-fit: cover;
+  display: block;
+  image-rendering: pixelated;
+}
+.chip-name { font-size: 12px; font-weight: 700; color: var(--c-ink); }
+.chip.on { background: var(--c-yellow); box-shadow: var(--shadow-sm); transform: translate(1px, 1px); }
+.chip:hover:not(.on) { background: #fff; }
 
-.game-name { margin: 7px 0 5px; font-size: 11px; font-weight: 700; }
-
-.stats { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; width: 100%; margin: 0; }
+.stats { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 7px; width: 100%; margin: 6px 0 0; }
 .stats > div {
-  padding: 6px 4px;
+  padding: 9px 4px;
   border: 2px solid var(--c-ink); border-radius: 10px; background: var(--c-mint-soft);
 }
-.stats dt { font-size: 7px; color: var(--c-muted); }
-.stats dd { margin: 3px 0 0; font-size: 12px; font-weight: 700; color: var(--c-blue); }
+.stats dt { font-size: 10px; font-weight: 700; color: var(--c-muted); }
+.stats dd { margin: 5px 0 0; font-size: 17px; font-weight: 700; color: var(--c-blue); }
 
 /* 신고 — 찾아서 누르는 작은 글씨. 눈에 띄는 자리를 주지 않는다 */
 .report-link {
