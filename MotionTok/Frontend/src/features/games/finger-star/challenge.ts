@@ -1,60 +1,70 @@
 /**
- * 핑거 스타 솔로 도전 모드(런) 규칙 — 순수 로직 (캔버스/DOM 의존 없음).
+ * 핑거 스타 90초 매치 규칙 — 순수 로직 (캔버스/DOM 의존 없음).
  *
- * 런 = 난이도가 점차 오르는 연속 라운드. 라운드를 완성하면 다음 라운드로,
- * 시간 내 미완성이면 런 종료. 총점 = Σ(라운드 점수 × 난이도 배수).
- * 서버 미연동 클라이언트 전용 — 랭킹 반영은 별도(서버 세션 기반, Phase 2).
+ * 매치 = 90초 동안 별자리를 연속으로 완성(각 별자리는 모든 별을 켠 채 3초 유지).
+ * 완성 즉시 그 별자리의 점수를 확정하고 다음 별자리로 넘어간다.
+ * 승부: 완성 개수(1순위) → 점수 평균(2순위, 개수가 같으면 총점 비교와 동치).
+ *
+ * 멀티는 서버가 GAME_START에 실어준 공유 시드로 전원이 같은 별자리 순서를 뽑는다
+ * (판정은 각자 로컬 — 순서만 공정하게 고정).
  */
-import type { Constellation, Difficulty } from './constellations'
+import type { Constellation } from './constellations'
 
-/** 라운드 → 난이도 커브: 1~2 EASY, 3~4 NORMAL, 5부터 HARD */
-export function difficultyForRound(round: number): Difficulty {
-  if (round <= 2) return 'EASY'
-  if (round <= 4) return 'NORMAL'
-  return 'HARD'
-}
-
-/** 어려운 별자리를 깰수록 이득이 되도록 하는 티어 배수 */
-export const TIER_MULTIPLIER: Record<Difficulty, number> = { EASY: 1, NORMAL: 1.2, HARD: 1.5 }
-
-/** 라운드 획득 점수 = 기본 점수(0~100) × 티어 배수, 반올림 */
-export function challengeRoundScore(base: number, difficulty: Difficulty): number {
-  return Math.round(base * TIER_MULTIPLIER[difficulty])
+/** 시드 고정 PRNG(mulberry32) — 같은 시드면 모든 클라이언트에서 같은 수열. */
+export function mulberry32(seed: number): () => number {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
 }
 
 /**
- * 런 동안 별자리를 뽑는 덱 — 티어별로 셔플해 순서대로 소비하므로
- * 같은 런 안에서는 티어가 소진되기 전까지 중복이 없다.
- * 소진되면 재셔플하되 직전 별자리가 연속으로 나오지 않게 한다.
+ * 매치 동안 별자리를 뽑는 순서 생성기.
+ * - 처음 3개: 쉬움(EASY)·보통(NORMAL) 풀에서만 출제
+ * - 이후: 전체 풀에서 아직 안 나온 것 우선, 풀 소진 시 재셔플(직전 별자리 연속 방지)
  */
-export class ChallengeDeck {
-  private readonly pools: Record<Difficulty, string[]>
-  private readonly queues: Record<Difficulty, string[]>
+export class StarSequence {
+  private readonly allKeys: string[]
+  private readonly openers: string[]
   private readonly rng: () => number
+  private queue: string[] = []
+  private used = new Set<string>()
+  private drawn = 0
   private lastKey: string | null = null
 
   constructor(pool: Constellation[], rng: () => number = Math.random) {
     this.rng = rng
-    this.pools = { EASY: [], NORMAL: [], HARD: [] }
-    for (const c of pool) this.pools[c.difficulty].push(c.key)
-    this.queues = {
-      EASY: this.shuffled(this.pools.EASY),
-      NORMAL: this.shuffled(this.pools.NORMAL),
-      HARD: this.shuffled(this.pools.HARD),
-    }
+    this.allKeys = pool.map((c) => c.key)
+    this.openers = this.shuffled(
+      pool.filter((c) => c.difficulty !== 'HARD').map((c) => c.key),
+    )
   }
 
-  next(difficulty: Difficulty): string {
-    const queue = this.queues[difficulty]
-    if (queue.length === 0) {
-      const refill = this.shuffled(this.pools[difficulty])
-      if (refill.length > 1 && refill[0] === this.lastKey) {
-        ;[refill[0], refill[1]] = [refill[1]!, refill[0]!]
+  next(): string {
+    let key: string
+    if (this.drawn < 3 && this.drawn < this.openers.length) {
+      key = this.openers[this.drawn]!
+    } else {
+      if (this.queue.length === 0) {
+        const fresh = this.allKeys.filter((k) => !this.used.has(k))
+        if (fresh.length === 0) {
+          this.used.clear()
+          this.queue = this.shuffled(this.allKeys)
+          if (this.queue.length > 1 && this.queue[0] === this.lastKey) {
+            ;[this.queue[0], this.queue[1]] = [this.queue[1]!, this.queue[0]!]
+          }
+        } else {
+          this.queue = this.shuffled(fresh)
+        }
       }
-      queue.push(...refill)
+      key = this.queue.shift()!
     }
-    const key = queue.shift()!
+    this.used.add(key)
     this.lastKey = key
+    this.drawn += 1
     return key
   }
 
@@ -66,4 +76,20 @@ export class ChallengeDeck {
     }
     return arr
   }
+}
+
+/** 매치 집계 — 완성 개수와 점수 합. 평균은 표시 시점에 계산한다. */
+export interface MatchRecord {
+  count: number
+  sum: number
+}
+
+export function averageScore(record: MatchRecord): number {
+  return record.count > 0 ? Math.round(record.sum / record.count) : 0
+}
+
+/** 승부 규칙과 동일한 기록 비교 — 완성 개수 우선, 같으면 총점(=평균) 비교. */
+export function isBetterRecord(candidate: MatchRecord, current: MatchRecord): boolean {
+  if (candidate.count !== current.count) return candidate.count > current.count
+  return candidate.sum > current.sum
 }
