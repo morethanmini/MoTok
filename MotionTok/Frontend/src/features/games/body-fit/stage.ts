@@ -10,6 +10,7 @@
  * 소비자는 stage.render()/setSize()만 쓴다.
  */
 import * as THREE from 'three'
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
@@ -17,7 +18,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
 import { VignetteShader } from 'three/addons/shaders/VignetteShader.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import type { BodyFitConfig } from './config'
-import { STAGE_SCALE } from './skeleton'
+import { STAGE_DROP, STAGE_SCALE } from './skeleton'
 
 export interface Stage {
   renderer: THREE.WebGLRenderer
@@ -79,17 +80,48 @@ export function createStage(canvas: HTMLCanvasElement, cfg: BodyFitConfig): Stag
   camera.position.set(0, 0.3, 8.2)
   camera.lookAt(0, -0.5, 0)
 
-  // 하늘색을 따뜻하게 — 조명이 포디움·석판 프레임 GLB에도 그대로 걸리므로
-  // 여기만 바꿔도 무대 소품 전체 톤이 같이 따라온다
-  // 조명 없음 — 전 재질이 unlit(MeshBasicMaterial)이라 빛을 받지 않는다.
-  // 입체 룩으로 되돌릴 때 필요한 것: HemisphereLight + DirectionalLight(sun, castShadow)
-  // + 뒤쪽 rim + 상단 SpotLight. git 이력에 남아 있다.
+  // ── 조명: 아바타 전용 ──
+  // 무대(벽·포디움)는 전부 MeshBasicMaterial이라 조명과 환경맵을 무시한다.
+  // 그래서 아래 광원들은 사실상 아바타 하나만 비춘다 — "납작한 배경 + 입체 주인공".
+  // ACES 톤매핑을 꺼둔 상태라 하이라이트가 롤오프 없이 그대로 클리핑된다.
+  // 예전(톤매핑 있던 시절) 세기 그대로 쓰면 타므로 전반적으로 낮춰 잡았다.
+
+  // 환경광 — 레퍼런스 마네킹의 부드러운 그늘. PBR 재질에만 적용되므로 무대엔 영향 없다
+  const pmrem = new THREE.PMREMGenerator(renderer)
+  scene.environment = pmrem.fromScene(new RoomEnvironment()).texture
+  scene.environmentIntensity = 0.28
+  pmrem.dispose()
+
+  scene.add(new THREE.HemisphereLight(0xffe8c8, 0x2a1f18, 0.45))
+
+  // 상단 키 라이트 — 무대 위에서 떨어지는 극장 조명. STAGE_DROP만큼 내려앉은
+  // 아바타를 겨냥해야 얼굴·어깨에 빛이 얹힌다
+  const key = new THREE.SpotLight(0xfff4e2, 10, 0, 0.6, 0.85)
+  key.position.set(0.6, 5, 2.5)
+  key.target.position.set(0, STAGE_DROP - 0.4, 0)
+  scene.add(key, key.target)
+
+  // 쿨 림 — 레퍼런스에서 마네킹 윤곽에 걸리던 푸른 테두리. 따뜻한 키와 대비되어
+  // 실루엣이 배경에서 떨어져 나온다
+  const rim = new THREE.DirectionalLight(0x8fb4ff, 0.9)
+  rim.position.set(-2.2, 1.2, -3)
+  scene.add(rim)
 
   // 2단 원형 석재 포디움(podium.glb) — 그룹 원점이 포디움 윗면이 되도록 자식을
   // 내려 앉혀서, setFloorY(y)가 "윗면 = 발바닥" 계약을 그대로 지킨다
   const podium = new THREE.Group()
   podium.scale.setScalar(STAGE_SCALE) // 아바타와 같은 배율 — 발바닥이 윗면에 계속 맞는다
   scene.add(podium)
+
+  // 가짜 접지 그림자 — 포디움이 unlit이라 진짜 그림자를 못 받는다. 어두운 원반 하나로
+  // 아바타가 공중에 뜬 느낌만 없앤다. 포디움 자식이라 setFloorY를 그대로 따라간다.
+  const contact = new THREE.Mesh(
+    new THREE.CircleGeometry(cfg.stage.podium.diameter * 0.3, 32),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28 }),
+  )
+  contact.rotation.x = -Math.PI / 2
+  contact.position.y = 0.01 // 포디움 윗면 살짝 위 — z-fighting 방지
+  podium.add(contact)
   new GLTFLoader().load('/assets/games/body-fit/podium.glb', (gltf) => {
     const model = gltf.scene
     const box = new THREE.Box3().setFromObject(model)
