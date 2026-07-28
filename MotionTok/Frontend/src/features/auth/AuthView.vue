@@ -7,6 +7,7 @@ import { useSessionStore } from '@/stores/session'
 import * as authApi from '@/api/auth'
 import { ApiError } from '@/api/client'
 import { authApi as recoveryApi } from '@/api'
+import { warmUpMotionModels } from '@/composables/motionModels'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelCat from './components/PixelCat.vue'
@@ -385,10 +386,16 @@ function startSocial(provider: 'google' | 'kakao') {
 // 소셜 콜백(?code=)으로 들어온 진입인지. 이 경우 로그인 폼 대신 로딩 화면을 렌더링해
 // 토큰 교환(~1-2초) 동안 로그인 폼이 잠깐 깜빡이는 것을 막는다. 초기값을 setup에서 정해 첫 렌더부터 로딩으로 시작.
 const socialCallback = ref(typeof route.query.code === 'string')
+// 소셜 콜백 대기 시간에 모델을 미리 받아 두기 위한 것(아래 onMounted 참고)
+
 
 // provider가 ?code=로 돌아오면 백엔드로 넘겨 JWT를 받고 로비로 이동
 onMounted(async () => {
   if (!socialCallback.value) return
+  // 토큰 교환을 기다리는 동안 모션 모델도 같이 받아 둔다 — 어차피 로비 스플래시에서 받을 것이라
+  // 여기서 시작해 두면 그만큼 스플래시가 짧아진다. 싱글턴이라 중복 다운로드는 없고,
+  // 실패해도 로그인 흐름과 무관하므로 기다리지 않는다(await 없음).
+  void warmUpMotionModels()
   const { provider, intent } = consumeAuthorizeContext()
   if (!provider) {
     socialCallback.value = false // provider 유실 등 잘못된 진입 — 로그인 폼으로 되돌림

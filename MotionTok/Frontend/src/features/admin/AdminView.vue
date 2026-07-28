@@ -7,6 +7,7 @@ import { onMounted, ref, watch } from 'vue'
 import {
   adminApi,
   adminChatReportsApi,
+  adminUserReportsApi,
   gamesApi,
   ApiError,
   type AuditLog,
@@ -15,9 +16,9 @@ import {
   type ChatReportReason,
   type ChatReportStatus,
   type Game,
-  type ReportedUser,
   type Sanction,
   type SanctionType,
+  type UserReportListResponse,
 } from '@/api'
 import { useAsyncData } from '@/composables/useAsyncData'
 import AppPage from '@/components/common/AppPage.vue'
@@ -29,28 +30,12 @@ import { useToast } from '@/composables/useToast'
 
 const { message: toast, flash } = useToast()
 
-const MOCK_REPORTED: ReportedUser[] = [
-  { userId: 42, nickname: '트롤러', reportCount: 7, recentReasons: ['욕설', '방해'] },
-  { userId: 51, nickname: '스팸봇', reportCount: 4, recentReasons: ['광고'] },
-]
-const MOCK_SANCTIONS: Sanction[] = [
-  { id: 1, userId: 42, adminId: 1, type: 'SUSPENSION', startsAt: '2025-07-15T00:00:00Z', endsAt: '2025-07-22T00:00:00Z' },
-]
-const MOCK_AUDIT: AuditLog[] = [
-  { id: 1, adminId: 1, action: 'SANCTION_APPLY', targetType: 'USER', targetId: 42, detail: '일시정지 7일', createdAt: '2025-07-15T09:00:00Z' },
-  { id: 2, adminId: 1, action: 'GAME_TOGGLE', targetType: 'GAME', targetId: 6, detail: '드로잉 릴레이 비활성화', createdAt: '2025-07-16T11:00:00Z' },
-]
-
-const MOCK_GAMES: Game[] = [
-  { id: 1, name: '핑거 스타', description: '', mode: 'SOLO', minPlayers: 1, maxPlayers: 1, supportsBot: false, category: '리듬', thumbnailUrl: '', playable: true },
-  { id: 6, name: '드로잉 릴레이', description: '', mode: 'COOP', minPlayers: 2, maxPlayers: 4, supportsBot: false, category: '드로잉', thumbnailUrl: '', playable: false },
-]
-
-const tab = ref<'chat-reports' | 'reports' | 'sanctions' | 'audit' | 'games' | 'songs'>('chat-reports')
-const { data: reported } = useAsyncData(() => adminApi.reports(), MOCK_REPORTED)
-const { data: sanctions } = useAsyncData(() => adminApi.sanctions(), MOCK_SANCTIONS)
-const { data: audit } = useAsyncData(() => adminApi.auditLogs(), MOCK_AUDIT)
-const { data: games } = useAsyncData(() => gamesApi.list(), MOCK_GAMES)
+// 목 데이터 없음 — 없는 걸 있는 것처럼 보여 주면 "백엔드가 붙었는데 왜 안 뜨지"를 판단할 수 없다.
+// 아직 서버가 없는 구역(제재·감사 로그·게임 토글·곡 등록)은 화면에서 그렇다고 밝힌다.
+const tab = ref<'chat-reports' | 'reports' | 'sanctions' | 'audit' | 'games'>('chat-reports')
+const { data: sanctions, error: sanctionsError } = useAsyncData<Sanction[]>(() => adminApi.sanctions(), [])
+const { data: audit, error: auditError } = useAsyncData<AuditLog[]>(() => adminApi.auditLogs(), [])
+const { data: games, error: gamesError } = useAsyncData<Game[]>(() => gamesApi.list(), [])
 
 const SANCTION_LABEL: Record<SanctionType, string> = {
   WARNING: '경고', SUSPENSION: '일시정지', PERMANENT_BAN: '영구정지',
@@ -112,44 +97,57 @@ async function setChatReportStatus(status: Exclude<ChatReportStatus, 'RECEIVED'>
   }
 }
 
-async function sanction(user: ReportedUser, type: SanctionType) {
+// ── 사용자 신고 (-112) ──────────────────────────────────
+// 채팅 신고와 같은 계열이지만 상세 조회가 없다 — "누가 누구를 왜 신고했다"가 목록 행에 다 들어간다.
+const userReportStatusFilter = ref<ChatReportStatus | ''>('')
+const userReportPage = ref(0)
+const userReports = ref<UserReportListResponse | null>(null)
+const userReportsError = ref('')
+/** 처리 중인 신고 id — 같은 행을 연타해 상태 전이가 겹치는 걸 막는다. */
+const userReportBusy = ref<number | null>(null)
+
+async function loadUserReports() {
+  userReportsError.value = ''
   try {
-    await adminApi.applySanction({ userId: user.userId, type, reason: '관리자 제재' })
-    flash(`${user.nickname} — ${SANCTION_LABEL[type]} 적용`)
+    userReports.value = await adminUserReportsApi.list({
+      status: userReportStatusFilter.value || undefined,
+      page: userReportPage.value,
+      size: 20,
+    })
   } catch (e) {
-    flash(e instanceof ApiError ? e.message : '제재 적용 실패 (백엔드 미연동)')
+    userReports.value = null
+    userReportsError.value = e instanceof ApiError ? e.message : '목록을 불러오지 못했어요'
+  }
+}
+onMounted(loadUserReports)
+watch([userReportStatusFilter, userReportPage], loadUserReports)
+
+async function setUserReportStatus(id: number, status: Exclude<ChatReportStatus, 'RECEIVED'>) {
+  if (userReportBusy.value !== null) return
+  userReportBusy.value = id
+  try {
+    await adminUserReportsApi.updateStatus(id, status)
+    flash(`#${id} — ${STATUS_LABEL[status]} 처리`)
+    await loadUserReports()
+  } catch (e) {
+    flash(e instanceof ApiError ? e.message : '상태 변경에 실패했어요')
+  } finally {
+    userReportBusy.value = null
   }
 }
 
 // 게임 노출 토글 (PATCH /admin/games/{gameId})
+// 서버가 받아들였을 때만 화면을 바꾼다 — 실패했는데 토글이 넘어가면 숨긴 줄 알았던 게임이 그대로 노출된다.
 async function toggleGame(g: Game) {
   const next = !g.playable
   try {
     await adminApi.toggleGame(g.id, next)
   } catch (e) {
-    if (e instanceof ApiError) flash(e.message)
+    flash(e instanceof ApiError ? e.message : '게임 노출을 바꾸지 못했어요')
+    return
   }
   g.playable = next
   flash(`${g.name} — ${next ? '노출' : '숨김'} 처리`)
-}
-
-// 곡 등록 (POST /admin/songs)
-const songForm = ref({ title: '', artist: '', audioUrl: '', durationSec: 0 })
-async function registerSong() {
-  const { title, artist, audioUrl, durationSec } = songForm.value
-  if (!title.trim() || !audioUrl.trim()) return flash('제목과 오디오 URL은 필수예요')
-  try {
-    await adminApi.registerSong({
-      title: title.trim(),
-      artist: artist.trim() || undefined,
-      audioUrl: audioUrl.trim(),
-      durationSec: durationSec || undefined,
-    })
-    flash(`"${title}" 곡을 등록했어요`)
-    songForm.value = { title: '', artist: '', audioUrl: '', durationSec: 0 }
-  } catch (e) {
-    flash(e instanceof ApiError ? e.message : '곡 등록 실패 (백엔드 미연동)')
-  }
 }
 
 const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
@@ -159,11 +157,10 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
   <AppPage title="관리자 대시보드" subtitle="신고·제재·게임 노출·감사 로그">
     <div class="tabs">
       <button :class="{ on: tab === 'chat-reports' }" @click="tab = 'chat-reports'">채팅 신고</button>
-      <button :class="{ on: tab === 'reports' }" @click="tab = 'reports'">신고 유저</button>
+      <button :class="{ on: tab === 'reports' }" @click="tab = 'reports'">사용자 신고</button>
       <button :class="{ on: tab === 'sanctions' }" @click="tab = 'sanctions'">제재 이력</button>
       <button :class="{ on: tab === 'audit' }" @click="tab = 'audit'">감사 로그</button>
       <button :class="{ on: tab === 'games' }" @click="tab = 'games'">게임 노출</button>
-      <button :class="{ on: tab === 'songs' }" @click="tab = 'songs'">곡 등록</button>
     </div>
 
     <!-- 채팅 신고 (v0.2.17, -133) -->
@@ -205,28 +202,65 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
       </div>
     </PixelCard>
 
-    <!-- 신고 유저 -->
-    <PixelCard v-else-if="tab === 'reports'" title="누적 신고 유저">
-      <table class="tbl">
-        <thead><tr><th>닉네임</th><th>누적</th><th>최근 사유</th><th>제재</th></tr></thead>
+    <!-- 사용자 신고 (-112) -->
+    <PixelCard v-else-if="tab === 'reports'" title="사용자 신고 접수함">
+      <div class="cr-filter">
+        <label>
+          상태
+          <select v-model="userReportStatusFilter">
+            <option value="">전체</option>
+            <option value="RECEIVED">접수</option>
+            <option value="REVIEWING">검토 중</option>
+            <option value="RESOLVED">조치 완료</option>
+            <option value="REJECTED">기각</option>
+          </select>
+        </label>
+        <span v-if="userReports" class="cr-total">총 {{ userReports.totalElements }}건</span>
+      </div>
+      <p v-if="userReportsError" class="cr-empty">{{ userReportsError }}</p>
+      <p v-else-if="userReports && !userReports.reports.length" class="cr-empty">해당 상태의 신고가 없어요</p>
+      <table v-else-if="userReports" class="tbl">
+        <thead><tr><th>#</th><th>신고자 → 피신고자</th><th>사유</th><th>직접 입력</th><th>상태</th><th>신고 일시</th><th>처리</th></tr></thead>
         <tbody>
-          <tr v-for="u in reported" :key="u.userId">
-            <td>{{ u.nickname }}</td>
-            <td class="warn">{{ u.reportCount }}회</td>
-            <td>{{ u.recentReasons.join(', ') }}</td>
+          <tr v-for="r in userReports.reports" :key="r.id">
+            <td>{{ r.id }}</td>
+            <td>{{ r.reporterNickname }} → <b>{{ r.reportedNickname }}</b></td>
+            <td>{{ REASON_LABEL[r.reason] }}</td>
+            <td class="cr-text">{{ r.reasonDetail ?? '—' }}</td>
+            <td><span class="cr-status" :class="r.status.toLowerCase()">{{ STATUS_LABEL[r.status] }}</span></td>
+            <td>{{ fmt(r.createdAt) }}</td>
             <td class="acts">
-              <PixelButton @click="sanction(u, 'WARNING')">경고</PixelButton>
-              <PixelButton variant="yellow" @click="sanction(u, 'SUSPENSION')">정지</PixelButton>
-              <PixelButton variant="primary" @click="sanction(u, 'PERMANENT_BAN')">영구</PixelButton>
+              <!-- 이미 그 상태면 눌러 봐야 같은 값이라 잠근다(RECEIVED로 되돌리기는 서버가 막는다) -->
+              <PixelButton
+                :disabled="userReportBusy !== null || r.status === 'REVIEWING'"
+                @click="setUserReportStatus(r.id, 'REVIEWING')"
+              >검토</PixelButton>
+              <PixelButton
+                variant="mint"
+                :disabled="userReportBusy !== null || r.status === 'RESOLVED'"
+                @click="setUserReportStatus(r.id, 'RESOLVED')"
+              >조치</PixelButton>
+              <PixelButton
+                variant="secondary"
+                :disabled="userReportBusy !== null || r.status === 'REJECTED'"
+                @click="setUserReportStatus(r.id, 'REJECTED')"
+              >기각</PixelButton>
             </td>
           </tr>
         </tbody>
       </table>
+      <div v-if="userReports && userReports.totalPages > 1" class="cr-pager">
+        <PixelButton :disabled="userReportPage === 0" @click="userReportPage--">이전</PixelButton>
+        <span>{{ userReportPage + 1 }} / {{ userReports.totalPages }}</span>
+        <PixelButton :disabled="userReportPage >= userReports.totalPages - 1" @click="userReportPage++">다음</PixelButton>
+      </div>
     </PixelCard>
 
     <!-- 제재 이력 -->
     <PixelCard v-else-if="tab === 'sanctions'" title="제재 이력">
-      <table class="tbl">
+      <p v-if="sanctionsError" class="cr-empty">{{ sanctionsError }} · 제재 API는 아직 서버에 없어요</p>
+      <p v-else-if="!sanctions.length" class="cr-empty">제재 이력이 없어요</p>
+      <table v-else class="tbl">
         <thead><tr><th>대상 ID</th><th>유형</th><th>시작</th><th>종료</th></tr></thead>
         <tbody>
           <tr v-for="s in sanctions" :key="s.id">
@@ -241,7 +275,9 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
 
     <!-- 감사 로그 -->
     <PixelCard v-else-if="tab === 'audit'" title="감사 로그">
-      <table class="tbl">
+      <p v-if="auditError" class="cr-empty">{{ auditError }} · 감사 로그 API는 아직 서버에 없어요</p>
+      <p v-else-if="!audit.length" class="cr-empty">감사 로그가 없어요</p>
+      <table v-else class="tbl">
         <thead><tr><th>행위</th><th>대상</th><th>상세</th><th>시각</th></tr></thead>
         <tbody>
           <tr v-for="a in audit" :key="a.id">
@@ -256,7 +292,9 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
 
     <!-- 게임 노출 -->
     <PixelCard v-else-if="tab === 'games'" title="게임 노출 관리">
-      <table class="tbl">
+      <p v-if="gamesError" class="cr-empty">{{ gamesError }}</p>
+      <p v-else-if="!games.length" class="cr-empty">등록된 게임이 없어요</p>
+      <table v-else class="tbl">
         <thead><tr><th>게임</th><th>분류</th><th>인원</th><th>노출</th></tr></thead>
         <tbody>
           <tr v-for="g in games" :key="g.id">
@@ -272,17 +310,6 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
           </tr>
         </tbody>
       </table>
-    </PixelCard>
-
-    <!-- 곡 등록 -->
-    <PixelCard v-else title="곡 등록">
-      <form class="song-form" @submit.prevent="registerSong">
-        <label>제목 *<input v-model="songForm.title" placeholder="곡 제목" /></label>
-        <label>아티스트<input v-model="songForm.artist" placeholder="아티스트 (선택)" /></label>
-        <label>오디오 URL *<input v-model="songForm.audioUrl" placeholder="https://..." /></label>
-        <label>길이(초)<input v-model.number="songForm.durationSec" type="number" min="0" placeholder="예: 210" /></label>
-        <PixelButton variant="primary" type="submit">등록</PixelButton>
-      </form>
     </PixelCard>
 
     <!-- 채팅 신고 상세 — 스냅샷을 시간순으로 렌더링해 채팅창을 복원하고, 신고 대상을 하이라이트한다 -->
@@ -359,11 +386,4 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
 .cr-line-time { font-size: 9px; color: var(--c-muted); flex-shrink: 0; }
 .cr-actions { display: flex; gap: 8px; }
 
-.song-form { display: grid; gap: 12px; max-width: 420px; }
-.song-form label { display: grid; gap: 5px; font-size: 10px; font-weight: 700; color: var(--c-muted); }
-.song-form input {
-  height: 42px; padding: 0 12px;
-  border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; outline: 0;
-  font-size: 12px; font-weight: 400; color: var(--c-ink);
-}
 </style>

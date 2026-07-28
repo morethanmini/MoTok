@@ -43,5 +43,9 @@ export const usersApi = {
   saveDecoration: (config: DecorationConfig) =>
     http.put<DecorationConfig>('/users/me/decoration', config),
 
+  /**
+   * ⚠️ 서버 미구현 — 명세에는 있으나 백엔드에 라우트가 없다(2026-07 기준).
+   * 마이페이지 전적은 게임별 리더보드의 myRank(-96)를 모아서 만든다(MyPageView 참고).
+   */
   getRecords: () => http.get<GameRecord[]>('/users/me/records'),
 }

@@ -16,6 +16,9 @@ import org.springframework.web.bind.annotation.RestController;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
 import ssafy.a706.backend.user.service.UserService;
 import ssafy.a706.backend.user.controller.dto.ChangePasswordRequest;
+import org.springframework.web.bind.annotation.RequestParam;
+import ssafy.a706.backend.user.controller.dto.PointBalanceResponse;
+import ssafy.a706.backend.user.controller.dto.PointHistoryPageResponse;
 import ssafy.a706.backend.user.controller.dto.PublicUserProfileResponse;
 import ssafy.a706.backend.user.controller.dto.UpdateAvatarRequest;
 import ssafy.a706.backend.user.controller.dto.UpdateProfileRequest;
@@ -23,8 +26,8 @@ import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
 import ssafy.a706.backend.user.controller.dto.WithdrawRequest;
 
 /**
- * API 명세서 회원 도메인 — 프로필 조회·수정, 비밀번호 변경, 탈퇴(-23·-111).
- * 포인트·인벤토리·화면 꾸미기·전적은 후속 작업.
+ * API 명세서 회원 도메인 — 프로필 조회·수정, 포인트 잔액, 비밀번호 변경, 탈퇴(-23·-111).
+ * 인벤토리·화면 꾸미기는 DecorController, 전적은 후속 작업.
  */
 @RestController
 @RequestMapping("/api/users")
@@ -37,6 +40,20 @@ public class UserController {
     @GetMapping("/me")
     public UserProfileResponse me(@AuthenticationPrincipal MemberPrincipal principal) {
         return userService.getProfile(principal.id());
+    }
+
+    /** GET /users/me/points — 포인트 잔액 조회 */
+    @GetMapping("/me/points")
+    public PointBalanceResponse points(@AuthenticationPrincipal MemberPrincipal principal) {
+        return userService.getPointBalance(principal.id());
+    }
+
+    /** GET /users/me/points/history — 포인트 적립·사용 내역(최신순) */
+    @GetMapping("/me/points/history")
+    public PointHistoryPageResponse pointHistory(@AuthenticationPrincipal MemberPrincipal principal,
+                                                 @RequestParam(defaultValue = "0") int page,
+                                                 @RequestParam(defaultValue = "20") int size) {
+        return userService.getPointHistory(principal.id(), page, size);
     }
 
     /** PATCH /users/me — 프로필(닉네임) 수정 */

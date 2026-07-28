@@ -74,6 +74,10 @@ deploy-backend:
       add S3_ACCESS_KEY "$S3_ACCESS_KEY"
       add S3_SECRET_KEY "$S3_SECRET_KEY"
       add S3_PUBLIC_BASE_URL "$S3_PUBLIC_BASE_URL"
+      # 그림으로 말해요 AI 채점(GMS) — 미등록 시 채점만 실패(앱 기동엔 영향 없음).
+      # API_URL 은 SSAFY GMS 릴레이로 고정이라 application.yaml 기본값을 쓴다.
+      add GMS_API_KEY "$GMS_API_KEY"
+      add GMS_MODEL "$GMS_MODEL"
       # GPU 워커 폴링 API(/api/internal/ai-jobs/**, -102) 공유 시크릿.
       # 미등록 시 InternalApiKeyFilter가 기본값(빈 문자열)으로 모든 요청을 401 처리한다(fail-safe).
       # 워커가 실제로 붙게 하려면 GitLab Settings>CI/CD>Variables 에 반드시 등록할 것.

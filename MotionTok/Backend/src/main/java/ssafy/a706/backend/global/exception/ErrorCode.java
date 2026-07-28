@@ -71,6 +71,9 @@ public enum ErrorCode {
     GAME_NOT_SETTER(HttpStatus.FORBIDDEN, "GAME_NOT_SETTER", "출제자만 포즈를 제출할 수 있습니다."),
     GAME_NEED_MORE_PLAYERS(HttpStatus.CONFLICT, "GAME_NEED_MORE_PLAYERS", "이 게임은 2명 이상부터 시작할 수 있습니다."),
     GAME_POSE_INVALID(HttpStatus.BAD_REQUEST, "GAME_POSE_INVALID", "포즈 데이터가 올바르지 않습니다."),
+    GAME_JUDGE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "GAME_JUDGE_UNAVAILABLE", "AI 채점을 사용할 수 없습니다."),
+    GAME_JUDGE_FAILED(HttpStatus.BAD_GATEWAY, "GAME_JUDGE_FAILED", "AI 채점에 실패했습니다."),
+    GAME_IMAGE_INVALID(HttpStatus.BAD_REQUEST, "GAME_IMAGE_INVALID", "그림 데이터가 올바르지 않습니다."),
 
     // signal
     SIGNAL_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "SIGNAL_NOT_IN_ROOM", "방 참가자만 시그널을 보낼 수 있습니다."),
@@ -104,6 +107,10 @@ public enum ErrorCode {
     // user report (-112) — 대상이 없거나 탈퇴·정지된 경우는 USER_NOT_FOUND를 재사용한다(-96과 같은 선)
     USER_REPORT_SELF(HttpStatus.BAD_REQUEST, "USER_REPORT_SELF", "자신은 신고할 수 없습니다."),
     USER_REPORT_DUPLICATE(HttpStatus.CONFLICT, "USER_REPORT_DUPLICATE", "이미 접수된 신고가 처리 중입니다."),
+    USER_REPORT_NOT_FOUND(HttpStatus.NOT_FOUND, "USER_REPORT_NOT_FOUND", "존재하지 않는 신고입니다."),
+
+    // decor — 화면 꾸미기 장착 한도(스티커 5개, 가면·효과·배경 각 1개)
+    DECOR_EQUIP_LIMIT(HttpStatus.CONFLICT, "DECOR_EQUIP_LIMIT", "더 장착할 수 없습니다. 다른 아이템을 먼저 해제해 주세요."),
 
     // friend (-57) — 닉네임으로 상대를 못 찾는 경우는 USER_NOT_FOUND를 재사용한다
     FRIEND_SELF_REQUEST(HttpStatus.BAD_REQUEST, "FRIEND_SELF_REQUEST", "자신에게는 친구 요청을 보낼 수 없습니다."),
