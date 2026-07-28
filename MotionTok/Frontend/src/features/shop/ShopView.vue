@@ -130,34 +130,31 @@ async function confirmPurchase() {
 </script>
 
 <template>
-  <AppPage title="상점" subtitle="포인트로 화면 꾸미기 아이템을 구매하세요">
-    <template #actions>
-      <div class="balance bottom-balance">
-        <small>MY POINT</small>
-        <b><CoinIcon :size="17" /> {{ currentPoints.toLocaleString() }}</b>
-      </div>
-    </template>
-
+  <AppPage class="shop-page" title="상점" :back="false" title-style="none" max-width="1460px" :zoom="1">
     <template #hero>
       <section class="shop-hero">
-        <div>
-          <span class="px-kicker">NEW ITEM DROP!</span>
-          <h2>나만의 플레이 화면을 꾸며봐요</h2>
+        <div class="shop-copy">
+          <span class="shop-kicker">MOTION BOUTIQUE</span>
+          <h1>나만의 플레이를 <em>꾸며봐요</em></h1>
           <p>가면, 반짝이는 효과, 배경까지 모션 파티에 개성을 더해요.</p>
         </div>
-        <div class="hero-actions">
-          <PixelButton variant="guest" @click="router.push({ name: RouteName.Inventory })">
-            🎒 내 아바타
-          </PixelButton>
-          <PixelButton variant="mint" @click="router.push({ name: RouteName.AiItemCreate })">
-            ✎ AI 아이템 만들기
-          </PixelButton>
+        <div class="shop-hero-side">
+          <div class="balance">
+            <small>MY POINT</small>
+            <b><CoinIcon :size="17" /> {{ currentPoints.toLocaleString() }}</b>
+          </div>
+          <div class="hero-actions">
+            <PixelButton variant="guest" @click="router.push({ name: RouteName.Inventory })">내 아바타</PixelButton>
+            <PixelButton variant="mint" @click="router.push({ name: RouteName.AiItemCreate })">AI 아이템 만들기</PixelButton>
+          </div>
         </div>
-        <img src="/assets/intro/sketchbook.png" alt="꾸미기 아이템" />
+        <img class="shop-art" src="/assets/shop-boutique-cat.png" alt="리본을 맨 고양이" />
       </section>
     </template>
 
-    <div class="chips">
+    <section class="shop-controls">
+      <div class="section-label"><span>ITEM SHELF</span><h2>꾸미기 아이템</h2></div>
+      <div class="chips">
       <button
         v-for="c in CATEGORIES"
         :key="c.key"
@@ -167,7 +164,8 @@ async function confirmPurchase() {
       >
         {{ c.emoji }} {{ c.label }}
       </button>
-    </div>
+      </div>
+    </section>
 
     <!-- 목록을 못 불러온 상태 — 아래 카드는 예시(목) 데이터라 구매할 수 없음을 밝힌다. -->
     <p v-if="loadError" class="load-error">
@@ -217,30 +215,11 @@ async function confirmPurchase() {
 </template>
 
 <style scoped>
-.shop-hero { position: relative; height: 150px; margin-bottom: 18px; padding: 22px 28px; display: flex; align-items: center; overflow: hidden; border: var(--border); border-radius: 21px 21px 15px 21px; background: linear-gradient(115deg, #ffe1d4, #fff2be); box-shadow: var(--shadow-lg); }
-.shop-hero h2 { margin: 12px 0 6px; font-size: 18px; }
-.shop-hero p { margin: 0; color: var(--c-muted); font-size: 10px; }
-.shop-hero > img { width: 180px; margin-left: 14px; transform: translateY(19px) rotate(5deg); }
-.hero-actions { margin-left: auto; display: flex; gap: 9px; }
-.balance { min-width: 130px; margin-left: 18px; padding: 13px 15px; border: var(--border); border-radius: 14px; background: #fff; box-shadow: var(--shadow-md); }
-.bottom-balance { margin-left: 0; }
-.balance small { display: block; margin-bottom: 7px; color: var(--c-muted); font-size: 8px; }
-.balance b { display: flex; align-items: center; gap: 7px; color: #d79600; font-size: 15px; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
-.chip { border: 2px solid var(--c-ink); background: #fff; border-radius: 999px; padding: 8px 13px; font-size: 11px; box-shadow: 2px 2px 0 #d8c9d8; }
-.chip.on { background: var(--c-yellow); box-shadow: var(--shadow-sm); font-weight: 700; }
-
-.load-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 14px; padding: 11px 14px; border: 2px solid var(--c-ink); border-radius: 12px; background: #ffe9e4; font-size: 11px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
-.item { border: var(--border); border-radius: 17px 17px 13px 17px; background: #fff; box-shadow: var(--shadow-md); padding: 11px 14px; transition: var(--t-fast); }
-.item:hover { transform: translate(-2px,-2px); box-shadow: var(--shadow-lg); }
-/* grid + auto 행이면 이미지의 height:100%가 순환 참조라 auto로 풀려 세로가 넘쳐 잘린다.
-   flex는 컨테이너 높이가 확정이라 100%가 96px-padding으로 제대로 풀리고 contain이 동작한다. */
-.thumb { position: relative; height: 96px; display: flex; align-items: center; justify-content: center; overflow: hidden; border: 2px solid var(--c-ink); border-radius: 12px; background: linear-gradient(135deg, var(--tone-4), #fff4d5); margin-bottom: 9px; }
-/* 50% — 나머지가 여백이 된다(별도 padding 불필요). */
-.thumb img { width: 50%; height: 50%; object-fit: contain; }
-.thumb i { position: absolute; left: 7px; top: 7px; padding: 4px 6px; border: 2px solid var(--c-ink); border-radius: 7px; background: var(--c-mint-soft); font-size: 7px; font-style: normal; font-weight: 700; }
-.name { font-size: 12px; font-weight: 700; }
-.row { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
-.price { font-size: 11px; color: #d79600; font-weight: 700; }
+:global(html:has(.shop-page)), :global(body:has(.shop-page)) { scrollbar-width: none; }
+:global(html:has(.shop-page)::-webkit-scrollbar), :global(body:has(.shop-page)::-webkit-scrollbar) { display: none; }
+.shop-page { background: #fff8e9; }.shop-page :deep(.app-page) { padding: 28px 0 48px; }.shop-page :deep(.hero), .shop-page :deep(.body) { padding-right: clamp(18px, 4vw, 58px); padding-left: clamp(18px, 4vw, 58px); }.shop-page :deep(.page-sticker) { display: none; }
+.shop-hero { position: relative; display: flex; min-height: 262px; overflow: hidden; border-radius: 18px; background: url('/assets/shop-hero-bg.png') center / cover; color: #4c3d44; }.shop-hero::before { display: none; }.shop-copy { position: relative; z-index: 2; padding: 38px 46px; }.shop-kicker, .section-label span { display: block; color: #a87069; font-size: 10px; letter-spacing: 1px; }.shop-copy h1 { margin: 11px 0 9px; font-size: clamp(30px, 3vw, 43px); letter-spacing: -.8px; }.shop-copy h1 em { color: #d77c7a; font-style: normal; }.shop-copy p { margin: 0; color: #705e61; font-size: 14px; }.shop-hero-side { position: relative; z-index: 3; display: flex; margin: auto 32px 25px auto; flex-direction: column; align-items: end; gap: 10px; }.balance { min-width: 142px; padding: 12px 14px; border: 2px solid #c79b83; border-radius: 9px; background: rgba(255,253,246,.78); box-shadow: 2px 2px 0 rgba(148,105,84,.2); }.balance small { display: block; margin-bottom: 5px; color: #aa8272; font-size: 8px; }.balance b { display: flex; align-items: center; gap: 7px; color: #c47b35; font-size: 15px; }.hero-actions { display: flex; gap: 8px; }.hero-actions :deep(.px-btn) { border: 2px solid #b98771; border-radius: 7px; box-shadow: 2px 2px 0 rgba(130,82,62,.2); font-size: 10px; }.shop-art { position: absolute; right: 20%; bottom: -48px; z-index: 2; width: 400px; filter: drop-shadow(5px 6px 0 rgba(116,79,76,.14)); }
+.shop-controls { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 18px; }.section-label h2 { margin: 5px 0 0; font-size: 19px; }.chips { display: flex; flex-wrap: wrap; justify-content: end; gap: 6px; }.chip { padding: 8px 11px; border: 2px solid #cfbbc5; border-radius: 7px; background: #fffdf9; color: #856d75; font-size: 10px; transition: var(--t-fast); }.chip:hover { background: #f8eef1; }.chip.on { border-color: #bd8d9c; background: #e8cbd5; color: #5e414c; box-shadow: inset 0 -3px #bd8d9c; }
+.load-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 14px; padding: 11px 14px; border: 2px solid #d7abb0; border-radius: 10px; background: #fff0eb; font-size: 11px; }.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(205px, 1fr)); gap: 14px; }.item { padding: 10px; border: 2px solid #e0cfd7; border-radius: 12px; background: #fffdf9; box-shadow: 3px 3px 0 #eadde1; transition: var(--t-fast); }.item:hover { transform: translate(-2px,-2px); border-color: #cba7b5; box-shadow: 5px 5px 0 #dcc5ce; }.thumb { position: relative; display: flex; height: 142px; align-items: center; justify-content: center; overflow: hidden; border-radius: 8px; background: linear-gradient(135deg, #ede4f4, #ffe7ca); }.thumb::before { position: absolute; inset: 0; opacity: .48; background-image: radial-gradient(rgba(255,255,255,.9) 1px, transparent 1px); background-size: 11px 11px; content: ''; }.thumb img { position: relative; z-index: 1; width: 65%; height: 65%; object-fit: contain; transition: transform .15s ease; }.item:hover .thumb img { transform: translateY(-3px) rotate(-2deg); }.thumb i { position: absolute; z-index: 2; top: 8px; left: 8px; padding: 4px 6px; border-radius: 4px; background: #b5ddca; color: #527565; font-size: 7px; font-style: normal; }.name { margin: 12px 3px 0; color: #554149; font-size: 13px; }.row { display: flex; align-items: center; justify-content: space-between; margin: 9px 3px 2px; }.price { display: flex; align-items: center; color: #c47b35; font-size: 11px; }.row :deep(.px-btn) { min-height: 29px; padding: 5px 8px; border-radius: 6px; font-size: 9px; }
+@media (max-width: 760px) { .shop-page :deep(.app-page) { padding-top: 20px; }.shop-hero { min-height: 310px; }.shop-copy { padding: 28px 25px; }.shop-copy h1 { max-width: 86%; font-size: 31px; }.shop-copy p { max-width: 76%; font-size: 12px; }.shop-art { right: -54px; bottom: -30px; width: 280px; opacity: .85; }.shop-hero-side { right: 15px; bottom: 14px; margin: 0; position: absolute; }.hero-actions { display: none; }.shop-controls { align-items: start; flex-direction: column; }.chips { justify-content: start; }.grid { grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); } }
 </style>
