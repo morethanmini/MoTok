@@ -39,7 +39,7 @@ export interface BodyFitConfig {
   }
   /**
    * 난이도 모드 프리셋 — 구멍 여유(K)와 벽 접근 시간이 함께 바뀐다.
-   * 쉬움 K 1.5는 실기 플레이로 확정(2026-07-27), 나머지는 캘리브레이션 대상 초깃값 (UI 스펙 §11)
+   * K는 2026-07-28 시뮬레이션으로 재보정했다 — 아래 defaultConfig의 difficulty 주석 참고.
    */
   difficulty: Record<DifficultyKey, { K: number; approachMs: number }>
   /** 판정 모델 (기획 §7, UI 스펙 §2) */
@@ -102,12 +102,25 @@ export function defaultConfig(): BodyFitConfig {
     difficulty: {
       // 접근 시간은 BE GameSessionService.BODY_FIT_APPROACH_MILLIS와 반드시 동기화.
       // 멀티는 서버 endAt이 진실이라 한쪽만 바꾸면 벽 도착과 판정 시점이 어긋난다.
-      easy: { K: 1.5, approachMs: 6000 },
-      normal: { K: 1.35, approachMs: 5000 },
-      hard: { K: 1.2, approachMs: 4000 },
+      //
+      // K 재보정 (2026-07-28) — 이전 값(1.5/1.35/1.2)은 통과 판정이 등급 사다리보다 빡빡해서
+      // "일치율 80인데 FAIL"이 나왔다. 통과 여부는 구멍 밖 픽셀(K)로, 등급은 원본과의 IoU로
+      // 재는데 둘이 정렬돼 있지 않았던 것. K가 낮으면 IoU가 PASS(70)까지 내려오기 전에 통과가
+      // 먼저 끊겨 PASS 등급이 구조적으로 안 나온다(옛 어려움 K1.2는 IoU 88에서 이미 탈락).
+      //
+      // 팔을 각도만큼 어긋뜨려 통과 한계를 이분 탐색한 측정값(만세 계열 포즈 기준):
+      //   K 1.2 → 5.6° 한계, 그때 IoU 88 (GREAT에서 잘림)
+      //   K 1.45 → 약 9.5°,  그때 IoU 80 (PASS 도달)
+      //   K 1.7  → 약 13°,   그때 IoU 74
+      //   K 1.9  → 약 16°,   그때 IoU 70 (통과 경계 = PASS 경계)
+      // 세 난이도 모두 4개 등급이 다 나오도록 아래로 올린다.
+      easy: { K: 1.9, approachMs: 6000 },
+      normal: { K: 1.7, approachMs: 5000 },
+      hard: { K: 1.45, approachMs: 4000 },
     },
     judge: {
-      K: 1.5,
+      // 난이도 미적용(솔로 초기값) 기본은 easy와 같게 둔다
+      K: 1.9,
       marginMul: { headTorso: 0.6, upperArm: 1.0, forearm: 1.6, hand: 2.0 },
       overflowTolerance: 0.03,
       grade: { perfect: 92, great: 82, pass: 70 },

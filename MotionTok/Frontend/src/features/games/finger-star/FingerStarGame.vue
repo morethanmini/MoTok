@@ -7,18 +7,29 @@
  * (게임룸의 로컬 캡처 스트림을 재사용 — S15P11A706-33). 카메라 원본을 그리지 않으므로
  * 카메라 발행을 끈(숨김) 상태에서 캔버스를 송출해도 얼굴은 노출되지 않는다.
  *
- * 두 가지 모드:
- * - 솔로(session=null): 별자리 선택 → 로컬 타이머 30초 → 결과. 서버 미연동 폴백 겸 연습.
- * - 멀티(session 제공): 서버가 정한 별자리·시작/종료 시각(서버 권위 타이머, S15P11A706-116)을
- *   따라 카운트다운 → 라운드 → 결과 집계 대기. 진행 상황은 progress 이벤트로(스로틀 300ms),
- *   최종 점수는 finished 이벤트로 부모가 STOMP 발신한다. 순위는 results prop(GAME_END)으로 표시.
+ * 매치 룰(개선안): 90초 동안 별자리를 연속으로 완성한다 — 모든 별을 켠 채 3초 유지하면
+ * 그 즉시 점수를 확정하고 다음 별자리가 나온다. 승부는 완성 개수(1순위) → 평균 점수(2순위).
+ * 처음 3개는 쉬움·보통에서만 출제된다(StarSequence).
+ *
+ * 모드:
+ * - 솔로 연습(session=null): 별자리를 골라 한 판(30초) — 서버 미연동 폴백 겸 연습.
+ * - 솔로 도전(session=null): 위 매치 룰 그대로 90초, 로컬 최고 기록(개수·평균).
+ * - 멀티(session 제공): 서버 권위 타이머(S15P11A706-116) + GAME_START의 공유 시드로
+ *   전원이 같은 별자리 순서를 뽑는다. 진행 상황은 progress 이벤트로(스로틀 300ms),
+ *   최종 집계는 finished 이벤트로 부모가 STOMP 발신한다. 순위는 results prop(GAME_END)으로 표시.
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { GameResultEntry } from '@/api/types'
 import { useHandLandmarker, type HandLandmarkerResult } from '@/composables/useHandLandmarker'
 import type { ActiveGameSession } from '../session'
-import { CONSTELLATIONS, constellationByKey, type Difficulty } from './constellations'
-import { ChallengeDeck, challengeRoundScore, difficultyForRound } from './challenge'
+import { CONSTELLATIONS, constellationByKey } from './constellations'
+import {
+  StarSequence,
+  mulberry32,
+  averageScore,
+  isBetterRecord,
+  type MatchRecord,
+} from './challenge'
 import {
   FINGER_TIPS,
   HIT_RADIUS_RATIO,
@@ -46,13 +57,17 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   close: []
-  /** 멀티: 라운드 중 진행 상황(300ms 스로틀 완료 상태) */
-  progress: [starsLit: number, holdProgress: number]
-  finished: [payload: { constellation: string; score: number; starsHit: number; starsTotal: number }]
+  /** 멀티: 라운드 중 진행 상황(300ms 스로틀 완료 상태) — starsLit·홀드 게이지·완성 개수 */
+  progress: [starsLit: number, holdProgress: number, completedCount: number]
+  /** 매치 최종 집계 — totalScore(총점)·completedCount가 서버 순위 입력이다 */
+  finished: [payload: { completedCount: number; totalScore: number; avgScore: number }]
 }>()
 
-const ROUND_SECONDS = 30
-const HOLD_SECONDS = 10
+/** 매치(도전·멀티) 총 시간 — 멀티는 서버 endAt이 권위이고 이 값은 games 테이블과 동기화된 표시 기본값 */
+const MATCH_SECONDS = 90
+/** 솔로 연습 한 판 시간 */
+const PRACTICE_SECONDS = 30
+const HOLD_SECONDS = 3
 const PROGRESS_EMIT_INTERVAL_MS = 300
 
 const SLOT_COLOR: Record<SlotKey, string> = {
@@ -79,7 +94,7 @@ const shapeKey = ref(CONSTELLATIONS[0]!.key)
 const shape = computed(() => constellationByKey(shapeKey.value))
 const isMultiplayer = computed(() => !!props.session)
 const countdownLeft = ref(0)
-const timeLeftSec = ref(ROUND_SECONDS)
+const timeLeftSec = ref(MATCH_SECONDS)
 const holdProgress = ref(0)
 const hitCount = ref(0)
 const score = ref<number | null>(null)
@@ -93,35 +108,43 @@ function serverNow(): number {
   return Date.now() + (props.session?.clockOffset ?? 0)
 }
 
-// ── 솔로 도전 모드 (런) — 난이도가 라운드마다 오르는 연속 플레이 ──
-const DIFFICULTY_LABEL: Record<Difficulty, string> = { EASY: '쉬움', NORMAL: '보통', HARD: '어려움' }
-/** 로컬 최고 기록 — 본인 표시용. 랭킹과 무관(서버 세션 기반 랭킹은 Phase 2). */
-const BEST_RUN_KEY = 'motok.fingerStar.bestRun'
+// ── 90초 매치 상태 (솔로 도전·멀티 공용) ─────
 const soloMode = ref<'practice' | 'challenge'>('practice')
-const runRound = ref(0)
-const runScore = ref(0)
-const runOver = ref(false)
-const lastRoundGain = ref(0)
-const isNewBest = ref(false)
-const bestRunScore = ref(loadBestRun())
-let deck: ChallengeDeck | null = null
+/** 이번 매치 집계 — 완성 개수·점수 합(평균은 표시 시점 계산) */
+const match = ref<MatchRecord>({ count: 0, sum: 0 })
+/** 별자리 완성 직후 잠깐 띄우는 배너 — 화면 전환 없이 즉시 다음 별자리로 넘어가므로 */
+const completeFlash = ref<{ gain: number; count: number } | null>(null)
+let flashTimer = 0
+let sequence: StarSequence | null = null
+/** 솔로(연습·도전) 종료 시각 — performance.now() 기준. 별자리 전환과 무관하게 유지된다 */
+let soloEndAt = 0
 
-function loadBestRun(): number {
+/** 로컬 최고 기록(도전 모드) — 본인 표시용. 랭킹과 무관. 비교 규칙은 승부와 동일(개수→총점) */
+const BEST_MATCH_KEY = 'motok.fingerStar.bestMatch'
+const isNewBest = ref(false)
+const bestRecord = ref<MatchRecord>(loadBestRecord())
+
+function loadBestRecord(): MatchRecord {
   try {
-    return Number(localStorage.getItem(BEST_RUN_KEY)) || 0
+    const parsed = JSON.parse(localStorage.getItem(BEST_MATCH_KEY) ?? '') as MatchRecord
+    if (typeof parsed?.count === 'number' && typeof parsed?.sum === 'number') {
+      return { count: parsed.count, sum: parsed.sum }
+    }
   } catch {
-    return 0
+    // 기록 없음 또는 구버전(라운드제 숫자) — 규칙이 달라 비교 불가라 초기화
   }
+  return { count: 0, sum: 0 }
 }
-function saveBestRun(score: number) {
+function saveBestRecord(record: MatchRecord) {
   try {
-    localStorage.setItem(BEST_RUN_KEY, String(score))
+    localStorage.setItem(BEST_MATCH_KEY, JSON.stringify(record))
   } catch {
     // 스토리지 불가(프라이빗 모드 등) — 기록 저장만 포기
   }
 }
 
-// 프레임마다 바뀌는 값은 반응성 없이 보관 (렌더 루프 전용)
+// 프레임마다 바뀌는 값은 반응성 없이 보관 (렌더 루프 전용) — "별자리 한 개" 단위 상태.
+// 매치 도중 완성할 때마다 freshRound()로 갈리고, 매치 집계는 match ref가 따로 든다.
 interface RoundState {
   activeMask: boolean[]
   matchedSlots: Set<SlotKey>
@@ -129,8 +152,6 @@ interface RoundState {
   bestCount: number
   done: boolean
   finalPositions: (Point | null)[] | null
-  /** 솔로 전용 — performance.now() 기준 종료 시각 */
-  soloEndAt: number
   lastTs: number
 }
 let round: RoundState = freshRound()
@@ -139,7 +160,7 @@ let lastProgressEmitAt = 0
 function freshRound(): RoundState {
   return {
     activeMask: [], matchedSlots: new Set(), positions: [],
-    bestCount: 0, done: false, finalPositions: null, soloEndAt: 0, lastTs: 0,
+    bestCount: 0, done: false, finalPositions: null, lastTs: 0,
   }
 }
 
@@ -163,11 +184,10 @@ watch(
       phase.value = 'ready'
       return
     }
-    shapeKey.value = session.constellationKey
-    finishEmitted = false
-    score.value = null
+    // GAME_START의 공유 시드(constellationKey 필드) → 전원이 같은 별자리 순서를 뽑는다
+    startMatch(mulberry32(Number(session.constellationKey) || 1))
     phase.value = serverNow() >= session.startAt ? 'playing' : 'countdown'
-    if (phase.value === 'playing') beginRound()
+    if (phase.value === 'playing') beginConstellation()
     mpTicker = window.setInterval(mpTick, 100)
   },
   { immediate: true },
@@ -178,7 +198,10 @@ function mpTick() {
   const now = serverNow()
   if (phase.value === 'countdown') {
     countdownLeft.value = Math.max(1, Math.ceil((session.startAt - now) / 1000))
-    if (now >= session.startAt) beginRound()
+    if (now >= session.startAt) {
+      beginConstellation()
+      phase.value = 'playing'
+    }
     return
   }
   if (phase.value === 'playing') {
@@ -198,65 +221,76 @@ watch(
 onBeforeUnmount(() => {
   hand.stop()
   clearInterval(mpTicker)
+  clearTimeout(flashTimer)
 })
 
-function beginRound() {
+/** 매치 공통 초기화 — 시퀀스 생성·집계 리셋·첫 별자리 결정 (연습은 안 거친다) */
+function startMatch(rng: () => number) {
+  sequence = new StarSequence(CONSTELLATIONS, rng)
+  match.value = { count: 0, sum: 0 }
+  completeFlash.value = null
+  isNewBest.value = false
+  finishEmitted = false
+  score.value = null
+  shapeKey.value = sequence.next()
+  timeLeftSec.value = MATCH_SECONDS
+}
+
+/** 별자리 한 개 단위 상태 리셋 — 매치 타이머는 건드리지 않는다 */
+function beginConstellation() {
   round = freshRound()
-  round.soloEndAt = performance.now() + ROUND_SECONDS * 1000
   round.lastTs = performance.now()
   holdProgress.value = 0
   hitCount.value = 0
-  score.value = null
-  timeLeftSec.value = ROUND_SECONDS
-  phase.value = 'playing'
 }
 
-/** 솔로 연습: 시작 버튼 / 다시 하기 (별자리 자유 선택) */
+/** 솔로 연습: 시작 버튼 / 다시 하기 (별자리 자유 선택, 한 판 30초) */
 function startSoloRound() {
   soloMode.value = 'practice'
   finishEmitted = false
-  beginRound()
+  score.value = null
+  soloEndAt = performance.now() + PRACTICE_SECONDS * 1000
+  timeLeftSec.value = PRACTICE_SECONDS
+  beginConstellation()
+  phase.value = 'playing'
 }
 
-/** 솔로 도전: 런 시작 / 다시 도전 */
+/** 솔로 도전: 90초 매치 시작 / 다시 도전 */
 function startChallengeRun() {
   soloMode.value = 'challenge'
-  deck = new ChallengeDeck(CONSTELLATIONS)
-  runRound.value = 1
-  runScore.value = 0
-  runOver.value = false
-  isNewBest.value = false
-  shapeKey.value = deck.next(difficultyForRound(1))
-  finishEmitted = false
-  beginRound()
+  startMatch(mulberry32(Math.floor(Math.random() * 0xffffffff)))
+  soloEndAt = performance.now() + MATCH_SECONDS * 1000
+  beginConstellation()
+  phase.value = 'playing'
 }
 
-/** 솔로 도전: 라운드 클리어 후 다음 라운드로 */
-function nextChallengeRound() {
-  if (!deck) return
-  runRound.value += 1
-  shapeKey.value = deck.next(difficultyForRound(runRound.value))
-  beginRound()
+/** 완성된 별자리의 비율 점수 (round.done 이후에만 유효) */
+function computeConstellationScore(): number {
+  const canvas = canvasRef.value
+  if (!round.finalPositions || !canvas) return 0
+  const targets = layoutConstellation(shape.value.pts, canvas.width, canvas.height)
+  return computeRatioScore(targets, round.finalPositions.filter((p): p is Point => !!p))
 }
 
-/** 솔로 도전: 런 확정(실패 또는 자발적 종료) — 최고 기록 갱신 */
-function finishRun() {
-  runOver.value = true
-  if (runScore.value > bestRunScore.value) {
-    bestRunScore.value = runScore.value
-    isNewBest.value = true
-    saveBestRun(runScore.value)
-  }
+/**
+ * 매치 중 별자리 완성(3초 유지) — 즉시 점수를 확정해 집계에 더하고 다음 별자리로 넘어간다.
+ * 화면 전환 없이 배너만 잠깐 띄운다(남은 시간이 곧 자원이므로 흐름을 끊지 않는다).
+ */
+function completeAndAdvance() {
+  const gain = computeConstellationScore()
+  match.value = { count: match.value.count + 1, sum: match.value.sum + gain }
+  completeFlash.value = { gain, count: match.value.count }
+  clearTimeout(flashTimer)
+  flashTimer = window.setTimeout(() => (completeFlash.value = null), 1200)
+  if (sequence) shapeKey.value = sequence.next()
+  beginConstellation()
 }
 
-/** 현재 라운드 상태로 최종 점수 계산 (완주 시 비율 점수, 미완주 시 부분 점수) */
+/** 연습 한 판 점수 (완성 시 비율 점수, 미완성 시 부분 점수) */
 function computeFinalScore(): { score: number; starsHit: number } {
   const n = shape.value.pts.length
-  const canvas = canvasRef.value
-  if (round.done && round.finalPositions && canvas) {
-    const targets = layoutConstellation(shape.value.pts, canvas.width, canvas.height)
-    const s = computeRatioScore(targets, round.finalPositions.filter((p): p is Point => !!p))
-    return { score: s, starsHit: round.bestCount }
+  if (round.done) {
+    return { score: computeConstellationScore(), starsHit: round.bestCount }
   }
   return { score: partialScore(round.bestCount, n), starsHit: round.bestCount }
 }
@@ -264,24 +298,35 @@ function computeFinalScore(): { score: number; starsHit: number } {
 function emitFinishedOnce() {
   if (finishEmitted) return
   finishEmitted = true
+  if (isMultiplayer.value || soloMode.value === 'challenge') {
+    const avg = averageScore(match.value)
+    score.value = avg
+    emit('finished', {
+      completedCount: match.value.count,
+      totalScore: match.value.sum,
+      avgScore: avg,
+    })
+    return
+  }
+  // 연습 — 단판 점수를 같은 페이로드 모양으로 실어 보낸다(솔로 폴백 토스트용)
   const r = computeFinalScore()
   score.value = r.score
   emit('finished', {
-    constellation: shape.value.key,
-    score: r.score,
-    starsHit: r.starsHit,
-    starsTotal: shape.value.pts.length,
+    completedCount: round.done ? 1 : 0,
+    totalScore: r.score,
+    avgScore: r.score,
   })
 }
 
-/** 솔로 라운드 종료 → 연습은 즉시 결과, 도전은 라운드 정산 후 클리어/런 종료 분기 */
+/** 솔로 시간 종료 → 연습은 단판 결과, 도전은 매치 집계·최고 기록 갱신 */
 function endSoloRound() {
   if (soloMode.value === 'challenge') {
-    const r = computeFinalScore()
-    lastRoundGain.value = challengeRoundScore(r.score, shape.value.difficulty)
-    runScore.value += lastRoundGain.value
-    score.value = r.score
-    if (!round.done) finishRun() // 시간 내 미완성 = 런 종료
+    score.value = averageScore(match.value)
+    if (isBetterRecord(match.value, bestRecord.value)) {
+      bestRecord.value = { ...match.value }
+      isNewBest.value = true
+      saveBestRecord(match.value)
+    }
     phase.value = 'result'
     return
   }
@@ -289,7 +334,7 @@ function endSoloRound() {
   phase.value = 'result'
 }
 
-/** 멀티 라운드 종료(완주·시간 만료·GAME_END 수신) → 점수 확정 후 집계 대기 */
+/** 멀티 매치 종료(시간 만료·GAME_END 수신) → 집계 발신 후 정산 대기 */
 function finalizeMultiplayerRound() {
   emitFinishedOnce()
   phase.value = 'result'
@@ -321,17 +366,20 @@ function onFrame(result: HandLandmarkerResult) {
     round.lastTs = now
     updateRound(slots, dt, w, h)
 
+    // 완성(3초 유지) — 매치(도전·멀티)는 즉시 점수 확정 후 다음 별자리로, 연습은 단판 결과로
+    if (round.done) {
+      if (isMultiplayer.value || soloMode.value === 'challenge') completeAndAdvance()
+      else endSoloRound()
+    }
+
     if (isMultiplayer.value) {
-      // 완주(게이지 완충) 즉시 최종 점수 발신(PLAYER_FINISHED) 후 대기 화면으로 전환 —
-      // 남은 시간 동안 "그대로 멈춰라"가 되지 않게 라운드 화면에 머무르지 않는다.
-      if (round.done) finalizeMultiplayerRound()
-      else if (now - lastProgressEmitAt >= PROGRESS_EMIT_INTERVAL_MS) {
+      if (now - lastProgressEmitAt >= PROGRESS_EMIT_INTERVAL_MS) {
         lastProgressEmitAt = now
-        emit('progress', hitCount.value, holdProgress.value)
+        emit('progress', hitCount.value, holdProgress.value, match.value.count)
       }
     } else {
-      timeLeftSec.value = Math.max(0, (round.soloEndAt - now) / 1000)
-      if (timeLeftSec.value <= 0 || round.done) endSoloRound()
+      timeLeftSec.value = Math.max(0, (soloEndAt - now) / 1000)
+      if (timeLeftSec.value <= 0) endSoloRound()
     }
   }
 
@@ -513,6 +561,11 @@ function beep(freq = 660, dur = 0.08) {
 }
 
 const resultTier = computed(() => (score.value === null ? '' : scoreTier(score.value)))
+
+/** GAME_END 항목의 평균 점수 — score는 매치 총점이라 완성 개수로 나눈다 */
+function entryAvg(r: GameResultEntry): number {
+  return r.completedCount ? Math.round(r.score / r.completedCount) : 0
+}
 </script>
 
 <template>
@@ -523,13 +576,18 @@ const resultTier = computed(() => (score.value === null ? '' : scoreTier(score.v
     <div class="fs-topbar">
       <span class="fs-name"
         >✨ {{ shape.name
-        }}{{ !isMultiplayer && soloMode === 'challenge' ? ` · 라운드 ${runRound}` : '' }}</span
+        }}{{ isMultiplayer || soloMode === 'challenge' ? ` · 완성 ${match.count}` : '' }}</span
       >
       <div class="fs-hold">
         <div class="fs-hold-track"><div class="fs-hold-fill" :style="{ width: `${Math.round(holdProgress * 100)}%` }" /></div>
       </div>
       <span class="fs-timer">{{ phase === 'playing' ? timeLeftSec.toFixed(1) + 's' : '--' }}</span>
       <button class="fs-close" title="게임 종료" @click="emit('close')">✕</button>
+    </div>
+
+    <!-- 별자리 완성 배너 — 화면 전환 없이 즉시 다음 별자리로 넘어가므로 잠깐만 띄운다 -->
+    <div v-if="completeFlash" class="fs-flash">
+      🌟 {{ completeFlash.count }}번째 완성! +{{ completeFlash.gain }}점
     </div>
 
     <!-- 하단 바: 손 인식 상태 · 진행 -->
@@ -542,12 +600,18 @@ const resultTier = computed(() => (score.value === null ? '' : scoreTier(score.v
     <!-- 솔로 대기 화면: 도전 모드(런) + 연습(별자리 선택) -->
     <div v-if="phase === 'ready'" class="fs-overlay">
       <p class="fs-guide">
-        열 손가락을 별 위치에 맞춰 별자리를 만들고<br />{{ HOLD_SECONDS }}초간 유지하면 완성!
+        별자리를 만들고 {{ HOLD_SECONDS }}초 유지하면 완성 — 즉시 다음 별자리!<br />{{
+          MATCH_SECONDS
+        }}초 동안 최대한 많이 완성해 보세요.
       </p>
-      <button class="fs-start" :disabled="!gotFrame" @click="startChallengeRun">⚔️ 도전 모드</button>
+      <button class="fs-start" :disabled="!gotFrame" @click="startChallengeRun">
+        ⚔️ {{ MATCH_SECONDS }}초 도전
+      </button>
       <p class="fs-sub">
-        라운드가 오를수록 어려운 별자리가 나와요{{
-          bestRunScore > 0 ? ` · 🏆 최고 ${bestRunScore}점` : ''
+        처음 3개는 쉬움·보통 별자리만 나와요{{
+          bestRecord.count > 0
+            ? ` · 🏆 최고 ${bestRecord.count}개 · 평균 ${averageScore(bestRecord)}점`
+            : ''
         }}
       </p>
       <div class="fs-shapes">
@@ -568,7 +632,10 @@ const resultTier = computed(() => (score.value === null ? '' : scoreTier(score.v
 
     <!-- 멀티 카운트다운 -->
     <div v-if="phase === 'countdown'" class="fs-overlay">
-      <p class="fs-guide">{{ shape.name }} — 열 손가락으로 별을 모두 켜고 {{ HOLD_SECONDS }}초 유지!</p>
+      <p class="fs-guide">
+        별을 모두 켠 채 {{ HOLD_SECONDS }}초 유지하면 완성, 즉시 다음 별자리 —<br />
+        {{ MATCH_SECONDS }}초 동안 최대한 많이 완성하세요!
+      </p>
       <p class="fs-countdown">{{ countdownLeft }}</p>
       <p v-if="!gotFrame" class="fs-warn">카메라 영상을 기다리는 중… (카메라가 켜져 있어야 해요)</p>
     </div>
@@ -583,37 +650,34 @@ const resultTier = computed(() => (score.value === null ? '' : scoreTier(score.v
             <li v-for="r in results" :key="r.userId" :class="{ me: r.userId === myUserId }">
               <span class="fs-rank">{{ r.rank }}</span>
               <span class="fs-rname">{{ r.nickname }}</span>
-              <span class="fs-rscore">{{ r.finished ? `${r.score}점 · ⭐${r.starsHit}` : '미완주' }}</span>
+              <span class="fs-rscore">{{
+                r.finished ? `${r.completedCount ?? 0}개 · 평균 ${entryAvg(r)}점` : '미제출'
+              }}</span>
             </li>
           </ol>
           <button class="fs-quit" @click="emit('close')">대기실로 돌아가기</button>
         </template>
         <template v-else>
-          <p class="fs-tier">{{ resultTier }}</p>
-          <p class="fs-score">{{ score }}<small>점</small></p>
-          <p class="fs-sub">🌟 다른 참가자를 기다리는 중…</p>
+          <p class="fs-tier">⏱ {{ MATCH_SECONDS }}초 종료!</p>
+          <p class="fs-score">{{ match.count }}<small>개</small></p>
+          <p class="fs-sub">평균 {{ averageScore(match) }}점 · 🌟 다른 참가자를 기다리는 중…</p>
         </template>
       </template>
 
       <!-- 솔로 -->
       <template v-else>
-        <!-- 도전: 라운드 클리어 → 다음 라운드 -->
-        <template v-if="soloMode === 'challenge' && !runOver">
-          <p class="fs-tier">🌟 라운드 {{ runRound }} 클리어! +{{ lastRoundGain }}점</p>
-          <p class="fs-score">{{ runScore }}<small>점</small></p>
+        <!-- 도전: 90초 매치 종료 -->
+        <template v-if="soloMode === 'challenge'">
+          <p class="fs-tier">⏱ {{ MATCH_SECONDS }}초 종료!</p>
+          <p class="fs-score">{{ match.count }}<small>개</small></p>
           <p class="fs-sub">
-            다음: 라운드 {{ runRound + 1 }} — {{ DIFFICULTY_LABEL[difficultyForRound(runRound + 1)] }}
+            평균 {{ averageScore(match) }}점 ·
+            {{
+              isNewBest
+                ? '🏆 신기록 달성!'
+                : `🏆 최고 ${bestRecord.count}개 · 평균 ${averageScore(bestRecord)}점`
+            }}
           </p>
-          <div class="fs-actions">
-            <button class="fs-start" @click="nextChallengeRound">➡️ 다음 라운드</button>
-            <button class="fs-quit" @click="finishRun">여기서 그만</button>
-          </div>
-        </template>
-        <!-- 도전: 런 종료(미완성 또는 자발적 종료) -->
-        <template v-else-if="soloMode === 'challenge'">
-          <p class="fs-tier">💫 라운드 {{ runRound }}에서 런 종료</p>
-          <p class="fs-score">{{ runScore }}<small>점</small></p>
-          <p class="fs-sub">{{ isNewBest ? '🏆 신기록 달성!' : `🏆 최고 기록 ${bestRunScore}점` }}</p>
           <div class="fs-actions">
             <button class="fs-start" @click="startChallengeRun">🔁 다시 도전</button>
             <button class="fs-quit" @click="emit('close')">나가기</button>
@@ -668,6 +732,18 @@ const resultTier = computed(() => (score.value === null ? '' : scoreTier(score.v
 .fs-hold-track { height: 8px; background: rgba(255, 255, 255, 0.12); border-radius: 6px; overflow: hidden; }
 .fs-hold-fill { height: 100%; background: linear-gradient(90deg, #c6ff5e, #ffd23f); transition: width 0.05s linear; }
 .fs-timer { font-size: 11px; min-width: 52px; text-align: right; color: #ff5d73; }
+.fs-flash {
+  position: absolute;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  font-size: 9px;
+  color: #0f2405;
+  background: #c6ff5e;
+  border-radius: 999px;
+  pointer-events: none;
+}
 .fs-close {
   width: 26px; height: 26px; border: 2px solid rgba(255, 255, 255, 0.35); border-radius: 8px;
   background: rgba(15, 10, 34, 0.6); color: #f4f0ff; font-size: 10px; cursor: pointer;

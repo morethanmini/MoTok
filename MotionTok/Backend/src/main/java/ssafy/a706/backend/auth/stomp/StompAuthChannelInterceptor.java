@@ -15,6 +15,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.stereotype.Component;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
+import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.auth.principal.GuestPrincipal;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
 import ssafy.a706.backend.global.exception.BusinessException;
@@ -48,6 +49,9 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
 
     private static final String BEARER = "Bearer ";
 
+    /** 로비 채널 — REST 방 목록(hasRole USER)과 같은 데이터를 실어 나르므로 같은 경계를 적용한다. */
+    private static final String MEMBER_ONLY_PREFIX = "/topic/lobby";
+
     private final JwtTokenProvider tokenProvider;
 
     /**
@@ -69,15 +73,42 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
             // getFirstNativeHeader: HTTP 헤더가 아니라 STOMP 프레임의 헤더에서 읽는다.
             // (프론트: stompClient.connectHeaders = { Authorization: `Bearer ${token}` })
             accessor.setUser(authenticate(accessor.getFirstNativeHeader(HttpHeaders.AUTHORIZATION)));
-        } else if ((StompCommand.SUBSCRIBE.equals(command) || StompCommand.SEND.equals(command))
-                && accessor.getUser() == null) {
+        } else if (StompCommand.SUBSCRIBE.equals(command) || StompCommand.SEND.equals(command)) {
             // 스프링은 "CONNECT 먼저"라는 프레임 순서를 강제하지 않는다. 악의적 클라이언트가
             // CONNECT를 생략하고 곧장 구독/발행하면 인증 없이 브로커까지 닿을 수 있으므로
             // (특히 /topic 채널 도청·스팸) 세션에 인증이 없는 SUBSCRIBE/SEND는 여기서 차단한다.
             // 하트비트(command == null)·DISCONNECT는 해당 없음.
-            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+            if (accessor.getUser() == null) {
+                throw new BusinessException(ErrorCode.UNAUTHORIZED);
+            }
+            requireMemberForRestrictedDestination(accessor);
         }
         return message;
+    }
+
+    /**
+     * 회원 전용 destination에 게스트가 붙는 것을 막는다(-142).
+     *
+     * <p>HTTP에서는 SecurityConfig가 {@code /api/v1/live-rooms}·{@code /api/friends}를 ROLE_USER로
+     * 막고 있지만 {@code /ws/**}는 permitAll이고 게스트도 CONNECT에 성공한다. 연결이 게임룸
+     * 안에서만 열리던 시절엔 게스트가 닿을 수 있는 토픽이 자기 1인방뿐이라 드러나지 않았는데,
+     * 로그인 즉시 전원 상시 연결로 바뀌면 <b>같은 데이터의 접근 경계가 프로토콜마다 달라진다.</b>
+     * REST로 막아 둔 것을 STOMP로 우회할 수 있으면 막았다고 할 수 없다.</p>
+     *
+     * <p>{@code /user/**}는 검사하지 않는다 — 스프링이 구독을 세션 전용 큐로 바꿔 주므로
+     * 남의 큐를 구독하는 것 자체가 불가능하다.</p>
+     */
+    private void requireMemberForRestrictedDestination(StompHeaderAccessor accessor) {
+        String destination = accessor.getDestination();
+        if (destination == null || !destination.startsWith(MEMBER_ONLY_PREFIX)) {
+            return;
+        }
+        if (accessor.getUser() instanceof Authentication auth
+                && auth.getPrincipal() instanceof AuthPrincipal principal
+                && !principal.isGuest()) {
+            return;
+        }
+        throw new BusinessException(ErrorCode.FORBIDDEN);
     }
 
     /** Bearer 토큰 파싱·검증. 실패 시 BusinessException → ERROR 프레임 → 연결 종료. */

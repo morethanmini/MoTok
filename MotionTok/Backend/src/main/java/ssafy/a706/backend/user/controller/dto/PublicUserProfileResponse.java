@@ -13,10 +13,13 @@ public record PublicUserProfileResponse(
         String nickname,
         LocalDateTime createdAt,
         /** 프로필 사진은 공개 정보다 — 랭킹·친구 목록에서 보여준다. */
-        String avatarUrl
+        String avatarUrl,
+        /** 총 접속시간(초, -141 친구 상세). 집계 시작(배포) 이전 접속은 포함하지 않는다. */
+        long totalConnectSeconds
 ) {
-    public static PublicUserProfileResponse from(User user) {
+    public static PublicUserProfileResponse from(User user, long totalConnectSeconds) {
         return new PublicUserProfileResponse(
-                user.getId(), user.getNickname(), user.getCreatedAt(), user.getAvatarUrl());
+                user.getId(), user.getNickname(), user.getCreatedAt(), user.getAvatarUrl(),
+                totalConnectSeconds);
     }
 }
