@@ -40,6 +40,8 @@ const props = defineProps<{
   challenge?: string | null
   /** 게임④(-9): 출제자 관전 화면에 띄울 실시간 순위 — 부모의 scoreboardRows */
   scores?: { userId: string; nickname: string; holdProgress: number; finished: boolean; score: number | null }[]
+  /** 게임④(-9): 이번 라운드 출제자 표시명 — 누가 내는지/내 차례인지 화면에 박아준다 */
+  setterName?: string | null
   /**
    * 게임룸 셀프 타일 안에 얹히는가(= 타일을 채우도록 absolute 배치).
    * 이전에는 isMultiplayer로 대신 판단했는데, 1인 방 연습 모드는 session이 null이라
@@ -71,7 +73,8 @@ const viewportRef = ref<HTMLDivElement>()
 const pipOverlayRef = ref<HTMLCanvasElement>()
 const thumbRef = ref<HTMLCanvasElement>()
 
-type Phase = 'idle' | 'wait' | 'setting' | 'incoming' | 'result'
+/** stale = 벽 도착 후 다음 라운드 이벤트가 끊긴 상태(복구 대기) — 아래 STALE_MS 참고 */
+type Phase = 'idle' | 'wait' | 'setting' | 'incoming' | 'result' | 'stale'
 const phase = ref<Phase>('idle')
 const round = ref(0)
 const timerSec = ref(0)
@@ -136,8 +139,51 @@ const spectating = computed(
     (phase.value === 'incoming' || phase.value === 'result'),
 )
 
+/** 출제자 이름 — 서버가 setterUserId만 주므로 부모가 참가자 목록에서 찾아 내려준다 */
+const setterLabel = computed(() => {
+  if (!isMultiplayer.value) return '나 (솔로)'
+  const name = props.setterName ?? '출제자'
+  return isSetter.value ? `${name} (나!)` : name
+})
+/** 내가 지금 포즈를 내는 중 — 이때만 "내가 낸다"는 골드 표시를 크게 띄운다.
+ * 휴식 구간은 제외한다 — 그쪽은 rest-panel이 따로 알려주고, 색을 겹치면 다시 구분이 안 된다. */
+const myPoseTurn = computed(
+  () => isMultiplayer.value && isSetter.value && phase.value === 'setting',
+)
+/** 라운드 사이 휴식(서버 startAt 전) 안내 — 다음이 누구 차례인지 알려준다 */
+const waitCaption = computed(() => {
+  if (!isMultiplayer.value) return '곧 시작합니다'
+  return isSetter.value
+    ? '내 차례! 포즈를 준비하세요'
+    : `${props.setterName ?? '출제자'}님 차례입니다 — 준비하세요`
+})
+/** 첫 라운드 시작 전 대기 — 같은 'wait' 페이즈지만 "다음 차례"가 아니라 "첫 출제자"다 */
+const firstWait = computed(() => (props.session?.roundNo ?? 1) <= 1)
+/** 휴식 패널 본문 — 출제 카운트다운과 문구·크기·색을 전부 분리한다(같아 보여서 헷갈렸다) */
+const restWho = computed(() => {
+  if (!isMultiplayer.value) return '곧 시작합니다'
+  if (isSetter.value) return firstWait.value ? '첫 출제자는 나!' : '다음 차례는 나!'
+  const name = props.setterName ?? '출제자'
+  return firstWait.value ? `${name}님이 첫 출제자입니다` : `${name}님 다음 차례입니다`
+})
+/**
+ * 무대에서 아바타를 치우는 구간.
+ * - 휴식: 전원 — 쉬는 시간에 아바타가 서 있으면 출제 페이즈와 화면이 구분되지 않는다.
+ * - 관전: 출제자만 — 이미 spectating이 같은 조건을 들고 있다.
+ */
+const hideAvatar = computed(
+  () => isMultiplayer.value && (phase.value === 'wait' || spectating.value),
+)
+
+/** 출제 카운트다운 위에 얹는 한 줄 — "지금 뭘 해야 하나"를 짚어준다 */
+const countdownCaption = computed(() =>
+  !isMultiplayer.value || isSetter.value
+    ? '포즈를 취하세요!'
+    : `${props.setterName ?? '출제자'}님이 출제 중`,
+)
+
 const phaseLabel = computed(() => {
-  if (phase.value === 'wait') return '곧 시작합니다 — 카메라 앞에 준비!'
+  if (phase.value === 'wait') return waitCaption.value
   if (phase.value === 'setting') {
     if (!isMultiplayer.value || isSetter.value) return '포즈를 취하세요! 이 포즈가 벽 구멍이 됩니다'
     return '출제자가 포즈를 만드는 중 — 따라할 준비!'
@@ -151,6 +197,7 @@ const phaseLabel = computed(() => {
     if (isMultiplayer.value && isSetter.value) return '라운드 종료 — 다음 출제자를 기다립니다'
     return isMultiplayer.value && !props.results ? '집계 중…' : '판정!'
   }
+  if (phase.value === 'stale') return '⚠ 라운드 정보를 못 받았어요 — 다음 라운드에 자동 복구됩니다'
   return tracked.value ? '시작을 누르면 3초 뒤 내 포즈가 벽이 됩니다' : '카메라 앞에 서주세요'
 })
 
@@ -182,6 +229,8 @@ let stage: Stage | null = null
 let rig: AvatarRig
 let wall: WallHandle
 let rafId = 0
+/** rAF가 멈추는 창(숨김·가림)에서도 페이즈가 진행되도록 하는 백업 시계 — onMounted 참고 */
+let phaseTimerId = 0
 let resizeObs: ResizeObserver | null = null
 let stream: MediaStream | null = null
 const smoother = new PoseSmoother(cfg.filter)
@@ -203,6 +252,12 @@ const WALL_STOP_Z = -1
 // ── 멀티 라운드 상태 (서버 타임라인 기반, -86) ──
 /** 출제 페이즈 길이 — 서버 BODY_FIT_SETTING_MILLIS와 동기화 */
 const SETTING_MS = 5000
+/**
+ * 벽 도착(endAt) 후 다음 라운드 이벤트를 기다리는 한계.
+ * 서버는 늦어도 endAt + END_GRACE(1.5s)에 정산하고 곧바로 다음 GAME_START(휴식 6s 포함)를
+ * 쏘므로, 이 시간을 넘겼으면 그 프레임을 못 받은 것이다.
+ */
+const STALE_MS = 5000
 /** 필터 통과된 마지막 랜드마크 — 출제 캡처(전송) 원본 */
 let lastSmoothed: LandmarkPoint[] | null = null
 let poseSubmitted = false
@@ -375,25 +430,33 @@ function tickMulti(now: number) {
       emit('finished', { score: GRADE_POINTS[result.grade], grade: result.grade, iou: result.iou })
     }
   }
-  phase.value = 'result'
+  // 다음 라운드 GAME_START(또는 GAME_END)가 안 오면 여기서 영원히 멈춘다 — 재연결 공백에
+  // 프레임 하나만 유실돼도 클라는 복구 수단이 없다. 'result'를 무한정 유지하면 출제자에게는
+  // 관전 화면이, 참가자에게는 "집계 중"이 계속 떠서 캠·아바타가 사라진 채 게임이 죽는다.
+  // 한계를 넘기면 stale로 내려 화면이 거짓말하지 않게 하고, 다음 GAME_START가 오면 저절로 복구된다.
+  phase.value = !props.results && srv > s.endAt + STALE_MS ? 'stale' : 'result'
   if (!isSetter.value && judgment.value?.passed && wall.mesh.visible) {
     wall.mesh.position.z += 0.12
     if (wall.mesh.position.z > 4) wall.mesh.visible = false
   }
 }
 
-function renderLoop() {
-  rafId = requestAnimationFrame(renderLoop)
+/**
+ * 페이즈 시계 — 서버 시각을 읽어 phase/timer를 갱신하고 제출을 트리거한다.
+ * 시계로 계산하니 몇 번 불려도 결과가 같다(제출은 poseSubmitted/finishedSent로 1회 보장).
+ */
+function tickPhase() {
   if (!stage) return
   if (isMultiplayer.value && props.session) tickMulti(performance.now())
   else tickSolo(performance.now())
-  // 게임④(-9) 룰: 출제자는 관전 — 벽 접근·결과 동안 내 아바타를 무대에서 치워
-  // "내가 플레이 중"처럼 보이지 않게 한다 (판정·제출 스킵은 tickMulti에서 이미 처리)
-  rig.group.visible = !(
-    isMultiplayer.value &&
-    isSetter.value &&
-    (phase.value === 'incoming' || phase.value === 'result')
-  )
+}
+
+function renderLoop() {
+  rafId = requestAnimationFrame(renderLoop)
+  if (!stage) return
+  tickPhase()
+  // 관전(출제자)·휴식(전원) 구간에는 아바타를 치운다 — 판정·제출 스킵은 tickMulti에서 이미 처리
+  rig.group.visible = !hideAvatar.value
   const camera = stage.camera
   camera.position.x += (rig.group.position.x * 0.35 - camera.position.x) * 0.06
   camera.lookAt(0, -0.5, 0)
@@ -496,6 +559,12 @@ onMounted(async () => {
   resizeObs.observe(viewport)
   resize()
   renderLoop()
+  // 브라우저는 숨은/가려진 창의 requestAnimationFrame을 멈춘다 — 창 여러 개로 멀티를 테스트하면
+  // 뒤에 가린 창은 페이즈 시계가 그대로 얼어붙어 출제 포즈를 제출하지도, 다음 라운드로 넘어가지도
+  // 못한다(그 창에서 GAME_START는 STOMP로 계속 오므로 isSetter만 바뀌어 관전 화면에 갇힌다).
+  // 렌더는 rAF에 두고, 페이즈 진행만 타이머로 한 번 더 돌린다 — 타이머는 백그라운드에서 1s로
+  // 느려질 뿐 멈추지 않는다.
+  phaseTimerId = window.setInterval(tickPhase, 200)
 
   // 멀티(게임룸): 셀프 타일 비디오를 재사용 — 카메라를 새로 열지 않는다 (S15P11A706-33 패턴)
   if (props.video && isMultiplayer.value) {
@@ -526,6 +595,7 @@ defineExpose({ canvas: glCanvasRef })
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(rafId)
+  clearInterval(phaseTimerId)
   stream?.getTracks().forEach((t) => t.stop())
   resizeObs?.disconnect()
   rig?.dispose()
@@ -546,14 +616,14 @@ onBeforeUnmount(() => {
         :class="{ urgent: phase === 'incoming' && timerSec <= 2 }"
         >00:{{ String(timerSec).padStart(2, '0') }}</span
       >
-      <span class="pill setter-pill">
-        👑 출제자 {{ isMultiplayer ? (isSetter ? '나!' : '상대') : '나 (솔로)' }}
+      <span class="pill setter-pill" :class="{ mine: isMultiplayer && isSetter }">
+        👑 출제자 {{ setterLabel }}
       </span>
     </header>
 
     <div class="main">
       <div class="center">
-        <div ref="viewportRef" class="viewport">
+        <div ref="viewportRef" class="viewport" :class="{ 'my-turn': myPoseTurn }">
           <!-- 관전 중에는 3D를 숨기기만 한다(v-if로 떼면 three.js 컨텍스트가 날아간다) -->
           <canvas v-show="!spectating" ref="glCanvasRef" class="gl-canvas"></canvas>
 
@@ -565,13 +635,30 @@ onBeforeUnmount(() => {
             height="96"
           ></canvas>
 
-          <div v-show="!spectating" class="pip">
-            <video ref="videoRef" class="pip-video mirrored" muted playsinline></video>
-            <canvas ref="pipOverlayRef" class="pip-overlay mirrored" width="640" height="480"></canvas>
-            <span class="pip-label">● 내 캠 · {{ tracked ? '인식 중' : '인식 안 됨' }}</span>
+          <!-- 상단 pill만으론 내 차례를 못 알아챈다는 피드백 — 출제 구간엔 무대 안에도 박아준다 -->
+          <div v-if="myPoseTurn" class="turn-banner">
+            👑 내가 출제자! 내 포즈가 벽 구멍이 됩니다
           </div>
 
-          <div v-if="phase === 'setting'" class="countdown">{{ timerSec }}</div>
+          <!-- 라운드 사이 휴식 — 출제 카운트다운(골드·초대형 숫자)과 색·크기·구성을 완전히 분리했다 -->
+          <div v-if="phase === 'wait'" class="rest-panel">
+            <span class="rest-tag">{{ firstWait ? '🎬 곧 시작' : '☕ 쉬는 시간' }}</span>
+            <p class="rest-who">{{ restWho }}</p>
+            <p class="rest-hint">{{ isSetter ? '어떤 포즈를 낼지 생각해 두세요' : '카메라 앞으로 돌아와 준비하세요' }}</p>
+            <span class="rest-sec">{{ timerSec }}<small>초 후 출제 시작</small></span>
+          </div>
+
+          <!-- 라운드 이벤트 유실 — 관전 화면(거짓)이 아니라 상태를 그대로 알린다. 캠·아바타는 되돌아온다 -->
+          <div v-if="phase === 'stale'" class="rest-panel stale">
+            <span class="rest-tag">⚠ 연결 지연</span>
+            <p class="rest-who">라운드 정보를 못 받았어요</p>
+            <p class="rest-hint">다음 라운드가 시작되면 자동으로 복구됩니다</p>
+          </div>
+
+          <div v-if="phase === 'setting'" class="countdown">
+            <span class="cd-cap">{{ countdownCaption }}</span>
+            <strong>{{ timerSec }}</strong>
+          </div>
 
           <div v-if="judgment" class="grade-pop" :style="{ color: GRADE_COLOR[judgment.grade] }">
             <strong>{{ judgment.grade }}</strong>
@@ -600,6 +687,13 @@ onBeforeUnmount(() => {
       </div>
 
       <aside class="side">
+        <!-- 내 캠 — 무대 위 PiP였으나 통과율 위(사이드 최상단)로 옮겼다(실기 피드백) -->
+        <div class="pip">
+          <video ref="videoRef" class="pip-video mirrored" muted playsinline></video>
+          <canvas ref="pipOverlayRef" class="pip-overlay mirrored" width="640" height="480"></canvas>
+          <span class="pip-label">● 내 캠 · {{ tracked ? '인식 중' : '인식 안 됨' }}</span>
+        </div>
+
         <div v-if="isMultiplayer && isSetter" class="card gauge-card">
           <h3>상태</h3>
           <p class="spectate">👀 관전 중 — 이번 라운드는 안 뛰어요</p>
@@ -841,6 +935,18 @@ onBeforeUnmount(() => {
   color: var(--bf-gold);
   border-color: #8a6d33;
 }
+/* 내가 출제자일 때 — 같은 골드 계열 안에서 명도를 반전시켜 눌러 담는다(실기 피드백: 내 차례를 못 알아챈다) */
+.setter-pill.mine {
+  background-color: var(--bf-gold);
+  background-image: none;
+  color: #221d1a;
+  animation: bf-setter-pulse 1.4s ease-in-out infinite;
+}
+@keyframes bf-setter-pulse {
+  50% {
+    box-shadow: var(--bf-shadow-sm), 0 0 0 3px rgba(232, 184, 75, 0.35);
+  }
+}
 .main {
   display: flex;
   gap: 14px;
@@ -882,13 +988,17 @@ onBeforeUnmount(() => {
   border-radius: var(--bf-radius-sm);
   box-shadow: var(--bf-shadow-sm);
 }
+/* 사이드 최상단 카드 — 무대 오버레이가 아니라 통과율 위에 놓인다 */
 .pip {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  width: 180px;
+  position: relative;
+  flex-shrink: 0;
+  /* 스켈레톤 오버레이가 4:3 비디오 위에 1:1로 얹히므로 비율은 건드리지 않고 폭만 줄인다
+     (crop/letterbox를 넣으면 오버레이 좌표가 어긋난다) */
+  width: 100%;
+  max-width: 200px;
+  margin: 0 auto;
   border: var(--bf-line);
-  border-radius: var(--bf-radius-sm);
+  border-radius: var(--bf-radius);
   overflow: hidden;
   box-shadow: var(--bf-shadow-sm);
   background: #000;
@@ -920,13 +1030,102 @@ onBeforeUnmount(() => {
 .countdown {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
-  font-size: 120px;
-  font-weight: 800;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   color: var(--bf-gold);
   text-shadow: 0 6px 24px rgba(255, 207, 77, 0.4);
   pointer-events: none;
+}
+.countdown strong {
+  font-size: 120px;
+  font-weight: 800;
+  line-height: 1;
+}
+.cd-cap {
+  padding: 6px 14px;
+  background: rgba(26, 20, 17, 0.72);
+  border: var(--bf-line);
+  border-radius: var(--bf-radius-sm);
+  font-size: 15px;
+  font-weight: 700;
+  text-align: center;
+}
+/* 라운드 사이 휴식 — 출제 카운트다운은 "골드 + 초대형 숫자 단독", 여기는 "이끼색 + 문장 위주 + 작은 숫자".
+   같은 자리에 같은 톤으로 뜨던 게 헷갈림의 원인이라 색·크기·구성을 전부 어긋나게 잡았다. */
+.rest-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  /* 아바타를 치운 빈 무대를 한 번 더 눌러 글씨만 남게 한다 */
+  background: rgba(18, 24, 20, 0.86);
+  color: var(--bf-mint);
+  pointer-events: none;
+}
+/* 유실 상태는 휴식과 같은 레이아웃을 쓰되 색만 경고색으로 — "쉬는 중"과 혼동하면 안 된다 */
+.rest-panel.stale {
+  color: var(--bf-coral);
+}
+.rest-tag {
+  padding: 5px 12px;
+  border: 1px solid var(--bf-mint);
+  border-radius: var(--bf-radius-sm);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+.rest-who {
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.3;
+  text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.5);
+}
+.rest-hint {
+  font-size: 14px;
+  color: var(--bf-muted);
+}
+.rest-sec {
+  margin-top: 4px;
+  font-size: 40px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--bf-text);
+}
+.rest-sec small {
+  margin-left: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--bf-muted);
+}
+/* 내 출제 차례 — 무대 테두리까지 골드로 물들여 "지금 나다"를 놓칠 수 없게 한다 */
+.viewport.my-turn {
+  border-color: var(--bf-gold);
+  box-shadow: var(--bf-shadow), inset 0 0 0 3px rgba(232, 184, 75, 0.55);
+}
+.turn-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  background: var(--bf-gold);
+  border: 1px solid #8a6d33;
+  border-radius: var(--bf-radius-sm);
+  box-shadow: var(--bf-shadow-sm);
+  color: #221d1a;
+  font-size: 14px;
+  font-weight: 800;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 2;
 }
 .grade-pop {
   position: absolute;
