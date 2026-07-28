@@ -8,11 +8,13 @@ import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 import org.springframework.web.socket.messaging.SessionSubscribeEvent;
+import org.springframework.web.socket.messaging.SessionUnsubscribeEvent;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.global.exception.BusinessException;
 
 import java.security.Principal;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -32,9 +34,12 @@ import java.util.regex.Pattern;
  *
  * <ul>
  *   <li>SUBSCRIBE(chat 토픽): 세션 → (방, 사용자) 등록 — 같은 사용자의 다중 탭도 세션별 관리</li>
- *   <li>DISCONNECT: 유예({@value #GRACE_MS}ms, FE 재연결 주기 3초의 여유분) 후에도 그 사용자의
- *       살아있는 세션이 없으면 {@link LiveRoomService#leave} 호출(멱등 — REST 퇴장과 중복돼도 안전)</li>
+ *   <li>UNSUBSCRIBE(그 구독): 방을 나갔다는 뜻. 전역 STOMP 연결(-142) 이후로는 방을 나가도
+ *       소켓이 닫히지 않으므로 <b>이쪽이 정상 퇴장 신호</b>가 된다</li>
+ *   <li>DISCONNECT: 탭 종료·크래시 등 통보 없는 이탈</li>
  * </ul>
+ * 어느 신호든 유예({@value #GRACE_MS}ms, FE 재연결 주기 3초의 여유분) 후에도 그 사용자의
+ * 살아있는 세션이 없으면 {@link LiveRoomService#leave}를 호출한다(멱등 — REST 퇴장과 중복돼도 안전).
  *
  * <p>단일 서버 인스턴스 전제의 인메모리 레지스트리(WebSocketConfig SimpleBroker와 동일 제약).
  * 스케일아웃 시 Redis presence로 교체한다.</p>
@@ -52,10 +57,10 @@ public class RoomPresenceTracker {
 
     private final LiveRoomService liveRoomService;
 
-    private record Occupancy(String roomId, AuthPrincipal principal, String presenceKey) {
+    private record Occupancy(String roomId, AuthPrincipal principal, String presenceKey, String subscriptionId) {
     }
 
-    /** sessionId → 재실 정보. */
+    /** sessionId → 재실 정보. 한 연결은 동시에 방 하나에만 있으므로 세션당 한 칸이면 충분하다. */
     private final Map<String, Occupancy> sessions = new ConcurrentHashMap<>();
     /** presenceKey(방+사용자) → 살아있는 sessionId 집합. */
     private final Map<String, Set<String>> presence = new ConcurrentHashMap<>();
@@ -81,8 +86,28 @@ public class RoomPresenceTracker {
         }
         String roomId = matcher.group(1);
         String presenceKey = roomId + "|" + (principal.isGuest() ? "g:" : "m:") + principal.userId();
-        sessions.put(sessionId, new Occupancy(roomId, principal, presenceKey));
+        sessions.put(sessionId, new Occupancy(roomId, principal, presenceKey, accessor.getSubscriptionId()));
         presence.computeIfAbsent(presenceKey, k -> ConcurrentHashMap.newKeySet()).add(sessionId);
+    }
+
+    /**
+     * 방 채팅 구독 해제 = 퇴장 신호(-142 전역 연결 대응).
+     *
+     * <p>전역 STOMP 연결이 생기기 전에는 게임룸을 나가면 소켓 자체가 닫혀 DISCONNECT가 났다.
+     * 이제는 <b>연결을 유지한 채 구독만 푼다</b> — DISCONNECT를 기다리면 로그아웃할 때까지
+     * 영영 오지 않아 방에 유령 멤버가 남는다. 구독 해제도 끊김과 같은 유예 경로를 태운다
+     * (다른 탭이 같은 방에 있으면 재실 유지, 없으면 퇴장 처리 — 판정 로직은 완전히 동일).</p>
+     */
+    @EventListener
+    public void onUnsubscribe(SessionUnsubscribeEvent event) {
+        StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
+        String sessionId = accessor.getSessionId();
+        Occupancy occupancy = sessions.get(sessionId);
+        if (occupancy == null || !Objects.equals(occupancy.subscriptionId(), accessor.getSubscriptionId())) {
+            return; // 방 구독이 아닌 다른 구독(로비·개인큐 등)의 해제
+        }
+        sessions.remove(sessionId);
+        release(occupancy, sessionId);
     }
 
     @EventListener
@@ -91,9 +116,13 @@ public class RoomPresenceTracker {
         if (occupancy == null) {
             return; // 방 구독이 없던 세션(로비 등) — 관심 없음
         }
+        release(occupancy, event.getSessionId());
+    }
+
+    private void release(Occupancy occupancy, String sessionId) {
         Set<String> live = presence.get(occupancy.presenceKey());
         if (live != null) {
-            live.remove(event.getSessionId());
+            live.remove(sessionId);
         }
         reaper.schedule(() -> reap(occupancy), GRACE_MS, TimeUnit.MILLISECONDS);
     }
