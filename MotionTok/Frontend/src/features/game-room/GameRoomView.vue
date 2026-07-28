@@ -10,6 +10,7 @@ import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } f
 import type { ActiveGameSession } from '@/features/games/session'
 import { useCamera } from '@/composables/useCamera'
 import { useDecoration } from '@/composables/useDecoration'
+import { warmUpMotionModels } from '@/composables/motionModels'
 import { useStickerCompositor } from '@/composables/useStickerCompositor'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
@@ -292,6 +293,14 @@ onMounted(async () => {
 
   // 채팅은 이력이 없어서(비영속) 구독이 늦은 만큼 그대로 유실 — 입장 직후 바로 연결.
   void roomChat.connect(roomCode.value)
+
+  // 모션 모델은 로비 스플래시가 이미 받아 뒀을 것이다(싱글턴이라 여기선 즉시 끝난다).
+  // 그래도 한 번 더 확인하는 이유 — 주소창으로 방에 바로 들어오거나 게스트로 로비를 건너뛴
+  // 경로가 있어서, 그대로 두면 게임 시작 버튼을 누른 뒤에야 17MB를 받기 시작한다.
+  // 입장 흐름을 막지 않도록 기다리지 않는다.
+  void warmUpMotionModels().then((ready) => {
+    if (!ready) flash('모션 인식 모델을 준비하지 못했어요 · 게임 시작이 늦어질 수 있어요')
+  })
 })
 onBeforeUnmount(() => {
   roomChat.disconnect()
