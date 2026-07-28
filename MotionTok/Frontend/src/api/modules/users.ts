@@ -44,4 +44,6 @@ export const usersApi = {
     http.put<DecorationConfig>('/users/me/decoration', config),
 
   getRecords: () => http.get<GameRecord[]>('/users/me/records'),
+  /** 다른 사용자의 게임별 전적(-141 친구 상세). 공개 범위는 공개 프로필과 동일(회원 전체) */
+  getRecordsOf: (userId: number) => http.get<GameRecord[]>(`/users/${userId}/records`),
 }

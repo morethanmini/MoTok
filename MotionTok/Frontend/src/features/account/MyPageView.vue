@@ -212,14 +212,16 @@ async function removeAvatar() {
             <tr><th>게임</th><th>플레이</th><th>최고점수</th><th>순위</th></tr>
           </thead>
           <tbody>
-            <tr v-for="r in records" :key="r.gameId">
-              <td>{{ r.gameName }}</td>
+            <!-- 같은 게임이라도 멀티/싱글 기록이 별개 행으로 온다(-97) — key에 mode까지 포함 -->
+            <tr v-for="r in records" :key="`${r.gameId}-${r.mode ?? ''}`">
+              <td>{{ r.gameName }}{{ r.mode === 'SOLO' ? ' (싱글)' : '' }}</td>
               <td>{{ r.playCount }}회</td>
               <td>{{ r.bestScore.toLocaleString() }}</td>
               <td>#{{ r.rankNo }}</td>
             </tr>
           </tbody>
         </table>
+        <p v-if="!records.length" class="empty">아직 게임 기록이 없어요.</p>
       </PixelCard>
     </div>
 
@@ -327,4 +329,5 @@ async function removeAvatar() {
 .history-card .plus { color: #36a17f; font-weight: 700; }
 .history-card .minus { color: var(--c-coral); font-weight: 700; }
 .history-card .empty { text-align: center; color: var(--c-muted); }
+.empty { margin: 10px 0 4px; text-align: center; font-size: 11px; color: var(--c-muted); }
 </style>

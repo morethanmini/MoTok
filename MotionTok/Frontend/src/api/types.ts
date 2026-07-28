@@ -104,6 +104,8 @@ export interface PublicUserProfile {
   createdAt: string
   /** 프로필 사진 URL. 공개 정보라 랭킹 등에서 함께 보여준다. null이면 기본 아바타 */
   avatarUrl?: string | null
+  /** 총 접속시간(초, -141 친구 상세). 집계 시작(배포) 이전 접속은 포함하지 않는다 */
+  totalConnectSeconds: number
 }
 
 /**
@@ -133,6 +135,8 @@ export interface PointHistoryPage {
 export interface GameRecord {
   gameId: number
   gameName: string
+  /** SOLO | MULTI — 리더보드(-96)와 같은 구분. 같은 게임이라도 모드별로 행이 따로 온다 */
+  mode?: LeaderboardMode
   playCount: number
   bestScore: number
   rankNo: number
