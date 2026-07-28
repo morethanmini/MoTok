@@ -16,6 +16,7 @@ import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.presence.model.PresenceSnapshot;
 import ssafy.a706.backend.presence.service.PresenceService;
+import ssafy.a706.backend.global.notification.UserNotifier;
 import ssafy.a706.backend.user.entity.User;
 import ssafy.a706.backend.user.repository.UserRepository;
 
@@ -49,8 +50,9 @@ class FriendServiceTest {
     private final FriendshipRepository friendshipRepository = mock(FriendshipRepository.class);
     private final UserRepository userRepository = mock(UserRepository.class);
     private final PresenceService presenceService = mock(PresenceService.class);
+    private final UserNotifier userNotifier = mock(UserNotifier.class);
     private final FriendService service =
-            new FriendService(friendshipRepository, userRepository, presenceService);
+            new FriendService(friendshipRepository, userRepository, presenceService, userNotifier);
 
     private static User user(long id, String nickname) {
         User u = User.builder().email(nickname + "@t.dev").nickname(nickname).build();

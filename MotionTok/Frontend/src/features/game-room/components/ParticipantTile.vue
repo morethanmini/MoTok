@@ -24,10 +24,21 @@ const props = withDefaults(
      * 표시만 덮는다(재부착 시 깜빡임·재협상 비용을 피한다).
      */
     cover?: string | null
+    /** 이 참가자 소리를 내 쪽에서 얼마나 크게 들을지(0~1) — 상대 설정과 무관한 내 전용 값 */
+    volume?: number
   }>(),
-  { view: null, host: false, playAudio: false, mirror: false, compact: false, canKick: false, cover: null },
+  {
+    view: null,
+    host: false,
+    playAudio: false,
+    mirror: false,
+    compact: false,
+    canKick: false,
+    cover: null,
+    volume: 1,
+  },
 )
-const emit = defineEmits<{ kick: [] }>()
+const emit = defineEmits<{ kick: []; volume: [value: number] }>()
 
 const occupied = computed(() => !!props.view)
 const hasVideo = computed(() => !!props.view?.cameraOn && !!props.view?.videoTrack)
@@ -81,6 +92,15 @@ watch(
 )
 
 const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase())
+
+// ── 개인 볼륨 (내 쪽에서만 적용) ──────────────
+// 원격 참가자 타일에서만 의미가 있다(로컬 타일은 애초에 소리를 재생하지 않는다).
+const canAdjustVolume = computed(() => props.playAudio && occupied.value)
+const volumeOpen = ref(false)
+const volumePercent = computed(() => Math.round(props.volume * 100))
+function onVolumeInput(e: Event) {
+  emit('volume', Number((e.target as HTMLInputElement).value) / 100)
+}
 </script>
 
 <template>
@@ -129,6 +149,33 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
       >
         {{ showCam ? '🎮' : '📷' }}
       </button>
+
+      <!-- 개인 볼륨 — 이 참가자 소리를 내 쪽에서만 줄인다(상대 마이크 설정과 무관) -->
+      <button
+        v-if="canAdjustVolume"
+        class="vol-btn"
+        :class="{ muted: volume === 0, open: volumeOpen }"
+        :title="volume === 0 ? `${view?.name} 소리 끔` : `${view?.name} 소리 ${volumePercent}%`"
+        @click.stop="volumeOpen = !volumeOpen"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square">
+          <path d="M11 5L6 9H2v6h4l5 4V5z" />
+          <path v-if="volume === 0" d="M16 9l6 6M22 9l-6 6" />
+          <path v-else d="M15.5 9a3.5 3.5 0 010 6" />
+        </svg>
+      </button>
+      <div v-if="canAdjustVolume && volumeOpen" class="vol-bar" @click.stop>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          step="5"
+          :value="volumePercent"
+          :aria-label="`${view?.name} 볼륨`"
+          @input="onVolumeInput"
+        />
+        <span class="vol-val">{{ volumePercent }}%</span>
+      </div>
 
       <div v-if="host" class="crown">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="#2b2333" stroke-width="1.4">
@@ -252,6 +299,38 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
 }
 
 .crown { position: absolute; top: 7px; right: 8px; color: #f5c518; pointer-events: none; }
+
+/* 개인 볼륨 — 버튼은 왼쪽 아래, 슬라이더는 타일 하단을 가로지른다(타일이 작아도 넘치지 않게) */
+.vol-btn {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  border: 2px solid var(--c-ink-soft);
+  border-radius: 8px;
+  background: rgba(255, 253, 247, 0.92);
+  color: #403124;
+  cursor: pointer;
+}
+.vol-btn.muted { background: #ffe2e3; color: #a94d52; }
+.vol-btn.open { background: var(--c-mint-soft); }
+.vol-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 34px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border: 2px solid var(--c-ink-soft);
+  border-radius: 8px;
+  background: rgba(255, 253, 247, 0.94);
+}
+.vol-bar input { flex: 1; min-width: 0; accent-color: #5cbf4a; }
+.vol-val { font-size: 8px; color: #403124; }
 
 .view-toggle {
   position: absolute;

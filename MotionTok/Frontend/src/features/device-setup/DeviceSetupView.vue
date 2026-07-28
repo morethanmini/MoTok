@@ -5,6 +5,7 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { roomsApi, type InventoryItem } from '@/api'
 import { useCamera } from '@/composables/useCamera'
+import { useMicLevel } from '@/composables/useMicLevel'
 import { EQUIP_LIMIT, useDecoration } from '@/composables/useDecoration'
 import { useMediaPermissionStore } from '@/stores/mediaPermission'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
@@ -16,7 +17,22 @@ import inventoryChest from '@/assets/device-setup/inventory-chest.png'
 
 const route = useRoute()
 const router = useRouter()
-const { stream, isOn, camOn, micOn, start, toggleCam, toggleMic } = useCamera()
+const {
+  stream,
+  isOn,
+  error,
+  camOn,
+  micOn,
+  videoDevices,
+  audioDevices,
+  videoDeviceId,
+  audioDeviceId,
+  start,
+  toggleCam,
+  toggleMic,
+  selectVideoDevice,
+  selectAudioDevice,
+} = useCamera()
 const game = computed(() => (route.query.game as string) || '게임 선택 중')
 const room = computed(() => (route.query.room as string) || 'MP4X9K')
 const showDecorInventory = ref(false)
@@ -114,6 +130,26 @@ async function copyRoomCode() {
   }
 }
 
+/** 카메라 선택 — 프리뷰가 바로 그 카메라로 바뀌고, 고른 장치는 게임룸까지 이어진다. */
+function pickCamera(e: Event) {
+  void selectVideoDevice((e.target as HTMLSelectElement).value)
+}
+/** 마이크 선택 — 고른 장치는 게임룸 LiveKit 발행까지 이어진다. */
+function pickMic(e: Event) {
+  void selectAudioDevice((e.target as HTMLSelectElement).value)
+}
+
+// 입력 레벨 미터 — 고른 마이크가 실제로 소리를 받는지 눈으로 확인시켜 준다.
+const MIC_SEGMENTS = 10
+const { level: micLevel } = useMicLevel(stream)
+// RMS를 그대로 쓰면 대화 소리에서도 막대가 거의 안 움직인다 — -60dB~0dB를 눈금 전체에 편다.
+const micBars = computed(() => {
+  if (micLevel.value <= 0) return 0
+  const db = 20 * Math.log10(micLevel.value)
+  return Math.round(Math.min(1, Math.max(0, (db + 60) / 60)) * MIC_SEGMENTS)
+})
+
+// 게임룸으로 넘어가는 건 이탈이 아니라 계속 진행이므로 퇴장 통보를 건너뛴다.
 let proceedingToRoom = false
 async function enter() {
   if (!isOn.value) return
@@ -250,12 +286,37 @@ async function cancel() { await notifyLeave(); router.push({ name: RouteName.Lob
           <button type="button" class="allow-button" :disabled="isOn || checking" @click="allow">{{ isOn ? '연결됨' : '권한 허용하기' }}</button>
         </section>
 
+        <!-- 장치 라벨은 권한 허용 후에야 채워지므로 허용 전에는 목록을 열지 않는다. -->
         <label class="setting-field">카메라
-          <select><option>기본 HD 카메라</option><option>외장 USB 카메라</option></select>
+          <select :disabled="!isOn" :value="videoDeviceId ?? ''" @change="pickCamera">
+            <option v-if="!isOn" value="">권한을 허용하면 카메라를 고를 수 있어요</option>
+            <option v-for="(d, i) in videoDevices" :key="d.deviceId" :value="d.deviceId">
+              {{ d.label || `카메라 ${i + 1}` }}
+            </option>
+          </select>
         </label>
         <label class="setting-field">마이크
-          <select><option>기본 마이크</option><option>헤드셋 마이크</option></select>
+          <select :disabled="!isOn" :value="audioDeviceId ?? ''" @change="pickMic">
+            <option v-if="!isOn" value="">권한을 허용하면 마이크를 고를 수 있어요</option>
+            <option v-for="(d, i) in audioDevices" :key="d.deviceId" :value="d.deviceId">
+              {{ d.label || `마이크 ${i + 1}` }}
+            </option>
+          </select>
+          <!-- 입력 레벨 — 고른 마이크가 소리를 받고 있는지 바로 보인다 -->
+          <div v-if="isOn" class="meter" :aria-label="`마이크 입력 레벨 ${micBars}/${MIC_SEGMENTS}`">
+            <span
+              v-for="i in MIC_SEGMENTS"
+              :key="i"
+              class="seg"
+              :class="{ on: micOn && i <= micBars, hot: i > MIC_SEGMENTS - 2 }"
+            />
+          </div>
+          <p v-if="isOn" class="meter-hint">
+            {{ micOn ? '말해보세요 — 막대가 움직이면 정상이에요' : '마이크가 꺼져 있어요' }}
+          </p>
         </label>
+        <!-- 권한 오류는 위 권한 카드가 이미 말해주므로, 여기선 장치 전환 실패만 알린다. -->
+        <p v-if="error && isOn" class="field-err">{{ error }}</p>
         <div class="actions"><PixelButton @click="cancel">취소</PixelButton><PixelButton variant="primary" :disabled="!isOn" @click="enter">대기실 입장</PixelButton></div>
       </aside>
     </div>
@@ -286,6 +347,13 @@ async function cancel() { await notifyLeave(); router.push({ name: RouteName.Lob
 .decor-save { width: 100%; height: 30px; margin-top: 8px; border: 2px solid #9a694d; border-radius: 6px; background: #edc66e; color: #543a29; font-size: 10px; font-weight: 700; }
 .decor-save:disabled { opacity: .6; }
 .decor-msg { margin: 0; padding: 8px 10px; border-top: 2px dashed #dec79e; color: #5d7f5e; font-size: 9px; line-height: 1.4; }
+/* 입력 레벨 미터 — 고른 마이크가 소리를 받는지 칸으로 표시(마이크 select 아래) */
+.meter { display: flex; gap: 3px; margin-top: 7px; }
+.meter .seg { flex: 1; height: 11px; border: 2px solid #d5b98e; border-radius: 3px; background: #f4ecdd; }
+.meter .seg.on { background: #8fc16b; }
+.meter .seg.hot.on { background: #e77771; }
+.meter-hint { margin: 5px 0 0; color: #8c7564; font-size: 10px; font-weight: 400; }
+.field-err { margin: 8px 0 0; color: #c0564f; font-size: 10px; font-weight: 700; }
 .setup-panel { display: flex; flex-direction: column; padding: 24px; }.setup-intro h2 { margin: 6px 0 6px; font-family: var(--font-pixel); font-size: 21px; font-weight: 400; }.setup-intro p { margin: 0; color: #8c7564; font-size: 12px; }.permission-card { display: grid; gap: 13px; margin-top: 22px; padding: 15px; border: 2px solid #dfc391; border-radius: 8px; background: #fff2cb; }.permission-card.ok { background: #e2f0d0; border-color: #b6d38d; }.permission-card strong { font-size: 13px; }.permission-card p { margin: 5px 0 0; color: #806c5c; font-size: 11px; line-height: 1.45; }.allow-button { height: 38px; border: 2px solid #9a694d; border-radius: 6px; background: #edc66e; color: #543a29; font-size: 12px; font-weight: 700; }.allow-button:disabled { border-color: #9db47b; background: #cfe5aa; color: #526e3e; }
 .setting-field { display: grid; gap: 7px; margin-top: 17px; color: #584234; font-size: 12px; font-weight: 700; }.setting-field select { height: 40px; padding: 0 10px; border: 2px solid #d5b98e; border-radius: 6px; background: #fffdf7; color: #604a3a; }.actions { display: grid; grid-template-columns: .8fr 1.2fr; gap: 9px; margin-top: auto; padding-top: 24px; }.actions :deep(.px-btn) { border: 2px solid #9a674b; border-radius: 7px; box-shadow: 3px 3px 0 #c6a47d; font-size: 14px; }
 @media (max-width: 900px) { .waiting-room { min-height: 100vh; }.waiting-layout { grid-template-columns: 1fr; }.setup-panel { order: 2; } }

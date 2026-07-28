@@ -315,6 +315,7 @@ async function removeAvatar() {
             <tr><th>게임</th><th>모드</th><th>플레이</th><th>최고점수</th><th>순위</th></tr>
           </thead>
           <tbody>
+            <!-- 같은 게임이라도 멀티/싱글 기록이 별개 행으로 온다(-97) — 모드는 별도 열 -->
             <tr v-for="r in records" :key="r.key">
               <td>{{ r.gameName }}</td>
               <td>{{ MODE_LABEL[r.mode] }}</td>
@@ -324,6 +325,7 @@ async function removeAvatar() {
             </tr>
           </tbody>
         </table>
+        <p v-if="!records.length" class="empty">아직 게임 기록이 없어요.</p>
       </PixelCard>
 
       <!-- 카메라·마이크 권한 — 앱 전체에 적용된다(방 입장 때 이 상태를 확인만 한다) -->
@@ -464,4 +466,5 @@ async function removeAvatar() {
 .history-card .plus { color: #36a17f; font-weight: 700; }
 .history-card .minus { color: var(--c-coral); font-weight: 700; }
 .history-card .empty { text-align: center; color: var(--c-muted); }
+.empty { margin: 10px 0 4px; text-align: center; font-size: 11px; color: var(--c-muted); }
 </style>

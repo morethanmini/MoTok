@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 친구 — 목록/요청/추가/방 합류 (API §6 /friends). */
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import {
   friendsApi,
   ApiError,
@@ -9,7 +9,9 @@ import {
   type Presence,
 } from '@/api'
 import { useAsyncData } from '@/composables/useAsyncData'
-import { useAutoReload } from '@/composables/useAutoReload'
+import { useLobbyLive } from '@/composables/useLobbyLive'
+import { useWhisper } from '@/composables/useWhisper'
+import { stompConnected } from '@/composables/useGlobalStomp'
 import AppPage from '@/components/common/AppPage.vue'
 import PixelCard from '@/components/common/PixelCard.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -17,6 +19,7 @@ import PixelToast from '@/components/common/PixelToast.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserProfileModal from '@/components/common/UserProfileModal.vue'
 import AddFriendModal from './components/AddFriendModal.vue'
+import WhisperModal from '@/components/common/WhisperModal.vue'
 import { useToast } from '@/composables/useToast'
 import { useUserProfile } from '@/composables/useUserProfile'
 import lobbyFriendCats from '@/assets/lobby/lobby-friend-cats.png'
@@ -70,9 +73,57 @@ function reloadAll() {
   return Promise.all([reloadFriends(), reloadReceived(), reloadSent()])
 }
 
-// 상대가 내 요청을 수락·거절하면 서버에서는 사라지지만 내 화면은 그대로다. 푸시 통로가 없어 주기적으로 확인한다.
-// 친구 추가 모달을 띄운 동안은 멈춘다 — 닉네임을 입력하는 중에 뒤 목록이 바뀔 이유가 없다.
-const { reloadNow } = useAutoReload(reloadAll, { shouldSkip: () => showAddModal.value })
+/**
+ * 상대가 내 요청을 수락·거절하면 서버에서는 사라지지만 내 화면은 그대로다.
+ * 예전에는 푸시 통로가 없어 20초마다 세 목록을 다시 받아 갔는데(-142 이전), 이제 서버가
+ * 그 순간에만 개인 큐로 알려 준다. 친구 접속 상태도 마찬가지다.
+ *
+ * 친구 추가 모달이 떠 있는 동안은 반영을 미룬다 — 닉네임을 입력하는 중에 뒤 목록이 바뀌면
+ * 방금 본 항목과 다른 것을 누르게 된다.
+ */
+/**
+ * 친구 귓속말(-150). 수신함은 앱 수명에 있고(useWhisper) 여기서는 창을 열고 닫기만 한다 —
+ * 창을 닫아 둔 사이에 온 말도 안 읽음으로 쌓여 있어야 한다.
+ */
+const whisper = useWhisper()
+const whisperTarget = ref<{ userId: number; nickname: string } | null>(null)
+function openWhisper(friend: { userId: number; nickname: string }) {
+  whisperTarget.value = friend
+  void whisper.open(friend.userId)
+}
+function closeWhisper() {
+  whisperTarget.value = null
+  whisper.close()
+}
+function sendWhisper(text: string) {
+  if (!whisperTarget.value) return
+  if (!whisper.send(whisperTarget.value.userId, text)) {
+    flash('실시간 연결이 끊겨 있어요. 잠시 후 다시 시도해 주세요')
+  }
+}
+
+const pendingRefresh = ref(false)
+function refreshOrDefer() {
+  if (showAddModal.value) {
+    pendingRefresh.value = true
+    return
+  }
+  void reloadAll()
+}
+watch(showAddModal, (open) => {
+  if (open || !pendingRefresh.value) return
+  pendingRefresh.value = false
+  void reloadAll()
+})
+
+useLobbyLive({
+  onNotification: refreshOrDefer,
+  onFriendPresence: refreshOrDefer,
+  // 끊겨 있던 동안의 변화는 되돌아오지 않는다 — 재연결마다 한 번 맞춘다.
+  onResync: () => void reloadAll(),
+})
+
+const reloadNow = reloadAll
 
 async function sendRequest() {
   if (!target.value.trim()) return flash('닉네임을 입력해 주세요')
@@ -185,7 +236,10 @@ async function removeFriend(f: Friend) {
           </div>
           <div class="friend-actions" @click.stop>
             <PixelButton v-if="manageMode" variant="mint" @click="removeFriend(f)">삭제</PixelButton>
-            <span v-else class="presence-badge">
+            <PixelButton v-else class="whisper-btn" @click="openWhisper(f)">
+              귓속말<span v-if="whisper.unreadWith(f.userId) > 0" class="unread">{{ whisper.unreadWith(f.userId) }}</span>
+            </PixelButton>
+            <span v-if="!manageMode" class="presence-badge">
               <i class="dot" :style="{ background: presenceColor[f.presence] }" />
               {{ presenceLabel[f.presence] }}
             </span>
@@ -224,7 +278,16 @@ async function removeFriend(f: Friend) {
     </PixelCard>
     <PixelToast :message="toast" />
     <AddFriendModal v-if="showAddModal" v-model="target" @close="showAddModal = false" @send="sendRequest" />
-    <!-- 랭킹과 같은 모달·같은 조회 규칙. 친구 목록에는 순위 같은 수치가 없어 stats를 넘기지 않는다. -->
+
+    <WhisperModal
+      v-if="whisperTarget"
+      :nickname="whisperTarget.nickname"
+      :messages="whisper.messagesWith(whisperTarget.userId)"
+      :connected="stompConnected"
+      @close="closeWhisper"
+      @send="sendWhisper"
+    />
+    <!-- 랭킹과 같은 모달·같은 조회 규칙. 가입일·접속시간·게임별 전적(-141)은 모달이 직접 그린다. -->
     <UserProfileModal
       v-if="viewer.isOpen.value"
       :user-id="viewer.targetId.value!"
@@ -335,5 +398,18 @@ async function removeFriend(f: Friend) {
   .cloud-b { display: none; }
   .tabs { flex-wrap: wrap; }
   .right-actions { width: 100%; margin-left: 0; justify-content: flex-end; }
+}
+.whisper-btn { position: relative; }
+.whisper-btn .unread {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 16px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 16px;
+  color: #fff;
+  background: var(--c-danger, #dc2626);
+  border-radius: 8px;
 }
 </style>

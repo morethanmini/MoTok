@@ -13,6 +13,7 @@ import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.oauth.entity.OauthAccount;
 import ssafy.a706.backend.auth.oauth.repository.OauthAccountRepository;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
+import ssafy.a706.backend.conntime.service.ConnectTimeService;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.storage.StorageService;
@@ -63,6 +64,7 @@ public class UserService {
     private final OauthClientResolver oauthClientResolver;
     private final RejoinPolicy rejoinPolicy;
     private final StorageService storageService;
+    private final ConnectTimeService connectTimeService;
 
     public UserProfileResponse getProfile(Long userId) {
         return UserProfileResponse.from(findActiveById(userId));
@@ -87,7 +89,8 @@ public class UserService {
         User user = userRepository.findById(userId)
                 .filter(User::isActive)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
-        return PublicUserProfileResponse.from(user);
+        // 총 접속시간(-141)은 공개 정보로 취급한다 — 가입일과 같은 활동성 지표.
+        return PublicUserProfileResponse.from(user, connectTimeService.totalSecondsOf(userId));
     }
 
     /** PATCH /users/me — 닉네임 변경(중복 검사). 동시 변경 경합은 UNIQUE 위반을 409로 변환한다. */
