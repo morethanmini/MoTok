@@ -413,17 +413,19 @@ public class GameSessionService {
             return;
         }
 
-        // main의 `Map<String, GamePlayerScore> scores = findScores(...)` 지역변수는 두지 않는다 —
-        // 로테이션(-48) 도입으로 아래에서 누적/단판을 갈라 각각 조회하므로 쓰이지 않는다.
+        // 이번 라운드 제출 점수 — 단판 순위의 입력이자 양쪽 경로의 로그 지표(제출 인원)다.
+        // 로테이션 경로는 위에서 누적(totals)에 이미 반영했고, 여기서는 집계용으로만 다시 읽는다.
+        Map<String, GamePlayerScore> scores = sessionRepository.findScores(roomId);
         List<LiveRoomMemberValue> members = liveRoomRepository.findMembers(roomId);
         List<GameResultEntry> results = rotates
                 ? rankByTotal(members, sessionRepository.findTotals(roomId), session.setterOrder())
-                : rank(members, sessionRepository.findScores(roomId));
+                : rank(members, scores);
         broadcast(roomId, GameEventResponse.gameEnd(sessionId, results));
         // write-behind 정산(-117) — 회원 결과 leaderboards 적재 + rank ZSET 갱신은 비동기 리스너에 위임.
         // endRound가 SETNX 가드로 1회만 실행되므로 정산도 1회 발행된다.
         eventPublisher.publishEvent(new GameSettledEvent(session.gameId(), results));
-        log.info("game session ended: room={} session={} players={}", roomId, sessionId, members.size());
+        log.info("game session ended: room={} session={} players={} submitted={}",
+                roomId, sessionId, members.size(), scores.size());
     }
 
     /** setterOrder에서 다음 출제자 인덱스 — 그새 방을 나간 참가자는 건너뛴다. */
