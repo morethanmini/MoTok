@@ -113,6 +113,54 @@ export function holeMarginFor(setter: SolvedSkeleton, cfg: BodyFitConfig): numbe
   )
 }
 
+/**
+ * 출제 포즈의 체감 난이도 (0~1) — 출제자 관전 화면의 별점 표시용.
+ *
+ * <p>점수·판정에는 쓰지 않는다(그건 K와 IoU가 정한다). 순수 표시용 휴리스틱이라
+ * 캔버스가 필요 없고 세 항으로만 잰다:
+ *  - 팔을 아래(중립)에서 얼마나 들었나 — 만세가 차렷보다 어렵다
+ *  - 팔꿈치를 얼마나 접었나 — 각도 재현이 직선보다 어렵다
+ *  - 좌우가 얼마나 다른가 — 대칭 포즈는 거울로 따라하기 쉽다
+ * 다리는 앵커로 고정돼 난이도에 기여하지 않으므로 제외한다.</p>
+ */
+export function poseDifficulty(s: SolvedSkeleton): number {
+  /** a→b 방향이 "아래"(0,-1)에서 벌어진 각 — 0(아래) ~ π(위) */
+  const liftOf = (from: { x: number; y: number }, to: { x: number; y: number } | null) => {
+    if (!to) return 0
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    const len = Math.hypot(dx, dy)
+    return len < 1e-6 ? 0 : Math.acos(Math.min(1, Math.max(-1, -dy / len)))
+  }
+  /** 팔꿈치 굽힘 — 위팔 방향에서 아래팔이 꺾인 각. 0(쭉 뻗음) ~ π(완전히 접음) */
+  const bendOf = (
+    shoulder: { x: number; y: number },
+    elbow: { x: number; y: number } | null,
+    wrist: { x: number; y: number } | null,
+  ) => {
+    if (!elbow || !wrist) return 0
+    const ux = elbow.x - shoulder.x
+    const uy = elbow.y - shoulder.y
+    const fx = wrist.x - elbow.x
+    const fy = wrist.y - elbow.y
+    const un = Math.hypot(ux, uy)
+    const fn = Math.hypot(fx, fy)
+    if (un < 1e-6 || fn < 1e-6) return 0
+    const cos = (ux * fx + uy * fy) / (un * fn)
+    return Math.acos(Math.min(1, Math.max(-1, cos)))
+  }
+
+  const liftL = liftOf(s.shoulderL, s.elbowL)
+  const liftR = liftOf(s.shoulderR, s.elbowR)
+  const bendL = bendOf(s.shoulderL, s.elbowL, s.wristL)
+  const bendR = bendOf(s.shoulderR, s.elbowR, s.wristR)
+
+  const lift = (liftL + liftR) / 2 / Math.PI
+  const bend = (bendL + bendR) / 2 / Math.PI
+  const asym = Math.abs(liftL - liftR) / Math.PI
+  return Math.min(1, lift * 0.45 + bend * 0.35 + asym * 0.2)
+}
+
 /** 벽 도달 순간의 프레임 1장 판정 (§4) */
 export function judgeRound(
   player: SolvedSkeleton,

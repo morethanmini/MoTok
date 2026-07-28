@@ -129,8 +129,8 @@ class GameSessionServiceTest {
         GameEventResponse event = eventCaptor.getValue();
         assertThat(event.challenge()).isNull();
         assertThat(event.constellationKey()).isNull();
-        // 게임④(-86): 출제자 = 방장, 난이도 릴레이, 라운드 = 출제 5s + 접근 4s(hard)
-        assertThat(event.setterUserId()).isEqualTo("1");
+        // 게임④: 출제 순서는 셔플이라 첫 출제자는 방 참가자 중 아무나 — 방장 고정이 아니다
+        assertThat(event.setterUserId()).isIn("1", "2");
         assertThat(event.difficulty()).isEqualTo("hard");
         assertThat(event.endAt() - event.startAt()).isEqualTo(9_000);
     }
