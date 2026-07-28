@@ -11,10 +11,14 @@ export interface NormalizedPoint {
   y: number
 }
 
-/** 총 제한 시간(초) — 인원수와 무관하게 고정. BE GameCatalogSeeder roundDurationSec과 동기화 */
+/**
+ * 총 제한 시간(초) — 인원수와 무관하게 고정.
+ * 실제 세션의 권위는 서버(games.roundDurationSec)이고 여기 값은 안내 문구·검증용 사본이다.
+ * BE GameCatalogSeeder.DRAW_TOTAL_SEC와 동기화할 것.
+ */
 export const TOTAL_SECONDS = 90
-/** 정식(멀티) 시작 최소 인원 — 솔로 로컬 테스트는 1인도 허용 */
-export const MIN_PLAYERS = 4
+/** 시작 최소 인원 — 이어그리기 게임이라 3명부터(인당 30초). BE 시더 minPlayers와 동기화 */
+export const MIN_PLAYERS = 3
 export const MAX_PLAYERS = 8
 
 /** 인당 그리기 시간(초) = 총 시간 / 인원수, 나눠떨어지지 않으면 올림 */
