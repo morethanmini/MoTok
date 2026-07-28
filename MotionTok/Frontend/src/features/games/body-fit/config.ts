@@ -91,9 +91,11 @@ export function defaultConfig(): BodyFitConfig {
       headGain: 1.5,
     },
     difficulty: {
-      easy: { K: 1.5, approachMs: 7000 },
-      normal: { K: 1.35, approachMs: 6000 },
-      hard: { K: 1.2, approachMs: 5000 },
+      // 접근 시간은 BE GameSessionService.BODY_FIT_APPROACH_MILLIS와 반드시 동기화.
+      // 멀티는 서버 endAt이 진실이라 한쪽만 바꾸면 벽 도착과 판정 시점이 어긋난다.
+      easy: { K: 1.5, approachMs: 6000 },
+      normal: { K: 1.35, approachMs: 5000 },
+      hard: { K: 1.2, approachMs: 4000 },
     },
     judge: {
       K: 1.5,
