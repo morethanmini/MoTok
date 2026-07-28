@@ -2,7 +2,7 @@
 /**
  * 그림으로 말해요 — 그림 이어그리기 + AI 블라인드 채점.
  *
- * 총 4분을 인원수로 나눠(올림) 한 명씩 같은 도화지에 이어 그리고, 완성 그림을
+ * 총 2분 30초를 인원수로 나눠(올림) 한 명씩 같은 도화지에 이어 그리고, 완성 그림을
  * GMS 비전 모델에 주제어 없이 보내 "무엇을 그린 것인지" 5개 추측을 받는다.
  * 주제어가 추측 순위에 들면 순위별 점수(1순위 100 … 5순위 20).
  *
@@ -339,7 +339,7 @@ function beginMpJudging() {
 async function judgeMp() {
   judgeError.value = null
   try {
-    const r = await judgeDrawing(finalImage.value, topic.value)
+    const r = await judgeDrawing(finalImage.value)
     const rank = findAnswerRank(topic.value, r.guesses)
     // 화면 전환은 DRAW_RESULT 에코 수신 시 — 전원이 같은 경로로 결과를 본다
     emit('drawResult', { guesses: r.guesses, answerRank: rank, score: scoreForRank(rank) })
@@ -408,9 +408,9 @@ function applyRemoteOps(userId: string, ops: DrawOp[]) {
   }
 }
 
-/** DRAW_RESULT 수신 — 전원 동일 결과 화면. 채점 주체가 모의 채점이었는지는 전달되지 않는다. */
+/** DRAW_RESULT 수신 — 전원 동일 결과 화면 */
 function applyDrawResult(guesses: string[], rank: number, score: number) {
-  judgeResult.value = { guesses, source: 'gms' }
+  judgeResult.value = { guesses }
   answerRank.value = rank
   finalScore.value = score
   if (!finalImage.value) finalImage.value = paper.toDataURL('image/png')
@@ -423,7 +423,7 @@ watch(
   () => props.results,
   (results) => {
     if (!results || !isMultiplayer.value || judgeResult.value) return
-    judgeResult.value = { guesses: [], source: 'gms' }
+    judgeResult.value = { guesses: [] }
     answerRank.value = 0
     finalScore.value = 0
     if (!finalImage.value) finalImage.value = paper.toDataURL('image/png')
@@ -478,7 +478,7 @@ function finishDrawing() {
 async function judge() {
   judgeError.value = null
   try {
-    const r = await judgeDrawing(finalImage.value, topic.value)
+    const r = await judgeDrawing(finalImage.value)
     judgeResult.value = r
     answerRank.value = findAnswerRank(topic.value, r.guesses)
     finalScore.value = scoreForRank(answerRank.value)
@@ -847,7 +847,7 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
     <!-- 대기 화면: 규칙 + 인원 선택(솔로 로컬 테스트) -->
     <div v-if="phase === 'ready'" class="dr-overlay">
       <p class="dr-guide">
-        총 4분을 인원수로 나눠 한 도화지에 그림을 이어 그려요.<br />
+        총 2분 30초를 인원수로 나눠 한 도화지에 그림을 이어 그려요.<br />
         <b>{{ penHandLabel }}</b> 엄지+검지를 <b>집으면</b> 그리기 · 펴면 이동,
         <b>{{ eraseHandLabel }} 주먹</b>으로 문지르면 지우개!<br />
         완성 그림을 본 AI의 추측 5개 안에 주제어가 있으면 점수!
@@ -937,9 +937,6 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
           </li>
         </ol>
       </div>
-      <p v-if="judgeResult.source === 'mock'" class="dr-sub">
-        모의 채점 결과예요 — VITE_GMS_KEY 설정 시 실제 AI가 채점해요
-      </p>
       <div class="dr-actions">
         <!-- 다시 하기는 솔로 전용 — 멀티는 방장이 게임 선택으로 새 세션을 시작한다 -->
         <button v-if="!isMultiplayer" class="dr-start" @click="startGame">🔁 다시 하기</button>
