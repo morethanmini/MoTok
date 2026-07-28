@@ -9,7 +9,8 @@ import org.springframework.stereotype.Service;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.game.dto.DrawOp;
 import ssafy.a706.backend.game.dto.GameDrawRequest;
-import ssafy.a706.backend.game.dto.GameDrawResultRequest;
+import ssafy.a706.backend.game.draw.DrawJudge;
+import ssafy.a706.backend.game.draw.DrawJudgeClient;
 import ssafy.a706.backend.game.dto.GameEventResponse;
 import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameProgressRequest;
@@ -99,6 +100,8 @@ public class GameSessionService {
     private static final int DRAW_MAX_OPS = 256;
     private static final int DRAW_MAX_GUESSES = 5;
     private static final int DRAW_MAX_GUESS_LEN = 40;
+    /** 도화지 PNG data URL 상한 — 960×540 낙서는 보통 100KB 미만이라 넉넉하다(악의적 대용량 차단용). */
+    private static final int DRAW_MAX_IMAGE_CHARS = 4_000_000;
     /** 주제어 후보 — FE drawing-relay/words.ts와 동기화 필수(솔로 모드가 같은 목록을 쓴다). */
     private static final List<String> DRAW_TOPICS = List.of(
             "사과", "바나나", "수박", "포도", "딸기",
@@ -116,6 +119,7 @@ public class GameSessionService {
     private final SimpMessagingTemplate messagingTemplate;
     private final TaskScheduler gameTaskScheduler;
     private final ApplicationEventPublisher eventPublisher;
+    private final DrawJudgeClient judgeClient;
 
     /** 조기 종료 시 취소할 라운드 종료 예약 (roomId → future). 인메모리 — 단일 인스턴스 전제. */
     private final Map<String, ScheduledFuture<?>> endTasks = new ConcurrentHashMap<>();
@@ -250,9 +254,10 @@ public class GameSessionService {
         String sessionId = UUID.randomUUID().toString();
         long startAt = now + game.getCountdownSec() * 1000L;
         long endAt = startAt + (long) playerCount * (DRAW_HANDOVER_SEC + turnSec) * 1000L;
-        // 게임⑩은 과제·출제자·난이도가 없고 로테이션도 없다 — 해당 필드는 비우고 roundIndex 0 고정.
-        // (GameSession은 -86/-48에서 setterUserId·setterOrder·roundIndex·difficulty가 추가됐다)
-        sessionRepository.saveSession(roomId, new GameSession(sessionId, DRAW_GAME_ID, null, null,
+        // 주제어는 세션의 과제(challenge)로 저장한다 — 서버가 채점할 때 정답을 알아야 하고,
+        // 게임①의 별자리 키와 같은 자리라 별도 필드가 필요 없다.
+        // 출제자·난이도·로테이션은 게임⑩에 없어 비운다(-86/-48에서 추가된 필드).
+        sessionRepository.saveSession(roomId, new GameSession(sessionId, DRAW_GAME_ID, topicWord, null,
                 startAt, endAt, GameSession.STATUS_PLAYING, List.of(), 0, null));
         liveRoomRepository.updateStatus(roomId, "PLAYING");
 
@@ -307,11 +312,21 @@ public class GameSessionService {
     }
 
     /**
-     * AI 채점 결과 수리(게임 10, 최초 1회) → DRAW_RESULT 방송 + 협동 정산.
-     * 채점은 그리기 종료(endAt) 이후에 이뤄지므로 일반 유예 대신 채점 유예 안에서 수리한다.
+     * 완성 그림 AI 채점(게임 10, 최초 1회) → DRAW_RESULT 방송 + 협동 정산.
+     *
+     * <p>배포 환경에서는 GMS 키를 프론트에 둘 수 없어 <b>채점 호출과 점수 계산을 서버가 한다</b>.
+     * 클라이언트는 도화지 이미지만 올리고, 정답(주제어)은 세션의 challenge에 있으므로
+     * 클라이언트가 점수를 조작할 수 있는 경로가 없다.</p>
+     *
+     * <p>채점은 그리기 종료(endAt) 이후에 이뤄지므로 일반 유예 대신 채점 유예 안에서 수리한다.
+     * 마지막 화가가 실패·이탈해도 다른 참가자가 같은 이미지를 올려 대신 채점할 수 있고,
+     * 이미 정산됐다면 SETNX 가드에서 조용히 무시된다.</p>
      */
-    public void drawResult(String roomId, GameDrawResultRequest request, AuthPrincipal sender) {
+    public void judgeDrawing(String roomId, String imageDataUrl, AuthPrincipal sender) {
         requireMembership(roomId, sender);
+        if (imageDataUrl == null || imageDataUrl.isBlank() || imageDataUrl.length() > DRAW_MAX_IMAGE_CHARS) {
+            throw new BusinessException(ErrorCode.GAME_IMAGE_INVALID);
+        }
         long now = System.currentTimeMillis();
         GameSession session = sessionRepository.findSession(roomId)
                 .filter(s -> s.isPlaying(now, DRAW_JUDGE_WINDOW_MILLIS + END_GRACE_MILLIS))
@@ -319,13 +334,13 @@ public class GameSessionService {
         if (session.gameId() != DRAW_GAME_ID) {
             throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
         }
-        List<String> guesses = request.guesses() == null ? List.of() : request.guesses().stream()
-                .filter(g -> g != null && !g.isBlank())
+
+        List<String> guesses = judgeClient.guess(imageDataUrl).stream()
                 .map(g -> g.length() > DRAW_MAX_GUESS_LEN ? g.substring(0, DRAW_MAX_GUESS_LEN) : g)
                 .limit(DRAW_MAX_GUESSES)
                 .toList();
-        int answerRank = clamp(request.answerRank() == null ? 0 : request.answerRank(), 0, DRAW_MAX_GUESSES);
-        int score = clamp(request.score() == null ? 0 : request.score(), 0, MAX_SCORE);
+        int answerRank = DrawJudge.findAnswerRank(session.challenge(), guesses);
+        int score = DrawJudge.scoreForRank(answerRank);
         endDrawRound(roomId, session.sessionId(), sender, guesses, answerRank, score);
     }
 
