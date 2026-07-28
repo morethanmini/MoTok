@@ -66,7 +66,7 @@ public class GameSessionService {
     private static final long BODY_FIT_SETTING_MILLIS = 5_000;
     /** 게임④ 난이도 → 벽 접근 시간(ms) — FE config.difficulty와 동기화. */
     private static final Map<String, Long> BODY_FIT_APPROACH_MILLIS =
-            Map.of("easy", 7_000L, "normal", 6_000L, "hard", 5_000L);
+            Map.of("easy", 6_000L, "normal", 5_000L, "hard", 4_000L);
     /** 포즈 payload 상한 — 랜드마크 33점 JSON은 ~2KB, 여유 4배 (§9-2). */
     private static final int MAX_POSE_PAYLOAD_BYTES = 8_192;
 

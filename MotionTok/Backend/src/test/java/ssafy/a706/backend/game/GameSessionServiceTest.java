@@ -129,10 +129,10 @@ class GameSessionServiceTest {
         GameEventResponse event = eventCaptor.getValue();
         assertThat(event.challenge()).isNull();
         assertThat(event.constellationKey()).isNull();
-        // 게임④(-86): 출제자 = 방장, 난이도 릴레이, 라운드 = 출제 5s + 접근 5s(hard)
+        // 게임④(-86): 출제자 = 방장, 난이도 릴레이, 라운드 = 출제 5s + 접근 4s(hard)
         assertThat(event.setterUserId()).isEqualTo("1");
         assertThat(event.difficulty()).isEqualTo("hard");
-        assertThat(event.endAt() - event.startAt()).isEqualTo(10_000);
+        assertThat(event.endAt() - event.startAt()).isEqualTo(9_000);
     }
 
     /** 게임④(-9): 출제자는 관전만 하므로 1인 방에서는 라운드가 성립하지 않는다 — 시작 거부. */
