@@ -21,6 +21,7 @@ import { gamesCatalogRoutes } from '@/features/games-catalog/routes'
 import { catchRhythmRoutes } from '@/features/games/catch-rhythm/routes'
 import { adminRoutes } from '@/features/admin/routes'
 import { unsupportedRoutes } from '@/features/unsupported/routes'
+import { bodyFitRoutes } from '@/features/games/body-fit/routes'
 
 export const routes: RouteRecordRaw[] = [
   ...startRoutes,
@@ -39,4 +40,5 @@ export const routes: RouteRecordRaw[] = [
   ...catchRhythmRoutes,
   ...adminRoutes,
   ...unsupportedRoutes,
+  ...bodyFitRoutes,
 ]

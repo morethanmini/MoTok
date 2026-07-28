@@ -21,6 +21,8 @@ import type {
 
 const BASE = '/v1/live-rooms'
 
+export type KickReason = 'MANNER_VIOLATION' | 'INAPPROPRIATE_PROFILE' | 'GAME_DISRUPTION' | 'SPAM_AD' | 'OTHER'
+
 export const roomsApi = {
   /** GET /v1/live-rooms?page= — 페이지당 6개 고정, page 생략 시 1. 최신 생성 순. */
   list: (page = 1) => httpEnvelope.get<LiveRoomListResponse>(BASE, { page }),
@@ -59,6 +61,10 @@ export const roomsApi = {
 
   /** DELETE /v1/live-rooms/{roomId}/members/me — 방 나가기(멱등). 마지막 인원이면 방 즉시 삭제. */
   leave: (roomId: string) => httpEnvelope.delete<void>(`${BASE}/${roomId}/members/me`),
+
+  /** POST /v1/live-rooms/{roomId}/members/{userId}/kick — 방장이 사유와 함께 참가자를 강퇴. */
+  kick: (roomId: string, userId: string, reason: KickReason) =>
+    httpEnvelope.post<void>(`${BASE}/${roomId}/members/${userId}/kick`, { reason }),
 
   /**
    * 문서 언로드(탭 닫기·주소창 이탈·새로고침) 전용 퇴장 통보.

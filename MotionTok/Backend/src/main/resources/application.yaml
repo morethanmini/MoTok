@@ -139,6 +139,14 @@ app:
       client-id: ${KAKAO_CLIENT_ID:}       # 카카오 REST API 키
       client-secret: ${KAKAO_CLIENT_SECRET:} # 콘솔에서 사용 설정 시에만(선택)
 
+  # 그림으로 말해요(게임 10) AI 채점 — GMS 릴레이(OpenAI 호환 chat/completions).
+  # 프론트에 키를 두면 번들에 노출되므로 채점은 서버에서만 호출한다.
+  # api-key/model 미설정 시 채점 요청은 GAME_JUDGE_UNAVAILABLE로 실패한다(조용한 대체 없음).
+  gms:
+    api-url: ${GMS_API_URL:https://gms.ssafy.io/gmsapi/api.openai.com/v1/chat/completions}
+    api-key: ${GMS_API_KEY:}
+    model: ${GMS_MODEL:gpt-5-mini}
+
   # 회원 탈퇴 정책 (API 명세서 DELETE /users/me, -111)
   withdrawal:
     rejoin-cooldown: 7d   # 탈퇴 후 같은 이메일·소셜 계정으로 다시 가입할 수 있게 되기까지

@@ -16,9 +16,18 @@ const props = withDefaults(
     playAudio?: boolean
     /** 로컬 프리뷰 등 좌우 반전 표시 */
     mirror?: boolean
+    compact?: boolean
+    canKick?: boolean
+    /**
+     * 영상을 가려야 할 때의 안내 문구(null이면 그대로 보여준다).
+     * 게임④ 출제 중인 출제자 캠처럼 "보이면 안 되는" 화면에 쓴다 — 트랙은 그대로 붙여두고
+     * 표시만 덮는다(재부착 시 깜빡임·재협상 비용을 피한다).
+     */
+    cover?: string | null
   }>(),
-  { view: null, host: false, playAudio: false, mirror: false },
+  { view: null, host: false, playAudio: false, mirror: false, compact: false, canKick: false, cover: null },
 )
+const emit = defineEmits<{ kick: [] }>()
 
 const occupied = computed(() => !!props.view)
 const hasVideo = computed(() => !!props.view?.cameraOn && !!props.view?.videoTrack)
@@ -33,6 +42,12 @@ watch(hasGame, (on) => {
 
 const videoEl = ref<HTMLVideoElement>()
 const audioEl = ref<HTMLAudioElement>()
+const videoAspect = ref(8 / 5)
+function syncVideoAspect() {
+  const video = videoEl.value
+  if (!video?.videoWidth || !video.videoHeight) return
+  videoAspect.value = video.videoWidth / video.videoHeight
+}
 
 // 트랙 인스턴스만 의존 대상으로 삼는다(뷰모델 객체는 이벤트마다 새로 생기므로 그대로 쓰면 재부착·깜빡임).
 // videoTrack/el 중 하나가 실제로 바뀔 때만 재부착.
@@ -69,7 +84,11 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
 </script>
 
 <template>
-  <div class="tile" :class="{ empty: !occupied, speaking: occupied && view?.isSpeaking }">
+  <div
+    class="tile"
+    :class="{ empty: !occupied, speaking: occupied && view?.isSpeaking, compact }"
+    :style="{ '--camera-aspect': videoAspect }"
+  >
     <!-- 참가자 있음 -->
     <template v-if="occupied">
       <video
@@ -80,24 +99,27 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
         muted
         class="tile-video"
         :class="{ mirror }"
+        @loadedmetadata="syncVideoAspect"
       />
       <audio v-if="playAudio" ref="audioEl" autoplay />
       <div v-if="!showingVideo" class="cam-off">
         <span class="avatar">{{ initial }}</span>
       </div>
 
+      <!-- 가림막 — 영상 위, 라벨·왕관 아래(DOM 순서로 쌓임) -->
+      <div v-if="cover" class="cover">{{ cover }}</div>
+
       <div class="label">
         <span class="name">{{ view?.name }}</span>
-        <span class="mic" :class="{ muted: !view?.micOn }">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square">
-            <rect x="9" y="3" width="6" height="11" />
-            <path d="M5 11a7 7 0 0014 0M12 18v3" />
-          </svg>
-        </span>
+        <button v-if="canKick" class="kick-btn" title="방에서 내보내기" @click.stop="emit('kick')">강퇴</button>
       </div>
-
-      <span class="live">● 참가 중</span>
-
+      <span class="mic" :class="{ muted: !view?.micOn }">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square">
+          <rect x="9" y="3" width="6" height="11" />
+          <path d="M5 11a7 7 0 0014 0M12 18v3" />
+          <path v-if="!view?.micOn" d="M4 4l16 16" stroke-width="3.4" />
+        </svg>
+      </span>
       <!-- 게임 송출 중 게임 화면 ↔ 카메라 전환(뷰어별) — 아이콘은 전환될 대상을 보여준다 -->
       <button
         v-if="hasGame"
@@ -135,11 +157,11 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
   background: #fff;
   border: 3px solid var(--c-ink-soft);
   border-radius: 14px 14px 10px 14px;
-  box-shadow: 4px 4px 0 rgba(43, 35, 51, 0.2);
+  box-shadow: none;
 }
 .tile.speaking {
   border-color: #5cbf4a;
-  box-shadow: 0 0 0 2px #5cbf4a, 4px 4px 0 rgba(43, 35, 51, 0.2);
+  box-shadow: 0 0 0 2px #5cbf4a;
 }
 .tile.empty {
   border-style: dashed;
@@ -148,7 +170,9 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
   background: #faf6ee;
 }
 
-.tile-video { width: 100%; height: 100%; object-fit: contain; background: #eee6cf; }
+.tile.compact { width: 100%; aspect-ratio: var(--camera-aspect, 8 / 5); }
+.tile-video { width: 100%; height: 100%; object-fit: cover; background: #eee6cf; }
+.tile.compact .tile-video { object-fit: cover; }
 .tile-video.mirror { transform: scaleX(-1); }
 
 .cam-off {
@@ -170,38 +194,68 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
   font-size: 16px;
 }
 
+.cover {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  text-align: center;
+  background: repeating-linear-gradient(
+    45deg,
+    #2b2333,
+    #2b2333 12px,
+    #3b3145 12px,
+    #3b3145 24px
+  );
+  color: #ffcf4d;
+  font-size: 9px;
+  line-height: 1.6;
+}
+
 .label {
   position: absolute;
   top: 8px;
   left: 8px;
   display: flex;
   align-items: center;
-  gap: 7px;
   padding: 6px 9px;
-  background: #fffdf3;
-  border: 2px solid var(--c-ink-soft);
-  pointer-events: none;
+  background: #fffdf7;
+  border: 2px solid #b78d5d;
+  border-radius: 6px;
+  box-shadow: 2px 2px 0 #e2d0b5;
+  color: #403124;
+  pointer-events: auto;
 }
 .name { font-size: 9px; }
-.mic { color: #5cbf4a; }
-.mic.muted { color: #e85d6e; }
-
-.live {
+.mic {
   position: absolute;
+  right: 8px;
   bottom: 8px;
-  left: 8px;
-  padding: 4px 7px;
-  background: rgba(43, 35, 51, 0.72);
-  color: #fff;
-  font-size: 7px;
-  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: #5b8d45;
 }
+.mic.muted { color: #d45c63; }
+.kick-btn {
+  margin-left: 5px;
+  padding: 2px 5px;
+  border: 1px solid #a94d52;
+  border-radius: 5px;
+  background: #ffe2e3;
+  color: #a94d52;
+  font-family: inherit;
+  font-size: 7px;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
 .crown { position: absolute; top: 7px; right: 8px; color: #f5c518; pointer-events: none; }
 
 .view-toggle {
   position: absolute;
   bottom: 8px;
-  right: 8px;
+  right: 42px;
   padding: 5px 8px;
   font-size: 12px;
   line-height: 1;
