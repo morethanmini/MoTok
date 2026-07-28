@@ -84,6 +84,13 @@ public enum ErrorCode {
     ITEM_ALREADY_OWNED(HttpStatus.CONFLICT, "ITEM_ALREADY_OWNED", "이미 보유한 아이템입니다."),
     INSUFFICIENT_POINT(HttpStatus.CONFLICT, "INSUFFICIENT_POINT", "포인트가 부족합니다."),
 
+    // shop - AI 아이템 생성 큐 (-102)
+    AI_ITEM_SKETCH_TOO_LARGE(HttpStatus.BAD_REQUEST, "AI_ITEM_SKETCH_TOO_LARGE", "스케치 이미지 용량이 너무 큽니다."),
+    AI_JOB_NOT_FOUND(HttpStatus.NOT_FOUND, "AI_JOB_NOT_FOUND", "존재하지 않는 AI 아이템 생성 작업입니다."),
+    AI_JOB_FORBIDDEN(HttpStatus.FORBIDDEN, "AI_JOB_FORBIDDEN", "본인의 작업만 조회할 수 있습니다."),
+    AI_JOB_INVALID_STATE(HttpStatus.CONFLICT, "AI_JOB_INVALID_STATE", "처리 중인 작업이 아닙니다."),
+    INTERNAL_UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "INTERNAL_UNAUTHORIZED", "내부 API 인증에 실패했습니다."),
+
     // chat
     CHAT_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "CHAT_NOT_IN_ROOM", "방 참가자만 채팅을 보낼 수 있습니다."),
 
