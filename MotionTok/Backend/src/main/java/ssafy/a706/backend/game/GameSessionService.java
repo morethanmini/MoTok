@@ -35,7 +35,6 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
@@ -61,10 +60,14 @@ public class GameSessionService {
 
     private static final String GAME_TOPIC = "/topic/rooms/%s/game";
 
-    /** 게임①(핑거 스타) — 과제(challenge)가 별자리 키인 게임. */
+    /** 게임①(핑거 스타) — 과제(challenge)가 90초 매치 공유 시드인 게임. */
     private static final long FINGER_STAR_GAME_ID = 1L;
     /** 게임① 부가 지표 stats 키 (-137 일반화 후 레거시 표기 유지용). */
     private static final String STAT_STARS_HIT = "starsHit";
+    /** 게임① 90초 매치 완성 개수 stats 키 — 1순위 순위 기준. */
+    private static final String STAT_COMPLETED = "completedCount";
+    /** 게임① 매치 완성 개수 상한 — 90초를 홀드 3초로 나눈 이론상 최대치. */
+    private static final int MAX_COMPLETED = 30;
 
     /** 게임④(몸 끼워 맞추기, S15P11A706-86) — 출제 페이즈가 있는 게임. */
     private static final long BODY_FIT_GAME_ID = 4L;
@@ -81,15 +84,6 @@ public class GameSessionService {
             Map.of("easy", 6_000L, "normal", 5_000L, "hard", 4_000L);
     /** 포즈 payload 상한 — 랜드마크 33점 JSON은 ~2KB, 여유 4배 (§9-2). */
     private static final int MAX_POSE_PAYLOAD_BYTES = 8_192;
-
-    /**
-     * 별자리 과제 후보(핑거 스타 콘텐츠) — 게임① 전용 챌린지 풀.
-     * FE constellations.ts와 동기화 필수 — 별자리 추가·삭제 시 양쪽을 함께 갱신한다.
-     */
-    private static final Set<String> CONSTELLATION_KEYS = Set.of(
-            "cassiopeia", "orion", "gemini",
-            "big-dipper", "corona-borealis", "cepheus", "auriga", "lyra",
-            "leo", "bootes", "scorpius", "taurus");
 
     /** endAt 경과 후 정산까지의 유예 — 마지막 순간 finish 프레임의 전송 지연 흡수. */
     private static final long END_GRACE_MILLIS = 1_500;
@@ -385,7 +379,7 @@ public class GameSessionService {
         List<GameResultEntry> results = new ArrayList<>(members.size());
         for (LiveRoomMemberValue m : members) {
             results.add(new GameResultEntry(1, m.userId(), m.displayName(), score, 0, finished,
-                    PointCalculator.calc(1, score, members.size())));
+                    PointCalculator.calc(1, score, members.size()), null));
         }
         return results;
     }
@@ -396,8 +390,11 @@ public class GameSessionService {
         GameSession session = requireActiveSession(roomId);
         int starsLit = clamp(request.starsLit() == null ? 0 : request.starsLit(), 0, MAX_STARS);
         double holdProgress = clampDouble(request.holdProgress() == null ? 0 : request.holdProgress());
+        int completedCount = clamp(
+                request.completedCount() == null ? 0 : request.completedCount(), 0, MAX_COMPLETED);
         broadcast(roomId, GameEventResponse.progress(
-                session.sessionId(), sender.userId(), sender.displayName(), starsLit, holdProgress));
+                session.sessionId(), sender.userId(), sender.displayName(),
+                starsLit, holdProgress, completedCount));
     }
 
     /** 참가자 최종 제출 수리(최초 1회) → PLAYER_FINISHED 브로드캐스트, 전원 제출 시 조기 정산. */
@@ -408,17 +405,31 @@ public class GameSessionService {
         if (session.gameId() == BODY_FIT_GAME_ID && sender.userId().equals(session.setterUserId())) {
             return;
         }
-        int score = clamp(request.score() == null ? 0 : request.score(), 0, MAX_SCORE);
-        int starsHit = clamp(request.starsHit() == null ? 0 : request.starsHit(), 0, MAX_STARS);
+        // 게임① 90초 매치: score=총점(완성 개수×100 상한), 그 외 게임: 단판 점수(0~100)
+        int score;
+        int starsHit;
+        Integer completedCount = null;
+        Map<String, Integer> stats;
+        if (session.gameId() == FINGER_STAR_GAME_ID) {
+            int completed = clamp(
+                    request.completedCount() == null ? 0 : request.completedCount(), 0, MAX_COMPLETED);
+            score = clamp(request.score() == null ? 0 : request.score(), 0, completed * MAX_SCORE);
+            starsHit = 0;
+            completedCount = completed;
+            stats = Map.of(STAT_COMPLETED, completed);
+        } else {
+            score = clamp(request.score() == null ? 0 : request.score(), 0, MAX_SCORE);
+            starsHit = clamp(request.starsHit() == null ? 0 : request.starsHit(), 0, MAX_STARS);
+            stats = Map.of(STAT_STARS_HIT, starsHit);
+        }
         GamePlayerScore playerScore = new GamePlayerScore(
-                sender.userId(), sender.displayName(), score,
-                Map.of(STAT_STARS_HIT, starsHit), System.currentTimeMillis());
+                sender.userId(), sender.displayName(), score, stats, System.currentTimeMillis());
         // 최초 제출만 수리 — 재제출·중복 프레임은 조용히 무시(브로드캐스트도 없음).
         if (!sessionRepository.saveScoreIfAbsent(roomId, playerScore)) {
             return;
         }
         broadcast(roomId, GameEventResponse.playerFinished(
-                session.sessionId(), sender.userId(), sender.displayName(), score, starsHit));
+                session.sessionId(), sender.userId(), sender.displayName(), score, starsHit, completedCount));
 
         long memberCount = liveRoomRepository.findMembers(roomId).size();
         // 게임④는 출제자를 뺀 인원만큼만 제출하면 조기 정산.
@@ -512,19 +523,26 @@ public class GameSessionService {
                 roomId, prev.sessionId(), roundIndex, setterUserId);
     }
 
-    /** 점수 내림차순(동점은 먼저 제출한 쪽 우선) 순위. 방에 남은 전원 포함 — 미제출자는 0점. */
+    /**
+     * 순위 — 게임① 90초 매치는 완성 개수 내림차순(1순위) → 총점 내림차순(2순위 — 개수가 같으면
+     * 평균 비교와 동치) → 먼저 제출한 쪽 우선. 완성 개수 개념이 없는 게임은 전원 0이라
+     * 기존 점수 내림차순과 동일하게 동작한다. 방에 남은 전원 포함 — 미제출자는 0점.
+     */
     private List<GameResultEntry> rank(List<LiveRoomMemberValue> members, Map<String, GamePlayerScore> scores) {
-        record Row(String userId, String nickname, int score, int starsHit, boolean finished, long finishedAt) {}
+        record Row(String userId, String nickname, int score, int starsHit, int completed,
+                   boolean finished, long finishedAt) {}
         List<Row> rows = new ArrayList<>();
         for (LiveRoomMemberValue m : members) {
             GamePlayerScore s = scores.get(m.userId());
             if (s != null) {
-                rows.add(new Row(m.userId(), s.nickname(), s.score(), s.starsHit(), true, s.finishedAt()));
+                rows.add(new Row(m.userId(), s.nickname(), s.score(), s.starsHit(),
+                        s.completedCount(), true, s.finishedAt()));
             } else {
-                rows.add(new Row(m.userId(), m.displayName(), 0, 0, false, Long.MAX_VALUE));
+                rows.add(new Row(m.userId(), m.displayName(), 0, 0, 0, false, Long.MAX_VALUE));
             }
         }
-        rows.sort(Comparator.comparingInt(Row::score).reversed()
+        rows.sort(Comparator.comparingInt(Row::completed).reversed()
+                .thenComparing(Comparator.comparingInt(Row::score).reversed())
                 .thenComparingLong(Row::finishedAt));
         int playerCount = rows.size();
         List<GameResultEntry> results = new ArrayList<>(playerCount);
@@ -532,8 +550,8 @@ public class GameSessionService {
             Row r = rows.get(i);
             int rankNo = i + 1;
             int pointsEarned = PointCalculator.calc(rankNo, r.score(), playerCount);
-            results.add(new GameResultEntry(
-                    rankNo, r.userId(), r.nickname(), r.score(), r.starsHit(), r.finished(), pointsEarned));
+            results.add(new GameResultEntry(rankNo, r.userId(), r.nickname(), r.score(), r.starsHit(),
+                    r.finished(), pointsEarned, r.completed()));
         }
         return results;
     }
@@ -559,8 +577,8 @@ public class GameSessionService {
             Row r = rows.get(i);
             int rankNo = i + 1;
             int pointsEarned = PointCalculator.calc(rankNo, r.score(), playerCount);
-            // 전원이 로테이션에 참가했으므로 finished=true, starsHit은 게임④와 무관해 0.
-            results.add(new GameResultEntry(rankNo, r.userId(), r.nickname(), r.score(), 0, true, pointsEarned));
+            // 전원이 로테이션에 참가했으므로 finished=true, starsHit·completedCount는 게임④와 무관.
+            results.add(new GameResultEntry(rankNo, r.userId(), r.nickname(), r.score(), 0, true, pointsEarned, null));
         }
         return results;
     }
@@ -603,22 +621,16 @@ public class GameSessionService {
 
     /**
      * 게임별 과제(challenge) 결정 (-137).
-     * 게임①: 별자리 키(요청값 검증, 없으면 무작위). 그 외(게임④ 등 출제 페이즈가 있는
-     * 게임): 시작 시점에는 과제가 없다 — 세션 도중 updateChallenge로 채워진다(§9-2).
+     * 게임①: 90초 매치 공유 시드(숫자 문자열) — 전 클라이언트가 같은 시드로 같은 별자리
+     * 순서를 뽑아 과제 공정성을 유지한다(별자리 데이터·출제 규칙은 FE constellations/challenge.ts).
+     * 그 외(게임④ 등 출제 페이즈가 있는 게임): 시작 시점에는 과제가 없다 —
+     * 세션 도중 updateChallenge로 채워진다(§9-2).
      */
     private String resolveChallenge(long gameId, GameStartRequest request) {
         if (gameId == FINGER_STAR_GAME_ID) {
-            return resolveConstellation(request.constellationKey());
+            return String.valueOf(ThreadLocalRandom.current().nextLong(1L << 48));
         }
         return null;
-    }
-
-    private String resolveConstellation(String requested) {
-        if (requested != null && CONSTELLATION_KEYS.contains(requested)) {
-            return requested;
-        }
-        List<String> keys = List.copyOf(CONSTELLATION_KEYS);
-        return keys.get(ThreadLocalRandom.current().nextInt(keys.size()));
     }
 
     private void broadcast(String roomId, GameEventResponse event) {
