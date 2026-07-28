@@ -597,8 +597,11 @@ export interface GameResultEntry {
   rank: number
   userId: string
   nickname: string
+  /** 핑거 스타(게임①)는 매치 총점 — 평균은 score/completedCount로 계산 */
   score: number
   starsHit: number
+  /** 핑거 스타(게임①) 90초 매치 완성 개수(1순위 승부 기준). 다른 게임은 null */
+  completedCount?: number | null
   /** false = 미제출(중도 이탈·타임아웃) — 0점 처리 */
   finished: boolean
 }
@@ -615,7 +618,7 @@ export type GameEvent =
       type: 'GAME_START'
       sessionId: string
       gameId: number
-      /** 게임⑩(그림으로 말해요)은 별자리가 없어 null이 온다 */
+      /** 게임①(핑거 스타): 공유 시드(숫자 문자열) — 전원이 같은 별자리 순서를 뽑는다. 그 외 게임은 null */
       constellationKey: string | null
       /** 게임별 과제 payload(-137) — 게임④는 출제 후 POSE_SET으로 도착하므로 시작 시 null */
       challenge?: string | null
@@ -650,6 +653,8 @@ export type GameEvent =
       nickname: string
       starsLit: number
       holdProgress: number
+      /** 핑거 스타(게임①) 매치 중 완성 개수 — 다른 게임은 0/null */
+      completedCount?: number | null
     }
   | {
       type: 'PLAYER_FINISHED'
@@ -658,6 +663,8 @@ export type GameEvent =
       nickname: string
       score: number
       starsHit: number
+      /** 핑거 스타(게임①) 매치 완성 개수 — 다른 게임은 null */
+      completedCount?: number | null
     }
   | { type: 'GAME_END'; sessionId: string; results: GameResultEntry[] }
   | {

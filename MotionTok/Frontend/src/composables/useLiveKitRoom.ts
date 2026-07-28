@@ -52,6 +52,11 @@ export function useLiveKitRoom() {
   const cameraEnabled = ref(false)
   const microphoneEnabled = ref(false)
   const error = ref<string | null>(null)
+  /**
+   * 참가자별 수신 볼륨(identity → 0~1). 내 브라우저에서 재생되는 소리만 줄이는 로컬 설정이라
+   * 상대의 마이크 설정과 무관하고, 상대나 다른 참가자에게는 아무 영향이 없다.
+   */
+  const participantVolumes = ref<Record<string, number>>({})
 
   function toView(p: Participant, isLocal: boolean): ParticipantView {
     // 게임 화면(화면공유 소스) 트랙이 추가되면서 kind만으로는 카메라를 못 가리므로 source로 찾는다.
@@ -102,7 +107,13 @@ export function useLiveKitRoom() {
       .on(RoomEvent.TrackUnmuted, refresh)
       .on(RoomEvent.LocalTrackPublished, refresh)
       .on(RoomEvent.LocalTrackUnpublished, refresh)
-      .on(RoomEvent.ParticipantConnected, refresh)
+      // 나갔다 다시 들어오면 LiveKit 참가자 객체가 새로 생겨 볼륨이 기본값으로 돌아간다 — 다시 걸어준다.
+      // (마이크를 껐다 켜서 트랙만 다시 붙는 경우는 LiveKit이 알아서 유지한다)
+      .on(RoomEvent.ParticipantConnected, (p) => {
+        const volume = participantVolumes.value[p.identity]
+        if (volume !== undefined) p.setVolume(volume)
+        refresh()
+      })
       .on(RoomEvent.ParticipantDisconnected, refresh)
       .on(RoomEvent.ActiveSpeakersChanged, refresh)
       .on(RoomEvent.Disconnected, () => {
@@ -115,14 +126,24 @@ export function useLiveKitRoom() {
   /** 방 접속: 토큰 발급 → connect → 카메라/마이크 발행. 실패 시 error 세팅 후 정리. */
   async function connect(
     roomId: string,
-    opts: { cameraTrack?: MediaStreamTrack | null; microphone?: boolean } = {},
+    opts: {
+      cameraTrack?: MediaStreamTrack | null
+      microphone?: boolean
+      /** 장치 설정에서 고른 마이크 — 카메라와 달리 마이크 트랙은 LiveKit이 직접 잡으므로 여기로 넘긴다. */
+      microphoneDeviceId?: string | null
+    } = {},
   ): Promise<boolean> {
-    const { cameraTrack = null, microphone = true } = opts
+    const { cameraTrack = null, microphone = true, microphoneDeviceId = null } = opts
     await disconnect()
     error.value = null
     try {
       const { url, token } = await sfuApi.videoToken(roomId)
-      const r = new Room({ adaptiveStream: true, dynacast: true })
+      // audioCaptureDefaults로 넣어야 방 안에서 마이크를 껐다 켤 때 새로 잡는 트랙도 같은 장치를 쓴다.
+      const r = new Room({
+        adaptiveStream: true,
+        dynacast: true,
+        audioCaptureDefaults: microphoneDeviceId ? { deviceId: microphoneDeviceId } : undefined,
+      })
       room = r
       bindEvents(r)
       await r.connect(url, token)
@@ -290,6 +311,15 @@ export function useLiveKitRoom() {
     refresh()
   }
 
+  /**
+   * 참가자 한 명의 수신 볼륨을 조절한다(0~1). 상대가 마이크를 껐다 켜서 트랙이 새로 붙어도
+   * LiveKit이 참가자에 기억해 둔 값을 다시 적용한다.
+   */
+  function setParticipantVolume(identity: string, volume: number) {
+    participantVolumes.value = { ...participantVolumes.value, [identity]: volume }
+    room?.remoteParticipants.get(identity)?.setVolume(volume)
+  }
+
   onScopeDispose(() => void disconnect())
 
   return {
@@ -298,11 +328,13 @@ export function useLiveKitRoom() {
     cameraEnabled: readonly(cameraEnabled),
     microphoneEnabled: readonly(microphoneEnabled),
     error: readonly(error),
+    participantVolumes: readonly(participantVolumes),
     connect,
     disconnect,
     publishCameraTrack,
     toggleCamera,
     toggleMicrophone,
+    setParticipantVolume,
     publishGameScreen,
     setGameScreenMuted,
     unpublishGameScreen,
