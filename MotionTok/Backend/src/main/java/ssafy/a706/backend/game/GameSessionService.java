@@ -172,10 +172,13 @@ public class GameSessionService {
             difficulty = request.difficulty() != null
                     && BODY_FIT_APPROACH_MILLIS.containsKey(request.difficulty())
                     ? request.difficulty() : "easy";
-            setterOrder = liveRoomRepository.findMembers(roomId).stream()
-                    .sorted(Comparator.comparingLong(LiveRoomMemberValue::joinedAt))
+            // 출제 순서는 무작위(게임⑩ turnOrder와 같은 방식). 이전에는 참가 순(joinedAt)이라
+            // 방을 만든 사람이 매 판 1번 출제자로 고정됐다.
+            List<String> shuffled = new ArrayList<>(liveRoomRepository.findMembers(roomId).stream()
                     .map(LiveRoomMemberValue::userId)
-                    .toList();
+                    .toList());
+            Collections.shuffle(shuffled);
+            setterOrder = List.copyOf(shuffled);
             // 게임④(-9): 출제자는 관전하는 룰 — 1인 방이면 플레이어가 0명이라 라운드가
             // 성립하지 않는다. FE가 혼자일 땐 로컬 연습 모드로 돌리므로 여기 도달은 레이스뿐.
             if (setterOrder.size() < 2) {

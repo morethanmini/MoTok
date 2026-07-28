@@ -101,7 +101,7 @@ class BodyFitRotationFlowTest {
     }
 
     @Test
-    void 세명이_세라운드를_끝까지_돌면_출제자가_1_2_3_순으로_바뀌고_마지막에_GAME_END가_온다() {
+    void 세명이_세라운드를_끝까지_돌면_전원이_한_번씩_출제하고_마지막에_GAME_END가_온다() {
         givenRoom(3);
         service.start(ROOM_ID, new GameStartRequest(4L, null, "easy"), new MemberPrincipal(1L, "P1"));
 
@@ -115,7 +115,9 @@ class BodyFitRotationFlowTest {
                 e.type(), e.setterUserId(), e.roundNo(), e.totalRounds(), e.startAt(), e.endAt()));
 
         assertThat(starts()).hasSize(3);
-        assertThat(starts().stream().map(GameEventResponse::setterUserId)).containsExactly("1", "2", "3");
+        // 순서는 셔플이라 고정할 수 없다 — 전원이 정확히 한 번씩 출제하는 것이 불변식이다
+        assertThat(starts().stream().map(GameEventResponse::setterUserId))
+                .containsExactlyInAnyOrder("1", "2", "3");
         assertThat(starts().stream().map(GameEventResponse::roundNo)).containsExactly(1, 2, 3);
         // 라운드2·3도 출제 페이즈(5s)가 온전히 남아있어야 한다 — startAt 이후 5s가 출제 창이다
         starts().forEach(e -> assertThat(e.endAt() - e.startAt())
@@ -141,8 +143,26 @@ class BodyFitRotationFlowTest {
         starts().forEach(e -> System.out.printf("roundNo=%s setter=%s%n", e.roundNo(), e.setterUserId()));
 
         assertThat(starts().stream().map(GameEventResponse::setterUserId))
-                .containsExactly("1", "2", "3", "4");
+                .containsExactlyInAnyOrder("1", "2", "3", "4");
         assertThat(events.get(events.size() - 1).type()).isEqualTo(GameEventResponse.EventType.GAME_END);
+    }
+
+    /**
+     * 출제 순서는 셔플이다 — 참가 순(joinedAt)으로 되돌아가면 방을 만든 사람이 매 판 1번
+     * 출제자로 고정된다. containsExactlyInAnyOrder만으론 그 회귀를 못 잡으므로 따로 본다.
+     */
+    @Test
+    void 첫_출제자가_매번_같은_사람이_아니다() {
+        givenRoom(4);
+        Set<String> firstSetters = new HashSet<>();
+        for (int i = 0; i < 20; i++) {
+            sessions.session = null; // 진행 중 세션 가드 우회 — 매 번 새로 시작
+            events.clear();
+            service.start(ROOM_ID, new GameStartRequest(4L, null, "easy"), new MemberPrincipal(1L, "P1"));
+            firstSetters.add(starts().get(0).setterUserId());
+        }
+        // 4명 중 20회 모두 같은 사람이 뽑힐 확률은 (1/4)^19 — 사실상 0
+        assertThat(firstSetters).hasSizeGreaterThan(1);
     }
 
     /** 라운드 사이 상태(세션·점수·누적·가드)를 실제 Redis처럼 들고 있는 fake. */
