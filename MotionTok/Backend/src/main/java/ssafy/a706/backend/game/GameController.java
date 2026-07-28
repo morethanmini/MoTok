@@ -14,6 +14,7 @@ import ssafy.a706.backend.game.dto.GameDrawResultRequest;
 import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameProgressRequest;
 import ssafy.a706.backend.game.dto.GameStartRequest;
+import ssafy.a706.backend.game.dto.GameTurnSkipRequest;
 import ssafy.a706.backend.game.dto.PoseSubmitRequest;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
@@ -58,6 +59,11 @@ public class GameController {
     @MessageMapping("/rooms/{roomId}/game/draw")
     public void draw(@DestinationVariable String roomId, GameDrawRequest request, Principal principal) {
         gameSessionService.draw(roomId, request, extractSender(principal));
+    }
+
+    @MessageMapping("/rooms/{roomId}/game/turn-skip")
+    public void turnSkip(@DestinationVariable String roomId, GameTurnSkipRequest request, Principal principal) {
+        gameSessionService.turnSkip(roomId, request, extractSender(principal));
     }
 
     @MessageMapping("/rooms/{roomId}/game/draw-result")
