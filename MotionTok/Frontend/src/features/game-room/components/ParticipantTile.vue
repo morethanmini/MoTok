@@ -17,9 +17,11 @@ const props = withDefaults(
     /** 로컬 프리뷰 등 좌우 반전 표시 */
     mirror?: boolean
     compact?: boolean
+    canKick?: boolean
   }>(),
-  { view: null, host: false, playAudio: false, mirror: false, compact: false },
+  { view: null, host: false, playAudio: false, mirror: false, compact: false, canKick: false },
 )
+const emit = defineEmits<{ kick: [] }>()
 
 const occupied = computed(() => !!props.view)
 const hasVideo = computed(() => !!props.view?.cameraOn && !!props.view?.videoTrack)
@@ -108,6 +110,7 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
           <path v-if="!view?.micOn" d="M4 4l16 16" stroke-width="3.4" />
         </svg>
       </span>
+      <button v-if="canKick" class="kick-btn" title="방에서 내보내기" @click.stop="emit('kick')">강퇴</button>
 
       <!-- 게임 송출 중 게임 화면 ↔ 카메라 전환(뷰어별) — 아이콘은 전환될 대상을 보여준다 -->
       <button
@@ -207,6 +210,19 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
   color: #5b8d45;
 }
 .mic.muted { color: #d45c63; }
+.kick-btn {
+  position: absolute;
+  right: 8px;
+  top: 42px;
+  padding: 4px 6px;
+  border: 2px solid #a94d52;
+  border-radius: 5px;
+  background: #ffe2e3;
+  color: #a94d52;
+  font-family: inherit;
+  font-size: 8px;
+  cursor: pointer;
+}
 
 .crown { position: absolute; top: 7px; right: 8px; color: #f5c518; pointer-events: none; }
 
