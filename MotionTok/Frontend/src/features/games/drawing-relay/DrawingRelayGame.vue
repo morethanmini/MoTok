@@ -11,7 +11,8 @@
  * 두 손은 각자 상태(스무딩·히스테리시스·진행 중 획)를 갖고 동시에 동작할 수 있다.
  * 펜 끝은 엄지·검지 중점을 써 손을 펴는 순간의 이동을 줄이고, 전환 프레임 동안
  * 그려지는 꼬리는 획을 점 목록으로 보관했다가 펜 업 시점에 소급 삭제한다(trimStrokeTail).
- * 카메라가 없으면 마우스/터치로도 그릴 수 있다(✏️/🧽 토글, 로컬 테스트 폴백).
+ * 입력은 손 인식뿐 — 카메라 영상이 있어야 시작할 수 있다(마우스 폴백은 로컬 테스트
+ * 종료 후 제거).
  *
  * 모드 두 가지:
  * - 솔로(session=null 또는 turnOrder 없음): 혼자서 n명 몫의 차례를 이어 그린다(로컬 타이머).
@@ -113,7 +114,6 @@ function resetPaper() {
   strokes = []
   penHand.stroke = null
   eraseHand.stroke = null
-  mouse.stroke = null
   clearPaper()
 }
 
@@ -162,10 +162,6 @@ const penDetected = ref(false)
 const penDrawing = ref(false)
 const eraseDetected = ref(false)
 const erasing = ref(false)
-/** 마우스 폴백용 도구 (✏️/🧽 토글) — 손 제스처에는 영향 없다 */
-const mouseTool = ref<Tool>('pen')
-const mouseDrawing = ref(false)
-const mouseOver = ref(false)
 /** 새 비디오 프레임이 한 번이라도 들어왔는지 — 아니면 "마우스로 그리기" 안내 */
 const gotFrame = ref(false)
 
@@ -196,7 +192,6 @@ function freshHand(): HandState {
 }
 const penHand = freshHand()
 const eraseHand = freshHand()
-const mouse: StrokeSource & { x: number; y: number } = { x: W / 2, y: H / 2, stroke: null }
 let handoverDeadline = 0
 let turnDeadline = 0
 
@@ -591,7 +586,6 @@ function endStroke(src: StrokeSource, trimTail = false) {
 function endAllStrokes() {
   endStroke(penHand)
   endStroke(eraseHand)
-  endStroke(mouse)
 }
 
 /** 획 목록으로 도화지 재구성 — 꼬리 삭제 직후에만 호출된다(매 프레임 아님) */
@@ -679,7 +673,7 @@ function updatePenHand(lm: NormalizedPoint[] | null) {
 
   // 주먹은 엄지·검지 끝도 가까워 핀치로 읽히므로, 펜 손이 주먹인 동안은 펜을 잠근다
   const down = !penHand.fist && applyPinchHysteresis(penHand.active, pinchRatio(lm))
-  const canAct = phase.value === 'drawing' && !mouseDrawing.value && inputAllowed()
+  const canAct = phase.value === 'drawing' && inputAllowed()
   if (down && canAct) {
     drawTo(penHand, penHand.x, penHand.y, 'pen')
   } else {
@@ -702,61 +696,11 @@ function updateEraseHand(lm: NormalizedPoint[] | null) {
   track(eraseHand, (1 - center.x) * W, center.y * H)
   updateFist(eraseHand, lm)
 
-  const canAct = phase.value === 'drawing' && !mouseDrawing.value && inputAllowed()
+  const canAct = phase.value === 'drawing' && inputAllowed()
   if (eraseHand.fist && canAct) drawTo(eraseHand, eraseHand.x, eraseHand.y, 'erase')
   else endStroke(eraseHand)
   eraseHand.active = eraseHand.fist
   erasing.value = eraseHand.fist && canAct
-}
-
-// ── 마우스/터치 폴백 (카메라 없이 로컬 테스트) ──
-/** 클라이언트 좌표 → 캔버스 논리 좌표 (object-fit: contain 레터박스 보정) */
-function canvasPoint(e: PointerEvent): { x: number; y: number } | null {
-  const c = canvasRef.value
-  if (!c) return null
-  const rect = c.getBoundingClientRect()
-  const scale = Math.min(rect.width / W, rect.height / H)
-  if (scale <= 0) return null
-  const x = (e.clientX - rect.left - (rect.width - W * scale) / 2) / scale
-  const y = (e.clientY - rect.top - (rect.height - H * scale) / 2) / scale
-  if (x < 0 || y < 0 || x > W || y > H) return null
-  return { x, y }
-}
-
-function onPointerDown(e: PointerEvent) {
-  if (phase.value !== 'drawing' || !inputAllowed()) return
-  const p = canvasPoint(e)
-  if (!p) return
-  try {
-    canvasRef.value?.setPointerCapture(e.pointerId)
-  } catch {
-    /* 활성 포인터가 없으면(합성 이벤트 등) 캡처 없이 진행 */
-  }
-  mouseDrawing.value = true
-  mouse.x = p.x
-  mouse.y = p.y
-  endStroke(mouse)
-  drawTo(mouse, p.x, p.y, mouseTool.value)
-}
-function onPointerMove(e: PointerEvent) {
-  if (phase.value !== 'drawing' || !inputAllowed()) return
-  const p = canvasPoint(e)
-  if (!p) {
-    mouseOver.value = false
-    return
-  }
-  mouseOver.value = true
-  mouse.x = p.x
-  mouse.y = p.y
-  if (mouseDrawing.value) drawTo(mouse, p.x, p.y, mouseTool.value)
-}
-function onPointerUp() {
-  if (!mouseDrawing.value) return
-  mouseDrawing.value = false
-  endStroke(mouse) // 마우스는 놓는 즉시 멈추므로 꼬리 삭제가 필요 없다
-}
-function onPointerLeave() {
-  mouseOver.value = false
 }
 
 // ── 렌더링 (도화지 + 펜/지우개 커서) ──────────
@@ -771,11 +715,6 @@ function render() {
   if (eraseDetected.value) drawEraserCursor(ctx, eraseHand.x, eraseHand.y, erasing.value)
   // 펜 손 커서
   if (penDetected.value) drawPenCursor(ctx, penHand.x, penHand.y, penDrawing.value)
-  // 손이 안 보일 때는 마우스 커서(드래그 중·호버 미리보기)
-  if (!penDetected.value && !eraseDetected.value && (mouseDrawing.value || mouseOver.value)) {
-    if (mouseTool.value === 'erase') drawEraserCursor(ctx, mouse.x, mouse.y, mouseDrawing.value)
-    else drawPenCursor(ctx, mouse.x, mouse.y, mouseDrawing.value)
-  }
 }
 
 /** 지우개 커서 — 지워질 반경을 그대로 보여준다 */
@@ -833,17 +772,7 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
 
 <template>
   <div class="dr-shell">
-    <canvas
-      ref="canvasRef"
-      class="dr-canvas"
-      :width="W"
-      :height="H"
-      @pointerdown="onPointerDown"
-      @pointermove="onPointerMove"
-      @pointerup="onPointerUp"
-      @pointercancel="onPointerUp"
-      @pointerleave="onPointerLeave"
-    />
+    <canvas ref="canvasRef" class="dr-canvas" :width="W" :height="H" />
 
     <!-- 상단 바: 주제어 · 화가 순번 · 턴 타이머 -->
     <div class="dr-topbar">
@@ -870,18 +799,17 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
       <span :class="{ on: erasing }">
         🧽 지우개·{{ eraseHandLabel }} {{ eraseDetected ? (erasing ? '지우는 중' : '대기') : '—' }}
       </span>
-      <span v-if="!gotFrame" class="dr-hint">카메라가 없어도 마우스로 그릴 수 있어요</span>
-      <!-- 마우스 도구·차례 넘기기 — 멀티 관전자에게는 숨김(입력 불가). 멀티 차례 넘기기는
-           TURN_SKIPPED 릴레이로 전원 스케줄을 당긴다(마지막 화가면 곧장 채점으로) -->
-      <template v-if="phase === 'drawing' && (!isMultiplayer || myTurn)">
-        <span class="dr-tools" :title="`마우스 도구 (손: ${penHandLabel} 핀치=펜 · ${eraseHandLabel} 주먹=지우개)`">
-          <button class="dr-tool" :class="{ on: mouseTool === 'pen' }" @click="mouseTool = 'pen'">✏️</button>
-          <button class="dr-tool" :class="{ on: mouseTool === 'erase' }" @click="mouseTool = 'erase'">🧽</button>
-        </span>
-        <button class="dr-pass" :disabled="skipRequested" @click="passTurn">
-          {{ turnIndex + 1 < playerCount ? '차례 마치기 ▶' : '완성! 채점하기 ▶' }}
-        </button>
-      </template>
+      <span v-if="!gotFrame" class="dr-hint">카메라 영상을 기다리는 중…</span>
+      <!-- 차례 넘기기 — 멀티 관전자에게는 숨김. 멀티는 TURN_SKIPPED 릴레이로
+           전원 스케줄을 당긴다(마지막 화가면 곧장 채점으로) -->
+      <button
+        v-if="phase === 'drawing' && (!isMultiplayer || myTurn)"
+        class="dr-pass"
+        :disabled="skipRequested"
+        @click="passTurn"
+      >
+        {{ turnIndex + 1 < playerCount ? '차례 마치기 ▶' : '완성! 채점하기 ▶' }}
+      </button>
     </div>
 
     <!-- 대기 화면: 규칙 + 인원 선택(솔로 로컬 테스트) -->
@@ -910,10 +838,10 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
         <input v-model="swapHands" type="checkbox" />
         왼손잡이 모드 — 왼손 펜 · 오른손 지우개
       </label>
-      <button class="dr-start" @click="startGame">🖌 그리기 시작</button>
-      <p v-if="hand.error.value" class="dr-warn">{{ hand.error.value }} — 마우스로 그릴 수 있어요</p>
+      <button class="dr-start" :disabled="!gotFrame" @click="startGame">🖌 그리기 시작</button>
+      <p v-if="hand.error.value" class="dr-warn">{{ hand.error.value }}</p>
       <p v-else-if="hand.isLoading.value" class="dr-warn">손 인식 모델 로딩 중…</p>
-      <p v-else-if="!gotFrame" class="dr-warn">카메라 대기 중 — 마우스로도 그릴 수 있어요</p>
+      <p v-else-if="!gotFrame" class="dr-warn">카메라 영상을 기다리는 중… (카메라가 켜져 있어야 해요)</p>
     </div>
 
     <!-- 차례 교대 -->
@@ -1004,8 +932,6 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
   width: 100%;
   height: 100%;
   object-fit: contain;
-  cursor: crosshair;
-  touch-action: none;
 }
 
 .dr-topbar {
@@ -1052,13 +978,8 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
 }
 .dr-bottombar .on { color: #3f7d2f; }
 .dr-hint { color: #b0452b; }
-.dr-tools { margin-left: auto; display: flex; gap: 4px; }
-.dr-tool {
-  width: 28px; height: 28px; font-size: 12px; cursor: pointer;
-  background: rgba(43, 43, 51, 0.08); border: 2px solid rgba(43, 43, 51, 0.2); border-radius: 8px;
-}
-.dr-tool.on { background: #ffd23f; border-color: #b0452b; }
 .dr-pass {
+  margin-left: auto;
   padding: 8px 14px; font-family: inherit; font-size: 9px; font-weight: 700; cursor: pointer;
   background: #2b2b33; color: #f6f1e5; border: none; border-radius: 10px;
 }
@@ -1098,6 +1019,7 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
   padding: 12px 20px; font-family: inherit; font-size: 10px; font-weight: 700; cursor: pointer;
   background: #e0642f; color: #fff4e8; border: none; border-radius: 12px;
 }
+.dr-start:disabled { opacity: 0.45; cursor: not-allowed; }
 .dr-quit {
   padding: 12px 20px; font-family: inherit; font-size: 10px; cursor: pointer;
   background: transparent; color: #f6f1e5; border: 2px solid rgba(255, 255, 255, 0.3); border-radius: 12px;
