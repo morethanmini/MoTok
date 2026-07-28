@@ -1,5 +1,4 @@
 <script setup lang="ts">
-/** 게임 목록/카탈로그 + 상세(규칙·조작) 모달 + 싱글 플레이 진입 (API §5 /games, /games/{id}). */
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
@@ -7,226 +6,116 @@ import { gamesApi, roomsApi, ApiError, type Game, type GameDetail } from '@/api'
 import { useAsyncData } from '@/composables/useAsyncData'
 import { useSessionStore } from '@/stores/session'
 import { useToast } from '@/composables/useToast'
-import AppPage from '@/components/common/AppPage.vue'
+import AppHeader from '@/components/common/AppHeader.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
+import heroFishingCat from '@/assets/games-catalog/hero-fishing-cat-transparent.png'
+import lobbyRoomListBoard from '@/assets/lobby/lobby-room-list-board.png'
+import lobbyGardenGrassTile from '@/assets/lobby/lobby-garden-grass-tile.png'
 
 const router = useRouter()
 const session = useSessionStore()
 const { message: toast, flash } = useToast()
 
-const EMOJI: Record<string, string> = {
-  '핑거 스타': '✨', '리듬 펀치': '🥊', '모션 피싱': '🎣',
-  '그림으로 말해요': '🎨', '포즈 매치': '🤸', '버블 팝': '🫧',
-  '캐치캐치리듬': '🐾',
+const GAME_ART: Record<number, string> = {
+  1: '/assets/intro/constellation.png',
+  2: '/assets/intro/fishing-rod.png',
+  3: '/assets/intro/tambourine.png',
+  5: '/assets/intro/person.png',
+  6: '/assets/intro/sketchbook.png',
 }
-const ART: Record<string, string> = {
-  '핑거 스타': '/assets/intro/constellation.png',
-  '리듬 펀치': '/assets/intro/tambourine.png',
-  '모션 피싱': '/assets/intro/fishing-rod.png',
-  '그림으로 말해요': '/assets/intro/sketchbook.png',
-  '포즈 매치': '/assets/intro/person.png',
-}
+const GAME_TONE = ['sky', 'mint', 'peach', 'lilac', 'butter']
 const MOCK_GAMES: Game[] = [
-  { id: 1, name: '핑거 스타', description: '손가락으로 별자리 만들기', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '손동작', thumbnailUrl: '', playable: true },
-  { id: 2, name: '모션 피싱', description: '온몸으로 즐기는 낚시', mode: 'SOLO', minPlayers: 1, maxPlayers: 4, supportsBot: false, category: '전신', thumbnailUrl: '', playable: true },
-  { id: 3, name: '리듬 펀치', description: '비트에 맞춰 펀치!', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '리듬', thumbnailUrl: '', playable: true },
-  { id: 5, name: '포즈 매치', description: '화면 속 포즈를 따라해요', mode: 'VERSUS', minPlayers: 2, maxPlayers: 8, supportsBot: true, category: '전신', thumbnailUrl: '', playable: false },
-  { id: 6, name: '그림으로 말해요', description: '그림 이어그리기 · AI가 맞혀요', mode: 'COOP', minPlayers: 3, maxPlayers: 8, supportsBot: false, category: '파티', thumbnailUrl: '', playable: true },
+  { id: 1, name: '핑거 스타', description: '손끝으로 별자리를 완성해요', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '손동작', thumbnailUrl: '', playable: true },
+  { id: 2, name: '모션 낚시', description: '온몸으로 즐기는 낚시 게임', mode: 'SOLO', minPlayers: 1, maxPlayers: 4, supportsBot: false, category: '전신', thumbnailUrl: '', playable: true },
+  { id: 3, name: '리듬 터치', description: '비트에 맞춰 움직여요', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '리듬', thumbnailUrl: '', playable: true },
+  { id: 5, name: '자세 매치', description: '화면 속 자세를 따라 해요', mode: 'VERSUS', minPlayers: 2, maxPlayers: 8, supportsBot: true, category: '전신', thumbnailUrl: '', playable: false },
+  { id: 6, name: '그림으로 말해요', description: '그림 릴레이로 마음을 맞춰요', mode: 'COOP', minPlayers: 3, maxPlayers: 8, supportsBot: false, category: '파티', thumbnailUrl: '', playable: true },
 ]
-
 const { data: games } = useAsyncData(() => gamesApi.list(), MOCK_GAMES)
-
-// 게스트는 1인 플레이 가능한 게임만 노출 (minPlayers === 1)
-const visibleGames = computed(() =>
-  session.isGuest ? games.value.filter((g) => g.minPlayers === 1) : games.value,
-)
-
+const visibleGames = computed(() => session.isGuest ? games.value.filter((g) => g.minPlayers === 1) : games.value)
 const detail = ref<GameDetail | null>(null)
 const detailOpen = ref(false)
 const selected = ref<Game | null>(null)
-/**
- * 이 화면의 플레이 버튼은 "혼자 방을 만들어 바로 시작"이라, 여러 명이 있어야 진행되는 게임
- * (그림으로 말해요 같은 이어그리기)은 설명만 보여주고 방을 만들지 않는다 — 로비에서 사람을
- * 모아 시작해야 한다.
- */
 const soloPlayable = computed(() => !!selected.value?.playable && selected.value.minPlayers <= 1)
-
-async function openDetail(g: Game) {
-  selected.value = g
-  detailOpen.value = true
-  detail.value = { id: g.id, name: g.name, rules: '규칙을 불러오는 중…', controls: '' }
-  try {
-    detail.value = await gamesApi.detail(g.id)
-  } catch {
-    // 상세 조회 실패(네트워크 오류 등) — 서버 에러 문구를 규칙 자리에 그대로 내보내지 않고 로컬 소개로 폴백
-    detail.value = {
-      id: g.id,
-      name: g.name,
-      rules: g.description || '카메라 앞에서 즐기는 모션 게임이에요.',
-      controls: '카메라 앞에서 손·몸을 움직여 플레이합니다.',
-    }
-  }
-}
-
-// ── 플레이 — 카탈로그에서 바로 싱글 플레이 시작 ─────────────────
-// 게스트는 시작 시 서버가 만들어 준 1인방으로 입장하고, 회원은 비공개 방을 만들어 혼자 입장한다.
-// (maxPlayers 최소값이 2라 2로 두지만, 임의 비밀번호 비공개방이라 초대코드를 공유하지 않는 한 혼자 플레이)
 const starting = ref(false)
 
+function artFor(game: Game) { return game.thumbnailUrl || GAME_ART[game.id] }
+function toneFor(game: Game) { return GAME_TONE[game.id % GAME_TONE.length] }
+async function openDetail(game: Game) {
+  selected.value = game
+  detailOpen.value = true
+  detail.value = { id: game.id, name: game.name, rules: '게임 규칙을 불러오는 중이에요.', controls: '' }
+  try { detail.value = await gamesApi.detail(game.id) }
+  catch {
+    detail.value = { id: game.id, name: game.name, rules: game.description || '카메라 앞에서 즐기는 모션 게임이에요.', controls: '카메라 앞에서 안내에 맞춰 몸을 움직여 주세요.' }
+  }
+}
 async function play() {
-  const g = selected.value
-  if (!soloPlayable.value || !g || starting.value) return
+  const game = selected.value
+  if (!soloPlayable.value || !game || starting.value) return
   if (session.isGuest) {
-    if (!session.guestRoomId) {
-      flash('게스트 세션 정보가 없어요. 처음 화면에서 다시 시작해 주세요.')
-      return
-    }
-    goDevice(g, session.guestRoomId)
-    return
+    if (!session.guestRoomId) return flash('게스트 게임 정보가 없어요. 처음 화면에서 다시 시작해 주세요.')
+    return goDevice(game, session.guestRoomId)
   }
   starting.value = true
   try {
-    const res = await roomsApi.create({
-      title: `${session.profile?.nickname ?? '나'}의 싱글 플레이`.slice(0, 30),
-      visibility: 'PRIVATE',
-      maxPlayers: 2,
+    const result = await roomsApi.create({
+      title: `${session.profile?.nickname ?? '나'}의 1인 플레이`.slice(0, 30),
+      visibility: 'PRIVATE', maxPlayers: 2,
       password: String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0'),
     })
-    goDevice(g, res.roomId)
-  } catch (e) {
-    flash(e instanceof ApiError ? e.message : '방을 만들지 못했어요. 잠시 후 다시 시도해 주세요.')
-  } finally {
-    starting.value = false
-  }
+    goDevice(game, result.roomId)
+  } catch (error) { flash(error instanceof ApiError ? error.message : '방을 만들지 못했어요. 다시 시도해 주세요.') }
+  finally { starting.value = false }
 }
-
-function goDevice(g: Game, roomId: string) {
+function goDevice(game: Game, roomId: string) {
   detailOpen.value = false
-  router.push({ name: RouteName.DeviceSetup, query: { game: g.name, room: roomId } })
+  router.push({ name: RouteName.DeviceSetup, query: { game: game.name, room: roomId } })
 }
 </script>
 
 <template>
-  <AppPage title="게임 목록" subtitle="플레이할 게임을 골라보세요">
-    <template #hero>
-      <section class="catalog-hero">
-        <div>
-          <span class="px-kicker">🎮 TODAY'S PARTY</span>
-          <h2>오늘은 어떤 움직임으로 놀까요?</h2>
-          <p>손끝부터 온몸까지, 카메라 앞에서 바로 시작하는 모션 게임이에요.</p>
+  <div class="catalog-page px-paper-bg">
+    <AppHeader />
+    <main class="catalog-shell">
+      <section class="catalog-intro">
+        <div class="intro-copy">
+          <span class="eyebrow">SOLO PLAYGROUND</span>
+          <h1>오늘은 어떤 움직임으로 놀까요?</h1>
+          <p>카메라 앞에서 바로 시작할 수 있는 모션 게임을 골라 보세요.</p>
         </div>
-        <img src="/assets/intro/person.png" alt="몸을 움직이는 캐릭터" />
+        <div class="intro-art" aria-hidden="true"><img :src="heroFishingCat" alt="" /><span class="art-grass" :style="{ backgroundImage: `url(${lobbyGardenGrassTile})` }" /></div>
       </section>
-    </template>
-    <div v-if="session.isGuest" class="guest-note">
-      👋 게스트는 <b>1인 게임</b>만 플레이할 수 있어요. 멀티플레이는 로그인 후 이용하세요.
-    </div>
 
-    <div class="grid">
-      <article
-        v-for="g in visibleGames"
-        :key="g.id"
-        class="game"
-        :class="{ dim: !g.playable }"
-        @click="openDetail(g)"
-      >
-        <div class="thumb" :class="`tone-${(g.id % 5) + 1}`">
-          <span class="spark">✦</span>
-          <img v-if="ART[g.name]" :src="ART[g.name]" :alt="g.name" />
-          <span v-else class="fallback">{{ EMOJI[g.name] ?? '🎮' }}</span>
-          <span class="tag">{{ g.playable ? g.category : 'SOON' }}</span>
-          <span class="play">▶</span>
-        </div>
-        <div class="copy">
-          <strong>{{ g.name }}</strong>
-          <small>{{ g.description }}</small>
-          <div class="meta">{{ g.minPlayers }}~{{ g.maxPlayers }}인 · {{ g.mode }}<template v-if="g.supportsBot"> · 봇</template></div>
-        </div>
-      </article>
-    </div>
+      <div v-if="session.isGuest" class="guest-note"><strong>게스트 안내</strong><span>게스트는 1인 플레이 게임만 이용할 수 있어요.</span></div>
 
-    <PixelModal v-if="detailOpen && detail" @close="detailOpen = false">
-      <h3>{{ detail.name }}</h3>
-      <p class="sec-label">규칙</p>
-      <p class="sec">{{ detail.rules }}</p>
-      <template v-if="detail.controls">
-        <p class="sec-label">조작 방법</p>
-        <p class="sec">{{ detail.controls }}</p>
-      </template>
-      <!-- 여러 명이 있어야 하는 게임은 여기서 방을 만들지 않는다 — 안내만 -->
-      <p v-if="selected?.playable && !soloPlayable" class="multi-only">
-        👥 {{ selected.minPlayers }}명부터 즐길 수 있는 게임이에요. 로비에서 방을 만들고 친구를
-        모아 시작해 주세요.
-      </p>
-      <div class="modal-actions">
-        <PixelButton block @click="detailOpen = false">닫기</PixelButton>
-        <PixelButton v-if="soloPlayable" variant="mint" block :disabled="starting" @click="play">
-          ▶ 플레이
-        </PixelButton>
-      </div>
+      <section class="game-section" aria-labelledby="games-title">
+        <header class="section-head"><div><span>CHOOSE A GAME</span><h2 id="games-title" :style="{ backgroundImage: `url(${lobbyRoomListBoard})` }"><i>게임 목록</i></h2></div></header>
+        <div class="game-grid">
+          <article v-for="game in visibleGames" :key="game.id" class="game-card" :class="{ unavailable: !game.playable }" tabindex="0" @click="openDetail(game)" @keydown.enter="openDetail(game)">
+            <div class="game-visual" :class="`tone-${toneFor(game)}`">
+              <img v-if="artFor(game)" :src="artFor(game)" alt="" />
+              <button type="button" class="detail-button" :aria-label="`${game.name} 상세 보기`" @click.stop="openDetail(game)"><span>자세히</span><b>›</b></button>
+            </div>
+            <div class="game-copy"><div class="game-title-row"><h3>{{ game.name }}</h3><span>{{ game.minPlayers }}~{{ game.maxPlayers }}인</span></div><p>{{ game.description }}</p><div class="game-meta"><span>{{ game.mode }}</span><span v-if="game.supportsBot">BOT 가능</span><span v-if="!game.playable">준비 중</span></div></div>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <PixelModal v-if="detailOpen && detail" variant="lobby" @close="detailOpen = false">
+      <section class="game-modal"><span class="modal-eyebrow">GAME GUIDE</span><h3>{{ detail.name }}</h3><div class="guide-block"><strong>게임 규칙</strong><p>{{ detail.rules }}</p></div><div v-if="detail.controls" class="guide-block"><strong>조작 방법</strong><p>{{ detail.controls }}</p></div><p v-if="selected?.playable && !soloPlayable" class="multi-notice">이 게임은 {{ selected.minPlayers }}명 이상이 함께 즐길 수 있어요. 로비에서 방을 만들어 친구를 초대해 주세요.</p><div class="modal-actions"><PixelButton block @click="detailOpen = false">닫기</PixelButton><PixelButton v-if="soloPlayable" variant="primary" block :disabled="starting" @click="play">혼자 플레이</PixelButton></div></section>
     </PixelModal>
-
     <PixelToast :message="toast" />
-  </AppPage>
+  </div>
 </template>
 
 <style scoped>
-.catalog-hero {
-  height: 150px;
-  margin-bottom: 18px;
-  padding: 22px 28px;
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-  border: var(--border);
-  border-radius: 21px 21px 15px 21px;
-  background: linear-gradient(120deg, #dff5ed 0 58%, #ffe3d5 58%);
-  box-shadow: var(--shadow-lg);
-}
-.catalog-hero h2 { margin: 12px 0 6px; font-size: 19px; }
-.catalog-hero p { margin: 0; color: var(--c-muted); font-size: 10px; }
-.catalog-hero img { width: 190px; margin-left: auto; transform: translateY(18px) rotate(3deg); }
-.guest-note {
-  margin-bottom: 16px;
-  padding: 11px 14px;
-  border: 2px solid var(--c-ink);
-  border-radius: 12px;
-  background: #fff1d2;
-  font-size: 11px;
-}
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 17px; }
-.game { border: var(--border); border-radius: 17px 17px 13px 17px; background: #fff; box-shadow: var(--shadow-md); overflow: hidden; cursor: pointer; transition: var(--t-fast); }
-.game:hover { transform: translate(-2px, -2px); box-shadow: var(--shadow-lg); }
-.game.dim { opacity: 0.72; }
-.thumb { height: 146px; position: relative; display: grid; place-items: center; overflow: hidden; border-bottom: var(--border); background: var(--tone-2); }
-.thumb::after { content: ''; position: absolute; inset: auto 0 0; height: 34%; background: linear-gradient(transparent, rgba(56,38,61,.12)); }
-.thumb img { width: 75%; height: 86%; object-fit: contain; position: relative; z-index: 1; transition: transform .18s steps(3); }
-.game:hover .thumb img { transform: translateY(-5px) rotate(-2deg) scale(1.05); }
-.fallback { font-size: 50px; }
-.tone-1 { background: var(--tone-1); } .tone-2 { background: var(--tone-2); }
-.tone-3 { background: var(--tone-3); } .tone-4 { background: var(--tone-4); }
-.tone-5 { background: var(--tone-5); }
-.spark { position: absolute; right: 12px; top: 10px; color: var(--c-yellow); font-size: 21px; text-shadow: 2px 2px 0 var(--c-ink); animation: px-twinkle 1.8s steps(2) infinite; }
-.tag { position: absolute; top: 8px; left: 8px; padding: 4px 7px; background: #fff; border: 2px solid var(--c-ink); border-radius: 8px; font-size: 8px; font-weight: 700; }
-.play { position: absolute; z-index: 2; right: 10px; bottom: 9px; width: 31px; height: 31px; display: grid; place-items: center; border: 2px solid var(--c-ink); border-radius: 9px; background: var(--c-yellow); box-shadow: 2px 2px 0 var(--c-ink); font-size: 10px; }
-.copy { padding: 14px 14px 16px; }
-.copy strong { display: block; font-size: 13px; }
-.copy small { display: block; color: var(--c-muted); font-size: 9px; margin-top: 5px; }
-.meta { margin-top: 7px; font-size: 8px; color: var(--c-muted); }
-
-h3 { margin: 0 0 12px; }
-.sec-label { margin: 12px 0 4px; font-size: 9px; font-weight: 700; color: var(--c-blue); }
-.sec { margin: 0 0 8px; font-size: 11px; line-height: 1.6; color: #55495a; }
-.multi-only {
-  margin: 12px 0 0;
-  padding: 10px 12px;
-  border: 2px solid var(--c-ink-soft);
-  border-radius: 11px;
-  background: #fff1d2;
-  font-size: 10px;
-  line-height: 1.7;
-}
-.modal-actions { display: flex; gap: 9px; margin-top: 16px; }
+.catalog-page { min-height: 100%; color: #3e2e24; }.catalog-shell { max-width: 1460px; margin: 0 auto; padding: 32px clamp(18px, 4vw, 58px) 48px; }.catalog-intro { position: relative; display: flex; min-height: 245px; overflow: hidden; border: 3px solid #d5b98e; border-radius: 17px; background: #c6ecff; box-shadow: 5px 5px 0 #dfcdb0; }.catalog-intro::before { content: ''; position: absolute; inset: 0; background: radial-gradient(rgba(255,255,255,.68) 1px, transparent 1px); background-size: 14px 14px; }.intro-copy { position: relative; z-index: 2; padding: 42px 48px; }.eyebrow, .section-head > div > span, .modal-eyebrow { color: #a8704f; font-size: 10px; font-weight: 700; letter-spacing: 1px; }.intro-copy h1 { margin: 11px 0 9px; font-family: var(--font-pixel); font-size: clamp(30px, 3vw, 43px); font-weight: 400; letter-spacing: -.8px; }.intro-copy > p { margin: 0; color: #685446; font-size: 14px; }.intro-stats { display: flex; gap: 8px; margin-top: 22px; }.intro-stats span { padding: 7px 10px; border: 2px solid #b68d63; border-radius: 6px; background: rgba(255,252,244,.85); color: #755844; font-size: 11px; }.intro-stats b { color: #dc766a; font-size: 15px; }.intro-art { position: absolute; right: 8%; bottom: 0; width: 250px; height: 100%; }.intro-art img { position: absolute; z-index: 2; right: 8px; bottom: -21px; width: 230px; filter: drop-shadow(5px 5px 0 rgba(107,72,48,.18)); }.art-sun { position: absolute; top: 27px; right: 27px; width: 57px; height: 57px; border: 3px solid #ca8d56; border-radius: 50%; background: #ffe69b; }.art-grass { position: absolute; right: 0; bottom: 0; left: -58vw; height: 22px; border-top: 3px solid #669a53; background: repeating-linear-gradient(90deg, #9aca68 0 18px, #b8dc7b 18px 36px); }.guest-note { display: flex; gap: 12px; align-items: center; margin-top: 18px; padding: 12px 15px; border: 2px solid #dfc391; border-radius: 8px; background: #fff3d0; color: #745944; font-size: 12px; }.guest-note strong { color: #a6624b; }.game-section { margin-top: 28px; }.section-head { display: flex; align-items: end; justify-content: space-between; margin: 0 4px 16px; }.section-head h2 { margin: 5px 0 0; font-family: var(--font-pixel); font-size: 26px; font-weight: 400; }.section-head p { margin: 0 0 4px; color: #957e6c; font-size: 12px; }.game-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }.game-card { overflow: hidden; border: 3px solid #d5b98e; border-radius: 12px; background: #fffdf7; box-shadow: 4px 4px 0 #e1ceb0; cursor: pointer; transition: transform .14s ease, box-shadow .14s ease; }.game-card:hover, .game-card:focus-visible { outline: 0; transform: translate(-2px, -2px); box-shadow: 6px 6px 0 #cfb084; }.game-card.unavailable { opacity: .68; filter: saturate(.7); }.game-visual { position: relative; display: grid; height: 173px; place-items: center; overflow: hidden; border-bottom: 2px solid #d5b98e; }.game-visual::before { content: ''; position: absolute; inset: 0; opacity: .45; background: radial-gradient(rgba(255,255,255,.9) 1px, transparent 1px); background-size: 12px 12px; }.game-visual img { position: relative; z-index: 2; width: 132px; height: 136px; object-fit: contain; transition: transform .15s ease; }.game-card:hover .game-visual img { transform: translateY(-4px) rotate(-2deg); }.tone-sky { background: #c9ebf9; }.tone-mint { background: #d8edcf; }.tone-peach { background: #ffe0c7; }.tone-lilac { background: #e2d9f2; }.tone-butter { background: #ffecad; }.visual-floor { position: absolute; z-index: 1; right: 0; bottom: 0; left: 0; height: 24px; border-top: 2px solid rgba(100,139,73,.5); background: #b8d47a; }.category-tag { position: absolute; z-index: 3; top: 10px; left: 10px; padding: 5px 8px; border: 2px solid #a97756; border-radius: 5px; background: #fffaf0; color: #76523a; font-size: 9px; font-weight: 700; }.detail-button { position: absolute; z-index: 3; right: 10px; bottom: 10px; display: flex; align-items: center; gap: 4px; height: 29px; padding: 0 7px 0 9px; border: 2px solid #986648; border-radius: 5px; background: #fff8e9; color: #704a35; font-size: 9px; font-weight: 700; }.detail-button b { font-size: 17px; line-height: 1; }.game-copy { padding: 16px 16px 14px; }.game-title-row { display: flex; align-items: start; justify-content: space-between; gap: 8px; }.game-title-row h3 { margin: 0; font-size: 16px; }.game-title-row > span { flex: none; color: #907968; font-size: 10px; }.game-copy p { min-height: 31px; margin: 7px 0 11px; color: #816c5b; font-size: 11px; line-height: 1.45; }.game-meta { display: flex; gap: 5px; }.game-meta span { padding: 4px 6px; border-radius: 4px; background: #f4ead5; color: #896b55; font-size: 9px; font-weight: 700; }.game-modal { padding: 2px; }.game-modal h3 { margin: 8px 0 18px; color: #3c2d23; font-family: var(--font-pixel); font-size: 26px; font-weight: 400; }.guide-block { margin-top: 13px; padding: 12px; border: 2px solid #dfc391; border-radius: 7px; background: #fffaf0; }.guide-block strong { color: #875c42; font-size: 11px; }.guide-block p { margin: 6px 0 0; color: #705c4d; font-size: 12px; line-height: 1.6; }.multi-notice { margin: 14px 0 0; padding: 11px; border: 2px solid #dcb37d; border-radius: 7px; background: #fff0c9; color: #765c45; font-size: 11px; line-height: 1.55; }.modal-actions { display: flex; gap: 9px; margin-top: 20px; }.modal-actions > * { flex: 1; }.modal-actions :deep(.px-btn) { border: 2px solid #9a674b; border-radius: 7px; box-shadow: 3px 3px 0 #c6a47d; font-size: 14px; }
+.catalog-shell { padding-top: 28px; }.catalog-intro { min-height: 262px; border-radius: 18px; background: #bfe9ff; }.intro-copy { padding: 38px 46px; }.intro-copy h1 { position: relative; z-index: 2; color: #34251f; text-shadow: 2px 2px 0 #f5dbae; }.intro-copy > p { position: relative; z-index: 2; font-size: 13px; }.intro-stats { position: relative; z-index: 3; }.intro-stats span { border-color: #bd8d62; box-shadow: 2px 2px 0 rgba(131,88,57,.18); }.intro-art { right: 8%; width: 310px; }.intro-art img { z-index: 4; right: -14px; bottom: 6px; width: 300px; image-rendering: pixelated; filter: drop-shadow(4px 4px 0 rgba(106,70,42,.18)); }.art-sun { top: 22px; right: 36px; width: 50px; height: 50px; opacity: .9; }.art-grass { right: -13vw; bottom: -8px; left: -72vw; z-index: 3; height: 59px; border: 0; background-repeat: repeat-x; background-position: left bottom; background-size: auto 59px; }.game-section { position: relative; margin-top: 32px; padding: 16px; border: 2px dashed #dec9a7; border-radius: 16px; background: rgba(255,253,247,.62); }.section-head { min-height: 57px; margin: -39px 0 9px -2px; align-items: center; }.section-head > div { display: flex; align-items: center; gap: 11px; }.section-head > div > span { display: none; }.section-head h2 { display: grid; width: 146px; height: 51px; margin: 0; place-items: center; background-position: center; background-repeat: no-repeat; background-size: 100% 100%; color: #33241c; font-size: 18px; }.section-head h2 i { display: block; transform: translateX(3px); font-family: var(--font-pixel); font-style: normal; font-weight: 400; }.section-head p { margin: 9px 8px 0 0; padding: 5px 8px; border-radius: 4px; background: #fff6df; color: #8b725d; }.game-grid { gap: 13px; }.game-card { border: 2px solid #d6ba90; border-radius: 10px; box-shadow: 3px 3px 0 #dfc9a6; }.game-card:hover, .game-card:focus-visible { box-shadow: 5px 5px 0 #c8a77b; }.game-visual { height: 158px; border-bottom-color: #d6ba90; }.game-visual img { width: 126px; height: 126px; }.category-tag { top: 9px; left: 9px; border-color: #b1835f; background: #fff8e9; }.detail-button { border-color: #a37151; box-shadow: 2px 2px 0 rgba(109,67,42,.22); }.game-copy { padding: 14px 14px 13px; }.game-title-row h3 { color: #473125; font-size: 15px; }.game-copy p { min-height: 28px; margin: 6px 0 9px; }.game-meta span { background: #f7ead0; }.guest-note { border-color: #dfc391; box-shadow: 2px 2px 0 rgba(164,119,77,.14); }
+.intro-art img { width: 400px; }
+.game-meta { display: none; }
+@media (max-width: 760px) { .catalog-shell { padding-top: 20px; }.catalog-intro { min-height: 330px; }.intro-copy { padding: 28px 25px; }.intro-copy h1 { max-width: 94%; font-size: 31px; }.intro-copy > p { max-width: 82%; font-size: 12px; }.intro-stats { flex-wrap: wrap; max-width: 74%; }.intro-art { right: -22px; width: 190px; }.intro-art img { width: 185px; }.game-grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }.section-head h2 { font-size: 23px; } }
 </style>

@@ -155,3 +155,9 @@ app:
   password-reset:
     token-ttl: 30m   # 재설정 토큰 유효시간(Redis auth:pwreset:{token})
     link-base-url: ${PW_RESET_LINK_BASE:http://localhost:5173/auth/reset-password}
+
+  # GPU 워커 폴링 API(/api/internal/ai-jobs/**, -102) 공유 시크릿.
+  # SecurityConfig는 이 경로를 permitAll로 열어 두고, InternalApiKeyFilter가
+  # X-Internal-Key 헤더를 이 값과 비교하는 것이 실제 방어선이다. 미설정 시 전부 401로 막힌다.
+  internal:
+    api-key: ${INTERNAL_API_KEY:}

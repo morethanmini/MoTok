@@ -7,7 +7,15 @@ defineEmits<{ enter: [] }>()
 </script>
 
 <template>
-  <article class="room-card">
+  <!-- 카드 전체가 입장 버튼이다. 안쪽에 또 <button>을 두면 버튼 중첩이라 유효하지 않은 마크업이고,
+       클릭 영역도 서로 겹쳐 어디를 눌렀는지에 따라 동작이 달라진다 — '입장'은 라벨로만 남긴다. -->
+  <button
+    type="button"
+    class="room-card"
+    :disabled="room.disabled"
+    :aria-label="`${room.title} 방 입장`"
+    @click="$emit('enter')"
+  >
     <div class="room-card-inner">
       <div class="room-icon">{{ room.emoji }}</div>
       <div class="room-copy">
@@ -21,18 +29,28 @@ defineEmits<{ enter: [] }>()
       </div>
       <div class="room-side">
         <div class="room-state" :class="{ playing: room.disabled }">● {{ room.state }}</div>
-        <button class="room-enter" :disabled="room.disabled" @click="$emit('enter')">
-          {{ room.disabled ? '입장 불가' : '입장' }}
-        </button>
+        <span class="room-enter">{{ room.disabled ? '입장 불가' : '입장' }}</span>
       </div>
     </div>
-  </article>
+  </button>
 </template>
 
 <style scoped>
+/* button 기본 스타일을 걷어내고 카드 그대로 보이게 한다(클릭 영역만 카드 전체로 넓힌 것). */
 .room-card {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
   text-align: left;
+  cursor: pointer;
 }
+.room-card:disabled { cursor: default; }
+/* 키보드 포커스가 어디 있는지 보이게 — 카드가 버튼이 됐으므로 Tab으로 순회한다. */
+.room-card:focus-visible { outline: 3px solid var(--c-ink); outline-offset: 3px; border-radius: 14px; }
 .room-card-inner {
   display: grid;
   grid-template-columns: 62px 1fr auto;
@@ -101,7 +119,7 @@ defineEmits<{ enter: [] }>()
   font-size: 9px;
   font-weight: 700;
 }
-.room-enter:disabled {
+.room-card:disabled .room-enter {
   background: #ddd4d5;
   color: #92878f;
 }
@@ -137,7 +155,8 @@ defineEmits<{ enter: [] }>()
   color: #6f5139;
   font-size: 12px;
 }
-.room-enter:not(:disabled):hover { transform: translateY(-1px); filter: brightness(1.04); }
-.room-enter:disabled { border: 0; background: transparent; box-shadow: none; }
+/* 라벨은 더 이상 버튼이 아니라 :disabled가 안 걸린다 — 카드의 상태를 따라간다. */
+.room-card:not(:disabled):hover .room-enter { transform: translateY(-1px); filter: brightness(1.04); }
+.room-card:disabled .room-enter { border: 0; background: transparent; box-shadow: none; }
 @media (prefers-reduced-motion: reduce) { .room-card-inner, .room-enter { transition: none; } }
 </style>

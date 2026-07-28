@@ -21,6 +21,7 @@ import ssafy.a706.backend.auth.jwt.JwtAuthenticationFilter;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.global.response.ErrorResponse;
+import ssafy.a706.backend.global.security.InternalApiKeyFilter;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.Arrays;
@@ -40,6 +41,10 @@ public class SecurityConfig {
     /** Swagger 공개 여부 — springdoc 활성화 플래그(SWAGGER_ENABLED)와 같은 값으로 묶는다. 기본 false(운영 잠금). */
     @Value("${springdoc.swagger-ui.enabled:false}")
     private boolean swaggerEnabled;
+
+    /** GPU 워커 폴링 API(/api/internal/ai-jobs/**) 공유 시크릿 — InternalApiKeyFilter가 실제로 검증한다. */
+    @Value("${app.internal.api-key:}")
+    private String internalApiKey;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -106,6 +111,9 @@ public class SecurityConfig {
                             .requestMatchers("/api/reports/**").hasRole("USER")
                             // 관리자 전용(-133) — role claim이 ADMIN인 토큰만(JwtAuthenticationFilter가 ROLE_ADMIN 부여)
                             .requestMatchers("/api/admin/**", "/api/v1/admin/**").hasRole("ADMIN")
+                            // GPU 워커 전용(-102) — 워커는 JWT가 없어 permitAll로 열되,
+                            // X-Internal-Key 공유 시크릿 검증(InternalApiKeyFilter)이 실제 방어선이다.
+                            .requestMatchers("/api/internal/**").permitAll()
                             // 나머지(개별 방 조회·나가기·화상 토큰·ICE·로그아웃 등)는 회원+게스트 공통 — 유효한 JWT 필수
                             .anyRequest().authenticated();
                 })
@@ -115,6 +123,8 @@ public class SecurityConfig {
                         .accessDeniedHandler((req, res, ex) ->
                                 writeError(res, ErrorCode.FORBIDDEN, req.getRequestURI())))
                 .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider),
+                        UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(new InternalApiKeyFilter(internalApiKey, objectMapper),
                         UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }

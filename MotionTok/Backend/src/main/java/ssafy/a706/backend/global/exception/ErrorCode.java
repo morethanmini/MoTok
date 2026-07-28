@@ -87,6 +87,13 @@ public enum ErrorCode {
     ITEM_ALREADY_OWNED(HttpStatus.CONFLICT, "ITEM_ALREADY_OWNED", "이미 보유한 아이템입니다."),
     INSUFFICIENT_POINT(HttpStatus.CONFLICT, "INSUFFICIENT_POINT", "포인트가 부족합니다."),
 
+    // shop - AI 아이템 생성 큐 (-102)
+    AI_ITEM_SKETCH_TOO_LARGE(HttpStatus.BAD_REQUEST, "AI_ITEM_SKETCH_TOO_LARGE", "스케치 이미지 용량이 너무 큽니다."),
+    AI_JOB_NOT_FOUND(HttpStatus.NOT_FOUND, "AI_JOB_NOT_FOUND", "존재하지 않는 AI 아이템 생성 작업입니다."),
+    AI_JOB_FORBIDDEN(HttpStatus.FORBIDDEN, "AI_JOB_FORBIDDEN", "본인의 작업만 조회할 수 있습니다."),
+    AI_JOB_INVALID_STATE(HttpStatus.CONFLICT, "AI_JOB_INVALID_STATE", "처리 중인 작업이 아닙니다."),
+    INTERNAL_UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "INTERNAL_UNAUTHORIZED", "내부 API 인증에 실패했습니다."),
+
     // chat
     CHAT_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "CHAT_NOT_IN_ROOM", "방 참가자만 채팅을 보낼 수 있습니다."),
 
@@ -100,6 +107,10 @@ public enum ErrorCode {
     // user report (-112) — 대상이 없거나 탈퇴·정지된 경우는 USER_NOT_FOUND를 재사용한다(-96과 같은 선)
     USER_REPORT_SELF(HttpStatus.BAD_REQUEST, "USER_REPORT_SELF", "자신은 신고할 수 없습니다."),
     USER_REPORT_DUPLICATE(HttpStatus.CONFLICT, "USER_REPORT_DUPLICATE", "이미 접수된 신고가 처리 중입니다."),
+    USER_REPORT_NOT_FOUND(HttpStatus.NOT_FOUND, "USER_REPORT_NOT_FOUND", "존재하지 않는 신고입니다."),
+
+    // decor — 화면 꾸미기 장착 한도(스티커 5개, 가면·효과·배경 각 1개)
+    DECOR_EQUIP_LIMIT(HttpStatus.CONFLICT, "DECOR_EQUIP_LIMIT", "더 장착할 수 없습니다. 다른 아이템을 먼저 해제해 주세요."),
 
     // friend (-57) — 닉네임으로 상대를 못 찾는 경우는 USER_NOT_FOUND를 재사용한다
     FRIEND_SELF_REQUEST(HttpStatus.BAD_REQUEST, "FRIEND_SELF_REQUEST", "자신에게는 친구 요청을 보낼 수 없습니다."),
