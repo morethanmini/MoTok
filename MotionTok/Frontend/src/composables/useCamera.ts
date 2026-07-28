@@ -3,8 +3,12 @@
  * Device Setup·Game Room 공용. 컴포넌트 언마운트 시 자동으로 트랙을 정리합니다.
  */
 import { onBeforeUnmount, ref, shallowRef } from 'vue'
+import { useMediaPermissionStore } from '@/stores/mediaPermission'
 
 export function useCamera() {
+  // getUserMedia의 성공·실패가 곧 권한 상태다 — 카메라를 여는 모든 화면이 전역 상태를 갱신하도록
+  // 여기 한 곳에서 알린다(화면마다 따로 기록하면 어느 한 곳이 빠졌을 때 상태가 어긋난다).
+  const permission = useMediaPermissionStore()
   const stream = shallowRef<MediaStream | null>(null)
   const isOn = ref(false)
   const error = ref<string | null>(null)
@@ -20,10 +24,17 @@ export function useCamera() {
       error.value = null
       camOn.value = s.getVideoTracks().length > 0
       micOn.value = s.getAudioTracks().length > 0
+      permission.markGranted()
       return s
-    } catch {
-      error.value = '카메라·마이크 권한을 허용해 주세요'
+    } catch (e) {
+      // 권한 거부와 그 밖의 실패(장치 없음·다른 앱이 점유·제약 불일치)를 구분한다 —
+      // 전부 '거부'로 기록하면 카메라를 잠깐 뺏겼을 뿐인데 설정 화면이 "차단됨"이라고 말한다.
+      const denied = e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'SecurityError')
+      error.value = denied
+        ? '카메라·마이크 권한을 허용해 주세요'
+        : '카메라·마이크 장치를 열 수 없어요(다른 앱이 쓰고 있는지 확인해 주세요)'
       isOn.value = false
+      if (denied) permission.markDenied()
       return null
     }
   }
