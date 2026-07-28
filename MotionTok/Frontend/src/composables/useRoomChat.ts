@@ -257,14 +257,8 @@ export function useRoomChat() {
     })
   }
 
-  /** AI 채점 결과 발신 — 최초 1회만 수리(SETNX). DRAW_RESULT + 협동 GAME_END가 돌아온다. */
-  function sendGameDrawResult(guesses: string[], answerRank: number, score: number) {
-    if (!client?.connected || !currentRoomId) return
-    client.publish({
-      destination: `/app/rooms/${currentRoomId}/game/draw-result`,
-      body: JSON.stringify({ guesses, answerRank, score }),
-    })
-  }
+  // AI 채점 결과는 클라이언트가 보내지 않는다 — 서버가 GMS를 호출해 점수까지 계산하고
+  // DRAW_RESULT + 협동 GAME_END를 방송한다(REST POST /games/draw/judge, 명세 v0.2.22).
 
   /**
    * 전용 채널을 쓰는 기능(캐치캐치리듬 등)이 **같은 연결에 올라타기 위한 구멍**.
@@ -306,6 +300,5 @@ export function useRoomChat() {
     sendGameFinish,
     sendGameDraw,
     sendGameTurnSkip,
-    sendGameDrawResult,
   }
 }

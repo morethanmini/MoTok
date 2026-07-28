@@ -22,16 +22,36 @@ public class WebClientConfig {
 
     private static final int CONNECT_TIMEOUT_MS = 5_000;
     private static final int RESPONSE_TIMEOUT_SEC = 5;
+    /** 비전 모델 추론은 수 초~수십 초 걸린다 — 게임 채점 유예(60s)보다 짧게 잡아 먼저 실패하게 한다. */
+    private static final int JUDGE_TIMEOUT_SEC = 45;
+    private static final int DEFAULT_BUFFER_BYTES = 256 * 1024;
+    /** 도화지 PNG(base64)를 실어 보내므로 기본 256KB로는 부족하다. */
+    private static final int JUDGE_BUFFER_BYTES = 8 * 1024 * 1024;
 
     @Bean
     public WebClient oauthWebClient() {
+        return build(RESPONSE_TIMEOUT_SEC, DEFAULT_BUFFER_BYTES);
+    }
+
+    /**
+     * 그림으로 말해요 AI 채점(GMS 비전 모델) 전용.
+     * 이미지를 보고 추론하는 호출이라 소셜 로그인보다 훨씬 오래 걸려 타임아웃을 길게 잡고,
+     * 그림 PNG(base64)를 실어 보내므로 요청/응답 버퍼 상한도 올린다.
+     */
+    @Bean
+    public WebClient gmsWebClient() {
+        return build(JUDGE_TIMEOUT_SEC, JUDGE_BUFFER_BYTES);
+    }
+
+    private WebClient build(int timeoutSec, int bufferBytes) {
         HttpClient httpClient = HttpClient.create()
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, CONNECT_TIMEOUT_MS)
-                .responseTimeout(Duration.ofSeconds(RESPONSE_TIMEOUT_SEC))
+                .responseTimeout(Duration.ofSeconds(timeoutSec))
                 .doOnConnected(conn ->
-                        conn.addHandlerLast(new ReadTimeoutHandler(RESPONSE_TIMEOUT_SEC, TimeUnit.SECONDS)));
+                        conn.addHandlerLast(new ReadTimeoutHandler(timeoutSec, TimeUnit.SECONDS)));
         return WebClient.builder()
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .codecs(c -> c.defaultCodecs().maxInMemorySize(bufferBytes))
                 .build();
     }
 }
