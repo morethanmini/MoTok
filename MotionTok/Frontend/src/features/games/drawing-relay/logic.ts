@@ -1,7 +1,7 @@
 /**
  * 그림으로 말해요 — 이어그리기 시간 분배·펜 제스처·채점 로직 (순수 함수 — 캔버스/DOM 의존 없음).
  *
- * 규칙: 총 2분 30초를 인원수로 나눠(올림) 한 명씩 같은 도화지에 이어 그린다.
+ * 규칙: 총 1분 30초를 인원수로 나눠(올림) 한 명씩 같은 도화지에 이어 그린다.
  * 완성 그림을 AI가 보고 "무엇을 그린 것인지" 5개를 추측 — 주제어가 몇 순위로
  * 추측됐는지에 따라 점수를 받는다(1순위 100점 … 5순위 20점).
  */
@@ -12,7 +12,7 @@ export interface NormalizedPoint {
 }
 
 /** 총 제한 시간(초) — 인원수와 무관하게 고정. BE GameCatalogSeeder roundDurationSec과 동기화 */
-export const TOTAL_SECONDS = 150
+export const TOTAL_SECONDS = 90
 /** 정식(멀티) 시작 최소 인원 — 솔로 로컬 테스트는 1인도 허용 */
 export const MIN_PLAYERS = 4
 export const MAX_PLAYERS = 8

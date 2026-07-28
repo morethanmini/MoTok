@@ -150,7 +150,7 @@ public class GameSessionService {
     }
 
     /**
-     * 그림으로 말해요 시작 — 총 시간(games.roundDurationSec, 현재 150초)을 인원수로 올림 분배한 턴 스케줄과
+     * 그림으로 말해요 시작 — 총 시간(games.roundDurationSec, 현재 90초)을 인원수로 올림 분배한 턴 스케줄과
      * 주제어·화가 순서(셔플)를 확정해 GAME_START로 배포한다. 이후 턴 전환은 별도 이벤트 없이
      * 전 클라이언트가 서버 권위 시각으로 같은 스케줄을 계산한다. 정산은 draw-result 수리(협동 점수)
      * 또는 endAt+채점 유예 타임아웃(0점) 중 먼저 온 쪽이 1회 실행한다.

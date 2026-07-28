@@ -26,9 +26,9 @@ public class GameCatalogSeeder implements ApplicationRunner {
             "카메라에 두 손이 잘 보이도록 자리를 잡고, 열 손가락 끝을 움직여 화면 속 별 위에 올려놓아요.";
 
     /** 그림으로 말해요 총 그리기 시간(초) — FE drawing-relay/logic.ts TOTAL_SECONDS와 동기화 필수. */
-    private static final int DRAW_TOTAL_SEC = 150;
+    private static final int DRAW_TOTAL_SEC = 90;
     private static final String DRAW_RULES =
-            "총 2분 30초를 인원수로 나눠 한 도화지에 그림을 이어 그리는 협동 게임이에요. "
+            "총 1분 30초를 인원수로 나눠 한 도화지에 그림을 이어 그리는 협동 게임이에요. "
                     + "완성 그림을 본 AI가 무엇인지 5가지로 추측하고, 그 안에 주제어가 있으면 순위에 따라 점수를 받아요.";
     private static final String DRAW_CONTROLS =
             "펜 손(기본 오른손) 엄지+검지를 집으면 그려지고, 지우개 손(기본 왼손) 주먹을 쥐고 문지르면 지워져요.";
@@ -82,7 +82,7 @@ public class GameCatalogSeeder implements ApplicationRunner {
                     .build());
             log.info("game catalog seeded: id=10 그림으로 말해요");
         } else if (draw.getRoundDurationSec() != DRAW_TOTAL_SEC) {
-            // 밸런스 조정(240→150) 전에 시딩된 행 — 총 시간과 규칙 문구만 백필한다(멱등).
+            // 밸런스 조정 전에 시딩된 행 — 총 시간과 규칙 문구만 백필한다(멱등).
             draw.updateRoundDuration(DRAW_TOTAL_SEC);
             draw.updateGuide(DRAW_RULES, DRAW_CONTROLS);
             gameRepository.save(draw);
