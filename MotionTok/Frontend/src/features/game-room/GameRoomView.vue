@@ -94,7 +94,18 @@ function applyDetail(d: LiveRoomDetail) {
   roomVisibility.value = d.visibility
   participantCount.value = d.participantCount
   memberIds.value = d.members.map((m) => m.userId)
+  memberNames.value = Object.fromEntries(d.members.map((m) => [m.userId, m.displayName]))
 }
+
+/** userId → 닉네임 — 상세 조회 멤버를 기본으로 LiveKit 참가자 이름으로 보강(그림으로 말해요 화가 표시). */
+const memberNames = ref<Record<string, string>>({})
+const participantNames = computed<Record<string, string>>(() => {
+  const names = { ...memberNames.value }
+  for (const p of lk.participants.value) {
+    if (p.identity && p.name) names[p.identity] = p.name
+  }
+  return names
+})
 
 // ── 실시간 참가자 → 슬롯 매핑 ────────────────
 const connected = computed(() => lk.state.value === ConnectionState.Connected)
@@ -442,6 +453,9 @@ watch(
   [() => gameComp.value?.canvas ?? null, captureOn, gameResults],
   async ([canvas, capOn, results]) => {
     if (!activeGame.value || !canvas) return
+    // 그림으로 말해요 — 전원이 획 릴레이로 같은 도화지를 로컬 렌더링하므로 캔버스 송출이
+    // 무의미하다. 송출하지 않으면 다른 참가자 타일은 게임 중에도 카메라 화면 그대로다.
+    if (activeGame.value.id === 'draw') return
     if (results) {
       await lk.unpublishGameScreen()
       return
@@ -845,6 +859,7 @@ const startHint = computed(() =>
             :results="gameResults"
             :my-user-id="myParticipantId"
             :draw-events="drawFeed"
+            :names="participantNames"
             @close="closeGame"
             @draw="(seq: number, ops: DrawOp[]) => roomChat.sendGameDraw(seq, ops)"
             @turn-skip="(turnIdx: number, remainingMs: number) => roomChat.sendGameTurnSkip(turnIdx, remainingMs)"
