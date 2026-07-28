@@ -35,6 +35,7 @@ import {
 } from './judge'
 import { createStage, type Stage } from './stage'
 import { createWall, type WallHandle } from './wall'
+import { BodyFitAudio } from './audio'
 
 const props = defineProps<{
   /** 게임룸 셀프 타일의 <video> — 있으면 카메라를 새로 열지 않고 재사용한다 (게임① 패턴) */
@@ -559,6 +560,21 @@ watch(
   },
 )
 
+// ── 사운드 (S15P11A706-138) ─────────────────
+// 페이즈가 바뀔 때만 큐를 갈아끼운다. 큐 길이(30s)가 페이즈보다 길어서 tailMs로 꼬리를 맞춘다 —
+// "이 큐가 남은 시간 뒤에 끝나도록" 재생 위치를 역산하면 라이저 절정이 벽 도착과 겹친다.
+const audio = new BodyFitAudio()
+watch(phase, (p) => {
+  const s = props.session
+  const srv = serverNow()
+  if (p === 'wait') audio.play('rest', { tailMs: s ? s.startAt - srv : 3000 })
+  else if (p === 'setting') audio.play('setting', { tailMs: s ? s.startAt + SETTING_MS - srv : 3000 })
+  else if (p === 'incoming')
+    audio.play('approach', { tailMs: s ? s.endAt - srv : cfg.wall.approachMs })
+  else if (p === 'result') audio.play('ingame', { loop: true })
+  else audio.stop() // idle · stale
+})
+
 // 관전 화면의 구멍 캔버스는 v-if라 출제 포즈가 도착한 시점엔 아직 DOM에 없다 —
 // 패널이 붙은 뒤 한 번 더 그린다(adoptSetterPose의 drawHole은 그때 no-op이었다).
 watch(spectating, async (on) => {
@@ -660,6 +676,7 @@ defineExpose({ canvas: glCanvasRef })
 onBeforeUnmount(() => {
   cancelAnimationFrame(rafId)
   clearInterval(phaseTimerId)
+  audio.dispose()
   stream?.getTracks().forEach((t) => t.stop())
   resizeObs?.disconnect()
   rig?.dispose()
