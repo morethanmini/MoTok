@@ -24,6 +24,8 @@ import type {
   DrawOp,
   GameEvent,
   LiveRoomHostChangedEvent,
+  LiveRoomMemberKickedEvent,
+  LiveRoomMemberRemovedEvent,
   LiveRoomUpdatedEvent,
   StompErrorPayload,
 } from '@/api/types'
@@ -52,6 +54,10 @@ export function useRoomChat() {
   const roomUpdated = ref<LiveRoomUpdatedEvent | null>(null)
   /** 방장 변경(-72). 이걸 반영하지 않으면 방장이 나가도 새 방장에게 시작 권한이 안 붙는다. */
   const hostChanged = ref<LiveRoomHostChangedEvent | null>(null)
+  /** 퇴장·강퇴 알림(-71, -73). 대상 여부는 뷰에서 현재 사용자 ID와 비교한다. */
+  const memberRemoved = ref<LiveRoomMemberRemovedEvent | null>(null)
+  /** 강퇴 알림(-73). 사유가 포함되어 대상에게 안내할 수 있다. */
+  const memberKicked = ref<LiveRoomMemberKickedEvent | null>(null)
 
   function handleChatFrame(body: string) {
     try {
@@ -85,11 +91,15 @@ export function useRoomChat() {
    */
   function handleMembersFrame(body: string) {
     try {
-      const msg = JSON.parse(body) as Partial<LiveRoomUpdatedEvent & LiveRoomHostChangedEvent>
+      const msg = JSON.parse(body) as Partial<LiveRoomUpdatedEvent & LiveRoomHostChangedEvent & LiveRoomMemberKickedEvent>
       if (typeof msg.title === 'string' && typeof msg.maxPlayers === 'number') {
         roomUpdated.value = msg as LiveRoomUpdatedEvent
       } else if (typeof msg.hostUserId === 'string') {
         hostChanged.value = msg as LiveRoomHostChangedEvent
+      } else if (typeof msg.userId === 'string' && typeof msg.participantCount === 'number' && typeof msg.reason === 'string') {
+        memberKicked.value = msg as LiveRoomMemberKickedEvent
+      } else if (typeof msg.userId === 'string' && typeof msg.participantCount === 'number') {
+        memberRemoved.value = msg as LiveRoomMemberRemovedEvent
       }
     } catch {
       // 무시
@@ -121,6 +131,8 @@ export function useRoomChat() {
     lastError.value = null
     roomUpdated.value = null
     hostChanged.value = null
+    memberRemoved.value = null
+    memberKicked.value = null
 
     return new Promise((resolve) => {
       const c = new Client({
@@ -187,11 +199,24 @@ export function useRoomChat() {
 
   // ── 게임 세션 발신 (S15P11A706-115) ──────────
   /** 게임 시작(방장 전용 — 서버가 방장 검증). 수리되면 GAME_START가 방 전체에 배포된다. */
-  function startGame(gameId: number, constellationKey?: string) {
+  function startGame(gameId: number, constellationKey?: string, difficulty?: string) {
     if (!client?.connected || !currentRoomId) return
     client.publish({
       destination: `/app/rooms/${currentRoomId}/game/start`,
-      body: JSON.stringify({ gameId, constellationKey: constellationKey ?? null }),
+      body: JSON.stringify({
+        gameId,
+        constellationKey: constellationKey ?? null,
+        difficulty: difficulty ?? null,
+      }),
+    })
+  }
+
+  /** 게임④ 출제자 포즈 제출(-86) — 서버가 검증 후 POSE_SET을 방 전체에 배포한다. */
+  function sendPoseSubmit(pose: string) {
+    if (!client?.connected || !currentRoomId) return
+    client.publish({
+      destination: `/app/rooms/${currentRoomId}/game/pose-submit`,
+      body: JSON.stringify({ pose }),
     })
   }
 
@@ -220,6 +245,15 @@ export function useRoomChat() {
     client.publish({
       destination: `/app/rooms/${currentRoomId}/game/draw`,
       body: JSON.stringify({ seq, ops }),
+    })
+  }
+
+  /** 조기 차례 넘기기 발신 — 서버가 TURN_SKIPPED로 재방송하면 전원이 스케줄을 앞당긴다. */
+  function sendGameTurnSkip(turnIndex: number, remainingMs: number) {
+    if (!client?.connected || !currentRoomId) return
+    client.publish({
+      destination: `/app/rooms/${currentRoomId}/game/turn-skip`,
+      body: JSON.stringify({ turnIndex, remainingMs }),
     })
   }
 
@@ -260,14 +294,18 @@ export function useRoomChat() {
     lastError,
     roomUpdated,
     hostChanged,
+    memberRemoved,
+    memberKicked,
     connect,
     disconnect,
     sendChat,
     suggestGame,
     startGame,
+    sendPoseSubmit,
     sendGameProgress,
     sendGameFinish,
     sendGameDraw,
+    sendGameTurnSkip,
     sendGameDrawResult,
   }
 }

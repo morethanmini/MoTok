@@ -12,13 +12,13 @@ import { useSessionStore } from '@/stores/session'
 import BrandLogo from './BrandLogo.vue'
 import UserAvatar from './UserAvatar.vue'
 import BgmToggle from './BgmToggle.vue'
-import CoinIcon from './CoinIcon.vue'
 import ChargePointsModal from './ChargePointsModal.vue'
 import LoginRequiredModal from './LoginRequiredModal.vue'
 import lobbyIcon from '@/assets/header/nav-lobby.png'
 import gamesIcon from '@/assets/header/nav-games.png'
 import rankingIcon from '@/assets/header/nav-ranking.png'
 import shopIcon from '@/assets/header/nav-shop.png'
+import headerCoin from '@/assets/header/header-coin.png'
 
 const router = useRouter()
 const route = useRoute()
@@ -143,17 +143,19 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
     <div class="account">
       <BgmToggle />
       <button class="coin" title="포인트 충전" @click="showCharge = true">
-        <CoinIcon :size="15" /> {{ balance.toLocaleString() }} <b>＋</b>
+        <img class="coin-icon" :src="headerCoin" alt="" aria-hidden="true" /> {{ balance.toLocaleString() }} <b>＋</b>
       </button>
       <div class="avatar-wrap" ref="accountMenuRef">
         <button class="avatar-pill" title="계정 메뉴" @click="toggleAccountMenu">
           <span class="nickname">{{ nickname }}</span>
+          <span class="avatar-pixel-frame">
           <UserAvatar class="avatar-circle" :src="avatarUrl" :alt="`${nickname} 프로필 사진`" />
+          </span>
         </button>
         <div v-if="showAccountMenu" class="account-menu">
           <div class="menu-head">
             <span>{{ nickname }}</span>
-            <span><CoinIcon :size="12" /> {{ balance.toLocaleString() }}</span>
+            <span><img class="coin-icon menu-coin-icon" :src="headerCoin" alt="" aria-hidden="true" /> {{ balance.toLocaleString() }}</span>
           </div>
           <!-- 마이페이지·설정은 회원 전용 — 게스트에게는 헤더에서 숨긴다 -->
           <template v-if="!session.isGuest">
@@ -238,15 +240,32 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   align-items: center;
   gap: 8px;
 }
-.nickname { font-size: 14px; font-weight: 700; }
-.avatar-circle {
-  width: 43px;
-  height: 43px;
-  border: var(--border);
-  border-radius: 50%;
-  background: var(--c-mint-soft);
+.nickname { font-size: 17px; font-weight: 700; }
+.coin-icon { width: 18px; height: 18px; object-fit: contain; image-rendering: pixelated; }
+.menu-coin-icon { width: 14px; height: 14px; }
+.avatar-pixel-frame {
+  order: -1;
+  flex: none;
+  width: 50px;
+  height: 50px;
+  box-sizing: border-box;
   display: grid;
   place-items: center;
+  margin: -3.5px;
+  padding: 2.5px;
+  background: #5e4634;
+  clip-path: polygon(16px 0, 34px 0, 34px 3px, 40px 3px, 40px 6px, 44px 6px, 44px 10px, 47px 10px, 47px 16px, 50px 16px, 50px 34px, 47px 34px, 47px 40px, 44px 40px, 44px 44px, 40px 44px, 40px 47px, 34px 47px, 34px 50px, 16px 50px, 16px 47px, 10px 47px, 10px 44px, 6px 44px, 6px 40px, 3px 40px, 3px 34px, 0 34px, 0 16px, 3px 16px, 3px 10px, 6px 10px, 6px 6px, 10px 6px, 10px 3px, 16px 3px);
+  box-shadow: 2px 2px 0 #e3d8c7;
+  transform: scale(.86);
+}
+.avatar-circle {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background: #f8dca5;
+  clip-path: polygon(14px 0, 31px 0, 31px 3px, 36px 3px, 36px 6px, 40px 6px, 40px 10px, 43px 10px, 43px 14px, 45px 14px, 45px 31px, 43px 31px, 43px 36px, 40px 36px, 40px 40px, 36px 40px, 36px 43px, 31px 43px, 31px 45px, 14px 45px, 14px 43px, 9px 43px, 9px 40px, 5px 40px, 5px 36px, 2px 36px, 2px 31px, 0 31px, 0 14px, 2px 14px, 2px 10px, 5px 10px, 5px 6px, 9px 6px, 9px 3px, 14px 3px);
+  image-rendering: pixelated;
   font-size: 20px;
 }
 
@@ -300,7 +319,18 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 .top { min-height: 78px; background: rgba(255, 250, 240, .97); border-bottom-color: #bd6d45; }
 .nav button { color: #443127; border: 2px solid transparent; border-radius: 9px; font-size: 15px; }
 .coin { border-color: #d4b17a; border-radius: 9px; box-shadow: 2px 2px 0 #ead8b9; }
-.avatar-circle { border-color: #d4b17a; background: #f8dca5; }
+@media (min-width: 851px) and (max-width: 1120px) {
+  .top { min-height: 68px; padding: 0 22px; gap: 14px; }
+  .brand :deep(.name) { font-size: 17px; }
+  .nav { gap: 2px; }
+  .nav button { padding: 8px 7px; font-size: 13px; }
+  .account { gap: 6px; }
+  .coin { height: 35px; padding: 0 9px; font-size: 12px; }
+  .coin-icon { width: 16px; height: 16px; }
+  .nickname { font-size: 15px; }
+  .avatar-pill { height: 38px; gap: 5px; }
+  .avatar-pixel-frame { transform: scale(.76); }
+}
 @media (max-width: 850px) {
   .top { height: auto; min-height: 68px; padding: 10px 16px; gap: 12px; flex-wrap: wrap; }
   .brand { min-width: 125px; }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 메인 로비 — 방 목록(공개방·비밀방), 친구, 빠른 메뉴, 방 만들기/코드 참가, 스플래시, BGM. */
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import {
   roomsApi,
@@ -11,6 +11,7 @@ import {
   type LiveRoomSummary,
   type Friend as ApiFriend,
   type InvitationItem,
+  type KickReason,
 } from '@/api'
 import { useSessionStore } from '@/stores/session'
 import { useAsyncData } from '@/composables/useAsyncData'
@@ -23,6 +24,7 @@ import type { Friend, Room } from './data'
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
+import PixelModal from '@/components/common/PixelModal.vue'
 import UserProfileModal from '@/components/common/UserProfileModal.vue'
 import RoomCard from './components/RoomCard.vue'
 import FriendItem from './components/FriendItem.vue'
@@ -40,10 +42,10 @@ import lobbyCloudA from '@/assets/lobby/lobby-cloud-a.png'
 import lobbyCloudB from '@/assets/lobby/lobby-cloud-b.png'
 import lobbyRoomListBoard from '@/assets/lobby/lobby-room-list-board.png'
 import lobbyEmptyCatTuna from '@/assets/lobby/lobby-empty-cat-tuna.png'
-import lobbyCreateRoomButton from '@/assets/lobby/lobby-create-room-button.png'
 import lobbyEmptyCatToys from '@/assets/lobby/lobby-empty-cat-toys.png'
 
 const router = useRouter()
+const route = useRoute()
 const session = useSessionStore()
 const bgm = useBgm()
 const { message: toast, flash } = useToast()
@@ -56,6 +58,22 @@ const showSplash = ref(sessionStorage.getItem(SPLASH_SEEN_KEY) !== '1')
 const query = ref('')
 const showJoin = ref(false)
 const showCreate = ref(false)
+
+const KICK_REASON_LABELS: Record<KickReason, string> = {
+  MANNER_VIOLATION: '비매너 행위',
+  INAPPROPRIATE_PROFILE: '부적절한 프로필',
+  GAME_DISRUPTION: '게임 진행 방해',
+  SPAM_AD: '도배·광고',
+  OTHER: '기타',
+}
+function readKickReason(value: unknown): KickReason | null {
+  return typeof value === 'string' && value in KICK_REASON_LABELS ? value as KickReason : null
+}
+const kickedReason = ref<KickReason | null>(readKickReason(route.query.kickedReason))
+function closeKickedNotice() {
+  kickedReason.value = null
+  void router.replace({ query: { ...route.query, kickedReason: undefined } })
+}
 
 // 사이드바 친구 목록 (GET /friends, -57). 사진(avatarUrl)이 있으면 그걸 그리고, 없는 친구만
 // 이모지로 채운다. 이모지·배경색은 API에 없는 값이라 userId로 팔레트를 골라
@@ -389,7 +407,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
             ⌕ <input v-model="query" placeholder="방 제목 검색" />
           </label>
           <button class="room-search-btn" type="button" @click="searchRooms">검색</button>
-          <PixelButton class="create-room-btn" :style="{ backgroundImage: `url(${lobbyCreateRoomButton})` }" @click="openCreate">＋ 방 만들기</PixelButton>
+          <PixelButton class="create-room-btn" @click="openCreate">＋ 방 만들기</PixelButton>
           <button class="refresh-btn" @click="refreshRooms">새로고침 ↻</button>
         </div>
 
@@ -413,10 +431,16 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 
       <aside class="side">
         <section class="side-card friends-card">
-          <div class="side-title friend-title">
+          <div class="friends-title-row">
+            <div
+              class="side-title friend-title"
+              :style="{ backgroundImage: `url(${lobbyRoomListBoard})` }"
+            >
             친구 목록
             <span v-if="pendingRequests > 0" class="req-badge">요청 {{ pendingRequests }}개</span>
             <button class="side-link" @click="router.push({ name: RouteName.Friends })">친구 목록 관리 →</button>
+            </div>
+            <button class="side-link" @click="router.push({ name: RouteName.Friends })">친구목록 관리</button>
           </div>
           <div class="friends-list">
             <!-- key는 userId — 접속 상태가 바뀌면 목록 순서가 바뀌는데(온라인 우선 정렬),
@@ -459,6 +483,16 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
     />
     <CreateRoomModal v-if="showCreate" :busy="creating" @close="showCreate = false" @create="createRoom" />
 
+    <PixelModal v-if="kickedReason" variant="lobby" @close="closeKickedNotice">
+      <div class="kick-notice">
+        <span class="kick-notice-icon" aria-hidden="true">⚠️</span>
+        <p class="kick-notice-kicker">ROOM NOTICE</p>
+        <h3>방에서 강퇴되었어요</h3>
+        <p class="kick-notice-desc">강퇴 사유: <strong>{{ KICK_REASON_LABELS[kickedReason] }}</strong><br />이 방이 유지되는 동안 다시 입장할 수 없어요.</p>
+        <PixelButton class="kick-notice-confirm" block @click="closeKickedNotice">확인</PixelButton>
+      </div>
+    </PixelModal>
+
     <!-- 받은 방 초대 (-100) — 모달이 아니라 쌓이는 카드. 배경 조작을 막지 않는다. -->
     <InviteCardStack
       :invitations="invitations"
@@ -493,6 +527,12 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   position: relative;
   overflow: hidden;
 }
+.kick-notice { text-align: center; color: #403124; }
+.kick-notice-icon { display: grid; place-items: center; width: 54px; height: 54px; margin: 0 auto 12px; border: 3px solid #b78d5d; border-radius: 12px; background: #fff0b9; box-shadow: 3px 3px 0 #e2d0b5; font-size: 26px; }
+.kick-notice-kicker { margin: 0 0 7px; color: #9e6b43; font-size: 9px; letter-spacing: 1px; }
+.kick-notice h3 { margin: 0 0 10px; font-size: 19px; }
+.kick-notice-desc { margin: 0 0 22px; color: #806e5e; font-size: 11px; line-height: 1.6; }
+.kick-notice-confirm { height: 46px; border: 3px solid #925c47; border-radius: 7px; background: #ef7775; color: #fff; box-shadow: inset 2px 2px 0 rgba(255, 255, 255, .42), inset -2px -3px 0 rgba(120, 58, 47, .18), 3px 3px 0 #a66b50; font-size: 12px; }
 /* 상단 무지개 스트라이프 */
 .shell::before {
   content: '';
@@ -831,9 +871,10 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   font-size: 42px;
   font-weight: normal;
   letter-spacing: -1px;
+  white-space: nowrap;
   text-shadow: 2px 2px 0 #ead7b8;
 }
-.lobby-hero h1::after { content: ' ✦'; color: var(--lobby-coral); }
+.lobby-hero h1::after { content: none; }
 .lobby-hero p { max-width: 620px; color: #594941; font-size: 14px; line-height: 1.75; }
 .lobby-hero .hero-actions { z-index: 3; flex-direction: column; align-self: center; margin-left: auto; }
 .lobby-hero .hero-actions :deep(.px-btn) {
@@ -867,7 +908,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   background-size: 100% 100%;
   box-shadow: none;
   color: #32231b;
-  font-size: 15px;
+  font-size: 18px;
   line-height: 1;
   text-shadow: 1px 1px 0 rgba(255, 237, 191, .65);
 }
@@ -893,16 +934,13 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 }
 .create-room-btn {
   min-width: 148px;
-  height: 45px;
-  border: 0 !important;
-  border-radius: 0 !important;
-  background-color: transparent !important;
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: 100% 100%;
-  box-shadow: none !important;
+  height: 43px;
+  border: 3px solid #925c47 !important;
+  border-radius: 7px !important;
+  background: #e7c996 !important;
+  box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), inset -2px -3px 0 rgba(120,58,47,.18), 4px 4px 0 #a66b50 !important;
   color: #34251f !important;
-  font-size: 15px;
+  font-size: 14px;
 }
 .refresh-btn { color: #69513e; }
 .room-list-wrap { padding: 10px; border: 2px dashed #dfc9a6; border-radius: 18px; background: rgba(255, 253, 247, .65); }
@@ -923,7 +961,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   background: transparent;
   color: #75624f;
   font-size: 17px;
-  transform: translateY(42px);
+  transform: translateY(60px);
 }
 .empty::before { content: none; }
 .empty-sign { width: 106px; height: auto; margin-bottom: 4px; }
@@ -937,32 +975,116 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 .side { gap: 20px; }
 .side-card { border: 3px solid var(--lobby-border); border-radius: 16px; box-shadow: 4px 4px 0 #dfcdb0; background: var(--lobby-surface); }
 .side-title { margin: -17px -17px 14px; padding: 12px 15px; border-bottom: 2px solid #ead9bd; background: #d7e7ad; color: #403124; font-size: 16px; }
-.friends-card { padding: 14px; border: 0; background: transparent; box-shadow: none; }
-.friends-card .friend-title {
-  width: calc(100% - 28px);
-  margin: -14px 0 14px -14px;
-  padding: 11px 14px;
-  border: 2px solid #8fa76d;
-  border-radius: 0;
-  border-bottom: 2px solid #8fa76d;
-  background: #bed795;
-  box-shadow: 3px 3px 0 #d2be95;
-  clip-path: polygon(0 0, calc(100% - 11px) 0, 100% 11px, calc(100% - 11px) 100%, 0 100%);
+.friends-card { position: relative; padding: 14px; border: 0; background: transparent; box-shadow: none; }
+.friends-title-row {
+  position: static;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: -14px -14px 14px;
 }
-.friends-card .side-link { margin-left: auto; color: #72583d; font-size: 11px; }
+.friends-card .friend-title {
+  position: relative;
+  flex: 0 0 145px;
+  width: 145px;
+  min-height: 49px;
+  box-sizing: border-box;
+  margin: 0 auto;
+  transform: translate(-71px, 8px);
+  padding: 11px 14px;
+  justify-content: center;
+  text-align: center;
+  font-size: 18px;
+  border: 0;
+  background-color: transparent;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  box-shadow: none;
+  clip-path: none;
+}
+.friends-card .req-badge { display: none; }
+.friends-card .friend-title .side-link { display: none; }
+.friends-card .side-link { position: absolute; top: 34px; right: 14px; margin: 0; color: #72583d; font-size: 13px; }
+.friends-title-row:has(.req-badge) > .side-link::before {
+  content: '새로운 친구 요청 !';
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4px);
+  width: max-content;
+  color: #b8704f;
+  font-size: 9px;
+  font-weight: 700;
+}
+.friends-title-row > .side-link::after { content: ' →'; }
 .friends-list {
   padding: 4px 8px;
+  margin-left: -15px;
+  margin-bottom: -14px;
   border: 2px dashed #dfc9a6;
   border-radius: 12px;
   background: rgba(255, 253, 247, .65);
 }
+.friends-list:has(.friends-empty) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.friends-list .friends-empty {
+  width: 100%;
+  margin: auto 4px;
+}
 .side-link { color: #7b5d3d; }
 .notice { flex: none; min-height: 148px; background: #fffdf7; }
+.notice { display: none; }
 .notice .side-title { background: #ffe294; }
 .notice .side-title::after { content: 'NEW'; margin-left: auto; padding: 4px 6px; border-radius: 4px; background: #e77491; color: #fff; font-size: 8px; font-style: normal; }
 .notice p { position: relative; padding-right: 38px; color: #67594d; font-size: 12px; }
 .notice b { color: #db6673; font-size: 16px; }
 .notice p::after { content: '🎁'; position: absolute; right: 0; bottom: -6px; font-size: 36px; }
+
+@media (min-width: 921px) and (max-width: 1260px) {
+  .layout { gap: 24px; padding: 28px 34px; }
+  .lobby-hero { min-height: 218px; padding: 30px 38px; }
+  .lobby-hero .hero-title { font-size: clamp(30px, 3vw, 37px); }
+  .lobby-hero .hero-actions :deep(.px-btn) { min-width: 185px; height: 52px; font-size: 16px; }
+  .section-head { min-height: 64px; }
+  .section-head .room-list-title { width: 140px; height: 48px; font-size: 18px; }
+  .room-search input { width: 190px; }
+  .create-room-btn { min-width: 140px; height: 42px; font-size: 14px; }
+  .room-search, .room-search-btn { height: 36px; }
+  .friends-card .friend-title { transform: translate(-64px, 6px); }
+  .friends-card .side-link { top: 29px; font-size: 12px; }
+}
+
+/* A 1920px-wide screen becomes about 1536px at 125% zoom. */
+@media (min-width: 1261px) and (max-width: 1600px) {
+  .layout { gap: 28px; padding: 34px 42px 30px; }
+  .lobby-hero { min-height: 238px; padding: 36px 44px; }
+  .lobby-hero .hero-title { font-size: clamp(32px, 2.65vw, 42px); }
+  .lobby-hero .hero-actions :deep(.px-btn) { min-width: 180px; height: 52px; font-size: 16px; }
+  .section-head { min-height: 72px; }
+  .section-head .room-list-title { width: 150px; height: 51px; font-size: 18px; }
+  .room-search input { width: 250px; }
+  .create-room-btn { min-width: 148px; height: 43px; font-size: 14px; }
+}
+
+/* Enlarge only at common 90% browser scale factors. */
+@media (min-resolution: .89dppx) and (max-resolution: .91dppx),
+       (min-resolution: 1.115dppx) and (max-resolution: 1.135dppx),
+       (min-resolution: 1.34dppx) and (max-resolution: 1.36dppx),
+       (min-resolution: 1.565dppx) and (max-resolution: 1.585dppx),
+       (min-resolution: 1.79dppx) and (max-resolution: 1.81dppx) {
+  .lobby-hero .hero-actions :deep(.px-btn) { min-width: 228px; height: 60px; font-size: 18px; }
+}
+
+@media (min-width: 921px) and (max-height: 800px) {
+  .layout { padding-top: 20px; padding-bottom: 18px; }
+  .lobby-hero { min-height: 182px; padding-top: 22px; padding-bottom: 22px; margin-bottom: 12px; }
+  .lobby-hero .hero-actions :deep(.px-btn) { height: 48px; }
+  .section-head { min-height: 56px; }
+  .room-list-wrap { padding-top: 6px; }
+}
 
 @media (max-width: 920px) {
   .shell { height: auto; min-height: 100vh; overflow: visible; }
@@ -971,6 +1093,13 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   .friends-card { min-height: 240px; }
   .lobby-hero > div:first-child { max-width: 52%; }
   .hero-cat-group { right: 27%; }
+}
+
+/* This is the common desktop width at roughly 150% browser zoom. */
+@media (min-width: 641px) and (max-width: 920px) {
+  .lobby-hero { min-height: 198px; padding: 24px 28px; }
+  .lobby-hero .hero-title { font-size: 31px; }
+  .lobby-hero .hero-actions :deep(.px-btn) { min-width: 138px; height: 43px; font-size: 13px; }
 }
 @media (max-width: 640px) {
   .layout { padding: 16px 12px 24px; }
@@ -987,7 +1116,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   .hero-cloud-a { top: 10px; left: 42%; width: 105px; }
   .hero-cloud-b { top: 48px; left: 64%; width: 88px; }
   .section-head { flex-wrap: wrap; gap: 10px; padding: 8px 0; }
-  .section-head .room-list-title { width: 123px; height: 42px; padding: 0 11px 1px 5px; font-size: 16px; }
+  .section-head .room-list-title { width: 123px; height: 42px; padding: 0 11px 1px 5px; font-size: 18px; }
   .room-pager-inline { margin: 0; }
   .room-search { order: 3; width: 100%; margin-left: 0; }
   .room-search input { width: 100%; }
