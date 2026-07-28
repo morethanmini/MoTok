@@ -196,11 +196,17 @@ public class AuthService {
      * 로그아웃 — Redis에서 Refresh 토큰을 지우는 것이 곧 서버측 무효화다.
      * 접속 상태도 함께 지운다: TTL(60s)을 기다리면 이미 나간 사용자가 친구 목록에 온라인으로 남는다.
      *
-     * <p>웹소켓까지 끊는 이유(-142) — STOMP 인증은 CONNECT 때 한 번뿐이라, 전역 연결로 바뀐 뒤로는
+     * <p>쓰기 트랜잭션을 명시하는 이유 — 클래스 기본값이 readOnly라 그대로 두면 이 안에서 도는
+     * 접속시간 정산(ConnectTimeService.flush)이 그 트랜잭션에 <b>참여</b>해 FlushMode가 MANUAL로 남는다.
+     * 그러면 save가 커밋 시 플러시되지 않아 사라지는데, Redis 버퍼는 GETDEL로 이미 비운 뒤라
+     * 복원 경로도 타지 않는다 — 로그아웃할 때마다 미정산 접속시간(-141)이 조용히 유실된다.</p>
+ *
+ * <p>웹소켓까지 끊는 이유(-142) — STOMP 인증은 CONNECT 때 한 번뿐이라, 전역 연결로 바뀐 뒤로는
      * 로그아웃해도 소켓이 살아 있으면 다음 하트비트가 방금 지운 프레즌스를 <b>되살린다</b>.
      * 클라이언트가 연결을 닫아 주기를 믿지 않고 서버가 먼저 끊는다. 순서도 중요하다 —
      * 소켓을 먼저 닫아야 그 사이에 들어오는 비트가 없다.</p>
      */
+    @Transactional
     public void logout(Long userId) {
         refreshTokenStore.delete(userId);
         stompSessionRegistry.closeAllOf(userId);
