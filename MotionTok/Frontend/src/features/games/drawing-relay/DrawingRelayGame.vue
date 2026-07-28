@@ -14,13 +14,15 @@
  * 입력은 손 인식뿐 — 카메라 영상이 있어야 시작할 수 있다(마우스 폴백은 로컬 테스트
  * 종료 후 제거).
  *
- * 모드 두 가지:
- * - 솔로(session=null 또는 turnOrder 없음): 혼자서 n명 몫의 차례를 이어 그린다(로컬 타이머).
- * - 멀티(session.turnOrder 제공, 명세 v0.2.20): 서버가 준 주제어·화가 순서·턴 스케줄을
- *   전 클라이언트가 서버 권위 시각으로 동일 계산한다(턴 전환 이벤트 없음). 내 차례에만
- *   입력이 열리고, 획 연산을 100ms 배치로 발신(draw emit → STOMP DRAW 릴레이)해 전원이
- *   같은 도화지를 실시간으로 본다. 마지막 화가가 GMS 채점 후 결과를 발신(drawResult emit)
- *   → DRAW_RESULT 에코를 전원이 받아 같은 결과 화면으로 전환한다.
+ * 멀티 전용(최소 3인, 명세 v0.2.20): 서버가 준 주제어·화가 순서·턴 스케줄을 전 클라이언트가
+ * 서버 권위 시각으로 동일 계산한다(턴 전환 이벤트 없음). 내 차례에만 입력이 열리고, 획 연산을
+ * 100ms 배치로 발신(draw emit → STOMP DRAW 릴레이)해 전원이 같은 도화지를 실시간으로 본다.
+ * 마지막 화가가 GMS 채점 후 결과를 발신(drawResult emit) → DRAW_RESULT 에코를 전원이 받아
+ * 같은 결과 화면으로 전환한다. 이어그리기라 솔로 플레이는 지원하지 않는다.
+ *
+ * 도화지는 <b>화가별 레이어</b>로 나뉜다 — 그리기는 자기 레이어에, 지우개는 자기 레이어에만
+ * destination-out으로 작용해 <b>남이 그린 획은 지워지지 않는다</b>. 화면·채점 이미지는 레이어를
+ * 화가 순서대로 겹쳐 합성해 만든다(뒤 순번이 위). 선 일부만 지우는 것도 자연스럽게 처리된다.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { DrawOp, GameEvent, GameResultEntry } from '@/api/types'
@@ -28,10 +30,9 @@ import { useHandLandmarker, type HandLandmarkerResult } from '@/composables/useH
 import type { ActiveGameSession } from '../session'
 import {
   MIN_PLAYERS,
-  MAX_PLAYERS,
+  TOTAL_SECONDS,
   PEN_TIP_INDEX,
   applyPinchHysteresis,
-  computeTurnSeconds,
   findAnswerRank,
   handRole,
   isFist,
@@ -43,13 +44,12 @@ import {
   type NormalizedPoint,
   type StrokePoint,
 } from './logic'
-import { pickTopic } from './words'
 import { judgeDrawing, type JudgeResult } from './scoring'
 
 const props = defineProps<{
   /** 게임룸 셀프 타일의 <video> — 스트림이 attach되어 재생 중이어야 한다 */
   video: HTMLVideoElement | null
-  /** 멀티플레이 세션(GAME_START). turnOrder가 있으면 멀티, 없으면 솔로 모드 */
+  /** 멀티플레이 세션(GAME_START) — turnOrder가 있어야 진행된다(솔로 미지원) */
   session?: ActiveGameSession | null
   /** 멀티 GAME_END — DRAW_RESULT 없이 타임아웃 정산됐을 때의 폴백 신호로만 쓴다 */
   results?: GameResultEntry[] | null
@@ -87,57 +87,97 @@ const canvasRef = ref<HTMLCanvasElement>()
 /** 부모(게임룸)가 게임 화면을 captureStream으로 송출할 수 있게 캔버스를 노출 */
 defineExpose({ canvas: canvasRef })
 
-// ── 도화지 (그려진 획만 보관 — 채점 시 이 캔버스를 그대로 내보낸다) ──
-const paper = document.createElement('canvas')
-paper.width = W
-paper.height = H
-const paperCtx = paper.getContext('2d')!
-
-// 획을 점 목록으로도 보관한다 — 펜을 놓는 순간 꼬리 점을 소급 삭제(trimStrokeTail)하고
-// 도화지를 다시 그리기 위해. 지우개는 도화지색 굵은 획이라 같은 구조로 함께 저장된다.
+// ── 도화지 — 화가별 레이어 ────────────────────
+// 한 장에 전원이 그리면 지우개(도화지색 덧칠)가 남의 획까지 덮어버린다. 화가마다 투명
+// 레이어를 주고 지우개를 destination-out으로 자기 레이어에만 적용하면 남의 획은 남는다.
+// 화면·채점 이미지는 레이어를 화가 순서대로 겹쳐 만든다(뒤 순번이 위).
 type Tool = 'pen' | 'erase'
 interface Stroke {
   tool: Tool
   points: StrokePoint[]
 }
-let strokes: Stroke[] = []
+/** strokes는 꼬리 삭제 후 레이어를 재생(rebuild)하기 위한 기록 — 지우개 획도 순서대로 담긴다. */
+interface PainterLayer {
+  canvas: HTMLCanvasElement
+  ctx: CanvasRenderingContext2D
+  strokes: Stroke[]
+}
+const layers = new Map<string, PainterLayer>()
 
-/** 진행 중인 획의 소유자 — 펜 손·지우개 손·마우스가 각자 하나씩 갖는다(동시 사용 가능) */
+/** 진행 중인 획의 소유자 — 펜 손·지우개 손·원격 화가가 각자 하나씩 갖는다(동시 사용 가능) */
 interface StrokeSource {
   stroke: Stroke | null
 }
-clearPaper()
 
-function clearPaper() {
-  paperCtx.fillStyle = PAPER_COLOR
-  paperCtx.fillRect(0, 0, W, H)
+function layerOf(painterId: string): PainterLayer {
+  let layer = layers.get(painterId)
+  if (!layer) {
+    const canvas = document.createElement('canvas')
+    canvas.width = W
+    canvas.height = H
+    layer = { canvas, ctx: canvas.getContext('2d')!, strokes: [] }
+    layers.set(painterId, layer)
+  }
+  return layer
 }
+/** 내 레이어 — 로컬 입력(펜 손·지우개 손)은 항상 여기로 간다 */
+function myLayer(): PainterLayer {
+  return layerOf(props.myUserId ?? 'me')
+}
+
+/** 합성 순서 = 화가 순서(뒤 순번이 위). 순서 목록 밖 레이어는 뒤에 붙인다(방어). */
+function orderedLayers(): PainterLayer[] {
+  const out: PainterLayer[] = []
+  const seen = new Set<string>()
+  for (const id of props.session?.turnOrder ?? []) {
+    const layer = layers.get(id)
+    if (layer) {
+      out.push(layer)
+      seen.add(id)
+    }
+  }
+  for (const [id, layer] of layers) if (!seen.has(id)) out.push(layer)
+  return out
+}
+
+/** 도화지 배경 + 레이어 합성 — 화면 렌더와 채점 이미지가 같은 경로를 쓴다 */
+function composite(ctx: CanvasRenderingContext2D) {
+  ctx.fillStyle = PAPER_COLOR
+  ctx.fillRect(0, 0, W, H)
+  for (const layer of orderedLayers()) ctx.drawImage(layer.canvas, 0, 0)
+}
+
+/** 채점용 완성 그림(PNG data URL) */
+function snapshot(): string {
+  const flat = document.createElement('canvas')
+  flat.width = W
+  flat.height = H
+  composite(flat.getContext('2d')!)
+  return flat.toDataURL('image/png')
+}
+
 function resetPaper() {
-  strokes = []
+  layers.clear()
   penHand.stroke = null
   eraseHand.stroke = null
-  clearPaper()
 }
 
-// ── 게임 상태 ─────────────────────────────────
-const phase = ref<'ready' | 'handover' | 'drawing' | 'judging' | 'result'>('ready')
-const playerCount = ref(MIN_PLAYERS)
+// ── 게임 상태 (명세 v0.2.20 — 서버 스케줄 계산·획 릴레이) ──
+const phase = ref<'waiting' | 'handover' | 'drawing' | 'judging' | 'result'>('waiting')
 const topic = ref('')
 const turnIndex = ref(0)
 const timeLeft = ref(0)
 const handoverLeft = ref(HANDOVER_SECONDS)
 
-// ── 멀티 (명세 v0.2.20 — 서버 스케줄 계산·획 릴레이) ──
-const isMultiplayer = computed(() => !!props.session?.turnOrder?.length)
-const turnSeconds = computed(() =>
-  isMultiplayer.value
-    ? (props.session!.turnDurationSec ?? computeTurnSeconds(playerCount.value))
-    : computeTurnSeconds(playerCount.value),
-)
+/** 서버가 화가 순서를 내려줘야 진행된다 — 솔로 플레이는 지원하지 않는다(이어그리기 게임) */
+const sessionReady = computed(() => !!props.session?.turnOrder?.length)
+const playerCount = computed(() => props.session?.turnOrder?.length ?? 0)
+/** 인당 그리기 시간·교대 시간의 권위는 서버(GAME_START) */
+const turnSeconds = computed(() => props.session?.turnDurationSec ?? 0)
 const mpHandoverSec = computed(() => props.session?.handoverSec ?? HANDOVER_SECONDS)
 /** 지금(또는 다가오는) 차례가 내 차례인지 */
 const myTurn = computed(
-  () => isMultiplayer.value && props.session!.turnOrder![turnIndex.value] === props.myUserId,
+  () => sessionReady.value && props.session!.turnOrder![turnIndex.value] === props.myUserId,
 )
 const amLastPainter = computed(() => {
   const order = props.session?.turnOrder
@@ -153,10 +193,10 @@ const resultWaitSec = ref(0)
 /** 조기 차례 넘기기 요청 후 에코 대기 — 연타로 다음 화가 시간까지 깎는 것 방지 */
 const skipRequested = ref(false)
 const showJudgeFallback = computed(
-  () => isMultiplayer.value && !amLastPainter.value && resultWaitSec.value >= 20,
+  () => sessionReady.value && !amLastPainter.value && resultWaitSec.value >= 20,
 )
 
-/** 멀티: 서버 보정 시각. 솔로에서는 사용하지 않는다. */
+/** 서버 권위 시각 — 턴 스케줄 계산의 기준 */
 function serverNow(): number {
   return Date.now() + (props.session?.clockOffset ?? 0)
 }
@@ -199,8 +239,6 @@ function freshHand(): HandState {
 }
 const penHand = freshHand()
 const eraseHand = freshHand()
-let handoverDeadline = 0
-let turnDeadline = 0
 
 // ── 멀티 획 릴레이 상태 ──
 /** 내 차례에 쌓는 발신 대기 획 연산 — 100ms 간격으로 draw emit */
@@ -219,9 +257,9 @@ interface RemoteSource extends StrokeSource {
 }
 const remoteStrokes = new Map<string, RemoteSource>()
 
-/** 내 차례(멀티)에만 획 연산을 발신 큐에 쌓는다 */
+/** 내 차례에만 획 연산을 발신 큐에 쌓는다 */
 function pushOp(op: DrawOp) {
-  if (isMultiplayer.value && myTurn.value) outbox.push(op)
+  if (myTurn.value) outbox.push(op)
 }
 function flushOutbox() {
   if (!outbox.length) return
@@ -240,26 +278,15 @@ watch(
   { immediate: true },
 )
 
-// ── 타이머(인터벌) + 렌더(RAF) 루프 — 카메라 프레임과 독립(마우스 폴백에서도 동작).
+// ── 타이머(인터벌) + 렌더(RAF) 루프 — 카메라 프레임과 독립.
 // 단계 전환을 RAF에 태우면 탭이 가려질 때 RAF가 멈춰 게임이 정지하므로,
 // 전환은 인터벌로 구동하고 RAF는 화면 갱신만 맡는다(핑거 스타 멀티 타이머와 같은 구조).
 let rafId = 0
 let phaseTicker = 0
 onMounted(() => {
   phaseTicker = window.setInterval(() => {
-    if (isMultiplayer.value) {
-      mpTick()
-      flushOutbox()
-      return
-    }
-    const now = performance.now()
-    if (phase.value === 'handover') {
-      handoverLeft.value = Math.max(1, Math.ceil((handoverDeadline - now) / 1000))
-      if (now >= handoverDeadline) beginTurn()
-    } else if (phase.value === 'drawing') {
-      timeLeft.value = Math.max(0, (turnDeadline - now) / 1000)
-      if (now >= turnDeadline) endTurn()
-    }
+    mpTick()
+    flushOutbox()
   }, 100)
   const tick = () => {
     rafId = requestAnimationFrame(tick)
@@ -278,11 +305,10 @@ watch(
   () => props.session,
   (session) => {
     if (!session?.turnOrder?.length) {
-      phase.value = 'ready'
+      phase.value = 'waiting'
       return
     }
     topic.value = session.topicWord ?? '???'
-    playerCount.value = session.turnOrder.length
     resetPaper()
     remoteStrokes.clear()
     outbox = []
@@ -347,7 +373,7 @@ function beginMpJudging() {
   endAllStrokes()
   flushOutbox()
   phase.value = 'judging'
-  finalImage.value = paper.toDataURL('image/png')
+  finalImage.value = snapshot()
   if (amLastPainter.value) void judgeMp()
 }
 
@@ -363,17 +389,8 @@ async function judgeMp() {
   }
 }
 
-function retryJudge() {
-  if (isMultiplayer.value) void judgeMp()
-  else void judge()
-}
-
-/** 차례 마치기 버튼 — 솔로는 즉시 전환, 멀티는 남은 시간을 서버로 보내 전원 스케줄을 당긴다 */
+/** 차례 마치기 — 남은 시간을 서버로 보내 전원 스케줄을 당긴다(마지막 화가면 곧장 채점) */
 function passTurn() {
-  if (!isMultiplayer.value) {
-    endTurn()
-    return
-  }
   const s = props.session
   if (!s?.turnOrder?.length || !myTurn.value || phase.value !== 'drawing' || skipRequested.value) return
   const h = mpHandoverSec.value * 1000
@@ -412,21 +429,22 @@ watch(
   },
 )
 
-/** 원격 화가의 획 연산 적용 — 로컬 입력과 같은 도화지·획 목록을 공유한다(이어받기 자동) */
+/** 원격 화가의 획 연산 적용 — 그 화가의 레이어에 그린다(지우개도 그 레이어에만 작용) */
 function applyRemoteOps(userId: string, ops: DrawOp[]) {
   let src = remoteStrokes.get(userId)
   if (!src) {
     src = { stroke: null, lastEnded: null }
     remoteStrokes.set(userId, src)
   }
+  const layer = layerOf(userId)
   for (const op of ops) {
     if (op.type === 'begin') {
       const tool: Tool = op.tool === 'erase' ? 'erase' : 'pen'
       const x = op.x ?? 0
       const y = op.y ?? 0
       src.stroke = { tool, points: [{ x, y, t: performance.now() }] }
-      strokes.push(src.stroke)
-      drawDot(x, y, tool)
+      layer.strokes.push(src.stroke)
+      drawDot(layer.ctx, x, y, tool)
     } else if (op.type === 'point') {
       const s = src.stroke
       if (!s) continue
@@ -434,17 +452,17 @@ function applyRemoteOps(userId: string, ops: DrawOp[]) {
       const x = op.x ?? prev.x
       const y = op.y ?? prev.y
       s.points.push({ x, y, t: performance.now() })
-      drawSegment(prev, { x, y }, s.tool)
+      drawSegment(layer.ctx, prev, { x, y }, s.tool)
     } else if (op.type === 'end') {
       if (src.stroke) src.lastEnded = src.stroke
       src.stroke = null
     } else if (op.type === 'trim') {
-      // 화가의 펜 업 꼬리 삭제 동기화 — 직전 획을 x개 점으로 절단하고 다시 그린다
+      // 화가의 펜 업 꼬리 삭제 동기화 — 직전 획을 x개 점으로 절단하고 레이어를 다시 그린다
       const target = src.stroke ?? src.lastEnded
       const keep = Math.max(1, Math.floor(op.x ?? 1))
       if (target && target.points.length > keep) {
         target.points = target.points.slice(0, keep)
-        rebuildPaper()
+        rebuildLayer(layer)
       }
     }
   }
@@ -455,7 +473,7 @@ function applyDrawResult(guesses: string[], rank: number, score: number) {
   judgeResult.value = { guesses }
   answerRank.value = rank
   finalScore.value = score
-  if (!finalImage.value) finalImage.value = paper.toDataURL('image/png')
+  if (!finalImage.value) finalImage.value = snapshot()
   phase.value = 'result'
   beep(880)
 }
@@ -464,116 +482,70 @@ function applyDrawResult(guesses: string[], rank: number, score: number) {
 watch(
   () => props.results,
   (results) => {
-    if (!results || !isMultiplayer.value || judgeResult.value) return
+    if (!results || !sessionReady.value || judgeResult.value) return
     judgeResult.value = { guesses: [] }
     answerRank.value = 0
     finalScore.value = 0
-    if (!finalImage.value) finalImage.value = paper.toDataURL('image/png')
+    if (!finalImage.value) finalImage.value = snapshot()
     phase.value = 'result'
   },
 )
 
-// ── 진행 흐름 ─────────────────────────────────
-function startGame() {
-  topic.value = pickTopic()
-  resetPaper()
-  turnIndex.value = 0
-  judgeResult.value = null
-  judgeError.value = null
-  answerRank.value = 0
-  finalScore.value = 0
-  finalImage.value = ''
-  startHandover()
+// ── 그리기 (화가 레이어에 획 누적) ─────────────
+function strokeWidth(tool: Tool): number {
+  return tool === 'erase' ? ERASER_WIDTH : PEN_WIDTH
+}
+/**
+ * 지우개는 destination-out — 색을 칠하는 게 아니라 <b>이 레이어의 잉크만</b> 알파에서 깎아낸다.
+ * 그래서 아래에 깔린 다른 화가의 레이어는 그대로 남는다.
+ */
+function applyTool(ctx: CanvasRenderingContext2D, tool: Tool) {
+  ctx.globalCompositeOperation = tool === 'erase' ? 'destination-out' : 'source-over'
+  ctx.fillStyle = PEN_COLOR
+  ctx.strokeStyle = PEN_COLOR
+  ctx.lineWidth = strokeWidth(tool)
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+}
+function drawDot(ctx: CanvasRenderingContext2D, x: number, y: number, tool: Tool) {
+  applyTool(ctx, tool)
+  ctx.beginPath()
+  ctx.arc(x, y, strokeWidth(tool) / 2, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.globalCompositeOperation = 'source-over'
+}
+function drawSegment(
+  ctx: CanvasRenderingContext2D,
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  tool: Tool,
+) {
+  applyTool(ctx, tool)
+  ctx.beginPath()
+  ctx.moveTo(a.x, a.y)
+  ctx.lineTo(b.x, b.y)
+  ctx.stroke()
+  ctx.globalCompositeOperation = 'source-over'
 }
 
-function startHandover() {
-  endAllStrokes()
-  phase.value = 'handover'
-  handoverLeft.value = HANDOVER_SECONDS
-  handoverDeadline = performance.now() + HANDOVER_SECONDS * 1000
-}
-
-function beginTurn() {
-  phase.value = 'drawing'
-  timeLeft.value = turnSeconds.value
-  turnDeadline = performance.now() + turnSeconds.value * 1000
-}
-
-/** 시간 만료 또는 "차례 마치기" — 다음 화가로 넘기거나 채점으로 */
-function endTurn() {
-  endAllStrokes()
-  if (turnIndex.value + 1 < playerCount.value) {
-    turnIndex.value += 1
-    beep(660)
-    startHandover()
-    return
-  }
-  finishDrawing()
-}
-
-function finishDrawing() {
-  phase.value = 'judging'
-  finalImage.value = paper.toDataURL('image/png')
-  void judge()
-}
-
-async function judge() {
-  judgeError.value = null
-  try {
-    const r = await judgeDrawing(finalImage.value)
-    judgeResult.value = r
-    answerRank.value = findAnswerRank(topic.value, r.guesses)
-    finalScore.value = scoreForRank(answerRank.value)
-    phase.value = 'result'
-    beep(880)
-  } catch (e) {
-    judgeError.value = e instanceof Error ? e.message : 'AI 채점에 실패했어요'
-  }
-}
-
-// ── 그리기 (도화지에 획 누적) ─────────────────
-function toolStyle(tool: Tool): { color: string; width: number } {
-  return tool === 'erase'
-    ? { color: PAPER_COLOR, width: ERASER_WIDTH }
-    : { color: PEN_COLOR, width: PEN_WIDTH }
-}
-function drawDot(x: number, y: number, tool: Tool) {
-  const s = toolStyle(tool)
-  paperCtx.fillStyle = s.color
-  paperCtx.beginPath()
-  paperCtx.arc(x, y, s.width / 2, 0, Math.PI * 2)
-  paperCtx.fill()
-}
-function drawSegment(a: { x: number; y: number }, b: { x: number; y: number }, tool: Tool) {
-  const s = toolStyle(tool)
-  paperCtx.strokeStyle = s.color
-  paperCtx.lineWidth = s.width
-  paperCtx.lineCap = 'round'
-  paperCtx.lineJoin = 'round'
-  paperCtx.beginPath()
-  paperCtx.moveTo(a.x, a.y)
-  paperCtx.lineTo(b.x, b.y)
-  paperCtx.stroke()
-}
-
-function drawTo(src: StrokeSource, x: number, y: number, tool: Tool) {
-  if (src.stroke && src.stroke.tool !== tool) endStroke(src)
+function drawTo(layer: PainterLayer, src: StrokeSource, x: number, y: number, tool: Tool) {
+  if (src.stroke && src.stroke.tool !== tool) endStroke(layer, src)
   const t = performance.now()
   if (!src.stroke) {
     src.stroke = { tool, points: [{ x, y, t }] }
-    strokes.push(src.stroke)
-    drawDot(x, y, tool)
+    layer.strokes.push(src.stroke)
+    drawDot(layer.ctx, x, y, tool)
     pushOp({ type: 'begin', tool, x, y })
     return
   }
   const prev = src.stroke.points[src.stroke.points.length - 1]!
   src.stroke.points.push({ x, y, t })
-  drawSegment(prev, { x, y }, tool)
+  drawSegment(layer.ctx, prev, { x, y }, tool)
   pushOp({ type: 'point', x, y })
 }
 
 /** 소스의 획 종료. trimTail이면(손 제스처 펜 업) 놓는 동안 그려진 꼬리 점을 소급 삭제한다. */
-function endStroke(src: StrokeSource, trimTail = false) {
+function endStroke(layer: PainterLayer, src: StrokeSource, trimTail = false) {
   const s = src.stroke
   if (!s) return
   pushOp({ type: 'end' })
@@ -581,7 +553,7 @@ function endStroke(src: StrokeSource, trimTail = false) {
     const trimmed = trimStrokeTail(s.points, performance.now())
     if (trimmed.length !== s.points.length) {
       s.points = trimmed
-      rebuildPaper()
+      rebuildLayer(layer)
       // 관전자도 같은 꼬리 삭제를 하도록 남길 점 수를 알린다(직전 획 대상)
       pushOp({ type: 'trim', x: trimmed.length })
     }
@@ -589,20 +561,23 @@ function endStroke(src: StrokeSource, trimTail = false) {
   src.stroke = null
 }
 
-/** 모든 입력 소스의 획 종료 — 차례 전환·게임 종료 시(타이머가 끊은 획은 꼬리 삭제 없음) */
+/** 내 입력 소스의 획 종료 — 차례 전환·게임 종료 시(타이머가 끊은 획은 꼬리 삭제 없음) */
 function endAllStrokes() {
-  endStroke(penHand)
-  endStroke(eraseHand)
+  const layer = myLayer()
+  endStroke(layer, penHand)
+  endStroke(layer, eraseHand)
 }
 
-/** 획 목록으로 도화지 재구성 — 꼬리 삭제 직후에만 호출된다(매 프레임 아님) */
-function rebuildPaper() {
-  clearPaper()
-  for (const s of strokes) {
+/** 한 화가의 레이어를 기록대로 다시 그린다 — 꼬리 삭제 직후에만 호출(매 프레임 아님) */
+function rebuildLayer(layer: PainterLayer) {
+  layer.ctx.clearRect(0, 0, W, H)
+  for (const s of layer.strokes) {
     const first = s.points[0]
     if (!first) continue
-    drawDot(first.x, first.y, s.tool)
-    for (let i = 1; i < s.points.length; i++) drawSegment(s.points[i - 1]!, s.points[i]!, s.tool)
+    drawDot(layer.ctx, first.x, first.y, s.tool)
+    for (let i = 1; i < s.points.length; i++) {
+      drawSegment(layer.ctx, s.points[i - 1]!, s.points[i]!, s.tool)
+    }
   }
 }
 
@@ -647,14 +622,14 @@ function updateFist(h: HandState, lm: NormalizedPoint[]) {
   }
 }
 
-/** 지금 그릴 권한 — 멀티에서는 내 차례에만 입력이 열린다(관전자는 커서·상태만 표시) */
+/** 지금 그릴 권한 — 내 차례에만 입력이 열린다(관전자는 커서·상태만 표시) */
 function inputAllowed(): boolean {
-  return !isMultiplayer.value || myTurn.value
+  return myTurn.value
 }
 
 /** 손이 화면에서 사라졌을 때의 상태 정리 */
 function resetHand(h: HandState, trimTail: boolean) {
-  endStroke(h, trimTail)
+  endStroke(myLayer(), h, trimTail)
   h.active = false
   h.tracked = false
   h.fistStreak = 0
@@ -682,10 +657,10 @@ function updatePenHand(lm: NormalizedPoint[] | null) {
   const down = !penHand.fist && applyPinchHysteresis(penHand.active, pinchRatio(lm))
   const canAct = phase.value === 'drawing' && inputAllowed()
   if (down && canAct) {
-    drawTo(penHand, penHand.x, penHand.y, 'pen')
+    drawTo(myLayer(), penHand, penHand.x, penHand.y, 'pen')
   } else {
     // 펜을 놓는 순간 — 손을 펴는 동안 그려진 꼬리를 소급 삭제
-    endStroke(penHand, true)
+    endStroke(myLayer(), penHand, true)
   }
   penHand.active = down
   penDrawing.value = down && canAct
@@ -704,8 +679,8 @@ function updateEraseHand(lm: NormalizedPoint[] | null) {
   updateFist(eraseHand, lm)
 
   const canAct = phase.value === 'drawing' && inputAllowed()
-  if (eraseHand.fist && canAct) drawTo(eraseHand, eraseHand.x, eraseHand.y, 'erase')
-  else endStroke(eraseHand)
+  if (eraseHand.fist && canAct) drawTo(myLayer(), eraseHand, eraseHand.x, eraseHand.y, 'erase')
+  else endStroke(myLayer(), eraseHand)
   eraseHand.active = eraseHand.fist
   erasing.value = eraseHand.fist && canAct
 }
@@ -715,7 +690,7 @@ function render() {
   const canvas = canvasRef.value
   const ctx = canvas?.getContext('2d')
   if (!canvas || !ctx) return
-  ctx.drawImage(paper, 0, 0)
+  composite(ctx)
 
   if (phase.value !== 'drawing') return
   // 지우개 손 커서 — 주먹이면 활성 표시, 아니면 위치 예고
@@ -774,7 +749,6 @@ function beep(freq = 660, dur = 0.08) {
   }
 }
 
-const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
 </script>
 
 <template>
@@ -783,15 +757,13 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
 
     <!-- 상단 바: 주제어 · 화가 순번 · 턴 타이머 -->
     <div class="dr-topbar">
-      <span class="dr-topic">🎨 주제어: {{ phase === 'ready' ? '???' : topic }}</span>
-      <span class="dr-painter">
+      <span class="dr-topic">🎨 주제어: {{ sessionReady ? topic : '???' }}</span>
+      <span v-if="sessionReady" class="dr-painter">
         화가 {{ turnIndex + 1 }} / {{ playerCount
         }}{{
-          isMultiplayer
-            ? myTurn
-              ? ' · 내 차례!'
-              : ` · ${painterName ? `${painterName}님이` : '다른 화가가'} 그리고 있어요!`
-            : ''
+          myTurn
+            ? ' · 내 차례!'
+            : ` · ${painterName ? `${painterName}님이` : '다른 화가가'} 그리고 있어요!`
         }}
       </span>
       <div class="dr-time-track">
@@ -813,10 +785,14 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
         🧽 지우개·{{ eraseHandLabel }} 주먹 {{ eraseDetected ? (erasing ? '지우는 중' : '대기') : '—' }}
       </span>
       <span v-if="!gotFrame" class="dr-hint">카메라 영상을 기다리는 중…</span>
-      <!-- 차례 넘기기 — 멀티 관전자에게는 숨김. 멀티는 TURN_SKIPPED 릴레이로
-           전원 스케줄을 당긴다(마지막 화가면 곧장 채점으로) -->
+      <!-- 손 역할 스왑 — 개인 설정이라 언제든 바꿀 수 있게 상태 옆에 둔다 -->
+      <button class="dr-swap-btn" :title="`현재 ${penHandLabel} 펜 · ${eraseHandLabel} 지우개`" @click="swapHands = !swapHands">
+        ✋ 손 바꾸기
+      </button>
+      <!-- 차례 넘기기 — 관전자에게는 숨김. TURN_SKIPPED 릴레이로 전원 스케줄을 당긴다
+           (마지막 화가면 곧장 채점으로) -->
       <button
-        v-if="phase === 'drawing' && (!isMultiplayer || myTurn)"
+        v-if="phase === 'drawing' && myTurn"
         class="dr-pass"
         :disabled="skipRequested"
         @click="passTurn"
@@ -825,54 +801,37 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
       </button>
     </div>
 
-    <!-- 대기 화면: 규칙 + 인원 선택(솔로 로컬 테스트) -->
-    <div v-if="phase === 'ready'" class="dr-overlay">
+    <!-- 세션 대기 — 이어그리기라 솔로가 없다. 서버 GAME_START(화가 순서)를 받아야 진행된다 -->
+    <div v-if="phase === 'waiting'" class="dr-overlay">
       <p class="dr-guide">
-        총 1분 30초를 인원수로 나눠 한 도화지에 그림을 이어 그려요.<br />
+        총 {{ Math.floor(TOTAL_SECONDS / 60) }}분 {{ TOTAL_SECONDS % 60 }}초를 인원수로 나눠 한
+        도화지에 그림을 이어 그려요.<br />
         <b>{{ penHandLabel }}</b> 엄지+검지를 <b>집으면</b> 그리기 · 펴면 이동,
         <b>{{ eraseHandLabel }} 주먹</b>으로 문지르면 지우개!<br />
         완성 그림을 본 AI의 추측 5개 안에 주제어가 있으면 점수!
       </p>
-      <div class="dr-players">
-        <button
-          v-for="n in playerOptions"
-          :key="n"
-          :class="{ on: n === playerCount }"
-          @click="playerCount = n"
-        >
-          {{ n }}인
-        </button>
-      </div>
       <p class="dr-sub">
-        인당 {{ turnSeconds }}초 × {{ playerCount }}명 — 정식 게임은 {{ MIN_PLAYERS }}인부터,
-        로컬 테스트는 혼자 모든 차례를 그려요
+        {{ MIN_PLAYERS }}명 이상 모이면 방장이 시작할 수 있어요 — 혼자서는 진행할 수 없는
+        이어그리기 게임이에요
       </p>
-      <label class="dr-swap">
-        <input v-model="swapHands" type="checkbox" />
-        왼손잡이 모드 — 왼손 펜 · 오른손 지우개
-      </label>
-      <button class="dr-start" :disabled="!gotFrame" @click="startGame">🖌 그리기 시작</button>
       <p v-if="hand.error.value" class="dr-warn">{{ hand.error.value }}</p>
       <p v-else-if="hand.isLoading.value" class="dr-warn">손 인식 모델 로딩 중…</p>
       <p v-else-if="!gotFrame" class="dr-warn">카메라 영상을 기다리는 중… (카메라가 켜져 있어야 해요)</p>
+      <button class="dr-quit" @click="emit('close')">나가기</button>
     </div>
 
     <!-- 차례 교대 -->
     <div v-if="phase === 'handover'" class="dr-overlay dr-overlay-light">
       <p class="dr-guide">
-        <b>{{
-          isMultiplayer && painterName ? `${painterName}님` : `${turnIndex + 1}번째 화가`
-        }}</b>
+        <b>{{ painterName ? `${painterName}님` : `${turnIndex + 1}번째 화가` }}</b>
         차례!<br />주제어: <b>{{ topic }}</b>
       </p>
       <p class="dr-countdown">{{ handoverLeft }}</p>
       <p class="dr-sub">
         {{
-          isMultiplayer
-            ? myTurn
-              ? '내 차례예요 — 이어서 그려주세요!'
-              : `${painterName ? `${painterName}님이` : '다른 화가가'} 이어 그려요 — 같은 도화지가 실시간으로 보여요`
-            : `이어서 그려주세요 — 인당 ${turnSeconds}초`
+          myTurn
+            ? '내 차례예요 — 이어서 그려주세요!'
+            : `${painterName ? `${painterName}님이` : '다른 화가가'} 이어 그려요 — 같은 도화지가 실시간으로 보여요`
         }}
       </p>
     </div>
@@ -883,19 +842,19 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
         <p class="dr-guide">🤖 AI가 그림을 살펴보는 중…</p>
         <p class="dr-sub">
           {{
-            isMultiplayer && !amLastPainter
-              ? '마지막 화가가 채점 결과를 보내면 함께 공개돼요'
-              : '주제어를 알려주지 않고 무엇을 그렸는지 5개를 추측하게 해요'
+            amLastPainter
+              ? '주제어를 알려주지 않고 무엇을 그렸는지 5개를 추측하게 해요'
+              : '마지막 화가가 채점 결과를 보내면 함께 공개돼요'
           }}
         </p>
-        <button v-if="showJudgeFallback" class="dr-quit" @click="retryJudge">
+        <button v-if="showJudgeFallback" class="dr-quit" @click="judgeMp">
           결과가 오지 않아요 — 직접 채점하기
         </button>
       </template>
       <template v-else>
         <p class="dr-warn">{{ judgeError }}</p>
         <div class="dr-actions">
-          <button class="dr-start" @click="retryJudge">🔁 다시 채점</button>
+          <button class="dr-start" @click="judgeMp">🔁 다시 채점</button>
           <button class="dr-quit" @click="emit('close')">나가기</button>
         </div>
       </template>
@@ -921,12 +880,9 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
           </li>
         </ol>
       </div>
+      <!-- 새 판은 방장이 게임 선택으로 다시 시작한다 -->
       <div class="dr-actions">
-        <!-- 다시 하기는 솔로 전용 — 멀티는 방장이 게임 선택으로 새 세션을 시작한다 -->
-        <button v-if="!isMultiplayer" class="dr-start" @click="startGame">🔁 다시 하기</button>
-        <button class="dr-quit" @click="emit('close')">
-          {{ isMultiplayer ? '대기실로 돌아가기' : '나가기' }}
-        </button>
+        <button class="dr-quit" @click="emit('close')">대기실로 돌아가기</button>
       </div>
     </div>
   </div>
@@ -1009,6 +965,11 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
 }
 .dr-bottombar .on { color: #3f7d2f; font-weight: 700; }
 .dr-hint { color: #b0452b; }
+.dr-swap-btn {
+  padding: 8px 12px; font-family: inherit; font-size: 13px; cursor: pointer;
+  background: rgba(43, 43, 51, 0.08); color: #4a4438;
+  border: 2px solid rgba(43, 43, 51, 0.25); border-radius: 10px;
+}
 .dr-pass {
   margin-left: auto;
   padding: 12px 18px; font-family: inherit; font-size: 15px; font-weight: 700; cursor: pointer;
@@ -1036,19 +997,7 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
 .dr-guide { font-size: 21px; line-height: 1.8; margin: 0; }
 .dr-guide b { color: #ffd23f; }
 .dr-countdown { font-size: 88px; color: #ffd23f; margin: 0; line-height: 1; }
-.dr-players { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-.dr-players button {
-  padding: 12px 18px; font-family: inherit; font-size: 16px; cursor: pointer;
-  background: rgba(255, 255, 255, 0.08); color: #d8d0be;
-  border: 2px solid rgba(255, 255, 255, 0.18); border-radius: 12px;
-}
-.dr-players button.on { background: #ffd23f; color: #3a2c05; border-color: #ffd23f; }
 .dr-warn { font-size: 15px; color: #ffd3b8; margin: 0; }
-.dr-swap {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 15px; color: #cfc6b2; cursor: pointer;
-}
-.dr-swap input { accent-color: #ffd23f; width: 18px; height: 18px; }
 .dr-start {
   padding: 13px 22px; font-family: inherit; font-size: 16px; font-weight: 700; cursor: pointer;
   background: #e0642f; color: #fff4e8; border: none; border-radius: 14px;
