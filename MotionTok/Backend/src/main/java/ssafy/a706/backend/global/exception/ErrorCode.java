@@ -71,6 +71,9 @@ public enum ErrorCode {
     GAME_NOT_SETTER(HttpStatus.FORBIDDEN, "GAME_NOT_SETTER", "출제자만 포즈를 제출할 수 있습니다."),
     GAME_NEED_MORE_PLAYERS(HttpStatus.CONFLICT, "GAME_NEED_MORE_PLAYERS", "이 게임은 2명 이상부터 시작할 수 있습니다."),
     GAME_POSE_INVALID(HttpStatus.BAD_REQUEST, "GAME_POSE_INVALID", "포즈 데이터가 올바르지 않습니다."),
+    GAME_JUDGE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "GAME_JUDGE_UNAVAILABLE", "AI 채점을 사용할 수 없습니다."),
+    GAME_JUDGE_FAILED(HttpStatus.BAD_GATEWAY, "GAME_JUDGE_FAILED", "AI 채점에 실패했습니다."),
+    GAME_IMAGE_INVALID(HttpStatus.BAD_REQUEST, "GAME_IMAGE_INVALID", "그림 데이터가 올바르지 않습니다."),
 
     // signal
     SIGNAL_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "SIGNAL_NOT_IN_ROOM", "방 참가자만 시그널을 보낼 수 있습니다."),

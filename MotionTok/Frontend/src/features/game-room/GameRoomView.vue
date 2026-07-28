@@ -1114,13 +1114,10 @@ const startHint = computed(() =>
             :my-user-id="myParticipantId"
             :draw-events="drawFeed"
             :names="participantNames"
+            :room-id="roomCode"
             @close="closeGame"
             @draw="(seq: number, ops: DrawOp[]) => roomChat.sendGameDraw(seq, ops)"
             @turn-skip="(turnIdx: number, remainingMs: number) => roomChat.sendGameTurnSkip(turnIdx, remainingMs)"
-            @draw-result="
-              (r: { guesses: string[]; answerRank: number; score: number }) =>
-                roomChat.sendGameDrawResult(r.guesses, r.answerRank, r.score)
-            "
           />
           <!-- 캐치캐치리듬 — 전용 STOMP 채널이라 activeSession을 쓰지 않는다(자기 생명주기 소유).
                roomChat은 구독/발행 구멍만 쓰고 리듬 도메인 지식은 컴포넌트 안에 있다. -->
