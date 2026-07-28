@@ -10,8 +10,10 @@ import {
   findMarginForArea,
   gradeOf,
   iouOf,
+  poseDifficulty,
 } from '@/features/games/body-fit/judge'
 import { defaultConfig } from '@/features/games/body-fit/config'
+import type { Pt, SolvedSkeleton } from '@/features/games/body-fit/skeleton'
 
 /** 알파 패턴으로 RGBA 버퍼 생성 — 1=칠해짐(alpha 255), 0=빈 픽셀 */
 function mask(bits: number[]): Uint8ClampedArray {
@@ -66,5 +68,69 @@ describe('마진 이분 탐색 (UI 스펙 §2-3)', () => {
   it('목표가 탐색 범위 밖이면 경계값으로 수렴한다 (발산하지 않음)', () => {
     expect(findMarginForArea(() => 1, 999)).toBeLessThanOrEqual(0.6)
     expect(findMarginForArea(() => 999, 1)).toBeGreaterThanOrEqual(0)
+  })
+})
+
+describe('출제 난이도 휴리스틱 (관전 화면 별점)', () => {
+  /** 어깨(±0.5, 0) 기준 골격 — 팔 좌표만 바꿔 넣는다 */
+  function skel(
+    elbowL: Pt, wristL: Pt, elbowR: Pt, wristR: Pt,
+  ): SolvedSkeleton {
+    return {
+      anchor: { x: 0, y: 0 },
+      head: { x: 0, y: 0.5 },
+      shoulderL: { x: -0.5, y: 0 },
+      shoulderR: { x: 0.5, y: 0 },
+      hip: { x: 0, y: -1 },
+      elbowL, wristL, elbowR, wristR,
+    } as SolvedSkeleton
+  }
+  /** 차렷 — 양팔 아래로 쭉 */
+  const rest = skel(
+    { x: -0.5, y: -0.5 }, { x: -0.5, y: -1 },
+    { x: 0.5, y: -0.5 }, { x: 0.5, y: -1 },
+  )
+  /** 만세 — 양팔 위로 쭉 */
+  const raised = skel(
+    { x: -0.5, y: 0.5 }, { x: -0.5, y: 1 },
+    { x: 0.5, y: 0.5 }, { x: 0.5, y: 1 },
+  )
+  /** 한 팔만 위 — 비대칭 */
+  const oneArm = skel(
+    { x: -0.5, y: 0.5 }, { x: -0.5, y: 1 },
+    { x: 0.5, y: -0.5 }, { x: 0.5, y: -1 },
+  )
+
+  it('차렷이 가장 쉽다(0)', () => {
+    expect(poseDifficulty(rest)).toBeCloseTo(0, 5)
+  })
+
+  it('팔을 들면 어려워진다', () => {
+    expect(poseDifficulty(raised)).toBeGreaterThan(poseDifficulty(rest))
+  })
+
+  it('팔꿈치를 접으면 같은 높이라도 더 어렵다', () => {
+    // 팔은 아래로 뻗되 손목만 위로 접어 올린다(팔꿈치 굽힘만 추가)
+    const folded = skel(
+      { x: -0.5, y: -0.5 }, { x: -0.5, y: 0 },
+      { x: 0.5, y: -0.5 }, { x: 0.5, y: 0 },
+    )
+    expect(poseDifficulty(folded)).toBeGreaterThan(poseDifficulty(rest))
+  })
+
+  it('비대칭이 대칭보다 어렵다 — 한 팔만 든 쪽이 양팔 평균 리프트가 같아도 더 높다', () => {
+    // oneArm: 리프트 평균 = (π + 0)/2, 양팔 절반만 든 대칭 포즈와 평균이 같다
+    const bothHalf = skel(
+      { x: -1, y: 0 }, { x: -1.5, y: 0 },
+      { x: 1, y: 0 }, { x: 1.5, y: 0 },
+    )
+    expect(poseDifficulty(oneArm)).toBeGreaterThan(poseDifficulty(bothHalf))
+  })
+
+  it('항상 0~1 범위 (별점 계산이 범위를 벗어나지 않는다)', () => {
+    for (const s of [rest, raised, oneArm]) {
+      expect(poseDifficulty(s)).toBeGreaterThanOrEqual(0)
+      expect(poseDifficulty(s)).toBeLessThanOrEqual(1)
+    }
   })
 })
