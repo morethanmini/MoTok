@@ -10,6 +10,7 @@ import ssafy.a706.backend.auth.oauth.repository.OauthAccountRepository;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.shop.repository.PointHistoryRepository;
 import ssafy.a706.backend.storage.StorageService;
 import ssafy.a706.backend.storage.UploadPurpose;
 import ssafy.a706.backend.user.controller.dto.UpdateAvatarRequest;
@@ -49,6 +50,7 @@ class UserAvatarServiceTest {
 
     private final UserService service = new UserService(
             userRepository,
+            mock(PointHistoryRepository.class),
             mock(PasswordEncoder.class),
             mock(RefreshTokenStore.class),
             mock(OauthAccountRepository.class),

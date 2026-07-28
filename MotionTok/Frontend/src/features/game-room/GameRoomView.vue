@@ -5,10 +5,14 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch 
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason } from '@/api'
+import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason } from '@/api'
 import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { useCamera } from '@/composables/useCamera'
+import { useDecoration } from '@/composables/useDecoration'
+import { warmUpMotionModels } from '@/composables/motionModels'
+import { useStickerCompositor } from '@/composables/useStickerCompositor'
+import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
 import { useRoomChat } from '@/composables/useRoomChat'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
@@ -26,6 +30,9 @@ import CreateRoomModal, { type NewRoom } from '@/features/lobby/components/Creat
 // MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
 const FingerStarGame = defineAsyncComponent(
   () => import('@/features/games/finger-star/FingerStarGame.vue'),
+)
+const BodyFitGame = defineAsyncComponent(
+  () => import('@/features/games/body-fit/BodyFitGame.vue'),
 )
 const DrawingRelayGame = defineAsyncComponent(
   () => import('@/features/games/drawing-relay/DrawingRelayGame.vue'),
@@ -49,6 +56,21 @@ const { message: toast, flash } = useToast(2600)
 const lk = useLiveKitRoom()
 const camera = useCamera()
 const CAMERA_CONSTRAINTS = { video: { width: 640, height: 400 }, audio: false } as const
+
+// 장착 스티커는 발행 트랙에 합성해서 내보낸다 — 원본 캡처에 그리면 모션 인식 입력이 오염되고,
+// 화면에만 얹으면 나만 보인다. 합성이 안 되는 환경에서는 원본 트랙으로 조용히 되돌아간다.
+const decor = useDecoration()
+const compositor = useStickerCompositor()
+
+/** 발행에 쓸 트랙 — 스티커가 있으면 합성 트랙, 없거나 합성 실패면 원본 트랙. */
+async function publishableTrack(stream: MediaStream | null): Promise<MediaStreamTrack | null> {
+  const source = stream?.getVideoTracks()[0] ?? null
+  if (!stream || !source) return null
+  if (decor.sprites.value.length === 0) return source
+  // 이미 합성 중이면 그대로 쓴다 — 다시 시작하면 지금 발행돼 있는 복제본에 프레임이 끊긴다.
+  if (compositor.track.value) return compositor.track.value
+  return (await compositor.start(stream, () => decor.sprites.value)) ?? source
+}
 // 대기실 채팅 + 게임 제안 (STOMP, 명세 §7)
 const roomChat = useRoomChat()
 const myParticipantId = computed(() => readAccessClaims()?.sub ?? null)
@@ -74,6 +96,8 @@ const roomVisibility = ref<Visibility>('PUBLIC')
 const participantCount = ref(1)
 /** 이미 방에 있는 참가자 — 친구 초대(-100) 목록에서 빼려고 들고 있는다. */
 const memberIds = ref<string[]>([])
+/** userId → 표시명(상세 조회 기준). 게임④ 출제자 이름·그림으로 말해요 화가 표시가 함께 쓴다. */
+const memberNames = ref<Record<string, string>>({})
 
 /**
  * 방장 판정 — <b>이 화면의 유일한 방장 판별 근거</b>다. 상세 조회의 hostUserId와 내 토큰 sub를 직접 비교한다.
@@ -98,7 +122,17 @@ function applyDetail(d: LiveRoomDetail) {
   roomVisibility.value = d.visibility
   participantCount.value = d.participantCount
   memberIds.value = d.members.map((m) => m.userId)
+  memberNames.value = Object.fromEntries(d.members.map((m) => [m.userId, m.displayName]))
 }
+
+/** userId → 닉네임 — 상세 조회 멤버를 기본으로 LiveKit 참가자 이름으로 보강(뒤늦게 들어온 참가자 대응). */
+const participantNames = computed<Record<string, string>>(() => {
+  const names = { ...memberNames.value }
+  for (const p of lk.participants.value) {
+    if (p.identity && p.name) names[p.identity] = p.name
+  }
+  return names
+})
 
 // ── 실시간 참가자 → 슬롯 매핑 ────────────────
 const connected = computed(() => lk.state.value === ConnectionState.Connected)
@@ -117,7 +151,15 @@ const otherSlots = computed<Slot[]>(() => {
 })
 // 내 캠은 왼쪽에 크게 고정, 나머지는 오른쪽 좁은 트레이에 인원수(2~8명)에 맞춰 세로로 쌓는다.
 // 1~2명: 1열(위아래로 쌓임). 3명 이상: 2열.
-const othersColumns = computed(() => (otherSlots.value.length <= 2 ? 1 : 2))
+const othersColumns = computed(() => {
+  if (otherSlots.value.length <= 2) return 1
+  if (otherSlots.value.length <= 4) return 2
+  return 3
+})
+const isEightPlayerLayout = computed(() => capacity.value === 8)
+const isSideBySideLayout = computed(() => capacity.value >= 5 && capacity.value <= 8)
+const leftSideSlots = computed(() => otherSlots.value.slice(0, capacity.value <= 6 ? 2 : 3))
+const rightSideSlots = computed(() => otherSlots.value.slice(capacity.value <= 6 ? 2 : 3, 7))
 
 // ── 자기 타일 상태 — 프리뷰·게임 참여 가능 여부는 로컬 캡처 기준, "보이는지"는 발행 상태 기준 ──
 const demoMic = ref(initialMicOn.value)
@@ -152,6 +194,43 @@ const showHostWaiting = computed(
 )
 
 const selfVideoEl = ref<HTMLVideoElement>()
+const kickTarget = ref<ParticipantView | null>(null)
+const kicking = ref(false)
+const kickReason = ref<KickReason>('GAME_DISRUPTION')
+const KICK_REASONS: ReadonlyArray<{ code: KickReason; label: string }> = [
+  { code: 'MANNER_VIOLATION', label: '비매너 행위' },
+  { code: 'INAPPROPRIATE_PROFILE', label: '부적절한 프로필' },
+  { code: 'GAME_DISRUPTION', label: '게임 진행 방해' },
+  { code: 'SPAM_AD', label: '도배·광고' },
+  { code: 'OTHER', label: '기타' },
+]
+function openKick(target: ParticipantView | null) {
+  if (!amRoomHost.value || !target) return
+  kickReason.value = 'GAME_DISRUPTION'
+  kickTarget.value = target
+}
+function closeKick() {
+  if (!kicking.value) kickTarget.value = null
+}
+async function confirmKick() {
+  if (!kickTarget.value || kicking.value) return
+  kicking.value = true
+  try {
+    await roomsApi.kick(roomCode.value, kickTarget.value.identity, kickReason.value)
+    flash(`${kickTarget.value.name}님을 방에서 내보냈어요`)
+    kickTarget.value = null
+  } catch (e) {
+    flash(e instanceof ApiError ? e.message : '강퇴 처리에 실패했어요')
+  } finally {
+    kicking.value = false
+  }
+}
+const selfVideoAspect = ref(8 / 5)
+function syncSelfVideoAspect() {
+  const video = selfVideoEl.value
+  if (!video?.videoWidth || !video.videoHeight) return
+  selfVideoAspect.value = video.videoWidth / video.videoHeight
+}
 // 모션 인식 입력은 항상 로컬 캡처 스트림을 쓴다 — 카메라를 꺼도(발행 mute) 스트림 연결은
 // 유지되어 게임 입력이 계속 흐른다. 프리뷰 표시 여부만 selfCamOn(발행 상태)으로 가린다.
 watch(
@@ -173,6 +252,7 @@ const picker = ref(false)
 
 // 탭 닫기·주소창 이탈 시 keepalive 퇴장 통보 + bfcache 복원 시 로비로(뒤로가기 복귀 차단)
 useRoomUnloadLeave(() => route.query.room as string | undefined)
+
 
 onMounted(async () => {
   bgm.setVolume(0.2)
@@ -204,17 +284,29 @@ onMounted(async () => {
   // 내 타일과 다른 사람 화면 모두 꺼져 보이고, 방 안에서 카메라를 켜면 그때 발행한다.
   const stream = await camera.start(CAMERA_CONSTRAINTS)
   if (!stream) flash('카메라를 켤 수 없어요(권한/장치 확인)')
+  // 장착 스티커를 먼저 읽어 두고 합성 트랙을 만든다(실패하면 원본 트랙으로 발행).
+  await decor.load()
   const ok = await lk.connect(roomCode.value, {
-    cameraTrack: initialCamOn.value ? (stream?.getVideoTracks()[0] ?? null) : null,
+    cameraTrack: initialCamOn.value ? await publishableTrack(stream) : null,
     microphone: initialMicOn.value,
   })
   if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
 
   // 채팅은 이력이 없어서(비영속) 구독이 늦은 만큼 그대로 유실 — 입장 직후 바로 연결.
   void roomChat.connect(roomCode.value)
+
+  // 모션 모델은 로비 스플래시가 이미 받아 뒀을 것이다(싱글턴이라 여기선 즉시 끝난다).
+  // 그래도 한 번 더 확인하는 이유 — 주소창으로 방에 바로 들어오거나 게스트로 로비를 건너뛴
+  // 경로가 있어서, 그대로 두면 게임 시작 버튼을 누른 뒤에야 17MB를 받기 시작한다.
+  // 입장 흐름을 막지 않도록 기다리지 않는다.
+  void warmUpMotionModels().then((ready) => {
+    if (!ready) flash('모션 인식 모델을 준비하지 못했어요 · 게임 시작이 늦어질 수 있어요')
+  })
 })
 onBeforeUnmount(() => {
   roomChat.disconnect()
+  // BGM은 모듈 싱글턴이라 suspend된 채로 방을 뜨면 로비에서도 영영 안 나온다
+  bgm.resumeAfterGame()
 })
 
 // ── 채팅 ────────────────────────────────────
@@ -394,14 +486,14 @@ async function toggleCam() {
       flash('카메라 권한을 허용해 주세요')
       return
     }
-    const track = s.getVideoTracks()[0]
+    const track = await publishableTrack(s)
     if (connected.value && track) await lk.publishCameraTrack(track)
     return
   }
   if (connected.value) {
     // 발행된 카메라가 없으면(입장 시 발행 실패) 지금 발행한다
     if (!(await lk.toggleCamera())) {
-      const track = camera.stream.value?.getVideoTracks()[0]
+      const track = await publishableTrack(camera.stream.value)
       if (track) await lk.publishCameraTrack(track)
     }
     return
@@ -429,27 +521,83 @@ const suggestCooldown = ref(false)
 const activeGame = ref<GameEntry | null>(null)
 const activeSession = ref<ActiveGameSession | null>(null)
 const gameResults = ref<GameResultEntry[] | null>(null)
+/** 게임④(-86): POSE_SET으로 도착한 출제 포즈(랜드마크 JSON) — 벽 생성 입력 */
+const poseChallenge = ref<string | null>(null)
 /** 그림으로 말해요(게임 10) — DRAW/DRAW_RESULT 릴레이를 게임 컴포넌트로 전달하는 피드 */
 const drawFeed = ref<GameEvent[]>([])
+
+/**
+ * 게임④는 자체 사운드(S15P11A706-138)를 가지므로 로비 BGM을 내린다.
+ * useBgm의 suspendForGame/resumeAfterGame은 만들어져만 있고 호출부가 없었다 — 여기서 연결한다.
+ * 게임④에만 거는 이유: 다른 게임은 자체 사운드가 없거나 담당이 달라, 임의로 BGM을 끄면 그쪽
+ * 체감이 바뀐다. 전체에 걸려면 조건만 `!!activeGame.value`로 넓히면 된다.
+ *
+ * 반드시 activeGame 선언 아래에 둔다 — watch는 초기값을 잡으려고 getter를 setup 중 즉시
+ * 실행하므로, 위에 두면 const TDZ에 걸려 setup 전체가 죽는다(빌드는 통과한다: TS는 화살표
+ * 함수 안의 선언 전 참조를 잡지 않는다).
+ */
+watch(
+  () => activeGame.value?.id === 'shape',
+  (ownsAudio) => (ownsAudio ? bgm.suspendForGame() : bgm.resumeAfterGame()),
+)
 
 // ── 게임 화면 송출 — 게임 중에는 카메라와 함께 게임 캔버스를 화면공유 트랙으로 발행한다.
 // 다른 참가자는 타일마다 게임 화면 ↔ 카메라를 토글로 골라 본다(ParticipantTile).
 // 표시되지 않는 쪽은 adaptiveStream·dynacast가 자동으로 쉬게 하므로 부하는 보는 만큼만 든다.
 const gameComp = ref<{ canvas?: HTMLCanvasElement } | null>(null)
 
+/** 게임④(-9): 이번 라운드 출제자가 나인가 — 출제자 화면은 빈 무대라 송출하지 않는다 */
+const iAmSetter = computed(
+  () =>
+    !!activeSession.value?.setterUserId &&
+    activeSession.value.setterUserId === myParticipantId.value,
+)
+/** 게임④(-9): 이번 라운드 출제자 표시명 — 이름 조회는 participantNames 하나로 통일한다 */
+const setterName = computed(() => {
+  const id = activeSession.value?.setterUserId
+  return id ? (participantNames.value[id] ?? '출제자') : null
+})
+/**
+ * 게임④(-9): 출제 중인 출제자의 카메라를 다른 참가자 타일에서 가린다 — 캠으로 포즈가
+ * 미리 보이면 문제가 성립하지 않는다(실기 피드백). 출제자는 게임 화면을 송출하지 않으므로
+ * 타일에 보이는 건 카메라 원본이다.
+ * 창은 타이머 없이 판별한다: GAME_START(poseChallenge=null) ~ POSE_SET 도착까지가 곧 출제 구간.
+ */
+const coveredSetterId = computed(() =>
+  activeGame.value?.id === 'shape' &&
+  activeSession.value?.setterUserId &&
+  !poseChallenge.value &&
+  !gameResults.value
+    ? activeSession.value.setterUserId
+    : null,
+)
+/**
+ * 타일에 씌울 가림막 문구. 참가자 타일은 레이아웃(정원 5~8인 side-tray / 그 외 others-tray)에
+ * 따라 세 군데에서 렌더되므로, 조건을 여기 한 곳에 두고 전부 이걸 쓴다 —
+ * 한 곳만 빠져도 그 레이아웃에서 출제 포즈가 새어나간다.
+ */
+function coverFor(slot: Slot): string | null {
+  return slot.view && slot.view.identity === coveredSetterId.value ? '🤫 출제 중 — 비밀!' : null
+}
+
 // 캔버스가 준비되면 송출 시작. 게임 캔버스에는 카메라 원본이 그려지지 않으므로(밤하늘+손 포인트)
 // 카메라를 숨긴 상태여도 계속 송출하고, 캡처가 끊겨 새 프레임이 없을 때만 가린다(정지 화면 방지).
 // 라운드가 끝나면(GAME_END 수신) 결과 화면을 닫지 않아도 송출을 내린다 — gameTrack이 사라지면서
 // 모든 참가자 타일이 카메라로 복귀하고 게임/카메라 토글도 함께 사라진다. 다음 GAME_START에서
 // gameResults가 초기화되면 같은 watch가 재발행한다.
+// 게임④(-9) 출제자는 제외한다 — 관전 화면이라 남에게 보내봐야 빈 무대다. 로테이션으로
+// 라운드마다 바뀌므로 iAmSetter를 의존성에 넣어 출제 차례가 끝나면 다시 발행된다.
 // 캐치캐치리듬은 전용 채널이라 gameResults를 안 쓴다 — 컴포넌트가 RHYTHM_END 정산을
 // started/ended 이벤트로 알려주면 rhythmEnded가 같은 역할(정산 즉시 송출 내림)을 한다.
 const rhythmEnded = ref(false)
 watch(
-  [() => gameComp.value?.canvas ?? null, captureOn, gameResults, rhythmEnded],
-  async ([canvas, capOn, results, rhythmDone]) => {
+  [() => gameComp.value?.canvas ?? null, captureOn, gameResults, iAmSetter, rhythmEnded],
+  async ([canvas, capOn, results, setter, rhythmDone]) => {
     if (!activeGame.value || !canvas) return
-    if (results || rhythmDone) {
+    // 그림으로 말해요 — 전원이 획 릴레이로 같은 도화지를 로컬 렌더링하므로 캔버스 송출이
+    // 무의미하다. 송출하지 않으면 다른 참가자 타일은 게임 중에도 카메라 화면 그대로다.
+    if (activeGame.value.id === 'draw') return
+    if (results || setter || rhythmDone) {
       await lk.unpublishGameScreen()
       return
     }
@@ -466,6 +614,15 @@ interface LiveScoreRow {
   score: number | null
 }
 const liveScores = ref<Record<string, LiveScoreRow>>({})
+/** 게임④(-9) 전용 — score(GRADE_POINTS 역산: 100/85/70/그 외)로 등급 배지를 보여준다 */
+const BODY_FIT_GRADE: Record<number, { label: string; color: string }> = {
+  100: { label: 'PERFECT', color: '#b98bff' },
+  85: { label: 'GREAT', color: '#45e0a8' },
+  70: { label: 'PASS', color: '#ffcf4d' },
+}
+function bodyFitGrade(score: number) {
+  return BODY_FIT_GRADE[score] ?? { label: 'FAIL', color: '#ff5d73' }
+}
 const scoreboardRows = computed(() => {
   const rows = Object.entries(liveScores.value).map(([userId, r]) => ({ userId, ...r }))
   rows.sort(
@@ -488,6 +645,7 @@ function applyGameEvent(e: GameEvent) {
     if (!entry) return
     gameResults.value = null
     liveScores.value = {}
+    poseChallenge.value = null
     drawFeed.value = []
     activeSession.value = {
       sessionId: e.sessionId,
@@ -495,6 +653,10 @@ function applyGameEvent(e: GameEvent) {
       startAt: e.startAt,
       endAt: e.endAt,
       clockOffset: e.serverNow - Date.now(),
+      setterUserId: e.setterUserId ?? null,
+      difficulty: e.difficulty ?? null,
+      roundNo: e.roundNo ?? null,
+      totalRounds: e.totalRounds ?? null,
       topicWord: e.topicWord ?? null,
       turnOrder: e.turnOrder ?? null,
       turnDurationSec: e.turnDurationSec ?? null,
@@ -502,13 +664,17 @@ function applyGameEvent(e: GameEvent) {
     }
     activeGame.value = entry
     picker.value = false
-    if (!captureOn.value && !entry.cameraOptional) flash('카메라를 켜면 게임에 참여할 수 있어요')
+    if (!captureOn.value) flash('카메라를 켜면 게임에 참여할 수 있어요')
     return
   }
   // 이하 이벤트는 현재 세션 것만 반영(닫은 뒤 늦게 도착한 프레임 방어)
   if (activeSession.value?.sessionId !== e.sessionId) return
+  if (e.type === 'POSE_SET') {
+    poseChallenge.value = e.challenge
+    return
+  }
   // 그리기 릴레이 — 게임 컴포넌트가 피드를 watch로 소비한다(자기 에코 무시 포함)
-  if (e.type === 'DRAW' || e.type === 'DRAW_RESULT') {
+  if (e.type === 'DRAW' || e.type === 'DRAW_RESULT' || e.type === 'TURN_SKIPPED') {
     drawFeed.value = [...drawFeed.value, e]
     return
   }
@@ -551,7 +717,11 @@ useRhythmAutoJoin(roomChat, roomCode, () => {
 function openPicker() {
   picker.value = true
 }
-function launch(g: GameEntry) {
+/** 지금 방에 있는 인원 — LiveKit 참가자(본인 포함)가 실시간, 상세 조회 값은 폴백 */
+function roomPlayerCount(): number {
+  return lk.participants.value.length || participantCount.value
+}
+async function launch(g: GameEntry, difficulty?: string) {
   picker.value = false
   // 캐치캐치리듬은 전용 STOMP 채널을 쓴다 — 공용 게임 세션(GAME_START) 경로를 타지 않고
   // 컴포넌트가 자기 생명주기를 소유한다. 난이도 선택·시작은 컴포넌트 안에서.
@@ -566,16 +736,34 @@ function launch(g: GameEntry) {
   }
   // 방장 + 서버 연결 + 플레이 가능 → 서버에 시작 요청. GAME_START가 방 전체에 돌아와 마운트된다.
   if (g.playable && roomChat.connected.value && selfIsHost.value) {
-    if (!captureOn.value && !g.cameraOptional) {
+    if (!captureOn.value) {
       flash('카메라를 켜고 시작해 주세요')
       return
     }
-    roomChat.startGame(g.gameId)
+    // 최소 인원은 서버도 거부하지만, 먼저 알려주는 편이 친절하다(이어그리기는 3인부터)
+    if (g.minPlayers && roomPlayerCount() < g.minPlayers) {
+      flash(`${g.name} 는 ${g.minPlayers}명부터 시작할 수 있어요`)
+      return
+    }
+    // 게임④(-9): 출제자는 관전하는 룰이라 1인 방에선 라운드가 성립 안 함 —
+    // 시작 시점 인원을 재조회해 혼자면 서버 세션 없이 로컬 연습 모드로 돌린다.
+    if (g.id === 'shape' && (await memberCountNow()) < 2) {
+      flash('혼자 있어서 연습 모드로 시작해요 — 출제와 플레이를 모두 해요')
+      activeSession.value = null
+      activeGame.value = g
+      return
+    }
+    roomChat.startGame(g.gameId, undefined, difficulty)
     return
   }
-  // 서버 미연동 데모 — 로컬 솔로 플레이 폴백
+  // 서버 미연동 데모 — 로컬 솔로 플레이 폴백. 멀티 전용 게임(minPlayers>1)은 혼자
+  // 진행할 수 없으므로 폴백에서 제외한다(그림으로 말해요는 이어그리기라 3인부터).
+  if (g.playable && !roomChat.connected.value && (g.minPlayers ?? 1) > 1) {
+    flash(`${g.name} 는 실시간 서버에 연결된 뒤 ${g.minPlayers}명부터 시작할 수 있어요`)
+    return
+  }
   if (g.playable && !roomChat.connected.value) {
-    if (!captureOn.value && !g.cameraOptional) {
+    if (!captureOn.value) {
       flash('카메라를 켜야 게임을 플레이할 수 있어요')
       return
     }
@@ -593,6 +781,15 @@ function launch(g: GameEntry) {
   setTimeout(() => (suggestCooldown.value = false), SUGGEST_COOLDOWN_MS)
 }
 
+/** 시작 클릭 시점의 실제 방 인원 — 조회 실패 시 2로 간주해 정상(서버 시작) 경로로 보낸다 */
+async function memberCountNow(): Promise<number> {
+  try {
+    return (await roomsApi.detail(roomCode.value)).members.length
+  } catch {
+    return 2
+  }
+}
+
 /** 게임 컴포넌트의 진행 상황(컴포넌트에서 300ms 스로틀) → 서버 중계 */
 function onGameProgress(starsLit: number, holdProgress: number) {
   if (activeSession.value && !gameResults.value) roomChat.sendGameProgress(starsLit, holdProgress)
@@ -608,12 +805,27 @@ function onGameFinished(r: { constellation: string; score: number; starsHit: num
   flash(`✨ ${r.score}점 · 별 ${r.starsHit}/${r.starsTotal}`)
 }
 
+/** 게임④(-86): 출제자가 캡처한 포즈(랜드마크 JSON)를 서버로 — POSE_SET이 방 전체에 돌아온다 */
+function onPoseSubmit(pose: string) {
+  if (activeSession.value && !gameResults.value) roomChat.sendPoseSubmit(pose)
+}
+
+function onBodyFitFinished(r: { score: number; grade: string; iou: number }) {
+  if (activeSession.value) {
+    // 서버가 최초 1회만 수리하고 PLAYER_FINISHED → (전원 완주 시) GAME_END를 배포한다.
+    roomChat.sendGameFinish(r.score, 0)
+    return
+  }
+  flash(`🧱 ${r.grade} · 일치율 ${Math.round(r.iou)}%`)
+}
+
 function closeGame() {
   void lk.unpublishGameScreen()
   activeGame.value = null
   activeSession.value = null
   gameResults.value = null
   liveScores.value = {}
+  poseChallenge.value = null
   rhythmEnded.value = false
   drawFeed.value = []
 }
@@ -717,10 +929,36 @@ watch(
     )
   },
 )
+
+// 강퇴·퇴장 멤버 이벤트(-71, -73)를 즉시 반영한다. 특히 내 ID가 대상이면 REST 요청 성공만으로
+// 화면이 남아 있지 않도록 LiveKit/카메라 연결을 끊고 확인 모달 없이 로비로 이동한다.
+watch(
+  () => roomChat.memberRemoved.value,
+  async (e) => {
+    if (!e) return
+    participantCount.value = e.participantCount
+    memberIds.value = memberIds.value.filter((id) => id !== e.userId)
+  },
+)
+watch(
+  () => roomChat.memberKicked.value,
+  async (e) => {
+    if (!e) return
+    participantCount.value = e.participantCount
+    memberIds.value = memberIds.value.filter((id) => id !== e.userId)
+    if (e.userId !== myParticipantId.value) return
+
+    await lk.disconnect()
+    camera.stop()
+    leavingIntentionally = true
+    await router.replace({ name: RouteName.Lobby, query: { kickedReason: e.reason } })
+  },
+)
 // 헤더 링크·뒤로가기 등으로 방을 벗어나려 하면 확인 모달. "나가기" 같은 의도된 이동은 통과.
 let leavingIntentionally = false
 const showLeaveConfirm = ref(false)
 let resolveLeave: ((ok: boolean) => void) | null = null
+let leaveToLobbyAfterConfirm = false
 onBeforeRouteLeave(() => {
   if (leavingIntentionally) return true
   showLeaveConfirm.value = true
@@ -728,9 +966,18 @@ onBeforeRouteLeave(() => {
 })
 async function answerLeave(ok: boolean) {
   showLeaveConfirm.value = false
-  if (ok) await notifyLeave()
-  resolveLeave?.(ok)
+  const routeLeaveResolver = resolveLeave
   resolveLeave = null
+  if (ok) {
+    await notifyLeave()
+    if (leaveToLobbyAfterConfirm) {
+      leavingIntentionally = true
+      leaveToLobbyAfterConfirm = false
+      await router.push({ name: RouteName.Lobby })
+    }
+  }
+  leaveToLobbyAfterConfirm = false
+  routeLeaveResolver?.(ok)
 }
 
 // 백엔드 퇴장 통보 + LiveKit 연결 정리. "LEAVE" 버튼과 확인 모달("나가기") 양쪽 경로에서 공유.
@@ -748,9 +995,8 @@ async function notifyLeave() {
 }
 
 async function leave() {
-  leavingIntentionally = true
-  await notifyLeave()
-  router.push({ name: RouteName.Lobby })
+  leaveToLobbyAfterConfirm = true
+  showLeaveConfirm.value = true
 }
 
 // ── 친구 초대 (-100, 대기실 전용) ─────────────
@@ -815,18 +1061,6 @@ const startHint = computed(() =>
         ⚙
       </button>
 
-      <!-- 게임 시작 — 바 정중앙. 힌트 문구는 54px 바에 두 줄이 안 들어가 title 툴팁으로 옮겼다. -->
-      <button
-        class="px start-btn"
-        :class="{ suggest: !amRoomHost }"
-        :disabled="pickerLocked || (detailLoaded && !amRoomHost && suggestCooldown)"
-        :title="startHint"
-        @click="openPicker"
-      >
-        <span class="play-ico">▶</span>
-        <span class="start-title">{{ startLabel }}</span>
-      </button>
-
       <!-- 방 코드 (하단 바에서 이동) -->
       <div class="code-box">
         <span class="px code-cap">ROOM CODE</span>
@@ -841,10 +1075,57 @@ const startHint = computed(() =>
 
     <!-- 본문: 내 캠을 크게, 나머지는 인원수에 맞춰 그리드로 배치 -->
     <main class="room-main">
-      <div class="cam-stage">
+      <div
+        class="cam-stage"
+        :class="{
+          crowded: otherSlots.length > 4,
+          'side-layout': isSideBySideLayout,
+          'five-player': capacity === 5,
+          'four-player': capacity === 4,
+          'three-player': capacity === 3,
+          'two-player': capacity === 2,
+        }"
+        :style="capacity === 2 ? { '--two-player-aspect': selfVideoAspect * 2 } : undefined"
+      >
+        <div
+          v-if="isSideBySideLayout"
+          class="side-tray"
+          :class="capacity <= 6 ? 'side-tray-left-two' : 'side-tray-left'"
+        >
+          <ParticipantTile
+            v-for="(slot, i) in leftSideSlots"
+            :key="`left-${i}`"
+            :view="slot.view"
+            :host="slot.host"
+            :cover="coverFor(slot)"
+            play-audio
+            compact
+            :can-kick="amRoomHost && !!slot.view"
+            @kick="openKick(slot.view)"
+          />
+        </div>
         <!-- 내 캠 — 항상 가장 크게 -->
-        <div class="self-tile self-spot">
-          <video v-show="selfCamOn" ref="selfVideoEl" autoplay playsinline muted class="self-video" />
+        <div class="self-tile self-spot" :style="{ '--camera-aspect': selfVideoAspect }">
+          <video
+            v-show="selfCamOn"
+            ref="selfVideoEl"
+            autoplay
+            playsinline
+            muted
+            class="self-video"
+            @loadedmetadata="syncSelfVideoAspect"
+          />
+          <!-- 내 <video>는 원본 캡처(게임 입력용)라 스티커가 없다. 발행 트랙에는 합성돼 나가므로
+               내 화면에도 같은 스티커를 얹어 준다. self-video는 좌우 반전이라 mirrored,
+               object-fit:cover로 잘리는 영역까지 같은 기하로 맞춘다.
+               영상 비율은 타일 레이아웃이 이미 재고 있는 selfVideoAspect를 그대로 쓴다. -->
+          <StickerOverlay
+            v-if="selfCamOn"
+            :sprites="decor.sprites.value"
+            mirrored
+            fit="cover"
+            :frame-aspect="selfVideoAspect"
+          />
           <div v-if="!selfCamOn" class="cam-off">
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">
               <path d="M2 6h11v12H2zM16 10l6-4v12l-6-4" /><line x1="2" y1="2" x2="22" y2="22" />
@@ -864,6 +1145,23 @@ const startHint = computed(() =>
             @progress="onGameProgress"
             @finished="onGameFinished"
           />
+          <!-- 게임④ 몸 끼워 맞추기(S15P11A706-9) — 출제 포즈(POSE_SET)는 challenge로 내려준다 -->
+          <BodyFitGame
+            v-else-if="activeGame?.id === 'shape'"
+            ref="gameComp"
+            :video="selfVideoEl ?? null"
+            :session="activeSession"
+            :results="gameResults"
+            :my-user-id="myParticipantId"
+            :challenge="poseChallenge"
+            :scores="scoreboardRows"
+            :setter-name="setterName"
+            embedded
+            @close="closeGame"
+            @pose-submit="onPoseSubmit"
+            @progress="onGameProgress"
+            @finished="onBodyFitFinished"
+          />
           <!-- 그림으로 말해요 — 솔로(session=null)·멀티(명세 v0.2.20 턴 릴레이) -->
           <DrawingRelayGame
             v-else-if="activeGame?.id === 'draw'"
@@ -873,12 +1171,11 @@ const startHint = computed(() =>
             :results="gameResults"
             :my-user-id="myParticipantId"
             :draw-events="drawFeed"
+            :names="participantNames"
+            :room-id="roomCode"
             @close="closeGame"
             @draw="(seq: number, ops: DrawOp[]) => roomChat.sendGameDraw(seq, ops)"
-            @draw-result="
-              (r: { guesses: string[]; answerRank: number; score: number }) =>
-                roomChat.sendGameDrawResult(r.guesses, r.answerRank, r.score)
-            "
+            @turn-skip="(turnIdx: number, remainingMs: number) => roomChat.sendGameTurnSkip(turnIdx, remainingMs)"
           />
           <!-- 캐치캐치리듬 — 전용 STOMP 채널이라 activeSession을 쓰지 않는다(자기 생명주기 소유).
                roomChat은 구독/발행 구멍만 쓰고 리듬 도메인 지식은 컴포넌트 안에 있다. -->
@@ -903,18 +1200,42 @@ const startHint = computed(() =>
         </div>
 
         <!-- 나머지 참가자 — 인원수(2~8명)에 맞춰 열 수가 달라지는 그리드 -->
-        <div class="others-tray" :style="{ '--cols': othersColumns }">
+        <div
+          v-if="isSideBySideLayout"
+          class="side-tray"
+          :class="isEightPlayerLayout ? 'side-tray-right' : capacity === 5 ? 'side-tray-right-two' : 'side-tray-right-three'"
+        >
+          <ParticipantTile
+            v-for="(slot, i) in rightSideSlots"
+            :key="`right-${i}`"
+            :view="slot.view"
+            :host="slot.host"
+            :cover="coverFor(slot)"
+            play-audio
+            compact
+            :can-kick="amRoomHost && !!slot.view"
+            @kick="openKick(slot.view)"
+          />
+        </div>
+        <div v-else class="others-tray" :style="{ '--cols': othersColumns }">
           <ParticipantTile
             v-for="(slot, i) in otherSlots"
             :key="i"
             :view="slot.view"
             :host="slot.host"
+            :cover="coverFor(slot)"
             play-audio
+            :can-kick="amRoomHost && !!slot.view"
+            @kick="openKick(slot.view)"
           />
         </div>
 
         <!-- 실시간 스코어보드 (게임 중, S15P11A706-82) -->
-        <div v-if="activeSession && !gameResults" class="px game-scoreboard">
+        <div
+          v-if="activeSession && !gameResults"
+          class="px game-scoreboard"
+          :class="{ bf: activeGame?.id === 'shape' }"
+        >
           <div class="gs-title">⭐ LIVE SCORE</div>
           <div
             v-for="row in scoreboardRows"
@@ -923,7 +1244,21 @@ const startHint = computed(() =>
             :class="{ me: row.userId === myParticipantId }"
           >
             <span class="gs-name">{{ row.nickname }}</span>
-            <span class="gs-val">{{ row.finished ? `${row.score}점 ✓` : `⭐ ${row.starsLit}` }}</span>
+            <span
+              v-if="activeGame?.id === 'shape' && row.finished"
+              class="gs-badge"
+              :style="{ color: bodyFitGrade(row.score ?? 0).color, borderColor: bodyFitGrade(row.score ?? 0).color }"
+            >
+              {{ bodyFitGrade(row.score ?? 0).label }}
+            </span>
+            <!-- 게임④는 별이 없다 — 진행 중이면 실시간 일치율(holdProgress)을 보여준다 -->
+            <span v-else class="gs-val">{{
+              row.finished
+                ? `${row.score}점 ✓`
+                : activeGame?.id === 'shape'
+                  ? `일치율 ${Math.round(row.holdProgress * 100)}%`
+                  : `⭐ ${row.starsLit}`
+            }}</span>
           </div>
           <div v-if="scoreboardRows.length === 0" class="gs-empty">진행 상황 수신 대기 중…</div>
         </div>
@@ -947,6 +1282,16 @@ const startHint = computed(() =>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="2" y="4" width="20" height="13" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>
         </button>
         <button class="ctrl" title="아바타"><span class="px">☻</span></button>
+        <button
+          class="px start-btn"
+          :class="{ suggest: !amRoomHost }"
+          :disabled="pickerLocked || (detailLoaded && !amRoomHost && suggestCooldown)"
+          :title="startHint"
+          @click="openPicker"
+        >
+          <span class="play-ico">▶</span>
+          <span class="start-title">{{ startLabel }}</span>
+        </button>
       </div>
 
       <!-- 채팅 독 -->
@@ -1062,14 +1407,38 @@ const startHint = computed(() =>
       @create="submitSettings"
     />
 
-    <PixelModal v-if="showLeaveConfirm" @close="answerLeave(false)">
-      <h3 class="leave-title">🚪 게임을 떠나시겠어요?</h3>
-      <p class="leave-desc">지금 나가면 진행 중인 방에서 나가게 돼요.</p>
-      <div class="leave-actions">
-        <PixelButton block @click="answerLeave(false)">취소</PixelButton>
-        <PixelButton variant="primary" block @click="answerLeave(true)">나가기</PixelButton>
+    <PixelModal v-if="showLeaveConfirm" variant="lobby" @close="answerLeave(false)">
+      <div class="leave-confirm">
+        <span class="leave-icon" aria-hidden="true">🚪</span>
+        <p class="leave-kicker">ROOM EXIT</p>
+        <h3 class="leave-title">정말 떠나시겠습니까?</h3>
+        <p class="leave-desc">나가면 현재 방과의 연결이 종료돼요.<br />친구들과 다시 만나려면 방에 재입장해야 합니다.</p>
+        <div class="leave-confirm-actions">
+          <PixelButton class="leave-cancel" block @click="answerLeave(false)">계속 놀기</PixelButton>
+          <PixelButton class="leave-submit" block @click="answerLeave(true)">나가기</PixelButton>
+        </div>
       </div>
     </PixelModal>
+
+    <PixelModal v-if="kickTarget" variant="lobby" @close="closeKick">
+      <div class="leave-confirm">
+        <span class="leave-icon" aria-hidden="true">⚠️</span>
+        <p class="leave-kicker">HOST CONTROL</p>
+        <h3 class="leave-title">{{ kickTarget.name }}님을 강퇴할까요?</h3>
+        <p class="leave-desc">강퇴 사유를 선택해 주세요. 강퇴된 참가자는 방이 유지되는 동안 재입장할 수 없어요.</p>
+        <div class="kick-reasons" role="radiogroup" aria-label="강퇴 사유">
+          <label v-for="reason in KICK_REASONS" :key="reason.code" class="kick-reason-option">
+            <input v-model="kickReason" type="radio" name="kick-reason" :value="reason.code" :disabled="kicking" />
+            {{ reason.label }}
+          </label>
+        </div>
+        <div class="leave-confirm-actions">
+          <PixelButton class="leave-cancel" block :disabled="kicking" @click="closeKick">취소</PixelButton>
+          <PixelButton class="leave-submit" block :disabled="kicking" @click="confirmKick">강퇴하기</PixelButton>
+        </div>
+      </div>
+    </PixelModal>
+
 
     <!-- 채팅 메시지 신고 -->
     <PixelModal v-if="reportTarget" @close="closeReport">
@@ -1197,6 +1566,36 @@ const startHint = computed(() =>
 .leave-title { margin: 0 0 8px; font-size: 15px; }
 .leave-desc { margin: 0 0 18px; font-size: 11px; color: var(--c-muted); line-height: 1.6; }
 .leave-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.leave-confirm { text-align: center; color: #403124; }
+.leave-icon {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  margin: 0 auto 12px;
+  place-items: center;
+  border: 3px solid #b78d5d;
+  border-radius: 12px;
+  background: #fff0b9;
+  box-shadow: 3px 3px 0 #e2d0b5;
+  font-size: 26px;
+}
+.leave-kicker { margin: 0 0 7px; color: #9e6b43; font-size: 9px; letter-spacing: 1px; }
+.leave-confirm .leave-title { margin-bottom: 10px; font-size: 19px; }
+.leave-confirm .leave-desc { margin-bottom: 22px; color: #806e5e; font-size: 11px; }
+.leave-confirm-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.leave-confirm-actions :deep(.px-btn) {
+  height: 46px;
+  border: 3px solid #925c47;
+  border-radius: 7px;
+  box-shadow: inset 2px 2px 0 rgba(255, 255, 255, .42), inset -2px -3px 0 rgba(120, 58, 47, .18), 3px 3px 0 #a66b50;
+  font-size: 12px;
+}
+.leave-confirm-actions :deep(.leave-cancel) { background: #fff7e5; color: #4b372b; }
+.leave-confirm-actions :deep(.leave-submit) { background: #ef7775; color: #fff; }
+.kick-reasons { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: -7px 0 19px; text-align: left; }
+.kick-reason-option { display: flex; align-items: center; gap: 5px; min-height: 27px; padding: 4px 6px; border: 1px solid #d9c29e; border-radius: 5px; background: #fffaf0; color: #715a48; font-size: 8px; cursor: pointer; }
+.kick-reason-option:has(input:checked) { border-color: #d45c63; background: #ffe8e7; color: #a94d52; }
+.kick-reason-option input { accent-color: #d45c63; margin: 0; }
 
 .room-ribbon { flex: none; position: relative; height: 54px; padding: 0 28px; display: flex; align-items: center; gap: 14px; border-bottom: 2px solid rgba(56, 38, 61, .18); background: linear-gradient(110deg, rgba(207, 244, 231, .95), rgba(255, 240, 185, .95)); z-index: 5; }
 .room-ribbon .px-kicker { padding: 5px 9px; font-size: 8px; }
@@ -1214,7 +1613,7 @@ const startHint = computed(() =>
 
 /* 캠 영역 — 내 캠(왼쪽, 크게) + 나머지 참가자(오른쪽, 인원수에 맞춰 그리드). 화면 안에 스크롤 없이 모두 들어가고,
    카메라 비율은 유지하되 박스를 꽉 채우지는 않는다(letterbox는 object-fit: contain으로 처리). */
-.cam-stage { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: row; gap: 14px; }
+.cam-stage { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: row; align-items: center; gap: 14px; }
 
 /* 게임 중 실시간 스코어보드 — 참가자 트레이 위 오버레이 */
 .game-scoreboard {
@@ -1237,6 +1636,14 @@ const startHint = computed(() =>
 .gs-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 110px; }
 .gs-val { color: #5cbf4a; white-space: nowrap; }
 .gs-empty { font-size: 7px; color: #a99f86; }
+.gs-badge { font-size: 7px; font-weight: 800; padding: 2px 6px; border: 1px solid; border-radius: 6px; white-space: nowrap; }
+
+/* 게임④(-9) 전용 다크 테마 — 인게임 화면(BodyFitGame)과 톤을 맞춘다 */
+.game-scoreboard.bf { background: rgba(18, 20, 43, 0.96); border-color: rgba(255, 255, 255, 0.12); }
+.game-scoreboard.bf .gs-title { color: #ffcf4d; }
+.game-scoreboard.bf .gs-row { color: #eef0ff; }
+.game-scoreboard.bf .gs-row.me .gs-name { color: #45e0a8; }
+.game-scoreboard.bf .gs-empty { color: #8d90b8; }
 
 /* 자기 타일 — 항상 가장 크게 */
 .self-tile.self-spot {
@@ -1260,8 +1667,34 @@ const startHint = computed(() =>
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(var(--cols, 1), 1fr);
-  grid-auto-rows: 1fr;
+  grid-auto-rows: minmax(0, 1fr);
+  align-items: center;
   gap: 12px;
+}
+.side-tray {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  display: grid;
+  gap: 12px;
+  align-items: center;
+}
+.side-tray-left { grid-template-rows: repeat(3, minmax(0, 1fr)); }
+.side-tray-left-two { grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.side-tray-right { grid-template-rows: repeat(4, minmax(0, 1fr)); }
+.side-tray-right-two { grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.side-tray-right-three { grid-template-rows: repeat(3, minmax(0, 1fr)); }
+.side-tray :deep(.tile) {
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+  justify-self: center;
+}
+.side-tray-left-two :deep(.tile), .side-tray-right-two :deep(.tile) {
+  width: 100%;
+  height: auto;
+  max-width: none;
+  justify-self: stretch;
 }
 
 /* 게임 시작 (상단 바 정중앙)
@@ -1428,4 +1861,241 @@ const startHint = computed(() =>
 .toast-leave-to { opacity: 0; }
 
 @keyframes px-bubble { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+/* Lobby visual language: warm paper, garden pastels, and soft wood outlines. */
+.room-shell {
+  --room-paper: #fffdf7;
+  --room-wood: #d9b77f;
+  --room-ink: #403124;
+  --room-muted: #806e5e;
+  --room-shadow: #dfcdb0;
+  background-color: #fffaf0;
+  background-image:
+    linear-gradient(0deg, rgba(204, 169, 115, .11) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(204, 169, 115, .08) 1px, transparent 1px);
+  background-size: 16px 16px;
+  color: var(--room-ink);
+}
+
+.room-ribbon {
+  height: 68px;
+  padding: 0 42px;
+  border-bottom: 3px solid var(--room-wood);
+  background: rgba(255, 250, 240, .94);
+  box-shadow: 0 4px 0 rgba(217, 183, 127, .2);
+}
+.room-ribbon .px-kicker {
+  padding: 9px 13px;
+  border: 2px solid #b78d5d;
+  border-radius: 7px;
+  background: #d7e7ad;
+  color: var(--room-ink);
+  box-shadow: 2px 2px 0 #e2d0b5;
+}
+.room-ribbon .px-kicker i { background: #ef7775; }
+.ribbon-report, .ribbon-invite, .ribbon-settings {
+  border-color: #b78d5d;
+  border-radius: 7px;
+  background: #fff7e5;
+  box-shadow: 2px 2px 0 #e2d0b5;
+}
+.ribbon-report:hover { background: #ffe2e3; }
+.ribbon-invite:hover, .ribbon-settings:hover { background: #d8f4ec; }
+.code-box {
+  border-color: #b78d5d;
+  border-radius: 7px;
+  background: #fffdf7;
+  box-shadow: 2px 2px 0 #e2d0b5;
+}
+.code-cap { color: var(--room-muted); }
+.code-val { color: #bd6d45; }
+.copy { border-color: #b78d5d; border-radius: 5px; background: #fff0b9; color: var(--room-ink); }
+
+.start-btn {
+  border: 3px solid #925c47;
+  border-radius: 7px;
+  background: #ef6d70;
+  box-shadow: inset 2px 2px 0 rgba(255, 255, 255, .4), inset -2px -3px 0 rgba(120, 58, 47, .2), 4px 4px 0 #a66b50;
+}
+.start-btn.suggest { background: #e7c996; color: var(--room-ink); }
+.controls .start-btn {
+  position: static;
+  transform: none;
+  height: 50px;
+  padding: 0 16px;
+  white-space: nowrap;
+}
+
+.room-main { gap: 18px; padding: 26px 46px; }
+.cam-stage {
+  padding: 12px;
+  gap: 16px;
+  border: 2px dashed #dfc9a6;
+  border-radius: 18px;
+  background: rgba(255, 253, 247, .65);
+}
+.self-tile {
+  border-color: var(--room-wood);
+  border-radius: 16px;
+  background: var(--room-paper);
+  box-shadow: none;
+}
+.self-tile.self-spot {
+  flex: 0 0 62%;
+}
+.cam-stage.crowded .self-tile.self-spot { flex-basis: 55%; }
+.cam-stage.side-layout { justify-content: center; gap: 16px; }
+.cam-stage.side-layout .self-tile.self-spot {
+  flex-basis: 58%;
+  align-self: stretch;
+  aspect-ratio: 8 / 5;
+}
+.cam-stage.five-player .self-tile.self-spot {
+  flex-basis: 42%;
+  align-self: center;
+}
+.cam-stage.four-player {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: 32 / 15;
+  align-self: center;
+  align-items: stretch;
+}
+.cam-stage.four-player .self-tile.self-spot {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  width: auto;
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  aspect-ratio: 8 / 5;
+  place-self: center;
+}
+.cam-stage.four-player .others-tray { display: contents; }
+.cam-stage.four-player .others-tray :deep(.tile) {
+  width: auto;
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  aspect-ratio: 8 / 5;
+  place-self: center;
+}
+.cam-stage.three-player {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: 12 / 5;
+  align-self: center;
+  align-items: stretch;
+}
+.cam-stage.three-player .self-tile.self-spot {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  width: auto;
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  aspect-ratio: 8 / 5;
+  place-self: center;
+}
+.cam-stage.three-player .others-tray { display: contents; }
+.cam-stage.three-player .others-tray :deep(.tile) {
+  width: auto;
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  aspect-ratio: 8 / 5;
+  place-self: center;
+}
+.cam-stage.two-player {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+  flex: 0 1 auto;
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+  aspect-ratio: var(--two-player-aspect, 16 / 5);
+  gap: 12px;
+  align-self: center;
+  align-items: stretch;
+}
+.cam-stage.two-player .self-tile.self-spot {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  aspect-ratio: var(--camera-aspect, 8 / 5);
+  place-self: stretch;
+}
+.cam-stage.two-player .others-tray { display: contents; }
+.cam-stage.two-player .others-tray :deep(.tile) {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  aspect-ratio: var(--camera-aspect, 8 / 5);
+  place-self: stretch;
+}
+.self-video { object-fit: cover; background: #f7ecd6; }
+.cam-stage.side-layout .self-video { object-fit: cover; }
+.cam-off { background: linear-gradient(135deg, #bfe9ff, #d7e7ad); color: var(--room-muted); }
+.cam-on-btn { border-color: #925c47; border-radius: 7px; background: #4078cf; box-shadow: 3px 3px 0 #a66b50; }
+.self-label {
+  border-color: #b78d5d;
+  border-radius: 6px;
+  background: #fffdf7;
+  color: var(--room-ink);
+  box-shadow: 2px 2px 0 #e2d0b5;
+}
+.c-g { color: #5b8d45; }
+.game-scoreboard {
+  border-color: var(--room-wood);
+  border-radius: 12px;
+  background: rgba(255, 253, 247, .97);
+  box-shadow: 3px 3px 0 var(--room-shadow);
+}
+.gs-title, .gs-row.me .gs-name { color: #bd6d45; }
+.gs-row { color: var(--room-ink); }
+.gs-val { color: #5b8d45; }
+
+.room-footer {
+  padding: 16px 40px;
+  border-top: 3px solid var(--room-wood);
+  background: rgba(255, 250, 240, .96);
+}
+.ctrl, .chat-dock, .leave {
+  border-color: #b78d5d;
+  border-radius: 7px;
+  box-shadow: 3px 3px 0 #e2d0b5;
+}
+.ctrl { background: #fffdf7; color: var(--room-ink); }
+.ctrl.on { background: #d7e7ad; color: #5b8d45; }
+.ctrl.off { background: #ffe2e3; color: #d45c63; }
+.chat-dock { background: #fffdf7; }
+.chat-dock input { color: var(--room-ink); }
+.chat-send { border-color: #925c47; border-radius: 6px; background: #e7c996; color: var(--room-ink); }
+.chat-expand { border-color: #b78d5d; border-radius: 6px; background: #fff7e5; color: var(--room-muted); }
+.chat-expand.active { background: #d7e7ad; color: var(--room-ink); }
+.bubble { border-color: #dfc9a6; border-radius: 9px; background: #fffdf7; box-shadow: 2px 2px 0 #e2d0b5; }
+.bubble.me { background: #fff0b9; }
+.bubble.suggest { background: #d8f4ec; }
+.bubble-name { color: #5b8d45; }
+.bubble-name.me { color: #bd6d45; }
+.suggest-pick { border-color: #925c47; border-radius: 6px; background: #e7c996; color: var(--room-ink); }
+.chat-full { border-color: var(--room-wood); border-radius: 12px; background: rgba(255, 253, 247, .95); box-shadow: 4px 4px 0 var(--room-shadow); }
+.chat-full-head { color: var(--room-ink); border-bottom-color: #ead9bd; }
+.chat-full-close { border-color: #b78d5d; border-radius: 5px; background: #fff7e5; color: var(--room-ink); }
+.leave { border-color: #925c47; border-radius: 7px; background: #ef7775; box-shadow: 3px 3px 0 #a66b50; }
+
+@media (max-width: 1280px) {
+  .room-ribbon { padding: 0 28px; }
+  .room-main { padding: 20px 28px; }
+  .room-footer { padding: 14px 26px; }
+}
 </style>

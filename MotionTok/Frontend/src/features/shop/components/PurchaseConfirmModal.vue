@@ -6,7 +6,8 @@ import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import CoinIcon from '@/components/common/CoinIcon.vue'
 
-const props = defineProps<{ item: Item; currentPoints: number }>()
+/** pending — 구매 요청 진행 중. 버튼을 잠가 연타로 두 번 결제되는 걸 막는다. */
+const props = defineProps<{ item: Item; currentPoints: number; pending?: boolean }>()
 const emit = defineEmits<{ close: []; confirm: []; charge: [] }>()
 
 const CATEGORY_LABEL: Record<ItemCategory, string> = {
@@ -29,7 +30,10 @@ const short = computed(() => after.value < 0)
       <h3>구매하시겠습니까?</h3>
 
       <div class="item">
-        <div class="thumb">{{ EMOJI[item.category] }}</div>
+        <div class="thumb">
+          <img v-if="item.imageUrl" :src="item.imageUrl" alt="" />
+          <template v-else>{{ EMOJI[item.category] }}</template>
+        </div>
         <div class="info">
           <div class="name">{{ item.name }}</div>
           <div class="cat">{{ CATEGORY_LABEL[item.category] }}</div>
@@ -45,9 +49,13 @@ const short = computed(() => after.value < 0)
       <p v-if="short" class="warn">포인트가 부족해요. 충전 후 구매할 수 있어요.</p>
 
       <div class="actions">
-        <PixelButton block @click="emit('close')">취소</PixelButton>
-        <PixelButton v-if="short" variant="yellow" block @click="emit('charge')">포인트 충전</PixelButton>
-        <PixelButton v-else variant="primary" block @click="emit('confirm')">구매</PixelButton>
+        <PixelButton block :disabled="pending" @click="emit('close')">취소</PixelButton>
+        <PixelButton v-if="short" variant="yellow" block :disabled="pending" @click="emit('charge')">
+          포인트 충전
+        </PixelButton>
+        <PixelButton v-else variant="primary" block :disabled="pending" @click="emit('confirm')">
+          {{ pending ? '구매 중…' : '구매' }}
+        </PixelButton>
       </div>
     </div>
   </PixelModal>
@@ -78,7 +86,9 @@ h3 { margin: 4px 0 16px; }
   border-radius: 13px;
   background: #fffdf3;
 }
-.thumb { width: 48px; height: 48px; display: grid; place-items: center; font-size: 26px; border: 2px solid var(--c-ink); border-radius: 11px; background: var(--tone-4); }
+/* ShopView .thumb와 같은 이유로 flex — grid + auto 행에서는 이미지 height:100%가 auto로 풀려 잘린다. */
+.thumb { width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 4px; font-size: 26px; border: 2px solid var(--c-ink); border-radius: 11px; background: var(--tone-4); }
+.thumb img { width: 100%; height: 100%; object-fit: contain; }
 .info { min-width: 0; }
 .name { font-size: 13px; font-weight: 700; }
 .cat { font-size: 9px; color: var(--c-muted); margin-top: 3px; }

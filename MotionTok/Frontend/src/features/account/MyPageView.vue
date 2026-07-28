@@ -1,12 +1,21 @@
 <script setup lang="ts">
 /** 마이페이지 — 프로필·포인트·포인트내역·내 전적 (API §2 /users/me, /users/me/points/history, /users/me/records). */
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { usersApi, type GameRecord, type PointHistory, type PointType, type UserProfile } from '@/api'
+import {
+  ApiError,
+  gamesApi,
+  usersApi,
+  type LeaderboardMode,
+  type PointHistory,
+  type PointType,
+  type UserProfile,
+} from '@/api'
 import { useAsyncData } from '@/composables/useAsyncData'
 import { useUpload } from '@/composables/useUpload'
 import { useToast } from '@/composables/useToast'
 import { useSessionStore } from '@/stores/session'
+import { useMediaPermissionStore, type MediaPermissionState } from '@/stores/mediaPermission'
 import PixelCard from '@/components/common/PixelCard.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -19,20 +28,7 @@ import AvatarPickerModal from './AvatarPickerModal.vue'
 const router = useRouter()
 const session = useSessionStore()
 
-const MOCK_ME: UserProfile = {
-  id: 1, email: 'play@motok.com', nickname: 'P1', role: 'USER',
-  pointBalance: 1250, createdAt: '2025-07-01T00:00:00Z',
-}
-const MOCK_RECORDS: GameRecord[] = [
-  { gameId: 1, gameName: '핑거 스타', playCount: 12, bestScore: 9850, rankNo: 3 },
-  { gameId: 3, gameName: '리듬 펀치', playCount: 8, bestScore: 8420, rankNo: 7 },
-  { gameId: 5, gameName: '포즈 매치', playCount: 5, bestScore: 7960, rankNo: 12 },
-]
-const MOCK_HISTORY: PointHistory[] = [
-  { id: 3, amount: 300, type: 'GAME_REWARD', balanceAfter: 1250, createdAt: '2025-07-19T10:00:00Z' },
-  { id: 2, amount: -500, type: 'SHOP_PURCHASE', balanceAfter: 950, createdAt: '2025-07-18T14:30:00Z' },
-  { id: 1, amount: -100, type: 'AI_GENERATE', balanceAfter: 1450, createdAt: '2025-07-17T09:15:00Z' },
-]
+
 const POINT_TYPE_LABEL: Record<PointType, string> = {
   GAME_REWARD: '게임 보상',
   SHOP_PURCHASE: '상점 구매',
@@ -40,9 +36,81 @@ const POINT_TYPE_LABEL: Record<PointType, string> = {
   GUEST_MIGRATE: '게스트 이전',
 }
 
-const { data: me, reload: reloadMe } = useAsyncData(() => usersApi.getMe(), MOCK_ME)
-const { data: records } = useAsyncData(() => usersApi.getRecords(), MOCK_RECORDS)
-const { data: history } = useAsyncData(() => usersApi.getPointHistory(0, 20).then((p) => p.content), MOCK_HISTORY)
+/**
+ * 목 데이터 없음 — 가짜 닉네임·전적·내역을 채워 두면 "내 정보인 줄 알았는데 남의 숫자"가 된다.
+ * 프로필 폴백은 세션에 이미 있는 <b>진짜 내 프로필</b>이다(라우터 가드가 진입 전에 복원해 둔다).
+ * 그래도 없으면 빈 값으로 두고 화면이 비어 보이게 한다.
+ */
+const EMPTY_ME: UserProfile = {
+  id: 0, email: null, nickname: '…', role: 'USER', pointBalance: 0, createdAt: '',
+}
+
+const { data: me, error: meError, reload: reloadMe } = useAsyncData(
+  () => usersApi.getMe(),
+  session.profile ?? EMPTY_ME,
+)
+/**
+ * 내 전적 — 게임별 리더보드의 myRank를 모아 만든다.
+ *
+ * 명세의 GET /users/me/records는 아직 서버에 없지만, 리더보드 응답이 이미 내 순위·최고점수·플레이 수를
+ * 돌려주므로(-96) 그걸로 같은 표를 세운다. myRank는 상위 목록 밖이어도 따로 조회되므로 limit=1로 충분하다.
+ * 한 게임을 솔로·멀티 양쪽으로 했다면 각각 한 줄이다(순위가 모드별로 따로 매겨진다).
+ */
+interface MyRecord {
+  key: string
+  gameName: string
+  mode: LeaderboardMode
+  playCount: number
+  bestScore: number
+  rankNo: number
+}
+const MODES: LeaderboardMode[] = ['MULTI', 'SOLO']
+const MODE_LABEL: Record<LeaderboardMode, string> = { MULTI: '멀티', SOLO: '솔로' }
+
+const records = ref<MyRecord[]>([])
+const recordsError = ref<string | null>(null)
+const recordsLoading = ref(true)
+
+async function loadRecords() {
+  recordsLoading.value = true
+  recordsError.value = null
+  try {
+    const games = await gamesApi.list()
+    const rows = await Promise.all(
+      games.flatMap((game) =>
+        MODES.map(async (mode): Promise<MyRecord | null> => {
+          try {
+            const board = await gamesApi.leaderboard(game.id, mode, 1)
+            const mine = board.myRank
+            return mine
+              ? {
+                  key: `${game.id}-${mode}`,
+                  gameName: game.name,
+                  mode,
+                  playCount: mine.playCount,
+                  bestScore: mine.bestScore,
+                  rankNo: mine.rank,
+                }
+              : null
+          } catch {
+            // 게임 하나의 랭킹 조회 실패가 전적 표 전체를 날리지 않게 한다.
+            return null
+          }
+        }),
+      ),
+    )
+    records.value = rows.filter((r): r is MyRecord => r !== null)
+  } catch (e) {
+    recordsError.value = e instanceof ApiError ? e.message : '전적을 불러오지 못했어요'
+  } finally {
+    recordsLoading.value = false
+  }
+}
+onMounted(loadRecords)
+const { data: history, error: historyError } = useAsyncData<PointHistory[]>(
+  () => usersApi.getPointHistory(0, 20).then((p) => p.content),
+  [],
+)
 
 const fmtDate = (iso: string) => iso.slice(0, 10)
 
@@ -60,6 +128,33 @@ const fmtDate = (iso: string) => iso.slice(0, 10)
  * 안 넣으면 사진을 바꾸고 로비로 나갔을 때 헤더만 옛 사진인 채로 남는다.
  */
 const { message: toast, flash } = useToast()
+
+// ── 카메라·마이크 권한 ────────────────────────────────────
+// 한 번 허용하면 앱 전체에 적용되고, 방에 들어갈 때는 이 상태를 확인만 한다.
+const permission = useMediaPermissionStore()
+const permChecking = ref(false)
+
+const PERMISSION_LABEL: Record<MediaPermissionState, string> = {
+  granted: '허용됨',
+  denied: '차단됨',
+  unknown: '확인 필요',
+}
+const PERMISSION_DESC: Record<MediaPermissionState, string> = {
+  granted: '카메라·마이크를 쓸 수 있어요. 방에 들어갈 때 따로 묻지 않습니다.',
+  denied: '브라우저에서 차단돼 있어 모션 게임을 플레이할 수 없어요.',
+  unknown: '아직 권한을 허용하지 않았어요. 모션 게임을 하려면 필요합니다.',
+}
+
+async function requestPermission() {
+  permChecking.value = true
+  try {
+    // ensure()는 브라우저에 실제 상태를 먼저 물어보고, 필요할 때만 권한 팝업을 띄운다.
+    const ok = await permission.ensure()
+    flash(ok ? '카메라·마이크 권한이 허용되어 있어요' : '권한이 차단돼 있어요. 브라우저 설정에서 허용해 주세요')
+  } finally {
+    permChecking.value = false
+  }
+}
 // error를 함께 받는다 — 용량 초과·형식 불일치는 서버에 가기 전에 여기서 걸리는데,
 // 사유를 꺼내 보여주지 않으면 미리보기만 잠깐 떴다 사라져 "그냥 안 되는" 화면이 된다.
 const { upload, uploading, error: uploadError } = useUpload('AVATAR')
@@ -161,6 +256,11 @@ async function removeAvatar() {
 
 <template>
   <AppPage :title="`${me.nickname}님의 마이페이지`" :subtitle="me.email ?? '소셜 계정'" title-style="plain">
+    <p v-if="meError" class="load-error">
+      <span>{{ meError }}</span>
+      <PixelButton @click="reloadMe">다시 시도</PixelButton>
+    </p>
+
     <div class="grid">
       <!-- 프로필 -->
       <PixelCard title="프로필">
@@ -207,14 +307,18 @@ async function removeAvatar() {
         <template #head>
           <button class="more" @click="router.push({ name: RouteName.Ranking })">랭킹 보기 →</button>
         </template>
-        <table class="records">
+        <p v-if="recordsLoading" class="cell-empty">불러오는 중…</p>
+        <p v-else-if="recordsError" class="cell-empty">{{ recordsError }}</p>
+        <p v-else-if="!records.length" class="cell-empty">아직 기록이 남은 게임이 없어요</p>
+        <table v-else class="records">
           <thead>
-            <tr><th>게임</th><th>플레이</th><th>최고점수</th><th>순위</th></tr>
+            <tr><th>게임</th><th>모드</th><th>플레이</th><th>최고점수</th><th>순위</th></tr>
           </thead>
           <tbody>
-            <!-- 같은 게임이라도 멀티/싱글 기록이 별개 행으로 온다(-97) — key에 mode까지 포함 -->
-            <tr v-for="r in records" :key="`${r.gameId}-${r.mode ?? ''}`">
-              <td>{{ r.gameName }}{{ r.mode === 'SOLO' ? ' (싱글)' : '' }}</td>
+            <!-- 같은 게임이라도 멀티/싱글 기록이 별개 행으로 온다(-97) — 모드는 별도 열 -->
+            <tr v-for="r in records" :key="r.key">
+              <td>{{ r.gameName }}</td>
+              <td>{{ MODE_LABEL[r.mode] }}</td>
               <td>{{ r.playCount }}회</td>
               <td>{{ r.bestScore.toLocaleString() }}</td>
               <td>#{{ r.rankNo }}</td>
@@ -223,27 +327,49 @@ async function removeAvatar() {
         </table>
         <p v-if="!records.length" class="empty">아직 게임 기록이 없어요.</p>
       </PixelCard>
+
+      <!-- 카메라·마이크 권한 — 앱 전체에 적용된다(방 입장 때 이 상태를 확인만 한다) -->
+      <PixelCard title="카메라·마이크 권한" class="perm-card">
+        <div class="perm">
+          <span class="perm-state" :class="permission.state">{{ PERMISSION_LABEL[permission.state] }}</span>
+          <p class="perm-desc">{{ PERMISSION_DESC[permission.state] }}</p>
+        </div>
+        <!-- 차단 상태에서도 눌러야 한다 — 브라우저 설정에서 허용으로 바꾼 뒤 여기서 다시 확인한다. -->
+        <PixelButton variant="mint" block :disabled="permChecking" @click="requestPermission">
+          {{ permChecking
+            ? '확인 중…'
+            : permission.state === 'unknown'
+              ? '카메라·마이크 권한 허용'
+              : '권한 다시 확인' }}
+        </PixelButton>
+        <p v-if="permission.denied" class="perm-help">
+          브라우저가 차단한 권한은 이 화면에서 다시 열 수 없어요. 주소창의 자물쇠 아이콘 →
+          사이트 설정에서 카메라·마이크를 허용으로 바꾼 뒤 "권한 다시 확인"을 눌러 주세요.
+        </p>
+      </PixelCard>
+
+      <!-- 포인트 내역 — 전적 아래(오른쪽 열), 권한 카드 옆에 놓인다 -->
+      <PixelCard title="포인트 내역" class="history-card">
+        <p v-if="historyError" class="cell-empty">{{ historyError }}</p>
+        <table v-else class="records">
+          <thead>
+            <tr><th>내역</th><th>변동</th><th>잔액</th><th>일시</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="h in history" :key="h.id">
+              <td>{{ POINT_TYPE_LABEL[h.type] }}</td>
+              <td :class="h.amount >= 0 ? 'plus' : 'minus'">
+                {{ h.amount >= 0 ? '+' : '' }}{{ h.amount.toLocaleString() }}
+              </td>
+              <td>{{ h.balanceAfter.toLocaleString() }}</td>
+              <td>{{ fmtDate(h.createdAt) }}</td>
+            </tr>
+            <tr v-if="history.length === 0"><td colspan="4" class="empty">포인트 내역이 없어요</td></tr>
+          </tbody>
+        </table>
+      </PixelCard>
     </div>
 
-    <!-- 포인트 내역 -->
-    <PixelCard title="포인트 내역" class="history-card">
-      <table class="records">
-        <thead>
-          <tr><th>내역</th><th>변동</th><th>잔액</th><th>일시</th></tr>
-        </thead>
-        <tbody>
-          <tr v-for="h in history" :key="h.id">
-            <td>{{ POINT_TYPE_LABEL[h.type] }}</td>
-            <td :class="h.amount >= 0 ? 'plus' : 'minus'">
-              {{ h.amount >= 0 ? '+' : '' }}{{ h.amount.toLocaleString() }}
-            </td>
-            <td>{{ h.balanceAfter.toLocaleString() }}</td>
-            <td>{{ fmtDate(h.createdAt) }}</td>
-          </tr>
-          <tr v-if="history.length === 0"><td colspan="4" class="empty">포인트 내역이 없어요</td></tr>
-        </tbody>
-      </table>
-    </PixelCard>
     <AvatarPickerModal
       v-if="showPicker"
       :current="shownAvatar"
@@ -258,18 +384,29 @@ async function removeAvatar() {
 </template>
 
 <style scoped>
+/* align-items 기본값(stretch)을 그대로 둬서 같은 행의 카드가 서로 높이를 맞춘다 */
 .grid { display: grid; grid-template-columns: 340px 1fr; gap: 18px; }
 @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+
+.load-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 14px; padding: 11px 14px; border: 2px solid var(--c-ink); border-radius: 12px; background: #ffe9e4; font-size: 11px; }
+.cell-empty { margin: 0; padding: 18px 4px; text-align: center; color: var(--c-muted); font-size: 10px; line-height: 1.6; }
+
+.perm { margin-bottom: 12px; }
+.perm-state { display: inline-block; padding: 5px 9px; border: 2px solid var(--c-ink); border-radius: 999px; font-size: 9px; font-weight: 700; background: var(--c-yellow); }
+.perm-state.granted { background: var(--c-mint-soft); }
+.perm-state.denied { background: #ffd9d2; }
+.perm-desc { margin: 9px 0 0; font-size: 10px; color: var(--c-muted); line-height: 1.6; }
+.perm-help { margin: 10px 0 0; font-size: 9px; color: var(--c-muted); line-height: 1.6; }
 
 .profile { display: flex; align-items: center; gap: 14px; }
 .avatar {
   position: relative;
   width: 60px;
   height: 60px;
-  border: var(--border);
-  border-radius: var(--radius-md);
-  background: var(--c-mint-soft);
-  box-shadow: var(--shadow-sm);
+  border: 2px solid #8e714e;
+  border-radius: 50%;
+  background: #fff0b9;
+  box-shadow: none;
   padding: 0;
   cursor: pointer;
 }
@@ -282,7 +419,7 @@ async function removeAvatar() {
   width: 100%;
   height: 100%;
   /* 테두리(--border, 3px) 안쪽이므로 그만큼 작은 반지름이라야 모서리에 흰 틈이 생기지 않는다 */
-  border-radius: calc(var(--radius-md) - 3px);
+  border-radius: 50%;
   font-size: 30px;
 }
 .avatar:disabled { cursor: default; }
@@ -324,7 +461,7 @@ async function removeAvatar() {
 .records th { font-size: 9px; color: var(--c-muted); }
 .records td:last-child { color: var(--c-blue); font-weight: 700; }
 
-.history-card { margin-top: 18px; }
+/* 그리드 안(전적 아래 칸)에 들어가므로 바깥 여백은 그리드 gap이 맡는다 */
 .history-card .records td:last-child { color: var(--c-muted); font-weight: 400; }
 .history-card .plus { color: #36a17f; font-weight: 700; }
 .history-card .minus { color: var(--c-coral); font-weight: 700; }

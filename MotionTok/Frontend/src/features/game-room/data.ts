@@ -8,8 +8,8 @@ export interface GameEntry {
   emoji: string
   thumb: string
   playable: boolean
-  /** 카메라 없이도 플레이 가능(마우스 폴백) — 시작 시 카메라 강제를 건너뛴다 */
-  cameraOptional?: boolean
+  /** 시작 최소 인원 — 없으면 1인(솔로 가능). 서버도 같은 값으로 거부한다(games.min_players) */
+  minPlayers?: number
   /** 게임 선택창 상세 패널에 보여줄 설명 */
   description: string
   /** 게임 선택창 상세 패널의 플레이 방법 단계 */
@@ -29,8 +29,8 @@ export const GAME_CATALOG: GameEntry[] = [
     howToPlay: ['카메라에 두 손이 잘 보이도록 위치를 잡아요', '열 손가락을 움직여 모든 별을 동시에 켜요', '그대로 10초간 유지하면 완성 — 모양이 비슷할수록 고득점!'],
   },
   {
-    id: 'draw', gameId: 10, name: '그림으로 말해요', tag: '이어 그리기 · AI 채점', emoji: '🎨', thumb: '#fdeee0', playable: true, cameraOptional: true,
-    description: '총 4분을 인원수로 나눠 한 도화지에 그림을 이어 그리는 협동 게임이에요. 완성 그림을 본 AI가 무엇인지 5가지로 추측하고, 그 안에 주제어가 있으면 순위에 따라 점수를 받아요.',
+    id: 'draw', gameId: 10, name: '그림으로 말해요', tag: '이어 그리기 · AI 채점', emoji: '🎨', thumb: '#fdeee0', playable: true, minPlayers: 3,
+    description: '총 1분 30초를 인원수로 나눠 한 도화지에 그림을 이어 그리는 협동 게임이에요(3명부터). 완성 그림을 본 AI가 무엇인지 5가지로 추측하고, 그 안에 주제어가 있으면 순위에 따라 점수를 받아요.',
     howToPlay: ['주제어를 확인하고 자기 차례에 이어 그려요', '오른손 엄지+검지를 집으면 그리기, 왼손 주먹으로 문지르면 지우개 (왼손잡이 모드 지원)', '모두 그리면 AI가 추측 — 1순위로 맞히면 100점!'],
   },
   {
@@ -44,9 +44,9 @@ export const GAME_CATALOG: GameEntry[] = [
     howToPlay: ['카메라에 상반신 전체가 나오도록 물러서요', '화면 속 실루엣과 같은 자세를 비트에 맞춰 취해요', '정확도가 높을수록 더 높은 점수를 받아요'],
   },
   {
-    id: 'shape', gameId: 4, name: 'SHAPE MATCH', tag: '제시된 포즈 따라하기', emoji: '🤸', thumb: '#f6e6fb', playable: false,
-    description: '화면에 제시되는 포즈 실루엣을 몸으로 똑같이 만들어 맞추는 게임이에요.',
-    howToPlay: ['카메라에 몸 전체가 보이게 서요', '제시된 실루엣과 같은 포즈를 취해요', '일치율이 높을수록 점수가 올라가요'],
+    id: 'shape', gameId: 4, name: 'BODY FIT', tag: '몸으로 벽 구멍 통과하기', emoji: '🧱', thumb: '#f6e6fb', playable: true,
+    description: '출제자가 취한 포즈가 그대로 벽의 구멍이 되고, 다가오는 벽의 구멍에 아바타를 끼워 맞추는 게임이에요. 못 맞추면 벽에 밀려 떨어져요!',
+    howToPlay: ['카메라에 상반신이 잘 보이게 앉아요', '출제자가 3초 뒤 포즈를 취하면 그 모양이 벽 구멍이 돼요', '벽이 도착하기 전에 구멍과 같은 포즈로 맞추세요 — 유령 실루엣에 맞추면 PERFECT!'],
   },
   {
     id: 'punch', gameId: 5, name: 'RHYTHM PUNCH', tag: '비트에 맞춰 펀치', emoji: '🥊', thumb: '#fbe2e2', playable: false,

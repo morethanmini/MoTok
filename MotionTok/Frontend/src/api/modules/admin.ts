@@ -6,11 +6,10 @@ import type {
   ChatReportListResponse,
   ChatReportStatus,
   Game,
-  RegisterSongRequest,
   ReportedUser,
   Sanction,
   SanctionRequest,
-  Song,
+  UserReportListResponse,
 } from '../types'
 
 export const adminApi = {
@@ -19,7 +18,6 @@ export const adminApi = {
   applySanction: (body: SanctionRequest) => http.post<Sanction>('/admin/sanctions', body),
   toggleGame: (gameId: number, isActive: boolean) =>
     http.patch<Game>(`/admin/games/${gameId}`, { isActive }),
-  registerSong: (body: RegisterSongRequest) => http.post<Song>('/admin/songs', body),
   auditLogs: (page = 0) => http.get<AuditLog[]>('/admin/audit-logs', { page }),
 }
 
@@ -28,6 +26,21 @@ export const adminApi = {
  * /api/v1/admin/** + ApiResponse 래핑 → httpEnvelope. AccessToken role claim이 ADMIN이어야 한다
  * (role claim 도입 전 구 토큰은 재로그인 필요).
  */
+/**
+ * 관리자 사용자 신고 (-112). 채팅 신고와 같은 계열(/api/v1/admin/** + ApiResponse 래핑).
+ * 상세 조회는 없다 — 사용자 신고는 "누가 누구를 왜 신고했다"가 곧 전부라 목록 행에 다 들어간다
+ * (채팅 신고처럼 복원할 전후 맥락 스냅샷이 없다).
+ */
+export const adminUserReportsApi = {
+  /** GET /v1/admin/user-reports — 목록(최신순). status 생략 시 전체 */
+  list: (params: { status?: ChatReportStatus; page?: number; size?: number } = {}) =>
+    httpEnvelope.get<UserReportListResponse>('/v1/admin/user-reports', params),
+
+  /** PATCH /v1/admin/user-reports/{id}/status — 처리 상태 전이(RECEIVED로 되돌리기 불가) */
+  updateStatus: (reportId: number, status: Exclude<ChatReportStatus, 'RECEIVED'>) =>
+    httpEnvelope.patch<void>(`/v1/admin/user-reports/${reportId}/status`, { status }),
+}
+
 export const adminChatReportsApi = {
   /** GET /v1/admin/chat-reports — 목록(최신순). status 생략 시 전체 */
   list: (params: { status?: ChatReportStatus; page?: number; size?: number } = {}) =>
