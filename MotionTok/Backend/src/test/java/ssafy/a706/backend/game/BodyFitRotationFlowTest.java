@@ -9,6 +9,7 @@ import ssafy.a706.backend.auth.principal.MemberPrincipal;
 import ssafy.a706.backend.game.dto.GameEventResponse;
 import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameStartRequest;
+import ssafy.a706.backend.game.draw.DrawJudgeClient;
 import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.model.GamePlayerScore;
 import ssafy.a706.backend.game.model.GameSession;
@@ -56,9 +57,12 @@ class BodyFitRotationFlowTest {
     private final FakeSessionRepository sessions = new FakeSessionRepository();
     private final List<GameEventResponse> events = new ArrayList<>();
 
+    // 게임⑩(그림으로 말해요) AI 채점 클라이언트 — 게임④ 흐름에서는 호출되지 않는다
+    private final DrawJudgeClient judgeClient = mock(DrawJudgeClient.class);
+
     private final GameSessionService service = new GameSessionService(
             membershipReader, liveRoomRepository, sessions, gameRepository,
-            messagingTemplate, taskScheduler, eventPublisher);
+            messagingTemplate, taskScheduler, eventPublisher, judgeClient);
 
     private void givenRoom(int playerCount) {
         List<LiveRoomMemberValue> members = new ArrayList<>();
