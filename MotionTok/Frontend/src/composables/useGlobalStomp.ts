@@ -40,6 +40,8 @@ type FrameHandler = (body: string) => void
 
 let client: Client | null = null
 let authFailures = 0
+/** 첫 연결에는 재동기화가 필요 없다 — 화면이 마운트하며 이미 스냅샷을 받는다. */
+let everConnected = false
 
 const connected = ref(false)
 /** destination → 핸들러들. 같은 목적지를 여러 화면이 구독해도 SUBSCRIBE는 하나만 건다. */
@@ -81,11 +83,17 @@ export function isMemberSession(): boolean {
 function bindHandlers(destination: string) {
   if (!client?.connected || subscriptions.has(destination)) return
   const sub = client.subscribe(destination, (frame) => {
+    // 실시간 기능이 "그냥 안 되는" 상황에서 가장 먼저 알아야 하는 건 프레임이 오긴 오느냐다.
+    // 개발 빌드에서만 찍는다 — 운영에서는 초당 수십 프레임이 콘솔을 덮는다.
+    if (import.meta.env.DEV) console.debug('[STOMP] ←', destination, frame.body)
     handlers.get(destination)?.forEach((handler) => {
       try {
         handler(frame.body)
-      } catch {
-        // 핸들러 하나가 던져도 같은 목적지의 다른 구독자는 계속 받아야 한다
+      } catch (e) {
+        // 핸들러 하나가 던져도 같은 목적지의 다른 구독자는 계속 받아야 한다.
+        // 다만 조용히 삼키면 "프레임이 안 왔다"와 "와서 처리하다 터졌다"를 구분할 수 없어
+        // 실시간 기능의 디버깅이 불가능해진다 — 삼키되 흔적은 남긴다.
+        console.warn('[STOMP] 핸들러 처리 실패', destination, e)
       }
     })
   })
@@ -121,12 +129,18 @@ export function publishGlobal(destination: string, body: unknown): boolean {
 }
 
 /**
- * 연결이 (재)성립할 때마다 불린다. 끊긴 동안 놓친 것을 REST 스냅샷으로 메우는 자리다.
+ * <b>재</b>연결될 때마다 불린다. 끊긴 동안 놓친 것을 REST 스냅샷으로 메우는 자리다.
+ *
+ * <p>등록 시점에 이미 연결돼 있어도 <b>즉시 부르지 않는다.</b> 화면은 어차피 마운트될 때
+ * 자기 데이터를 한 번 불러오므로(useAsyncData), 여기서 또 부르면 같은 요청이 두 벌 나가고
+ * 더 나쁘게는 <b>둘 사이에 도착한 실시간 델타를 늦게 온 응답이 덮어쓴다</b> —
+ * "실시간으로 바뀌었다가 원래대로 돌아가는" 형태로 보인다.
+ * 이 훅의 일은 "처음 채우기"가 아니라 "끊겼다 붙은 뒤 메우기"다.</p>
+ *
  * @returns 해제 함수
  */
 export function onStompConnected(callback: () => void): () => void {
   connectedCallbacks.add(callback)
-  if (connected.value) callback()
   return () => connectedCallbacks.delete(callback)
 }
 
@@ -150,7 +164,12 @@ function activate() {
       c.reconnectDelay = BASE_RECONNECT_DELAY_MS
       connected.value = true
       handlers.forEach((_, destination) => bindHandlers(destination))
-      connectedCallbacks.forEach((callback) => callback())
+      // 재연결일 때만 재동기화 — 첫 연결은 화면의 초기 로드와 겹쳐 요청이 두 벌 나가고
+      // 그 사이 도착한 델타가 늦은 응답에 덮인다.
+      if (everConnected) {
+        connectedCallbacks.forEach((callback) => callback())
+      }
+      everConnected = true
     },
     onStompError: () => {
       // CONNECT 거부(토큰 문제 등). 백오프를 늘려 죽은 자격으로 서버를 두드리지 않는다.
@@ -173,6 +192,7 @@ function activate() {
 
 function deactivate() {
   connected.value = false
+  everConnected = false // 로그아웃 후 다시 로그인하면 그건 '첫 연결'이다
   subscriptions.clear()
   const c = client
   client = null
