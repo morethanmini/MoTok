@@ -223,7 +223,9 @@ async function saveDecoration() {
 
 .preview { text-align: center; }
 .cam { position: relative; overflow: hidden; border: var(--border); border-radius: var(--radius-md); background: linear-gradient(135deg, #dff3ee, #fff0c4); }
-.cam video { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 박스 비율은 onVideoMeta가 영상에 맞춰 두지만, 비율이 확정되기 전(또는 카메라가 요청과 다른
+   해상도를 준 순간)에는 어긋난다 — 그때 얼굴이 잘리지 않게 contain으로 두고 남는 자리는 회색 여백. */
+.cam video { width: 100%; height: 100%; object-fit: contain; background: var(--c-letterbox); display: block; }
 .cam-placeholder { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 8px; }
 .cam-placeholder img { width: 55%; opacity: 0.5; }
 .hint { margin: 10px 0 0; font-size: 9px; color: var(--c-muted); line-height: 1.6; }
