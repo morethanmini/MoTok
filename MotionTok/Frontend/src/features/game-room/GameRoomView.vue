@@ -203,6 +203,17 @@ const picker = ref(false)
 // 탭 닫기·주소창 이탈 시 keepalive 퇴장 통보 + bfcache 복원 시 로비로(뒤로가기 복귀 차단)
 useRoomUnloadLeave(() => route.query.room as string | undefined)
 
+/**
+ * 게임④는 자체 사운드(S15P11A706-138)를 가지므로 로비 BGM을 내린다.
+ * useBgm의 suspendForGame/resumeAfterGame은 만들어져만 있고 호출부가 없었다 — 여기서 연결한다.
+ * 게임④에만 거는 이유: 다른 게임은 자체 사운드가 없거나 담당이 달라, 임의로 BGM을 끄면 그쪽
+ * 체감이 바뀐다. 전체에 걸려면 조건만 `!!activeGame.value`로 넓히면 된다.
+ */
+watch(
+  () => activeGame.value?.id === 'shape',
+  (ownsAudio) => (ownsAudio ? bgm.suspendForGame() : bgm.resumeAfterGame()),
+)
+
 onMounted(async () => {
   bgm.setVolume(0.2)
 
@@ -244,6 +255,8 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   roomChat.disconnect()
+  // BGM은 모듈 싱글턴이라 suspend된 채로 방을 뜨면 로비에서도 영영 안 나온다
+  bgm.resumeAfterGame()
 })
 
 // ── 채팅 ────────────────────────────────────
