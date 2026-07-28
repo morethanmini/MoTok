@@ -15,6 +15,7 @@ import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameProgressRequest;
 import ssafy.a706.backend.game.dto.GameResultEntry;
 import ssafy.a706.backend.game.dto.GameStartRequest;
+import ssafy.a706.backend.game.dto.GameTurnSkipRequest;
 import ssafy.a706.backend.game.dto.PoseSubmitRequest;
 import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.model.GamePlayerScore;
@@ -224,7 +225,7 @@ public class GameSessionService {
     }
 
     /**
-     * 그림으로 말해요 시작 — 총 시간(games.roundDurationSec=240)을 인원수로 올림 분배한 턴 스케줄과
+     * 그림으로 말해요 시작 — 총 시간(games.roundDurationSec, 현재 90초)을 인원수로 올림 분배한 턴 스케줄과
      * 주제어·화가 순서(셔플)를 확정해 GAME_START로 배포한다. 이후 턴 전환은 별도 이벤트 없이
      * 전 클라이언트가 서버 권위 시각으로 같은 스케줄을 계산한다. 정산은 draw-result 수리(협동 점수)
      * 또는 endAt+채점 유예 타임아웃(0점) 중 먼저 온 쪽이 1회 실행한다.
@@ -233,6 +234,12 @@ public class GameSessionService {
         List<LiveRoomMemberValue> members = liveRoomRepository.findMembers(roomId);
         if (members.isEmpty()) {
             throw new BusinessException(ErrorCode.GAME_NOT_IN_ROOM);
+        }
+        // 이어그리기라 혼자서는 성립하지 않는다 — 카탈로그 최소 인원(games.min_players)을 강제한다.
+        if (members.size() < game.getMinPlayers()) {
+            throw new BusinessException(ErrorCode.GAME_NEED_MORE_PLAYERS,
+                    String.format("%d명부터 시작할 수 있는 게임입니다. (현재 %d명)",
+                            game.getMinPlayers(), members.size()));
         }
         List<String> turnOrder = new ArrayList<>(members.stream().map(LiveRoomMemberValue::userId).toList());
         Collections.shuffle(turnOrder);
@@ -271,6 +278,32 @@ public class GameSessionService {
             ops = ops.subList(0, DRAW_MAX_OPS);
         }
         broadcast(roomId, GameEventResponse.draw(session.sessionId(), sender.userId(), request.seq(), ops));
+    }
+
+    /**
+     * 조기 차례 넘기기(게임 10) — 남은 그리기 시간을 클램프해 TURN_SKIPPED로 재방송하고,
+     * 전체 스케줄이 그만큼 당겨지므로 세션 endAt과 타임아웃 예약도 함께 앞당긴다.
+     * 차례(발신자가 현재 화가인지) 강제는 클라이언트 몫 — draw 릴레이와 같은 신뢰 모델.
+     */
+    public void turnSkip(String roomId, GameTurnSkipRequest request, AuthPrincipal sender) {
+        requireMembership(roomId, sender);
+        GameSession session = requireActiveSession(roomId);
+        if (session.gameId() != DRAW_GAME_ID) {
+            throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
+        }
+        long now = System.currentTimeMillis();
+        long requested = request.remainingMs() == null ? 0 : request.remainingMs();
+        long remaining = Math.max(0, Math.min(requested, session.endAt() - now));
+        int turnIndex = Math.max(0, request.turnIndex() == null ? 0 : request.turnIndex());
+
+        long newEndAt = session.endAt() - remaining;
+        sessionRepository.updateEndAt(roomId, newEndAt);
+        // 그림으로 말해요는 라운드 로테이션(게임④)이 없어 roundIndex는 항상 0
+        scheduleEnd(roomId, session.sessionId(), 0, newEndAt + DRAW_JUDGE_WINDOW_MILLIS);
+        broadcast(roomId, GameEventResponse.turnSkipped(
+                session.sessionId(), sender.userId(), turnIndex, remaining));
+        log.info("draw turn skipped: room={} session={} turn={} remainingMs={}",
+                roomId, session.sessionId(), turnIndex, remaining);
     }
 
     /**
