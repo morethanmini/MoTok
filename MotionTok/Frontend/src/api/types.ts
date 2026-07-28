@@ -189,9 +189,21 @@ export interface PurchaseResponse {
   balanceAfter: number
 }
 export interface AiItemRequest {
-  name?: string
-  strokes: object[]
-  category?: ItemCategory
+  name: string
+  category: ItemCategory
+  sketchBase64: string
+}
+export type AiItemJobStatus = 'PENDING' | 'PROCESSING' | 'DONE' | 'FAILED'
+export interface AiItemJobResponse {
+  jobId: number
+  status: AiItemJobStatus
+}
+export interface AiItemJobStatusResponse {
+  jobId: number
+  status: AiItemJobStatus
+  itemId: number | null
+  imageUrl: string | null
+  errorMessage: string | null
 }
 
 // ── 라이브룸 (구 rooms → live-rooms, 명세 §4) ──────
