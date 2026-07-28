@@ -25,14 +25,17 @@ import {
 } from './skeleton'
 import { drawSilhouette } from './silhouette'
 import {
+  GRADE_POINTS,
   gradeOf as gradeFromIou,
   holeMarginFor,
   judgeRound,
   poseDifficulty,
+  scoreFor,
   type RoundJudgment,
 } from './judge'
 import { createStage, type Stage } from './stage'
 import { createWall, type WallHandle } from './wall'
+import { BodyFitAudio } from './audio'
 
 const props = defineProps<{
   /** 게임룸 셀프 타일의 <video> — 있으면 카메라를 새로 열지 않고 재사용한다 (게임① 패턴) */
@@ -80,6 +83,7 @@ const pipOverlayRef = ref<HTMLCanvasElement>()
 const thumbRef = ref<HTMLCanvasElement>()
 /** 출제자 관전 화면의 큰 구멍 — 썸네일과 달리 "벽에 뚫린 구멍" 자체를 보여준다 */
 const holeRef = ref<HTMLCanvasElement>()
+const sideRef = ref<HTMLElement>()
 
 /** stale = 벽 도착 후 다음 라운드 이벤트가 끊긴 상태(복구 대기) — 아래 STALE_MS 참고 */
 type Phase = 'idle' | 'wait' | 'setting' | 'incoming' | 'result' | 'stale'
@@ -101,8 +105,8 @@ const GRADE_COLOR: Record<Grade, string> = {
   PASS: 'var(--bf-gold)',
   FAIL: 'var(--bf-coral)',
 }
-const GRADE_POINTS: Record<Grade, number> = { PERFECT: 100, GREAT: 85, PASS: 70, FAIL: 0 }
-/** 관전 화면용 — 서버가 돌려준 점수를 등급으로 역산한다(GRADE_POINTS의 역함수) */
+/** 관전 화면용 — 서버가 돌려준 점수를 등급으로 역산한다(GRADE_POINTS의 역함수).
+ *  실패 점수는 FAIL_MAX_SCORE 이하라 어떤 등급 점수와도 겹치지 않는다(judge.ts 주석 참고). */
 function gradeOf(score: number | null): Grade {
   return (Object.keys(GRADE_POINTS) as Grade[]).find((g) => GRADE_POINTS[g] === score) ?? 'FAIL'
 }
@@ -127,6 +131,15 @@ const liveOverflow = ref<SegmentKey[]>([])
 const overflowWarning = computed(() =>
   liveOverflow.value.length ? SEGMENT_WARNING[liveOverflow.value[0]!] : null,
 )
+/**
+ * FAIL 팝업에 붙일 실패 사유.
+ * 탈락 경로가 둘이다 — ① 구멍 밖으로 삐져나옴(어느 부위인지 말해준다) ② 삐져나오진 않았지만
+ * 모양이 너무 안 맞아 등급만 FAIL. 둘을 구분해줘야 "일치율 80인데 왜 실패냐"가 안 나온다.
+ */
+const failReason = computed(() => {
+  if (judgment.value?.grade !== 'FAIL') return null
+  return overflowWarning.value ?? '포즈가 많이 달라요'
+})
 
 const DIFFICULTIES: { key: DifficultyKey; label: string }[] = [
   { key: 'easy', label: '쉬움' },
@@ -426,9 +439,9 @@ function tickSolo(now: number) {
 
     if (t >= 1 && setterPose && rig.lastSolved) {
       const result = finalizeJudgment()
-      totalScore.value += GRADE_POINTS[result.grade]
+      totalScore.value += scoreFor(result)
       history.value.unshift({ round: round.value, grade: result.grade, iou: result.iou })
-      emit('finished', { score: GRADE_POINTS[result.grade], grade: result.grade, iou: result.iou })
+      emit('finished', { score: scoreFor(result), grade: result.grade, iou: result.iou })
       resultAt = now
       phase.value = 'result'
     }
@@ -480,7 +493,7 @@ function tickMulti(now: number) {
     finishedSent = true
     if (!isSetter.value) {
       const result = finalizeJudgment()
-      emit('finished', { score: GRADE_POINTS[result.grade], grade: result.grade, iou: result.iou })
+      emit('finished', { score: scoreFor(result), grade: result.grade, iou: result.iou })
     }
   }
   // 다음 라운드 GAME_START(또는 GAME_END)가 안 오면 여기서 영원히 멈춘다 — 재연결 공백에
@@ -502,6 +515,9 @@ function tickPhase() {
   if (!stage) return
   if (isMultiplayer.value && props.session) tickMulti(performance.now())
   else tickSolo(performance.now())
+  // 사이드 맞춤도 여기서 — ResizeObserver만 걸면 zoom 변경이 다시 리사이즈를 부르는 관계라
+  // 갱신이 새는 경우가 있었다. 이미 도는 타이머에 얹으면 컨테이너가 어떻게 바뀌든 자가 복구된다.
+  fitSide()
 }
 
 function renderLoop() {
@@ -554,6 +570,56 @@ watch(
     } catch {
       /* 손상된 포즈 payload — 벽 없이 진행되면 도착 시 FAIL 처리된다 */
     }
+  },
+)
+
+// ── 사운드 (S15P11A706-138) ─────────────────
+// 페이즈가 바뀔 때만 큐를 갈아끼운다. 큐 길이(30s)가 페이즈보다 길어서 tailMs로 꼬리를 맞춘다 —
+// "이 큐가 남은 시간 뒤에 끝나도록" 재생 위치를 역산하면 라이저 절정이 벽 도착과 겹친다.
+const audio = new BodyFitAudio()
+watch(phase, (p) => {
+  const s = props.session
+  const srv = serverNow()
+  if (p === 'wait') audio.play('rest', { tailMs: s ? s.startAt - srv : 3000 })
+  else if (p === 'setting') audio.play('setting', { tailMs: s ? s.startAt + SETTING_MS - srv : 3000 })
+  else if (p === 'incoming')
+    audio.play('approach', { tailMs: s ? s.endAt - srv : cfg.wall.approachMs })
+  // result에서는 아무것도 틀지 않는다. 중간 라운드의 result는 다음 GAME_START가 올 때까지
+  // 0.2~1.5초뿐이라, 여기서 곡을 걸면 시작하자마자 잘려 딸꾹질처럼 들린다.
+  // 인게임 곡은 아래 results watch에서 "진짜 끝났을 때"만 튼다.
+  // 단, 이미 결과가 와 있으면 멈추지 않는다 — GAME_END가 페이즈 전환보다 먼저 도착하면
+  // (rAF가 멈춘 창은 페이즈 갱신이 200ms까지 늦는다) 뒤늦은 stop이 최종 음악을 꺼버린다.
+  else if (!props.results) audio.stop() // result · idle · stale
+})
+
+/**
+ * 사이드바를 자리에 맞게 축소한다 — 스크롤을 만들지 않기 위해서.
+ *
+ * <p>내용(캠·게이지·점수·난이도)이 고정 px라, 브라우저 배율을 올리거나 타일이 작아지면
+ * CSS 픽셀 기준 높이가 모자라 넘친다(1280×720 솔로에서 이미 830 vs 637). 브레이크포인트로
+ * 항목을 하나씩 숨기는 대신 통째로 줄여 전부 보이게 한다.</p>
+ *
+ * <p>transform:scale이 아니라 zoom을 쓰는 이유 — scale은 레이아웃 박스를 그대로 두어
+ * 줄인 만큼 빈 공간이 남는다. zoom은 박스까지 줄어 무대가 그 자리를 가져간다.</p>
+ */
+function fitSide() {
+  const el = sideRef.value
+  if (!el) return
+  el.style.zoom = '1' // 원래 크기로 되돌려 natural height를 잰다
+  const avail = el.clientHeight
+  const need = el.scrollHeight
+  if (!avail || !need) return
+  // 0.98은 반올림 여유 — 딱 맞추면 브라우저 반올림 때문에 몇 px가 남아 잘린다.
+  // 0.55 아래로는 글씨가 못 읽을 크기라, 그때는 잘리는 쪽을 택한다.
+  const z = need > avail ? Math.max(0.55, (avail / need) * 0.98) : 1
+  el.style.zoom = String(Math.round(z * 1000) / 1000)
+}
+
+/** 최종 결과 오버레이 — 여기가 기획상 ⑤최종 결과(=①인게임 베드) 자리다 */
+watch(
+  () => props.results,
+  (r) => {
+    if (r) audio.play('ingame', { loop: true })
   },
 )
 
@@ -617,6 +683,8 @@ onMounted(async () => {
     if (!w || !h || !stage) return
     stage.setSize(w, h)
   }
+  // 사이드는 관찰하지 않는다 — zoom 변경이 다시 리사이즈를 부르는 관계라서. 사이드 맞춤은
+  // tickPhase(200ms)가 맡는다.
   resizeObs = new ResizeObserver(resize)
   resizeObs.observe(viewport)
   resize()
@@ -658,6 +726,7 @@ defineExpose({ canvas: glCanvasRef })
 onBeforeUnmount(() => {
   cancelAnimationFrame(rafId)
   clearInterval(phaseTimerId)
+  audio.dispose()
   stream?.getTracks().forEach((t) => t.stop())
   resizeObs?.disconnect()
   rig?.dispose()
@@ -724,7 +793,10 @@ onBeforeUnmount(() => {
 
           <div v-if="judgment" class="grade-pop" :style="{ color: GRADE_COLOR[judgment.grade] }">
             <strong>{{ judgment.grade }}</strong>
-            <span>일치율 {{ judgment.iou.toFixed(0) }}%</span>
+            <!-- FAIL도 일치율만큼 점수를 받는다 — 안 보여주면 0점처럼 느껴진다 -->
+            <span>일치율 {{ judgment.iou.toFixed(0) }}% · +{{ scoreFor(judgment) }}점</span>
+            <!-- 일치율이 높은데 FAIL이면 이유 없이는 판정을 불신한다 — 어디가 걸렸는지 짚어준다 -->
+            <em v-if="failReason" class="fail-why">{{ failReason }}</em>
           </div>
 
           <div v-if="phase === 'incoming' && !spectating" class="approach-bar" :class="{ urgent: timerSec <= 2 }">
@@ -771,7 +843,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <aside class="side">
+      <aside ref="sideRef" class="side">
         <!-- 내 캠 — 무대 위 PiP였으나 통과율 위(사이드 최상단)로 옮겼다(실기 피드백) -->
         <div class="pip">
           <video ref="videoRef" class="pip-video mirrored" muted playsinline></video>
@@ -912,6 +984,8 @@ onBeforeUnmount(() => {
   color: var(--bf-text);
   /* 방 화면은 루트에서 전역 픽셀 폰트를 쓰는데 게임 화면만 산세리프로 튀고 있었다 */
   font-family: var(--font-pixel);
+  /* 어떤 배율에서도 게임 밖으로 스크롤바가 생기지 않게 한다 */
+  overflow: hidden;
 }
 /* 게임룸 셀프 타일 위 오버레이(멀티) — 자체 페이지가 아니라 타일을 채운다 */
 .game.embedded {
@@ -1234,6 +1308,16 @@ onBeforeUnmount(() => {
   color: #fff;
   font-variant-numeric: tabular-nums;
 }
+/* 실패 사유 — 등급색(코랄)을 그대로 물려받아 FAIL과 한 덩어리로 읽히게 한다 */
+.fail-why {
+  padding: 4px 12px;
+  background: rgba(26, 20, 17, 0.72);
+  border: 1px solid currentColor;
+  border-radius: var(--bf-radius-sm);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 700;
+}
 .approach-bar {
   position: absolute;
   left: 0;
@@ -1256,7 +1340,9 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  overflow-y: auto;
+  /* 스크롤 금지 — 넘치는 만큼은 fitSide()가 zoom으로 줄인다(스크립트 주석 참고).
+     hidden이어야 scrollHeight로 "원래 필요한 높이"를 읽을 수 있다 */
+  overflow: hidden;
 }
 .card {
   padding: 14px;

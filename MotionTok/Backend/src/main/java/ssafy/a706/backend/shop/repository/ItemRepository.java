@@ -13,4 +13,7 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
     List<Item> findAllByItemTypeAndActiveTrue(ItemType itemType);
 
     List<Item> findAllByItemTypeAndCategoryAndActiveTrue(ItemType itemType, ItemCategory category);
+
+    /** 기본 아이템 시드 멱등성 판별용 (ShopItemSeeder). */
+    boolean existsByImageUrl(String imageUrl);
 }

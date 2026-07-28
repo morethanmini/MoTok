@@ -41,7 +41,9 @@ describe('ParticipantTile 개인 볼륨', () => {
     expect(tile.find('.vol-val').text()).toBe('60%')
 
     await slider.setValue('25')
-    expect(tile.emitted('volume')?.at(-1)).toEqual([0.25])
+    // .at(-1) 대신 인덱싱 — tsconfig lib가 ES2022 미만이라 Array.at 타입이 없다
+    const emitted = tile.emitted('volume') ?? []
+    expect(emitted[emitted.length - 1]).toEqual([0.25])
   })
 
   it('0으로 내리면 음소거 상태로 보인다', () => {
