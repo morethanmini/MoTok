@@ -575,6 +575,8 @@ interface LiveScoreRow {
   nickname: string
   starsLit: number
   holdProgress: number
+  /** 핑거 스타(게임①) 90초 매치 완성 개수 — 1순위 정렬 기준. 다른 게임은 0 */
+  completedCount: number
   finished: boolean
   score: number | null
 }
