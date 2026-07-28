@@ -77,6 +77,8 @@ const roomVisibility = ref<Visibility>('PUBLIC')
 const participantCount = ref(1)
 /** 이미 방에 있는 참가자 — 친구 초대(-100) 목록에서 빼려고 들고 있는다. */
 const memberIds = ref<string[]>([])
+/** userId → 표시명(상세 조회 기준). 게임④ 출제자 이름·그림으로 말해요 화가 표시가 함께 쓴다. */
+const memberNames = ref<Record<string, string>>({})
 
 /**
  * 방장 판정 — <b>이 화면의 유일한 방장 판별 근거</b>다. 상세 조회의 hostUserId와 내 토큰 sub를 직접 비교한다.
@@ -101,7 +103,17 @@ function applyDetail(d: LiveRoomDetail) {
   roomVisibility.value = d.visibility
   participantCount.value = d.participantCount
   memberIds.value = d.members.map((m) => m.userId)
+  memberNames.value = Object.fromEntries(d.members.map((m) => [m.userId, m.displayName]))
 }
+
+/** userId → 닉네임 — 상세 조회 멤버를 기본으로 LiveKit 참가자 이름으로 보강(뒤늦게 들어온 참가자 대응). */
+const participantNames = computed<Record<string, string>>(() => {
+  const names = { ...memberNames.value }
+  for (const p of lk.participants.value) {
+    if (p.identity && p.name) names[p.identity] = p.name
+  }
+  return names
+})
 
 // ── 실시간 참가자 → 슬롯 매핑 ────────────────
 const connected = computed(() => lk.state.value === ConnectionState.Connected)
@@ -493,6 +505,33 @@ const iAmSetter = computed(
     !!activeSession.value?.setterUserId &&
     activeSession.value.setterUserId === myParticipantId.value,
 )
+/** 게임④(-9): 이번 라운드 출제자 표시명 — 이름 조회는 participantNames 하나로 통일한다 */
+const setterName = computed(() => {
+  const id = activeSession.value?.setterUserId
+  return id ? (participantNames.value[id] ?? '출제자') : null
+})
+/**
+ * 게임④(-9): 출제 중인 출제자의 카메라를 다른 참가자 타일에서 가린다 — 캠으로 포즈가
+ * 미리 보이면 문제가 성립하지 않는다(실기 피드백). 출제자는 게임 화면을 송출하지 않으므로
+ * 타일에 보이는 건 카메라 원본이다.
+ * 창은 타이머 없이 판별한다: GAME_START(poseChallenge=null) ~ POSE_SET 도착까지가 곧 출제 구간.
+ */
+const coveredSetterId = computed(() =>
+  activeGame.value?.id === 'shape' &&
+  activeSession.value?.setterUserId &&
+  !poseChallenge.value &&
+  !gameResults.value
+    ? activeSession.value.setterUserId
+    : null,
+)
+/**
+ * 타일에 씌울 가림막 문구. 참가자 타일은 레이아웃(정원 5~8인 side-tray / 그 외 others-tray)에
+ * 따라 세 군데에서 렌더되므로, 조건을 여기 한 곳에 두고 전부 이걸 쓴다 —
+ * 한 곳만 빠져도 그 레이아웃에서 출제 포즈가 새어나간다.
+ */
+function coverFor(slot: Slot): string | null {
+  return slot.view && slot.view.identity === coveredSetterId.value ? '🤫 출제 중 — 비밀!' : null
+}
 
 // 캔버스가 준비되면 송출 시작. 게임 캔버스에는 카메라 원본이 그려지지 않으므로(밤하늘+손 포인트)
 // 카메라를 숨긴 상태여도 계속 송출하고, 캡처가 끊겨 새 프레임이 없을 때만 가린다(정지 화면 방지).
@@ -508,6 +547,9 @@ watch(
   [() => gameComp.value?.canvas ?? null, captureOn, gameResults, iAmSetter, rhythmEnded],
   async ([canvas, capOn, results, setter, rhythmDone]) => {
     if (!activeGame.value || !canvas) return
+    // 그림으로 말해요 — 전원이 획 릴레이로 같은 도화지를 로컬 렌더링하므로 캔버스 송출이
+    // 무의미하다. 송출하지 않으면 다른 참가자 타일은 게임 중에도 카메라 화면 그대로다.
+    if (activeGame.value.id === 'draw') return
     if (results || setter || rhythmDone) {
       await lk.unpublishGameScreen()
       return
@@ -575,7 +617,7 @@ function applyGameEvent(e: GameEvent) {
     }
     activeGame.value = entry
     picker.value = false
-    if (!captureOn.value && !entry.cameraOptional) flash('카메라를 켜면 게임에 참여할 수 있어요')
+    if (!captureOn.value) flash('카메라를 켜면 게임에 참여할 수 있어요')
     return
   }
   // 이하 이벤트는 현재 세션 것만 반영(닫은 뒤 늦게 도착한 프레임 방어)
@@ -585,7 +627,7 @@ function applyGameEvent(e: GameEvent) {
     return
   }
   // 그리기 릴레이 — 게임 컴포넌트가 피드를 watch로 소비한다(자기 에코 무시 포함)
-  if (e.type === 'DRAW' || e.type === 'DRAW_RESULT') {
+  if (e.type === 'DRAW' || e.type === 'DRAW_RESULT' || e.type === 'TURN_SKIPPED') {
     drawFeed.value = [...drawFeed.value, e]
     return
   }
@@ -628,6 +670,10 @@ useRhythmAutoJoin(roomChat, roomCode, () => {
 function openPicker() {
   picker.value = true
 }
+/** 지금 방에 있는 인원 — LiveKit 참가자(본인 포함)가 실시간, 상세 조회 값은 폴백 */
+function roomPlayerCount(): number {
+  return lk.participants.value.length || participantCount.value
+}
 async function launch(g: GameEntry, difficulty?: string) {
   picker.value = false
   // 캐치캐치리듬은 전용 STOMP 채널을 쓴다 — 공용 게임 세션(GAME_START) 경로를 타지 않고
@@ -643,8 +689,13 @@ async function launch(g: GameEntry, difficulty?: string) {
   }
   // 방장 + 서버 연결 + 플레이 가능 → 서버에 시작 요청. GAME_START가 방 전체에 돌아와 마운트된다.
   if (g.playable && roomChat.connected.value && selfIsHost.value) {
-    if (!captureOn.value && !g.cameraOptional) {
+    if (!captureOn.value) {
       flash('카메라를 켜고 시작해 주세요')
+      return
+    }
+    // 최소 인원은 서버도 거부하지만, 먼저 알려주는 편이 친절하다(이어그리기는 3인부터)
+    if (g.minPlayers && roomPlayerCount() < g.minPlayers) {
+      flash(`${g.name} 는 ${g.minPlayers}명부터 시작할 수 있어요`)
       return
     }
     // 게임④(-9): 출제자는 관전하는 룰이라 1인 방에선 라운드가 성립 안 함 —
@@ -658,9 +709,14 @@ async function launch(g: GameEntry, difficulty?: string) {
     roomChat.startGame(g.gameId, undefined, difficulty)
     return
   }
-  // 서버 미연동 데모 — 로컬 솔로 플레이 폴백
+  // 서버 미연동 데모 — 로컬 솔로 플레이 폴백. 멀티 전용 게임(minPlayers>1)은 혼자
+  // 진행할 수 없으므로 폴백에서 제외한다(그림으로 말해요는 이어그리기라 3인부터).
+  if (g.playable && !roomChat.connected.value && (g.minPlayers ?? 1) > 1) {
+    flash(`${g.name} 는 실시간 서버에 연결된 뒤 ${g.minPlayers}명부터 시작할 수 있어요`)
+    return
+  }
   if (g.playable && !roomChat.connected.value) {
-    if (!captureOn.value && !g.cameraOptional) {
+    if (!captureOn.value) {
       flash('카메라를 켜야 게임을 플레이할 수 있어요')
       return
     }
@@ -994,6 +1050,7 @@ const startHint = computed(() =>
             :key="`left-${i}`"
             :view="slot.view"
             :host="slot.host"
+            :cover="coverFor(slot)"
             play-audio
             compact
             :can-kick="amRoomHost && !!slot.view"
@@ -1040,6 +1097,7 @@ const startHint = computed(() =>
             :my-user-id="myParticipantId"
             :challenge="poseChallenge"
             :scores="scoreboardRows"
+            :setter-name="setterName"
             embedded
             @close="closeGame"
             @pose-submit="onPoseSubmit"
@@ -1055,8 +1113,10 @@ const startHint = computed(() =>
             :results="gameResults"
             :my-user-id="myParticipantId"
             :draw-events="drawFeed"
+            :names="participantNames"
             @close="closeGame"
             @draw="(seq: number, ops: DrawOp[]) => roomChat.sendGameDraw(seq, ops)"
+            @turn-skip="(turnIdx: number, remainingMs: number) => roomChat.sendGameTurnSkip(turnIdx, remainingMs)"
             @draw-result="
               (r: { guesses: string[]; answerRank: number; score: number }) =>
                 roomChat.sendGameDrawResult(r.guesses, r.answerRank, r.score)
@@ -1095,6 +1155,7 @@ const startHint = computed(() =>
             :key="`right-${i}`"
             :view="slot.view"
             :host="slot.host"
+            :cover="coverFor(slot)"
             play-audio
             compact
             :can-kick="amRoomHost && !!slot.view"
@@ -1107,6 +1168,7 @@ const startHint = computed(() =>
             :key="i"
             :view="slot.view"
             :host="slot.host"
+            :cover="coverFor(slot)"
             play-audio
             :can-kick="amRoomHost && !!slot.view"
             @kick="openKick(slot.view)"

@@ -15,6 +15,7 @@ import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameProgressRequest;
 import ssafy.a706.backend.game.dto.GameResultEntry;
 import ssafy.a706.backend.game.dto.GameStartRequest;
+import ssafy.a706.backend.game.dto.GameTurnSkipRequest;
 import ssafy.a706.backend.game.dto.PoseSubmitRequest;
 import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.model.GamePlayerScore;
@@ -68,6 +69,12 @@ public class GameSessionService {
     private static final long BODY_FIT_GAME_ID = 4L;
     /** 게임④ 출제 페이즈 길이 — FE config·기획 §3과 동기화. */
     private static final long BODY_FIT_SETTING_MILLIS = 5_000;
+    /**
+     * 게임④ 라운드 간 휴식(ms) — 벽 도착 후 다음 출제 포즈까지의 텀.
+     * 이전에는 다음 라운드 startAt이 곧 now였고, 벽 통과 직후 바로 카운트다운이 다시 시작돼
+     * 쉴 틈이 없었다(실기 피드백). FE는 startAt 전 구간을 'wait' 페이즈로 그린다.
+     */
+    private static final long BODY_FIT_ROUND_BREAK_MILLIS = 6_000;
     /** 게임④ 난이도 → 벽 접근 시간(ms) — FE config.difficulty와 동기화. */
     private static final Map<String, Long> BODY_FIT_APPROACH_MILLIS =
             Map.of("easy", 6_000L, "normal", 5_000L, "hard", 4_000L);
@@ -166,10 +173,13 @@ public class GameSessionService {
             difficulty = request.difficulty() != null
                     && BODY_FIT_APPROACH_MILLIS.containsKey(request.difficulty())
                     ? request.difficulty() : "easy";
-            setterOrder = liveRoomRepository.findMembers(roomId).stream()
-                    .sorted(Comparator.comparingLong(LiveRoomMemberValue::joinedAt))
+            // 출제 순서는 무작위(게임⑩ turnOrder와 같은 방식). 이전에는 참가 순(joinedAt)이라
+            // 방을 만든 사람이 매 판 1번 출제자로 고정됐다.
+            List<String> shuffled = new ArrayList<>(liveRoomRepository.findMembers(roomId).stream()
                     .map(LiveRoomMemberValue::userId)
-                    .toList();
+                    .toList());
+            Collections.shuffle(shuffled);
+            setterOrder = List.copyOf(shuffled);
             // 게임④(-9): 출제자는 관전하는 룰 — 1인 방이면 플레이어가 0명이라 라운드가
             // 성립하지 않는다. FE가 혼자일 땐 로컬 연습 모드로 돌리므로 여기 도달은 레이스뿐.
             if (setterOrder.size() < 2) {
@@ -224,7 +234,7 @@ public class GameSessionService {
     }
 
     /**
-     * 그림으로 말해요 시작 — 총 시간(games.roundDurationSec=240)을 인원수로 올림 분배한 턴 스케줄과
+     * 그림으로 말해요 시작 — 총 시간(games.roundDurationSec, 현재 90초)을 인원수로 올림 분배한 턴 스케줄과
      * 주제어·화가 순서(셔플)를 확정해 GAME_START로 배포한다. 이후 턴 전환은 별도 이벤트 없이
      * 전 클라이언트가 서버 권위 시각으로 같은 스케줄을 계산한다. 정산은 draw-result 수리(협동 점수)
      * 또는 endAt+채점 유예 타임아웃(0점) 중 먼저 온 쪽이 1회 실행한다.
@@ -233,6 +243,12 @@ public class GameSessionService {
         List<LiveRoomMemberValue> members = liveRoomRepository.findMembers(roomId);
         if (members.isEmpty()) {
             throw new BusinessException(ErrorCode.GAME_NOT_IN_ROOM);
+        }
+        // 이어그리기라 혼자서는 성립하지 않는다 — 카탈로그 최소 인원(games.min_players)을 강제한다.
+        if (members.size() < game.getMinPlayers()) {
+            throw new BusinessException(ErrorCode.GAME_NEED_MORE_PLAYERS,
+                    String.format("%d명부터 시작할 수 있는 게임입니다. (현재 %d명)",
+                            game.getMinPlayers(), members.size()));
         }
         List<String> turnOrder = new ArrayList<>(members.stream().map(LiveRoomMemberValue::userId).toList());
         Collections.shuffle(turnOrder);
@@ -271,6 +287,32 @@ public class GameSessionService {
             ops = ops.subList(0, DRAW_MAX_OPS);
         }
         broadcast(roomId, GameEventResponse.draw(session.sessionId(), sender.userId(), request.seq(), ops));
+    }
+
+    /**
+     * 조기 차례 넘기기(게임 10) — 남은 그리기 시간을 클램프해 TURN_SKIPPED로 재방송하고,
+     * 전체 스케줄이 그만큼 당겨지므로 세션 endAt과 타임아웃 예약도 함께 앞당긴다.
+     * 차례(발신자가 현재 화가인지) 강제는 클라이언트 몫 — draw 릴레이와 같은 신뢰 모델.
+     */
+    public void turnSkip(String roomId, GameTurnSkipRequest request, AuthPrincipal sender) {
+        requireMembership(roomId, sender);
+        GameSession session = requireActiveSession(roomId);
+        if (session.gameId() != DRAW_GAME_ID) {
+            throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
+        }
+        long now = System.currentTimeMillis();
+        long requested = request.remainingMs() == null ? 0 : request.remainingMs();
+        long remaining = Math.max(0, Math.min(requested, session.endAt() - now));
+        int turnIndex = Math.max(0, request.turnIndex() == null ? 0 : request.turnIndex());
+
+        long newEndAt = session.endAt() - remaining;
+        sessionRepository.updateEndAt(roomId, newEndAt);
+        // 그림으로 말해요는 라운드 로테이션(게임④)이 없어 roundIndex는 항상 0
+        scheduleEnd(roomId, session.sessionId(), 0, newEndAt + DRAW_JUDGE_WINDOW_MILLIS);
+        broadcast(roomId, GameEventResponse.turnSkipped(
+                session.sessionId(), sender.userId(), turnIndex, remaining));
+        log.info("draw turn skipped: room={} session={} turn={} remainingMs={}",
+                roomId, session.sessionId(), turnIndex, remaining);
     }
 
     /**
@@ -442,7 +484,7 @@ public class GameSessionService {
     private void startNextRound(String roomId, GameSession prev, int roundIndex) {
         String setterUserId = prev.setterOrder().get(roundIndex);
         long now = System.currentTimeMillis();
-        long startAt = now;
+        long startAt = now + BODY_FIT_ROUND_BREAK_MILLIS;
         long endAt = startAt + BODY_FIT_SETTING_MILLIS + BODY_FIT_APPROACH_MILLIS.get(prev.difficulty());
         GameSession next = new GameSession(prev.sessionId(), prev.gameId(), null, setterUserId,
                 startAt, endAt, GameSession.STATUS_PLAYING, prev.setterOrder(), roundIndex, prev.difficulty());

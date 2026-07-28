@@ -18,8 +18,14 @@ const props = withDefaults(
     mirror?: boolean
     compact?: boolean
     canKick?: boolean
+    /**
+     * 영상을 가려야 할 때의 안내 문구(null이면 그대로 보여준다).
+     * 게임④ 출제 중인 출제자 캠처럼 "보이면 안 되는" 화면에 쓴다 — 트랙은 그대로 붙여두고
+     * 표시만 덮는다(재부착 시 깜빡임·재협상 비용을 피한다).
+     */
+    cover?: string | null
   }>(),
-  { view: null, host: false, playAudio: false, mirror: false, compact: false, canKick: false },
+  { view: null, host: false, playAudio: false, mirror: false, compact: false, canKick: false, cover: null },
 )
 const emit = defineEmits<{ kick: [] }>()
 
@@ -99,6 +105,9 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
       <div v-if="!showingVideo" class="cam-off">
         <span class="avatar">{{ initial }}</span>
       </div>
+
+      <!-- 가림막 — 영상 위, 라벨·왕관 아래(DOM 순서로 쌓임) -->
+      <div v-if="cover" class="cover">{{ cover }}</div>
 
       <div class="label">
         <span class="name">{{ view?.name }}</span>
@@ -183,6 +192,25 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
   background: #fff;
   color: var(--c-ink-soft);
   font-size: 16px;
+}
+
+.cover {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  text-align: center;
+  background: repeating-linear-gradient(
+    45deg,
+    #2b2333,
+    #2b2333 12px,
+    #3b3145 12px,
+    #3b3145 24px
+  );
+  color: #ffcf4d;
+  font-size: 9px;
+  line-height: 1.6;
 }
 
 .label {
