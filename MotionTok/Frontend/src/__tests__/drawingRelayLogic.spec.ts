@@ -29,18 +29,19 @@ function handLandmarks(points: Record<number, [number, number]>): NormalizedPoin
 }
 
 describe('computeTurnSeconds', () => {
-  it('총 4분을 인원수로 나눈다 (4명 → 60초, 8명 → 30초)', () => {
-    expect(TOTAL_SECONDS).toBe(240)
-    expect(computeTurnSeconds(4)).toBe(60)
-    expect(computeTurnSeconds(8)).toBe(30)
-    expect(computeTurnSeconds(6)).toBe(40)
-    expect(computeTurnSeconds(1)).toBe(240)
+  it('총 150초를 인원수로 나눈다 (5명 → 30초, 6명 → 25초)', () => {
+    expect(TOTAL_SECONDS).toBe(150)
+    expect(computeTurnSeconds(2)).toBe(75)
+    expect(computeTurnSeconds(5)).toBe(30)
+    expect(computeTurnSeconds(6)).toBe(25)
+    expect(computeTurnSeconds(1)).toBe(150)
   })
 
-  it('나눠떨어지지 않으면 올림한다 (7명 → 35초, 9명 → 27초)', () => {
-    expect(computeTurnSeconds(7)).toBe(35)
-    expect(computeTurnSeconds(5)).toBe(48)
-    expect(computeTurnSeconds(9)).toBe(27)
+  it('나눠떨어지지 않으면 올림한다 (4명 → 38초, 8명 → 19초)', () => {
+    expect(computeTurnSeconds(4)).toBe(38)
+    expect(computeTurnSeconds(7)).toBe(22)
+    expect(computeTurnSeconds(8)).toBe(19)
+    expect(computeTurnSeconds(9)).toBe(17)
   })
 
   it('0 이하 인원은 0초', () => {
