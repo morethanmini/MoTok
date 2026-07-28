@@ -12,9 +12,6 @@ import {
   applyPinchHysteresis,
   isFist,
   trimStrokeTail,
-  scoreForRank,
-  findAnswerRank,
-  parseGuesses,
   type NormalizedPoint,
   type StrokePoint,
 } from '../features/games/drawing-relay/logic'
@@ -161,59 +158,6 @@ describe('trimStrokeTail', () => {
   })
 })
 
-describe('scoreForRank', () => {
-  it('1순위 100점, 3순위 60점, 5순위 20점', () => {
-    expect(scoreForRank(1)).toBe(100)
-    expect(scoreForRank(2)).toBe(80)
-    expect(scoreForRank(3)).toBe(60)
-    expect(scoreForRank(4)).toBe(40)
-    expect(scoreForRank(5)).toBe(20)
-  })
 
-  it('순위 밖(0, 6)은 0점', () => {
-    expect(scoreForRank(0)).toBe(0)
-    expect(scoreForRank(6)).toBe(0)
-  })
-})
-
-describe('findAnswerRank', () => {
-  it('정확히 일치하는 추측의 순위(1-based)를 돌려준다', () => {
-    expect(findAnswerRank('사과', ['수박', '사과', '공'])).toBe(2)
-    expect(findAnswerRank('사과', ['사과'])).toBe(1)
-  })
-
-  it('공백·대소문자·따옴표를 무시하고 비교한다', () => {
-    expect(findAnswerRank('아이스크림', ['"아이스 크림"'])).toBe(1)
-    expect(findAnswerRank('Robot', ['robot'])).toBe(1)
-  })
-
-  it('두 글자 이상이면 포함 관계도 정답 ("사과나무" ↔ "사과")', () => {
-    expect(findAnswerRank('사과', ['사과나무'])).toBe(1)
-    expect(findAnswerRank('사과나무', ['수박', '사과'])).toBe(2)
-  })
-
-  it('한 글자 주제는 포함 관계를 인정하지 않는다 ("배" ↔ "배구")', () => {
-    expect(findAnswerRank('배', ['배구', '바다'])).toBe(0)
-    expect(findAnswerRank('배', ['배'])).toBe(1)
-  })
-
-  it('추측에 없으면 0', () => {
-    expect(findAnswerRank('사과', ['수박', '공', '달'])).toBe(0)
-  })
-})
-
-describe('parseGuesses', () => {
-  it('JSON 배열 응답을 파싱한다 (앞뒤 설명이 있어도)', () => {
-    expect(parseGuesses('추측 결과: ["사과","수박","공","달","바퀴"] 입니다')).toEqual([
-      '사과', '수박', '공', '달', '바퀴',
-    ])
-  })
-
-  it('번호 목록 응답을 파싱한다', () => {
-    expect(parseGuesses('1. 사과\n2) 수박\n- 공')).toEqual(['사과', '수박', '공'])
-  })
-
-  it('최대 5개까지만 돌려준다', () => {
-    expect(parseGuesses('["a","b","c","d","e","f"]')).toEqual(['a', 'b', 'c', 'd', 'e'])
-  })
-})
+// 채점 판정(순위 점수·주제어 매칭·AI 응답 파싱)은 서버로 옮겨졌다 —
+// 백엔드 DrawJudgeTest가 같은 케이스를 검증한다. (명세 v0.2.22)
