@@ -19,4 +19,9 @@ public record GamePlayerScore(
     public int starsHit() {
         return stats.getOrDefault("starsHit", 0);
     }
+
+    /** 게임①(핑거 스타) 90초 매치 완성 개수 — 1순위 순위 기준. 다른 게임은 0. */
+    public int completedCount() {
+        return stats.getOrDefault("completedCount", 0);
+    }
 }

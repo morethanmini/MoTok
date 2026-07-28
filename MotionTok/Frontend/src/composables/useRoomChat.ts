@@ -190,15 +190,18 @@ export function useRoomChat() {
   }
 
   /** 라운드 진행 상황 발신 — 호출부에서 2~5Hz로 스로틀할 것(프레임마다 금지). */
-  function sendGameProgress(starsLit: number, holdProgress: number) {
+  function sendGameProgress(starsLit: number, holdProgress: number, completedCount = 0) {
     if (!currentRoomId) return
-    publishGlobal(`/app/rooms/${currentRoomId}/game/progress`, { starsLit, holdProgress })
+    publishGlobal(`/app/rooms/${currentRoomId}/game/progress`, { starsLit, holdProgress, completedCount })
   }
 
-  /** 라운드 최종 결과 발신 — 참가자당 1회만 수리된다(재전송은 서버가 무시). */
-  function sendGameFinish(score: number, starsHit: number) {
+  /**
+   * 라운드 최종 결과 발신 — 참가자당 1회만 수리된다(재전송은 서버가 무시).
+   * 핑거 스타(게임①)는 score=매치 총점, completedCount=완성 개수(1순위 승부 기준).
+   */
+  function sendGameFinish(score: number, starsHit: number, completedCount = 0) {
     if (!currentRoomId) return
-    publishGlobal(`/app/rooms/${currentRoomId}/game/finish`, { score, starsHit })
+    publishGlobal(`/app/rooms/${currentRoomId}/game/finish`, { score, starsHit, completedCount })
   }
 
   // ── 그림으로 말해요(게임 10, 명세 v0.2.20) ──

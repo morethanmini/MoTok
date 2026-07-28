@@ -98,7 +98,7 @@ class BodyFitRotationFlowTest {
             if (uid.equals(setter)) {
                 continue;
             }
-            service.finish(ROOM_ID, new GameFinishRequest(70, 0), new MemberPrincipal((long) i, "P" + i));
+            service.finish(ROOM_ID, new GameFinishRequest(70, 0, null), new MemberPrincipal((long) i, "P" + i));
         }
     }
 

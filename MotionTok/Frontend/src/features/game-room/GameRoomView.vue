@@ -8,7 +8,7 @@ import { RouteName } from '@/router/routeNames'
 import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason } from '@/api'
 import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
-import { useCamera } from '@/composables/useCamera'
+import { preferredAudioDeviceId, useCamera } from '@/composables/useCamera'
 import { useDecoration } from '@/composables/useDecoration'
 import { warmUpMotionModels } from '@/composables/motionModels'
 import { useStickerCompositor } from '@/composables/useStickerCompositor'
@@ -289,6 +289,8 @@ onMounted(async () => {
   const ok = await lk.connect(roomCode.value, {
     cameraTrack: initialCamOn.value ? await publishableTrack(stream) : null,
     microphone: initialMicOn.value,
+    // 카메라는 로컬 캡처(camera.start)가 이미 고른 장치를 쓰지만, 마이크는 LiveKit이 직접 잡는다.
+    microphoneDeviceId: preferredAudioDeviceId(),
   })
   if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
 
@@ -580,6 +582,16 @@ function coverFor(slot: Slot): string | null {
   return slot.view && slot.view.identity === coveredSetterId.value ? '🤫 출제 중 — 비밀!' : null
 }
 
+// ── 참가자별 개인 볼륨 ───────────────────────
+// 상대의 마이크 설정과 무관하게 "내 귀에 들리는 크기"만 바꾼다(디스코드식). 타일은 세 군데
+// 레이아웃에서 렌더되므로 조회·변경을 여기 두고 전부 이걸 쓴다.
+function volumeFor(slot: Slot): number {
+  return slot.view ? (lk.participantVolumes.value[slot.view.identity] ?? 1) : 1
+}
+function changeVolume(slot: Slot, value: number) {
+  if (slot.view) lk.setParticipantVolume(slot.view.identity, value)
+}
+
 // 캔버스가 준비되면 송출 시작. 게임 캔버스에는 카메라 원본이 그려지지 않으므로(밤하늘+손 포인트)
 // 카메라를 숨긴 상태여도 계속 송출하고, 캡처가 끊겨 새 프레임이 없을 때만 가린다(정지 화면 방지).
 // 라운드가 끝나면(GAME_END 수신) 결과 화면을 닫지 않아도 송출을 내린다 — gameTrack이 사라지면서
@@ -610,6 +622,8 @@ interface LiveScoreRow {
   nickname: string
   starsLit: number
   holdProgress: number
+  /** 핑거 스타(게임①) 90초 매치 완성 개수 — 1순위 정렬 기준. 다른 게임은 0 */
+  completedCount: number
   finished: boolean
   score: number | null
 }
@@ -685,6 +699,7 @@ function applyGameEvent(e: GameEvent) {
       nickname: e.nickname,
       starsLit: e.starsLit,
       holdProgress: e.holdProgress,
+      completedCount: e.completedCount ?? 0,
       finished: false,
       score: null,
     }
@@ -695,6 +710,7 @@ function applyGameEvent(e: GameEvent) {
       nickname: e.nickname,
       starsLit: e.starsHit,
       holdProgress: 1,
+      completedCount: e.completedCount ?? 0,
       finished: true,
       score: e.score,
     }
@@ -790,19 +806,22 @@ async function memberCountNow(): Promise<number> {
   }
 }
 
-/** 게임 컴포넌트의 진행 상황(컴포넌트에서 300ms 스로틀) → 서버 중계 */
-function onGameProgress(starsLit: number, holdProgress: number) {
-  if (activeSession.value && !gameResults.value) roomChat.sendGameProgress(starsLit, holdProgress)
+/** 게임 컴포넌트의 진행 상황(컴포넌트에서 300ms 스로틀) → 서버 중계. completedCount는 게임① 전용 */
+function onGameProgress(starsLit: number, holdProgress: number, completedCount = 0) {
+  if (activeSession.value && !gameResults.value) {
+    roomChat.sendGameProgress(starsLit, holdProgress, completedCount)
+  }
 }
 
-function onGameFinished(r: { constellation: string; score: number; starsHit: number; starsTotal: number }) {
+/** 핑거 스타 90초 매치 집계 — score 자리에 총점, completedCount가 1순위 승부 기준 */
+function onGameFinished(r: { completedCount: number; totalScore: number; avgScore: number }) {
   if (activeSession.value) {
     // 서버가 최초 1회만 수리하고 PLAYER_FINISHED → (전원 완주 시) GAME_END를 배포한다.
-    roomChat.sendGameFinish(r.score, r.starsHit)
+    roomChat.sendGameFinish(r.totalScore, 0, r.completedCount)
     return
   }
   // 솔로 폴백 — 결과를 토스트로만 알린다.
-  flash(`✨ ${r.score}점 · 별 ${r.starsHit}/${r.starsTotal}`)
+  flash(`✨ ${r.completedCount}개 완성 · 평균 ${r.avgScore}점`)
 }
 
 /** 게임④(-86): 출제자가 캡처한 포즈(랜드마크 JSON)를 서버로 — POSE_SET이 방 전체에 돌아온다 */
@@ -1098,10 +1117,12 @@ const startHint = computed(() =>
             :view="slot.view"
             :host="slot.host"
             :cover="coverFor(slot)"
+            :volume="volumeFor(slot)"
             play-audio
             compact
             :can-kick="amRoomHost && !!slot.view"
             @kick="openKick(slot.view)"
+            @volume="changeVolume(slot, $event)"
           />
         </div>
         <!-- 내 캠 — 항상 가장 크게 -->
@@ -1211,10 +1232,12 @@ const startHint = computed(() =>
             :view="slot.view"
             :host="slot.host"
             :cover="coverFor(slot)"
+            :volume="volumeFor(slot)"
             play-audio
             compact
             :can-kick="amRoomHost && !!slot.view"
             @kick="openKick(slot.view)"
+            @volume="changeVolume(slot, $event)"
           />
         </div>
         <div v-else class="others-tray" :style="{ '--cols': othersColumns }">
@@ -1224,9 +1247,11 @@ const startHint = computed(() =>
             :view="slot.view"
             :host="slot.host"
             :cover="coverFor(slot)"
+            :volume="volumeFor(slot)"
             play-audio
             :can-kick="amRoomHost && !!slot.view"
             @kick="openKick(slot.view)"
+            @volume="changeVolume(slot, $event)"
           />
         </div>
 

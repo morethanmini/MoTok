@@ -224,7 +224,7 @@ public class RhythmSessionService {
         List<GameResultEntry> out = new ArrayList<>(results.size());
         for (RhythmResultEntry r : results) {
             out.add(new GameResultEntry(r.rank(), r.userId(), r.nickname(),
-                    r.score(), r.maxCombo(), r.finished(), r.pointsEarned()));
+                    r.score(), r.maxCombo(), r.finished(), r.pointsEarned(), null));
         }
         return out;
     }
