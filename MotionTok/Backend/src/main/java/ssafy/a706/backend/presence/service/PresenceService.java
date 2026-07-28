@@ -72,7 +72,11 @@ public class PresenceService {
      * 두 번째 탭을 여는 것만으로 친구 목록에서 "방에서 나간 것처럼" 보이지 않는다.</p>
      */
     public void sessionOpened(Long userId, String sessionId) {
-        heartbeat(userId, sessionId, null);
+        // 방 안에서 소켓이 한 번 끊겼다 붙는 일은 흔하다(절전 복귀·프록시 유휴 타임아웃·토큰 갱신).
+        // 그때 방을 null로 등록하면 합성 결과가 null이 되어 친구 전원에게 "방에서 나갔다"가
+        // 잘못 나가고, 곧 이어질 첫 비트가 되돌린다 — 그사이 친구방 입장(-98)은 빈 방을 본다.
+        // 직전에 알던 방을 물려주고, 진짜 위치는 곧 오는 첫 비트가 확정한다.
+        heartbeat(userId, sessionId, presenceRepository.readPrior(userId).roomId());
     }
 
     /**
@@ -124,9 +128,11 @@ public class PresenceService {
         presenceRepository.delete(userId);
         sessionRepository.delete(userId);
         connectTimeService.flush(userId);
-        if (prior.wasOnline()) {
-            eventPublisher.publishEvent(PresenceChangedEvent.offline(userId));
-        }
+        // 전이 여부를 따지지 않고 무조건 알린다. 프레즌스 키는 TTL(60s)로 조용히 사라질 수 있어
+        // (절전·백그라운드 탭·망 단절) 로그아웃 시점에 이미 "오프라인"인 경우가 흔한데,
+        // 그때 wasOnline() 가드에 걸려 침묵하면 친구 목록에는 <b>영원히 접속 중으로 박제</b>된다.
+        // 델타만 받는 목록에서는 "한 번 놓친 오프라인"을 되찾을 방법이 없다.
+        eventPublisher.publishEvent(PresenceChangedEvent.offline(userId));
     }
 
     public PresenceSnapshot find(Long userId) {

@@ -65,6 +65,9 @@ class FriendPresencePushIntegrationTest {
     @Autowired
     private PresenceService presenceService;
 
+    @Autowired
+    private ssafy.a706.backend.presence.repository.PresenceRepository presenceRepository;
+
     private User mover;      // 상태가 바뀌는 쪽
     private User watcher;    // 그 변화를 받아야 하는 친구
     private Friendship friendship;
@@ -126,6 +129,52 @@ class FriendPresencePushIntegrationTest {
         assertThat(received).as("오프라인 전이가 도착해야 한다").isNotNull();
         assertThat(received.userId()).isEqualTo(mover.getId());
         assertThat(received.presence()).isEqualTo("OFFLINE");
+    }
+
+    @Test
+    @DisplayName("프레즌스가 TTL로 이미 사라진 뒤 로그아웃해도 오프라인 전이를 알린다")
+    void pushesLogoutEvenAfterPresenceExpired() throws Exception {
+        StompSession watcherSession = connect(watcher);
+        BlockingQueue<PresenceQueueMessage> inbox =
+                subscribe(watcherSession, "/user/queue/presence", PresenceQueueMessage.class);
+        connect(mover);
+        drainConnectNoise(inbox);
+
+        // 절전·백그라운드 탭·망 단절이면 비트가 끊겨 presence 키가 TTL로 조용히 사라진다.
+        // 이 소멸에는 훅이 없어 이벤트가 하나도 나가지 않으므로, 친구 목록에는 접속 중으로 남아 있다.
+        presenceRepository.delete(mover.getId());
+        inbox.clear();
+
+        presenceService.clear(mover.getId()); // 그 상태에서 로그아웃을 누른다
+
+        PresenceQueueMessage received = pollFriendEvent(inbox);
+        assertThat(received)
+                .as("직전 상태가 '오프라인'이라도 로그아웃은 알려야 한다 — 안 그러면 목록에 영원히 박제된다")
+                .isNotNull();
+        assertThat(received.presence()).isEqualTo("OFFLINE");
+    }
+
+    @Test
+    @DisplayName("방 안에서 소켓이 재연결돼도 '방에서 나갔다'로 오인하지 않는다")
+    void reconnectKeepsRoom() throws Exception {
+        StompSession watcherSession = connect(watcher);
+        BlockingQueue<PresenceQueueMessage> inbox =
+                subscribe(watcherSession, "/user/queue/presence", PresenceQueueMessage.class);
+        StompSession first = connect(mover);
+        first.send("/app/presence/heartbeat", new PresenceBeatRequest(ROOM_ID, 20L));
+        Thread.sleep(700);
+        first.disconnect();
+        inbox.clear();
+
+        // 같은 사용자가 방에 있는 채로 다시 붙는다(절전 복귀·프록시 유휴 타임아웃).
+        connect(mover);
+
+        PresenceQueueMessage received = pollFriendEvent(inbox);
+        if (received != null) {
+            assertThat(received.presence())
+                    .as("재연결이 IN_ROOM을 ONLINE으로 되돌려서는 안 된다")
+                    .isNotEqualTo("ONLINE");
+        }
     }
 
     @Test
