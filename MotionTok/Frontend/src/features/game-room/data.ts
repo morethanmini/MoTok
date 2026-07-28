@@ -8,8 +8,6 @@ export interface GameEntry {
   emoji: string
   thumb: string
   playable: boolean
-  /** 카메라 없이도 플레이 가능(마우스 폴백) — 시작 시 카메라 강제를 건너뛴다 */
-  cameraOptional?: boolean
   /** 게임 선택창 상세 패널에 보여줄 설명 */
   description: string
   /** 게임 선택창 상세 패널의 플레이 방법 단계 */
@@ -29,7 +27,7 @@ export const GAME_CATALOG: GameEntry[] = [
     howToPlay: ['카메라에 두 손이 잘 보이도록 위치를 잡아요', '열 손가락을 움직여 모든 별을 동시에 켜요', '그대로 10초간 유지하면 완성 — 모양이 비슷할수록 고득점!'],
   },
   {
-    id: 'draw', gameId: 10, name: '그림으로 말해요', tag: '이어 그리기 · AI 채점', emoji: '🎨', thumb: '#fdeee0', playable: true, cameraOptional: true,
+    id: 'draw', gameId: 10, name: '그림으로 말해요', tag: '이어 그리기 · AI 채점', emoji: '🎨', thumb: '#fdeee0', playable: true,
     description: '총 2분 30초를 인원수로 나눠 한 도화지에 그림을 이어 그리는 협동 게임이에요. 완성 그림을 본 AI가 무엇인지 5가지로 추측하고, 그 안에 주제어가 있으면 순위에 따라 점수를 받아요.',
     howToPlay: ['주제어를 확인하고 자기 차례에 이어 그려요', '오른손 엄지+검지를 집으면 그리기, 왼손 주먹으로 문지르면 지우개 (왼손잡이 모드 지원)', '모두 그리면 AI가 추측 — 1순위로 맞히면 100점!'],
   },

@@ -495,7 +495,7 @@ function applyGameEvent(e: GameEvent) {
     }
     activeGame.value = entry
     picker.value = false
-    if (!captureOn.value && !entry.cameraOptional) flash('카메라를 켜면 게임에 참여할 수 있어요')
+    if (!captureOn.value) flash('카메라를 켜면 게임에 참여할 수 있어요')
     return
   }
   // 이하 이벤트는 현재 세션 것만 반영(닫은 뒤 늦게 도착한 프레임 방어)
@@ -539,7 +539,7 @@ function launch(g: GameEntry) {
   picker.value = false
   // 방장 + 서버 연결 + 플레이 가능 → 서버에 시작 요청. GAME_START가 방 전체에 돌아와 마운트된다.
   if (g.playable && roomChat.connected.value && selfIsHost.value) {
-    if (!captureOn.value && !g.cameraOptional) {
+    if (!captureOn.value) {
       flash('카메라를 켜고 시작해 주세요')
       return
     }
@@ -548,7 +548,7 @@ function launch(g: GameEntry) {
   }
   // 서버 미연동 데모 — 로컬 솔로 플레이 폴백
   if (g.playable && !roomChat.connected.value) {
-    if (!captureOn.value && !g.cameraOptional) {
+    if (!captureOn.value) {
       flash('카메라를 켜야 게임을 플레이할 수 있어요')
       return
     }
