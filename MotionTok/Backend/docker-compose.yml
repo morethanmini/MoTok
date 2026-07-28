@@ -52,6 +52,49 @@ services:
       - "7881:7881"        # TCP 폴백
       - "7882:7882/udp"    # RTC 미디어 (로컬은 단일 포트 멀티플렉스)
 
+  # S3 호환 오브젝트 스토리지 (로컬 개발 전용).
+  # 운영은 실제 AWS S3를 쓰므로 docker-compose.prod.yml에는 넣지 않는다.
+  # 팀원이 AWS 키 없이 개발할 수 있고, 자바 코드는 endpoint만 갈아끼우면 그대로 돈다.
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: motiontok-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"   # S3 API — .env의 S3_ENDPOINT가 가리키는 곳
+      - "9001:9001"   # 웹 콘솔 (업로드된 객체 눈으로 확인용)
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # 버킷 생성 + public/ prefix만 익명 읽기 허용. 한 번 돌고 종료되는 one-shot 컨테이너.
+  # AWS에서는 이 역할을 버킷 정책이 대신한다(public/* 만 s3:GetObject 허용).
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    container_name: motiontok-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      BUCKET: ${S3_BUCKET:-motok-local}
+      ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $$ACCESS_KEY $$SECRET_KEY &&
+      mc mb --ignore-existing local/$$BUCKET &&
+      mc anonymous set download local/$$BUCKET/public &&
+      echo '[minio-init] bucket ready: '$$BUCKET' (public/ is anonymous-readable)'
+      "
+
 volumes:
   mysql-data:
   redis-data:
+  minio-data:

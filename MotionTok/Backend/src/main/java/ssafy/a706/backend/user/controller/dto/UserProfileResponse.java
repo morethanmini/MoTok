@@ -19,7 +19,9 @@ public record UserProfileResponse(
          * email이 있어도 소셜로만 만들어진 계정이 있어 email 유무로는 판별할 수 없다.
          * 클라이언트는 이 값으로 비밀번호 변경 노출 여부와 탈퇴 시 본인 확인 방식을 정한다.
          */
-        boolean socialOnly
+        boolean socialOnly,
+        /** 프로필 사진 URL. null이면 클라이언트가 기본 아바타를 그린다. */
+        String avatarUrl
 ) {
     public static UserProfileResponse from(User user) {
         return new UserProfileResponse(
@@ -30,6 +32,7 @@ public record UserProfileResponse(
                 user.getPointBalance(),
                 user.getCreatedAt(),
                 user.isNicknamePending(),
-                user.isSocialOnly());
+                user.isSocialOnly(),
+                user.getAvatarUrl());
     }
 }
