@@ -83,6 +83,7 @@ const pipOverlayRef = ref<HTMLCanvasElement>()
 const thumbRef = ref<HTMLCanvasElement>()
 /** 출제자 관전 화면의 큰 구멍 — 썸네일과 달리 "벽에 뚫린 구멍" 자체를 보여준다 */
 const holeRef = ref<HTMLCanvasElement>()
+const sideRef = ref<HTMLElement>()
 
 /** stale = 벽 도착 후 다음 라운드 이벤트가 끊긴 상태(복구 대기) — 아래 STALE_MS 참고 */
 type Phase = 'idle' | 'wait' | 'setting' | 'incoming' | 'result' | 'stale'
@@ -514,6 +515,9 @@ function tickPhase() {
   if (!stage) return
   if (isMultiplayer.value && props.session) tickMulti(performance.now())
   else tickSolo(performance.now())
+  // 사이드 맞춤도 여기서 — ResizeObserver만 걸면 zoom 변경이 다시 리사이즈를 부르는 관계라
+  // 갱신이 새는 경우가 있었다. 이미 도는 타이머에 얹으면 컨테이너가 어떻게 바뀌든 자가 복구된다.
+  fitSide()
 }
 
 function renderLoop() {
@@ -588,6 +592,29 @@ watch(phase, (p) => {
   else if (!props.results) audio.stop() // result · idle · stale
 })
 
+/**
+ * 사이드바를 자리에 맞게 축소한다 — 스크롤을 만들지 않기 위해서.
+ *
+ * <p>내용(캠·게이지·점수·난이도)이 고정 px라, 브라우저 배율을 올리거나 타일이 작아지면
+ * CSS 픽셀 기준 높이가 모자라 넘친다(1280×720 솔로에서 이미 830 vs 637). 브레이크포인트로
+ * 항목을 하나씩 숨기는 대신 통째로 줄여 전부 보이게 한다.</p>
+ *
+ * <p>transform:scale이 아니라 zoom을 쓰는 이유 — scale은 레이아웃 박스를 그대로 두어
+ * 줄인 만큼 빈 공간이 남는다. zoom은 박스까지 줄어 무대가 그 자리를 가져간다.</p>
+ */
+function fitSide() {
+  const el = sideRef.value
+  if (!el) return
+  el.style.zoom = '1' // 원래 크기로 되돌려 natural height를 잰다
+  const avail = el.clientHeight
+  const need = el.scrollHeight
+  if (!avail || !need) return
+  // 0.98은 반올림 여유 — 딱 맞추면 브라우저 반올림 때문에 몇 px가 남아 잘린다.
+  // 0.55 아래로는 글씨가 못 읽을 크기라, 그때는 잘리는 쪽을 택한다.
+  const z = need > avail ? Math.max(0.55, (avail / need) * 0.98) : 1
+  el.style.zoom = String(Math.round(z * 1000) / 1000)
+}
+
 /** 최종 결과 오버레이 — 여기가 기획상 ⑤최종 결과(=①인게임 베드) 자리다 */
 watch(
   () => props.results,
@@ -656,6 +683,8 @@ onMounted(async () => {
     if (!w || !h || !stage) return
     stage.setSize(w, h)
   }
+  // 사이드는 관찰하지 않는다 — zoom 변경이 다시 리사이즈를 부르는 관계라서. 사이드 맞춤은
+  // tickPhase(200ms)가 맡는다.
   resizeObs = new ResizeObserver(resize)
   resizeObs.observe(viewport)
   resize()
@@ -814,7 +843,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <aside class="side">
+      <aside ref="sideRef" class="side">
         <!-- 내 캠 — 무대 위 PiP였으나 통과율 위(사이드 최상단)로 옮겼다(실기 피드백) -->
         <div class="pip">
           <video ref="videoRef" class="pip-video mirrored" muted playsinline></video>
@@ -955,6 +984,8 @@ onBeforeUnmount(() => {
   color: var(--bf-text);
   /* 방 화면은 루트에서 전역 픽셀 폰트를 쓰는데 게임 화면만 산세리프로 튀고 있었다 */
   font-family: var(--font-pixel);
+  /* 어떤 배율에서도 게임 밖으로 스크롤바가 생기지 않게 한다 */
+  overflow: hidden;
 }
 /* 게임룸 셀프 타일 위 오버레이(멀티) — 자체 페이지가 아니라 타일을 채운다 */
 .game.embedded {
@@ -1309,7 +1340,9 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  overflow-y: auto;
+  /* 스크롤 금지 — 넘치는 만큼은 fitSide()가 zoom으로 줄인다(스크립트 주석 참고).
+     hidden이어야 scrollHeight로 "원래 필요한 높이"를 읽을 수 있다 */
+  overflow: hidden;
 }
 .card {
   padding: 14px;
