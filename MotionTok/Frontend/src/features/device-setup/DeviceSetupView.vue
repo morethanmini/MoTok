@@ -11,7 +11,8 @@ import BrandLogo from '@/components/common/BrandLogo.vue'
 
 const route = useRoute()
 const router = useRouter()
-const { stream, isOn, camOn, micOn, start, toggleCam, toggleMic } = useCamera()
+const { stream, isOn, error, camOn, micOn, videoDevices, videoDeviceId, start, toggleCam, toggleMic, selectVideoDevice } =
+  useCamera()
 
 const game = computed(() => (route.query.game as string) || '게임 선택 중')
 const room = computed(() => (route.query.room as string) || 'MP4X9K')
@@ -29,6 +30,11 @@ const showVideo = computed(() => isOn.value && camOn.value)
 
 async function allow() {
   await start({ video: { width: 640, height: 400 }, audio: true })
+}
+
+/** 카메라 선택 — 프리뷰가 바로 그 카메라로 바뀌고, 고른 장치는 게임룸까지 이어진다. */
+function pickCamera(e: Event) {
+  void selectVideoDevice((e.target as HTMLSelectElement).value)
 }
 
 // 게임룸으로 넘어가는 건 이탈이 아니라 계속 진행이므로 퇴장 통보를 건너뛴다.
@@ -146,9 +152,12 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
 
         <label class="field">
           카메라
-          <select>
-            <option>기본 HD 웹캠</option>
-            <option>외장 USB 카메라</option>
+          <!-- 장치 라벨은 권한 허용 후에야 채워지므로 허용 전에는 목록을 열지 않는다. -->
+          <select :disabled="!isOn" :value="videoDeviceId ?? ''" @change="pickCamera">
+            <option v-if="!isOn" value="">권한을 허용하면 카메라를 고를 수 있어요</option>
+            <option v-for="(d, i) in videoDevices" :key="d.deviceId" :value="d.deviceId">
+              {{ d.label || `카메라 ${i + 1}` }}
+            </option>
           </select>
         </label>
         <label class="field">
@@ -158,6 +167,8 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
             <option>헤드셋 마이크</option>
           </select>
         </label>
+        <!-- 권한 오류는 위 안내 박스가 이미 말해주므로, 여기선 장치 전환 실패만 알린다. -->
+        <p v-if="error && isOn" class="field-err">{{ error }}</p>
 
         <div class="field">
           <div class="field-head">
@@ -290,6 +301,8 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
   background: #fff;
   padding: 0 10px;
 }
+.field select:disabled { background: #f1eef4; color: #8d8496; }
+.field-err { margin: 6px 0 0; color: var(--c-coral); font-size: 9px; }
 .items { display: flex; gap: 8px; margin-top: 8px; }
 .item { width: 52px; height: 48px; border: 2px solid var(--c-ink); border-radius: 12px; background: #fff; font-size: 23px; }
 .item.on { background: #d9ccfa; box-shadow: var(--shadow-sm); }
