@@ -4,7 +4,7 @@
 //  - 회원 전용 화면 진입 차단 안내(라우터 가드)
 //  - 세션 만료 안내(액세스·리프레시 토큰이 모두 죽어 더 이상 이어갈 수 없을 때)
 //  - 게스트 회원가입 유도(게임 종료 시)
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { useSessionStore } from '@/stores/session'
@@ -18,6 +18,9 @@ import LoginRequiredModal from '@/components/common/LoginRequiredModal.vue'
 import GuestSignupPromptModal from '@/components/common/GuestSignupPromptModal.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
+import PixelToast from '@/components/common/PixelToast.vue'
+import { useWhisper } from '@/composables/useWhisper'
+import { useToast } from '@/composables/useToast'
 
 const router = useRouter()
 const session = useSessionStore()
@@ -30,6 +33,21 @@ const { open: guestPrompt, close: closeGuestPrompt } = useGuestSignupPrompt()
 useGlobalStomp()
 // 접속 상태 하트비트 — 화면과 무관하게 앱 수명 동안 돌아야 하므로 여기서 한 번만 켠다(-57).
 usePresenceHeartbeat()
+
+/**
+ * 귓속말 도착 알림(-150) — 어느 화면에 있든 떠야 하므로 앱 셸이 맡는다.
+ *
+ * 대화창을 열어 둔 상대의 말은 이미 화면에 보이므로 알리지 않는다(useWhisper가 걸러 준다).
+ * 본문을 그대로 싣되 길면 잘라서 — 알림은 "누가 말을 걸었다"를 알리는 것이지 읽는 자리가 아니다.
+ */
+const whisper = useWhisper()
+const { message: whisperToast, flash: flashWhisper } = useToast(4000)
+watch(whisper.incoming, (msg) => {
+  if (!msg) return
+  const preview = msg.text.length > 24 ? `${msg.text.slice(0, 24)}…` : msg.text
+  flashWhisper(`💬 ${msg.senderNickname}: ${preview}`)
+  whisper.clearIncoming()
+})
 
 function goLogin() {
   closeLoginRequired()
@@ -66,6 +84,8 @@ function guestPromptTo(mode: 'login' | 'signup') {
   <RouterView v-slot="{ Component }">
     <component :is="Component" />
   </RouterView>
+
+  <PixelToast :message="whisperToast" />
 
   <LoginRequiredModal
     v-if="loginRequired"
