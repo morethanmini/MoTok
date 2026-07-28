@@ -9,6 +9,10 @@ import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type 
 import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { useCamera } from '@/composables/useCamera'
+import { useDecoration } from '@/composables/useDecoration'
+import { warmUpMotionModels } from '@/composables/motionModels'
+import { useStickerCompositor } from '@/composables/useStickerCompositor'
+import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
 import { useRoomChat } from '@/composables/useRoomChat'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
@@ -52,6 +56,21 @@ const { message: toast, flash } = useToast(2600)
 const lk = useLiveKitRoom()
 const camera = useCamera()
 const CAMERA_CONSTRAINTS = { video: { width: 640, height: 400 }, audio: false } as const
+
+// 장착 스티커는 발행 트랙에 합성해서 내보낸다 — 원본 캡처에 그리면 모션 인식 입력이 오염되고,
+// 화면에만 얹으면 나만 보인다. 합성이 안 되는 환경에서는 원본 트랙으로 조용히 되돌아간다.
+const decor = useDecoration()
+const compositor = useStickerCompositor()
+
+/** 발행에 쓸 트랙 — 스티커가 있으면 합성 트랙, 없거나 합성 실패면 원본 트랙. */
+async function publishableTrack(stream: MediaStream | null): Promise<MediaStreamTrack | null> {
+  const source = stream?.getVideoTracks()[0] ?? null
+  if (!stream || !source) return null
+  if (decor.sprites.value.length === 0) return source
+  // 이미 합성 중이면 그대로 쓴다 — 다시 시작하면 지금 발행돼 있는 복제본에 프레임이 끊긴다.
+  if (compositor.track.value) return compositor.track.value
+  return (await compositor.start(stream, () => decor.sprites.value)) ?? source
+}
 // 대기실 채팅 + 게임 제안 (STOMP, 명세 §7)
 const roomChat = useRoomChat()
 const myParticipantId = computed(() => readAccessClaims()?.sub ?? null)
@@ -234,6 +253,7 @@ const picker = ref(false)
 // 탭 닫기·주소창 이탈 시 keepalive 퇴장 통보 + bfcache 복원 시 로비로(뒤로가기 복귀 차단)
 useRoomUnloadLeave(() => route.query.room as string | undefined)
 
+
 onMounted(async () => {
   bgm.setVolume(0.2)
 
@@ -264,17 +284,29 @@ onMounted(async () => {
   // 내 타일과 다른 사람 화면 모두 꺼져 보이고, 방 안에서 카메라를 켜면 그때 발행한다.
   const stream = await camera.start(CAMERA_CONSTRAINTS)
   if (!stream) flash('카메라를 켤 수 없어요(권한/장치 확인)')
+  // 장착 스티커를 먼저 읽어 두고 합성 트랙을 만든다(실패하면 원본 트랙으로 발행).
+  await decor.load()
   const ok = await lk.connect(roomCode.value, {
-    cameraTrack: initialCamOn.value ? (stream?.getVideoTracks()[0] ?? null) : null,
+    cameraTrack: initialCamOn.value ? await publishableTrack(stream) : null,
     microphone: initialMicOn.value,
   })
   if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
 
   // 채팅은 이력이 없어서(비영속) 구독이 늦은 만큼 그대로 유실 — 입장 직후 바로 연결.
   void roomChat.connect(roomCode.value)
+
+  // 모션 모델은 로비 스플래시가 이미 받아 뒀을 것이다(싱글턴이라 여기선 즉시 끝난다).
+  // 그래도 한 번 더 확인하는 이유 — 주소창으로 방에 바로 들어오거나 게스트로 로비를 건너뛴
+  // 경로가 있어서, 그대로 두면 게임 시작 버튼을 누른 뒤에야 17MB를 받기 시작한다.
+  // 입장 흐름을 막지 않도록 기다리지 않는다.
+  void warmUpMotionModels().then((ready) => {
+    if (!ready) flash('모션 인식 모델을 준비하지 못했어요 · 게임 시작이 늦어질 수 있어요')
+  })
 })
 onBeforeUnmount(() => {
   roomChat.disconnect()
+  // BGM은 모듈 싱글턴이라 suspend된 채로 방을 뜨면 로비에서도 영영 안 나온다
+  bgm.resumeAfterGame()
 })
 
 // ── 채팅 ────────────────────────────────────
@@ -454,14 +486,14 @@ async function toggleCam() {
       flash('카메라 권한을 허용해 주세요')
       return
     }
-    const track = s.getVideoTracks()[0]
+    const track = await publishableTrack(s)
     if (connected.value && track) await lk.publishCameraTrack(track)
     return
   }
   if (connected.value) {
     // 발행된 카메라가 없으면(입장 시 발행 실패) 지금 발행한다
     if (!(await lk.toggleCamera())) {
-      const track = camera.stream.value?.getVideoTracks()[0]
+      const track = await publishableTrack(camera.stream.value)
       if (track) await lk.publishCameraTrack(track)
     }
     return
@@ -493,6 +525,21 @@ const gameResults = ref<GameResultEntry[] | null>(null)
 const poseChallenge = ref<string | null>(null)
 /** 그림으로 말해요(게임 10) — DRAW/DRAW_RESULT 릴레이를 게임 컴포넌트로 전달하는 피드 */
 const drawFeed = ref<GameEvent[]>([])
+
+/**
+ * 게임④는 자체 사운드(S15P11A706-138)를 가지므로 로비 BGM을 내린다.
+ * useBgm의 suspendForGame/resumeAfterGame은 만들어져만 있고 호출부가 없었다 — 여기서 연결한다.
+ * 게임④에만 거는 이유: 다른 게임은 자체 사운드가 없거나 담당이 달라, 임의로 BGM을 끄면 그쪽
+ * 체감이 바뀐다. 전체에 걸려면 조건만 `!!activeGame.value`로 넓히면 된다.
+ *
+ * 반드시 activeGame 선언 아래에 둔다 — watch는 초기값을 잡으려고 getter를 setup 중 즉시
+ * 실행하므로, 위에 두면 const TDZ에 걸려 setup 전체가 죽는다(빌드는 통과한다: TS는 화살표
+ * 함수 안의 선언 전 참조를 잡지 않는다).
+ */
+watch(
+  () => activeGame.value?.id === 'shape',
+  (ownsAudio) => (ownsAudio ? bgm.suspendForGame() : bgm.resumeAfterGame()),
+)
 
 // ── 게임 화면 송출 — 게임 중에는 카메라와 함께 게임 캔버스를 화면공유 트랙으로 발행한다.
 // 다른 참가자는 타일마다 게임 화면 ↔ 카메라를 토글로 골라 본다(ParticipantTile).
@@ -1067,6 +1114,17 @@ const startHint = computed(() =>
             muted
             class="self-video"
             @loadedmetadata="syncSelfVideoAspect"
+          />
+          <!-- 내 <video>는 원본 캡처(게임 입력용)라 스티커가 없다. 발행 트랙에는 합성돼 나가므로
+               내 화면에도 같은 스티커를 얹어 준다. self-video는 좌우 반전이라 mirrored,
+               object-fit:cover로 잘리는 영역까지 같은 기하로 맞춘다.
+               영상 비율은 타일 레이아웃이 이미 재고 있는 selfVideoAspect를 그대로 쓴다. -->
+          <StickerOverlay
+            v-if="selfCamOn"
+            :sprites="decor.sprites.value"
+            mirrored
+            fit="cover"
+            :frame-aspect="selfVideoAspect"
           />
           <div v-if="!selfCamOn" class="cam-off">
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">

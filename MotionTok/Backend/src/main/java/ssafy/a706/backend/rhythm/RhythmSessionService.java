@@ -179,7 +179,8 @@ public class RhythmSessionService {
 
         // 리더보드 적재·랭킹 ZSET·솔로/멀티 판정은 기존 정산 리스너에 위임한다(호출만, 수정 없음).
         // 리스너는 pointsEarned를 재계산하지 않고 그대로 싣는다 → 리듬 전용 포인트가 유지된다.
-        eventPublisher.publishEvent(new GameSettledEvent(RhythmGameSeeder.GAME_ID, toSettlement(results)));
+        eventPublisher.publishEvent(
+                new GameSettledEvent(sessionId, RhythmGameSeeder.GAME_ID, toSettlement(results)));
         log.info("rhythm session ended: room={} session={} players={} submitted={}",
                 roomId, sessionId, members.size(), scores.size());
     }

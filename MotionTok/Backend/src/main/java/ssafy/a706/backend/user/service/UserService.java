@@ -19,6 +19,12 @@ import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.storage.StorageService;
 import ssafy.a706.backend.storage.UploadPurpose;
 import ssafy.a706.backend.user.entity.User;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import ssafy.a706.backend.shop.repository.PointHistoryRepository;
+import ssafy.a706.backend.user.controller.dto.PointBalanceResponse;
+import ssafy.a706.backend.user.controller.dto.PointHistoryPageResponse;
 import ssafy.a706.backend.user.controller.dto.PublicUserProfileResponse;
 import ssafy.a706.backend.user.controller.dto.UpdateAvatarRequest;
 import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
@@ -51,6 +57,7 @@ public class UserService {
     private static final String AVATAR_PRESET_PATH = "/assets/icons/profile/";
 
     private final UserRepository userRepository;
+    private final PointHistoryRepository pointHistoryRepository;
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenStore refreshTokenStore;
     private final OauthAccountRepository oauthAccountRepository;
@@ -61,6 +68,17 @@ public class UserService {
 
     public UserProfileResponse getProfile(Long userId) {
         return UserProfileResponse.from(findActiveById(userId));
+    }
+
+    /** GET /users/me/points — 잔액만. 프로필 전체를 받지 않아도 상점이 서버 값으로 갱신할 수 있게 한다. */
+    public PointBalanceResponse getPointBalance(Long userId) {
+        return new PointBalanceResponse(findActiveById(userId).getPointBalance());
+    }
+
+    /** GET /users/me/points/history — 적립·사용 내역(최신순). */
+    public PointHistoryPageResponse getPointHistory(Long userId, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id"));
+        return PointHistoryPageResponse.from(pointHistoryRepository.findByUserId(userId, pageable));
     }
 
     /**

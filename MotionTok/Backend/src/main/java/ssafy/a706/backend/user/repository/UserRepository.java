@@ -30,4 +30,12 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE User u SET u.pointBalance = u.pointBalance - :amount WHERE u.id = :id AND u.pointBalance >= :amount")
     int deductPointsIfSufficient(@Param("id") Long id, @Param("amount") int amount);
+
+    /**
+     * 포인트 적립(게임 보상). 차감과 같은 이유로 조건부가 아닌 원자 UPDATE다 —
+     * 두 게임이 비슷한 시각에 끝나면 읽고-더하고-쓰는 방식은 한쪽 적립이 사라진다(lost update).
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE User u SET u.pointBalance = u.pointBalance + :amount WHERE u.id = :id")
+    int addPoints(@Param("id") Long id, @Param("amount") int amount);
 }

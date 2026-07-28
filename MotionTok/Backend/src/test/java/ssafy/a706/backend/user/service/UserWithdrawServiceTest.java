@@ -13,6 +13,7 @@ import ssafy.a706.backend.auth.oauth.repository.OauthAccountRepository;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.shop.repository.PointHistoryRepository;
 import ssafy.a706.backend.storage.StorageService;
 import ssafy.a706.backend.user.controller.dto.WithdrawRequest;
 import ssafy.a706.backend.user.entity.User;
@@ -49,7 +50,8 @@ class UserWithdrawServiceTest {
     private final RejoinPolicy rejoinPolicy = mock(RejoinPolicy.class);
     private final StorageService storageService = mock(StorageService.class);
 
-    private final UserService service = new UserService(userRepository, passwordEncoder,
+    private final UserService service = new UserService(userRepository,
+            mock(PointHistoryRepository.class), passwordEncoder,
             refreshTokenStore, oauthAccountRepository, oauthClientResolver, rejoinPolicy, storageService,
             mock(ssafy.a706.backend.conntime.service.ConnectTimeService.class));
 

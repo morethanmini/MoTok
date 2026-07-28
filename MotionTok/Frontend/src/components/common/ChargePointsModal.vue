@@ -78,6 +78,11 @@ function pay() {
           <b><CoinIcon :size="16" /> {{ afterPoints }} P</b>
         </div>
 
+        <p class="notice">
+          ※ 결제(PG) 연동 전이라 충전은 <b>데모</b>입니다. 화면 잔액만 늘어나고 실제 포인트는 늘지 않아,
+          구매 시 포인트 부족으로 실패할 수 있어요.
+        </p>
+
         <div class="actions">
           <PixelButton block @click="emit('close')">취소</PixelButton>
           <PixelButton variant="primary" block @click="step = 'pay'">결제하기</PixelButton>
@@ -107,7 +112,9 @@ function pay() {
           </button>
         </div>
 
-        <p class="notice">※ 결제창은 초안입니다. 실제 결제(PG) 연동은 추후 붙일 예정이에요.</p>
+        <p class="notice">
+          ※ 결제창은 초안입니다. 실제 결제(PG) 연동 전이라 <b>서버 포인트는 늘지 않습니다</b>(화면 표시만 증가).
+        </p>
 
         <div class="actions">
           <PixelButton block @click="step = 'select'">← 이전</PixelButton>
