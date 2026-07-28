@@ -9,12 +9,15 @@ import org.springframework.stereotype.Service;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.game.dto.DrawOp;
 import ssafy.a706.backend.game.dto.GameDrawRequest;
-import ssafy.a706.backend.game.dto.GameDrawResultRequest;
+import ssafy.a706.backend.game.draw.DrawJudge;
+import ssafy.a706.backend.game.draw.DrawJudgeClient;
 import ssafy.a706.backend.game.dto.GameEventResponse;
 import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameProgressRequest;
 import ssafy.a706.backend.game.dto.GameResultEntry;
 import ssafy.a706.backend.game.dto.GameStartRequest;
+import ssafy.a706.backend.game.dto.GameTurnSkipRequest;
+import ssafy.a706.backend.game.dto.PoseSubmitRequest;
 import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.model.GamePlayerScore;
 import ssafy.a706.backend.game.model.GameSession;
@@ -25,6 +28,7 @@ import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
 import ssafy.a706.backend.signal.RoomMembershipReader;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -57,8 +61,29 @@ public class GameSessionService {
 
     private static final String GAME_TOPIC = "/topic/rooms/%s/game";
 
+    /** 게임①(핑거 스타) — 과제(challenge)가 별자리 키인 게임. */
+    private static final long FINGER_STAR_GAME_ID = 1L;
+    /** 게임① 부가 지표 stats 키 (-137 일반화 후 레거시 표기 유지용). */
+    private static final String STAT_STARS_HIT = "starsHit";
+
+    /** 게임④(몸 끼워 맞추기, S15P11A706-86) — 출제 페이즈가 있는 게임. */
+    private static final long BODY_FIT_GAME_ID = 4L;
+    /** 게임④ 출제 페이즈 길이 — FE config·기획 §3과 동기화. */
+    private static final long BODY_FIT_SETTING_MILLIS = 5_000;
     /**
-     * 별자리 과제 후보(핑거 스타 콘텐츠) — 게임1 전용. 공통 서버 밖(게임 모듈)으로 분리 대상.
+     * 게임④ 라운드 간 휴식(ms) — 벽 도착 후 다음 출제 포즈까지의 텀.
+     * 이전에는 다음 라운드 startAt이 곧 now였고, 벽 통과 직후 바로 카운트다운이 다시 시작돼
+     * 쉴 틈이 없었다(실기 피드백). FE는 startAt 전 구간을 'wait' 페이즈로 그린다.
+     */
+    private static final long BODY_FIT_ROUND_BREAK_MILLIS = 6_000;
+    /** 게임④ 난이도 → 벽 접근 시간(ms) — FE config.difficulty와 동기화. */
+    private static final Map<String, Long> BODY_FIT_APPROACH_MILLIS =
+            Map.of("easy", 6_000L, "normal", 5_000L, "hard", 4_000L);
+    /** 포즈 payload 상한 — 랜드마크 33점 JSON은 ~2KB, 여유 4배 (§9-2). */
+    private static final int MAX_POSE_PAYLOAD_BYTES = 8_192;
+
+    /**
+     * 별자리 과제 후보(핑거 스타 콘텐츠) — 게임① 전용 챌린지 풀.
      * FE constellations.ts와 동기화 필수 — 별자리 추가·삭제 시 양쪽을 함께 갱신한다.
      */
     private static final Set<String> CONSTELLATION_KEYS = Set.of(
@@ -81,6 +106,8 @@ public class GameSessionService {
     private static final int DRAW_MAX_OPS = 256;
     private static final int DRAW_MAX_GUESSES = 5;
     private static final int DRAW_MAX_GUESS_LEN = 40;
+    /** 도화지 PNG data URL 상한 — 960×540 낙서는 보통 100KB 미만이라 넉넉하다(악의적 대용량 차단용). */
+    private static final int DRAW_MAX_IMAGE_CHARS = 4_000_000;
     /** 주제어 후보 — FE drawing-relay/words.ts와 동기화 필수(솔로 모드가 같은 목록을 쓴다). */
     private static final List<String> DRAW_TOPICS = List.of(
             "사과", "바나나", "수박", "포도", "딸기",
@@ -98,6 +125,7 @@ public class GameSessionService {
     private final SimpMessagingTemplate messagingTemplate;
     private final TaskScheduler gameTaskScheduler;
     private final ApplicationEventPublisher eventPublisher;
+    private final DrawJudgeClient judgeClient;
 
     /** 조기 종료 시 취소할 라운드 종료 예약 (roomId → future). 인메모리 — 단일 인스턴스 전제. */
     private final Map<String, ScheduledFuture<?>> endTasks = new ConcurrentHashMap<>();
@@ -128,28 +156,89 @@ public class GameSessionService {
             throw new BusinessException(ErrorCode.GAME_SESSION_ALREADY_ACTIVE);
         }
 
+        // 그림으로 말해요(게임 10)는 출제자·난이도가 없는 별도 타임라인이라 전용 경로로 빠진다
         if (gameId == DRAW_GAME_ID) {
             startDrawSession(roomId, game, now);
             return;
         }
 
-        String constellationKey = resolveConstellation(request.constellationKey());
+        // -137 일반화: 게임별 과제 payload. 게임①이면 내부에서 별자리를 고른다
+        String challenge = resolveChallenge(gameId, request);
         String sessionId = UUID.randomUUID().toString();
         long startAt = now + game.getCountdownSec() * 1000L;
-        long endAt = startAt + game.getRoundDurationSec() * 1000L;
-        GameSession session = new GameSession(sessionId, gameId, constellationKey,
-                startAt, endAt, GameSession.STATUS_PLAYING);
+
+        // 게임④(-86, -48): 라운드 = 출제 5s + 벽 접근(난이도별). 출제자는 참가 순(joinedAt)으로
+        // 로테이션 — 전원이 한 번씩 출제자를 맡을 때까지 endRound가 자동으로 다음 라운드를 연다.
+        String difficulty = null;
+        String setterUserId = null;
+        List<String> setterOrder = List.of();
+        long endAt;
+        if (gameId == BODY_FIT_GAME_ID) {
+            difficulty = request.difficulty() != null
+                    && BODY_FIT_APPROACH_MILLIS.containsKey(request.difficulty())
+                    ? request.difficulty() : "easy";
+            // 출제 순서는 무작위(게임⑩ turnOrder와 같은 방식). 이전에는 참가 순(joinedAt)이라
+            // 방을 만든 사람이 매 판 1번 출제자로 고정됐다.
+            List<String> shuffled = new ArrayList<>(liveRoomRepository.findMembers(roomId).stream()
+                    .map(LiveRoomMemberValue::userId)
+                    .toList());
+            Collections.shuffle(shuffled);
+            setterOrder = List.copyOf(shuffled);
+            // 게임④(-9): 출제자는 관전하는 룰 — 1인 방이면 플레이어가 0명이라 라운드가
+            // 성립하지 않는다. FE가 혼자일 땐 로컬 연습 모드로 돌리므로 여기 도달은 레이스뿐.
+            if (setterOrder.size() < 2) {
+                throw new BusinessException(ErrorCode.GAME_NEED_MORE_PLAYERS);
+            }
+            setterUserId = setterOrder.isEmpty() ? sender.userId() : setterOrder.get(0);
+            endAt = startAt + BODY_FIT_SETTING_MILLIS + BODY_FIT_APPROACH_MILLIS.get(difficulty);
+            sessionRepository.clearTotals(roomId);
+        } else {
+            endAt = startAt + game.getRoundDurationSec() * 1000L;
+        }
+
+        GameSession session = new GameSession(sessionId, gameId, challenge, setterUserId,
+                startAt, endAt, GameSession.STATUS_PLAYING, setterOrder, 0, difficulty);
         sessionRepository.saveSession(roomId, session);
         liveRoomRepository.updateStatus(roomId, "PLAYING");
 
-        broadcast(roomId, GameEventResponse.gameStart(sessionId, gameId, constellationKey, now, startAt, endAt));
-        scheduleEnd(roomId, sessionId, endAt + END_GRACE_MILLIS);
-        log.info("game session started: room={} session={} game={} constellation={}",
-                roomId, sessionId, gameId, constellationKey);
+        // constellationKey는 게임① FE 하위호환 필드 — 게임①일 때만 challenge와 같은 값
+        String legacyConstellationKey = gameId == FINGER_STAR_GAME_ID ? challenge : null;
+        Integer roundNo = setterOrder.isEmpty() ? null : 1;
+        Integer totalRounds = setterOrder.isEmpty() ? null : setterOrder.size();
+        broadcast(roomId, GameEventResponse.gameStart(
+                sessionId, gameId, challenge, legacyConstellationKey, setterUserId, difficulty,
+                now, startAt, endAt, roundNo, totalRounds));
+        scheduleEnd(roomId, sessionId, 0, endAt + END_GRACE_MILLIS);
+        log.info("game session started: room={} session={} game={} challenge={} setter={}",
+                roomId, sessionId, gameId, challenge, setterUserId);
     }
 
     /**
-     * 그림으로 말해요 시작 — 총 시간(games.roundDurationSec=240)을 인원수로 올림 분배한 턴 스케줄과
+     * 게임④ 출제자 포즈 수리(-86) — challenge 저장 + POSE_SET 재방송.
+     * 각 클라이언트가 받은 랜드마크를 같은 렌더 함수에 넣으므로 전원이 동일한 벽을 본다(§9-2).
+     */
+    public void submitPose(String roomId, PoseSubmitRequest request, AuthPrincipal sender) {
+        requireMembership(roomId, sender);
+        GameSession session = requireActiveSession(roomId);
+        if (session.gameId() != BODY_FIT_GAME_ID || session.setterUserId() == null) {
+            throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
+        }
+        if (!sender.userId().equals(session.setterUserId())) {
+            throw new BusinessException(ErrorCode.GAME_NOT_SETTER);
+        }
+        String pose = request.pose();
+        if (pose == null || pose.isBlank()
+                || pose.getBytes(StandardCharsets.UTF_8).length > MAX_POSE_PAYLOAD_BYTES) {
+            throw new BusinessException(ErrorCode.GAME_POSE_INVALID);
+        }
+        sessionRepository.updateChallenge(roomId, pose);
+        broadcast(roomId, GameEventResponse.poseSet(session.sessionId(), sender.userId(), pose));
+        log.info("pose set: room={} session={} setter={} bytes={}",
+                roomId, session.sessionId(), sender.userId(), pose.length());
+    }
+
+    /**
+     * 그림으로 말해요 시작 — 총 시간(games.roundDurationSec, 현재 90초)을 인원수로 올림 분배한 턴 스케줄과
      * 주제어·화가 순서(셔플)를 확정해 GAME_START로 배포한다. 이후 턴 전환은 별도 이벤트 없이
      * 전 클라이언트가 서버 권위 시각으로 같은 스케줄을 계산한다. 정산은 draw-result 수리(협동 점수)
      * 또는 endAt+채점 유예 타임아웃(0점) 중 먼저 온 쪽이 1회 실행한다.
@@ -158,6 +247,12 @@ public class GameSessionService {
         List<LiveRoomMemberValue> members = liveRoomRepository.findMembers(roomId);
         if (members.isEmpty()) {
             throw new BusinessException(ErrorCode.GAME_NOT_IN_ROOM);
+        }
+        // 이어그리기라 혼자서는 성립하지 않는다 — 카탈로그 최소 인원(games.min_players)을 강제한다.
+        if (members.size() < game.getMinPlayers()) {
+            throw new BusinessException(ErrorCode.GAME_NEED_MORE_PLAYERS,
+                    String.format("%d명부터 시작할 수 있는 게임입니다. (현재 %d명)",
+                            game.getMinPlayers(), members.size()));
         }
         List<String> turnOrder = new ArrayList<>(members.stream().map(LiveRoomMemberValue::userId).toList());
         Collections.shuffle(turnOrder);
@@ -168,13 +263,16 @@ public class GameSessionService {
         String sessionId = UUID.randomUUID().toString();
         long startAt = now + game.getCountdownSec() * 1000L;
         long endAt = startAt + (long) playerCount * (DRAW_HANDOVER_SEC + turnSec) * 1000L;
-        sessionRepository.saveSession(roomId, new GameSession(sessionId, DRAW_GAME_ID, null,
-                startAt, endAt, GameSession.STATUS_PLAYING));
+        // 주제어는 세션의 과제(challenge)로 저장한다 — 서버가 채점할 때 정답을 알아야 하고,
+        // 게임①의 별자리 키와 같은 자리라 별도 필드가 필요 없다.
+        // 출제자·난이도·로테이션은 게임⑩에 없어 비운다(-86/-48에서 추가된 필드).
+        sessionRepository.saveSession(roomId, new GameSession(sessionId, DRAW_GAME_ID, topicWord, null,
+                startAt, endAt, GameSession.STATUS_PLAYING, List.of(), 0, null));
         liveRoomRepository.updateStatus(roomId, "PLAYING");
 
         broadcast(roomId, GameEventResponse.gameStartDraw(sessionId, DRAW_GAME_ID, now, startAt, endAt,
                 topicWord, turnOrder, turnSec, DRAW_HANDOVER_SEC));
-        scheduleEnd(roomId, sessionId, endAt + DRAW_JUDGE_WINDOW_MILLIS);
+        scheduleEnd(roomId, sessionId, 0, endAt + DRAW_JUDGE_WINDOW_MILLIS);
         log.info("draw session started: room={} session={} players={} turnSec={}",
                 roomId, sessionId, playerCount, turnSec);
     }
@@ -197,11 +295,47 @@ public class GameSessionService {
     }
 
     /**
-     * AI 채점 결과 수리(게임 10, 최초 1회) → DRAW_RESULT 방송 + 협동 정산.
-     * 채점은 그리기 종료(endAt) 이후에 이뤄지므로 일반 유예 대신 채점 유예 안에서 수리한다.
+     * 조기 차례 넘기기(게임 10) — 남은 그리기 시간을 클램프해 TURN_SKIPPED로 재방송하고,
+     * 전체 스케줄이 그만큼 당겨지므로 세션 endAt과 타임아웃 예약도 함께 앞당긴다.
+     * 차례(발신자가 현재 화가인지) 강제는 클라이언트 몫 — draw 릴레이와 같은 신뢰 모델.
      */
-    public void drawResult(String roomId, GameDrawResultRequest request, AuthPrincipal sender) {
+    public void turnSkip(String roomId, GameTurnSkipRequest request, AuthPrincipal sender) {
         requireMembership(roomId, sender);
+        GameSession session = requireActiveSession(roomId);
+        if (session.gameId() != DRAW_GAME_ID) {
+            throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
+        }
+        long now = System.currentTimeMillis();
+        long requested = request.remainingMs() == null ? 0 : request.remainingMs();
+        long remaining = Math.max(0, Math.min(requested, session.endAt() - now));
+        int turnIndex = Math.max(0, request.turnIndex() == null ? 0 : request.turnIndex());
+
+        long newEndAt = session.endAt() - remaining;
+        sessionRepository.updateEndAt(roomId, newEndAt);
+        // 그림으로 말해요는 라운드 로테이션(게임④)이 없어 roundIndex는 항상 0
+        scheduleEnd(roomId, session.sessionId(), 0, newEndAt + DRAW_JUDGE_WINDOW_MILLIS);
+        broadcast(roomId, GameEventResponse.turnSkipped(
+                session.sessionId(), sender.userId(), turnIndex, remaining));
+        log.info("draw turn skipped: room={} session={} turn={} remainingMs={}",
+                roomId, session.sessionId(), turnIndex, remaining);
+    }
+
+    /**
+     * 완성 그림 AI 채점(게임 10, 최초 1회) → DRAW_RESULT 방송 + 협동 정산.
+     *
+     * <p>배포 환경에서는 GMS 키를 프론트에 둘 수 없어 <b>채점 호출과 점수 계산을 서버가 한다</b>.
+     * 클라이언트는 도화지 이미지만 올리고, 정답(주제어)은 세션의 challenge에 있으므로
+     * 클라이언트가 점수를 조작할 수 있는 경로가 없다.</p>
+     *
+     * <p>채점은 그리기 종료(endAt) 이후에 이뤄지므로 일반 유예 대신 채점 유예 안에서 수리한다.
+     * 마지막 화가가 실패·이탈해도 다른 참가자가 같은 이미지를 올려 대신 채점할 수 있고,
+     * 이미 정산됐다면 SETNX 가드에서 조용히 무시된다.</p>
+     */
+    public void judgeDrawing(String roomId, String imageDataUrl, AuthPrincipal sender) {
+        requireMembership(roomId, sender);
+        if (imageDataUrl == null || imageDataUrl.isBlank() || imageDataUrl.length() > DRAW_MAX_IMAGE_CHARS) {
+            throw new BusinessException(ErrorCode.GAME_IMAGE_INVALID);
+        }
         long now = System.currentTimeMillis();
         GameSession session = sessionRepository.findSession(roomId)
                 .filter(s -> s.isPlaying(now, DRAW_JUDGE_WINDOW_MILLIS + END_GRACE_MILLIS))
@@ -209,13 +343,13 @@ public class GameSessionService {
         if (session.gameId() != DRAW_GAME_ID) {
             throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
         }
-        List<String> guesses = request.guesses() == null ? List.of() : request.guesses().stream()
-                .filter(g -> g != null && !g.isBlank())
+
+        List<String> guesses = judgeClient.guess(imageDataUrl).stream()
                 .map(g -> g.length() > DRAW_MAX_GUESS_LEN ? g.substring(0, DRAW_MAX_GUESS_LEN) : g)
                 .limit(DRAW_MAX_GUESSES)
                 .toList();
-        int answerRank = clamp(request.answerRank() == null ? 0 : request.answerRank(), 0, DRAW_MAX_GUESSES);
-        int score = clamp(request.score() == null ? 0 : request.score(), 0, MAX_SCORE);
+        int answerRank = DrawJudge.findAnswerRank(session.challenge(), guesses);
+        int score = DrawJudge.scoreForRank(answerRank);
         endDrawRound(roomId, session.sessionId(), sender, guesses, answerRank, score);
     }
 
@@ -225,7 +359,8 @@ public class GameSessionService {
      */
     private void endDrawRound(String roomId, String sessionId, AuthPrincipal judge,
                               List<String> guesses, int answerRank, int score) {
-        if (!sessionRepository.tryAcquireEndGuard(roomId, sessionId)) {
+        // 게임⑩은 로테이션이 없어 roundIndex 0 — 가드 키가 라운드별로 갈리는 게임④와 달리 세션당 1개
+        if (!sessionRepository.tryAcquireEndGuard(roomId, sessionId, 0)) {
             return; // 이미 다른 멤버의 결과로 정산됨 — 늦은 재시도는 조용히 무시
         }
         cancelScheduledEnd(roomId);
@@ -239,7 +374,7 @@ public class GameSessionService {
         broadcast(roomId, GameEventResponse.drawResult(sessionId, judge.userId(), guesses, answerRank, score));
         List<GameResultEntry> results = coopResults(roomId, score, true);
         broadcast(roomId, GameEventResponse.gameEnd(sessionId, results));
-        eventPublisher.publishEvent(new GameSettledEvent(session.gameId(), results));
+        eventPublisher.publishEvent(new GameSettledEvent(sessionId, session.gameId(), results));
         log.info("draw session judged: room={} session={} answerRank={} score={}",
                 roomId, sessionId, answerRank, score);
     }
@@ -269,10 +404,15 @@ public class GameSessionService {
     public void finish(String roomId, GameFinishRequest request, AuthPrincipal sender) {
         requireMembership(roomId, sender);
         GameSession session = requireActiveSession(roomId);
+        // 게임④(-9): 출제자는 이번 라운드에 플레이하지 않는다 — 제출해도 조용히 무시.
+        if (session.gameId() == BODY_FIT_GAME_ID && sender.userId().equals(session.setterUserId())) {
+            return;
+        }
         int score = clamp(request.score() == null ? 0 : request.score(), 0, MAX_SCORE);
         int starsHit = clamp(request.starsHit() == null ? 0 : request.starsHit(), 0, MAX_STARS);
         GamePlayerScore playerScore = new GamePlayerScore(
-                sender.userId(), sender.displayName(), score, starsHit, System.currentTimeMillis());
+                sender.userId(), sender.displayName(), score,
+                Map.of(STAT_STARS_HIT, starsHit), System.currentTimeMillis());
         // 최초 제출만 수리 — 재제출·중복 프레임은 조용히 무시(브로드캐스트도 없음).
         if (!sessionRepository.saveScoreIfAbsent(roomId, playerScore)) {
             return;
@@ -281,24 +421,43 @@ public class GameSessionService {
                 session.sessionId(), sender.userId(), sender.displayName(), score, starsHit));
 
         long memberCount = liveRoomRepository.findMembers(roomId).size();
-        if (memberCount > 0 && sessionRepository.countScores(roomId) >= memberCount) {
-            endRound(roomId, session.sessionId());
+        // 게임④는 출제자를 뺀 인원만큼만 제출하면 조기 정산.
+        long requiredCount = session.gameId() == BODY_FIT_GAME_ID && session.setterUserId() != null
+                ? Math.max(0, memberCount - 1) : memberCount;
+        if (requiredCount > 0 && sessionRepository.countScores(roomId) >= requiredCount) {
+            endRound(roomId, session.sessionId(), session.roundIndex());
         }
     }
 
     /**
      * 라운드 정산 — 스케줄러(시간 종료)와 finish(전원 완주)가 모두 호출할 수 있어
      * Redis SETNX 가드로 1회만 실행된다. 미제출 참가자는 0점 미완주로 포함.
+     *
+     * <p>게임④ 로테이션(-48): 이번 라운드 점수를 누적(totals)에 더한 뒤, 아직 출제 안 한
+     * 참가자가 남아있으면 GAME_END 대신 다음 라운드 GAME_START를 연다. 전원이 한 번씩
+     * 출제자를 마치면 그때 누적 점수로 최종 GAME_END를 배포한다.</p>
      */
-    private void endRound(String roomId, String sessionId) {
-        if (!sessionRepository.tryAcquireEndGuard(roomId, sessionId)) {
+    private void endRound(String roomId, String sessionId, int roundIndex) {
+        if (!sessionRepository.tryAcquireEndGuard(roomId, sessionId, roundIndex)) {
             return;
         }
         cancelScheduledEnd(roomId);
         GameSession session = sessionRepository.findSession(roomId).orElse(null);
-        if (session == null || !session.sessionId().equals(sessionId)) {
-            return; // 이미 새 세션으로 대체된 stale 예약
+        if (session == null || !session.sessionId().equals(sessionId) || session.roundIndex() != roundIndex) {
+            return; // 이미 다음 라운드/새 세션으로 대체된 stale 예약
         }
+
+        boolean rotates = session.gameId() == BODY_FIT_GAME_ID && !session.setterOrder().isEmpty();
+        if (rotates) {
+            sessionRepository.findScores(roomId)
+                    .forEach((userId, s) -> sessionRepository.addToTotal(roomId, userId, s.score()));
+            int nextRoundIndex = nextSetterIndex(roomId, session);
+            if (nextRoundIndex < session.setterOrder().size()) {
+                startNextRound(roomId, session, nextRoundIndex);
+                return;
+            }
+        }
+
         sessionRepository.markEnded(roomId);
         liveRoomRepository.updateStatus(roomId, "WAITING");
 
@@ -306,20 +465,51 @@ public class GameSessionService {
         if (session.gameId() == DRAW_GAME_ID) {
             List<GameResultEntry> coop = coopResults(roomId, 0, false);
             broadcast(roomId, GameEventResponse.gameEnd(sessionId, coop));
-            eventPublisher.publishEvent(new GameSettledEvent(session.gameId(), coop));
+            eventPublisher.publishEvent(new GameSettledEvent(sessionId, session.gameId(), coop));
             log.info("draw session timed out without result: room={} session={}", roomId, sessionId);
             return;
         }
 
+        // 이번 라운드 제출 점수 — 단판 순위의 입력이자 양쪽 경로의 로그 지표(제출 인원)다.
+        // 로테이션 경로는 위에서 누적(totals)에 이미 반영했고, 여기서는 집계용으로만 다시 읽는다.
         Map<String, GamePlayerScore> scores = sessionRepository.findScores(roomId);
         List<LiveRoomMemberValue> members = liveRoomRepository.findMembers(roomId);
-        List<GameResultEntry> results = rank(members, scores);
+        List<GameResultEntry> results = rotates
+                ? rankByTotal(members, sessionRepository.findTotals(roomId), session.setterOrder())
+                : rank(members, scores);
         broadcast(roomId, GameEventResponse.gameEnd(sessionId, results));
         // write-behind 정산(-117) — 회원 결과 leaderboards 적재 + rank ZSET 갱신은 비동기 리스너에 위임.
         // endRound가 SETNX 가드로 1회만 실행되므로 정산도 1회 발행된다.
-        eventPublisher.publishEvent(new GameSettledEvent(session.gameId(), results));
+        eventPublisher.publishEvent(new GameSettledEvent(sessionId, session.gameId(), results));
         log.info("game session ended: room={} session={} players={} submitted={}",
                 roomId, sessionId, members.size(), scores.size());
+    }
+
+    /** setterOrder에서 다음 출제자 인덱스 — 그새 방을 나간 참가자는 건너뛴다. */
+    private int nextSetterIndex(String roomId, GameSession session) {
+        int idx = session.roundIndex() + 1;
+        while (idx < session.setterOrder().size()
+                && !membershipReader.isMember(roomId, session.setterOrder().get(idx))) {
+            idx++;
+        }
+        return idx;
+    }
+
+    /** 로테이션(-48) 다음 라운드 시작 — 클라 요청 없이 서버가 자동으로 다음 출제자를 지정한다. */
+    private void startNextRound(String roomId, GameSession prev, int roundIndex) {
+        String setterUserId = prev.setterOrder().get(roundIndex);
+        long now = System.currentTimeMillis();
+        long startAt = now + BODY_FIT_ROUND_BREAK_MILLIS;
+        long endAt = startAt + BODY_FIT_SETTING_MILLIS + BODY_FIT_APPROACH_MILLIS.get(prev.difficulty());
+        GameSession next = new GameSession(prev.sessionId(), prev.gameId(), null, setterUserId,
+                startAt, endAt, GameSession.STATUS_PLAYING, prev.setterOrder(), roundIndex, prev.difficulty());
+        sessionRepository.saveSession(roomId, next);
+        broadcast(roomId, GameEventResponse.gameStart(
+                prev.sessionId(), prev.gameId(), null, null, setterUserId, prev.difficulty(),
+                now, startAt, endAt, roundIndex + 1, prev.setterOrder().size()));
+        scheduleEnd(roomId, prev.sessionId(), roundIndex, endAt + END_GRACE_MILLIS);
+        log.info("game round advanced: room={} session={} round={} setter={}",
+                roomId, prev.sessionId(), roundIndex, setterUserId);
     }
 
     /** 점수 내림차순(동점은 먼저 제출한 쪽 우선) 순위. 방에 남은 전원 포함 — 미제출자는 0점. */
@@ -348,12 +538,39 @@ public class GameSessionService {
         return results;
     }
 
-    private void scheduleEnd(String roomId, String sessionId, long atMillis) {
+    /**
+     * 게임④ 로테이션(-48) 최종 순위 — 라운드별 GamePlayerScore가 아니라 누적 총점(totals)으로 매긴다.
+     * 동점자는 출제 순서(setterOrder)가 빠른 쪽을 우선한다.
+     */
+    private List<GameResultEntry> rankByTotal(
+            List<LiveRoomMemberValue> members, Map<String, Integer> totals, List<String> setterOrder) {
+        record Row(String userId, String nickname, int score, int orderIdx) {}
+        List<Row> rows = new ArrayList<>();
+        for (LiveRoomMemberValue m : members) {
+            int score = totals.getOrDefault(m.userId(), 0);
+            int orderIdx = setterOrder.indexOf(m.userId());
+            rows.add(new Row(m.userId(), m.displayName(), score, orderIdx < 0 ? Integer.MAX_VALUE : orderIdx));
+        }
+        rows.sort(Comparator.comparingInt(Row::score).reversed()
+                .thenComparingInt(Row::orderIdx));
+        int playerCount = rows.size();
+        List<GameResultEntry> results = new ArrayList<>(playerCount);
+        for (int i = 0; i < rows.size(); i++) {
+            Row r = rows.get(i);
+            int rankNo = i + 1;
+            int pointsEarned = PointCalculator.calc(rankNo, r.score(), playerCount);
+            // 전원이 로테이션에 참가했으므로 finished=true, starsHit은 게임④와 무관해 0.
+            results.add(new GameResultEntry(rankNo, r.userId(), r.nickname(), r.score(), 0, true, pointsEarned));
+        }
+        return results;
+    }
+
+    private void scheduleEnd(String roomId, String sessionId, int roundIndex, long atMillis) {
         cancelScheduledEnd(roomId);
         ScheduledFuture<?> future = gameTaskScheduler.schedule(
                 () -> {
                     try {
-                        endRound(roomId, sessionId);
+                        endRound(roomId, sessionId, roundIndex);
                     } catch (Exception e) {
                         log.error("game round settlement failed: room={} session={}", roomId, sessionId, e);
                     }
@@ -382,6 +599,18 @@ public class GameSessionService {
         if (!membershipReader.isMember(roomId, sender.userId())) {
             throw new BusinessException(ErrorCode.GAME_NOT_IN_ROOM);
         }
+    }
+
+    /**
+     * 게임별 과제(challenge) 결정 (-137).
+     * 게임①: 별자리 키(요청값 검증, 없으면 무작위). 그 외(게임④ 등 출제 페이즈가 있는
+     * 게임): 시작 시점에는 과제가 없다 — 세션 도중 updateChallenge로 채워진다(§9-2).
+     */
+    private String resolveChallenge(long gameId, GameStartRequest request) {
+        if (gameId == FINGER_STAR_GAME_ID) {
+            return resolveConstellation(request.constellationKey());
+        }
+        return null;
     }
 
     private String resolveConstellation(String requested) {

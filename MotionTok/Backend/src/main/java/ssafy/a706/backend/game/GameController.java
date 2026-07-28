@@ -10,10 +10,11 @@ import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.game.dto.GameDrawRequest;
-import ssafy.a706.backend.game.dto.GameDrawResultRequest;
 import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameProgressRequest;
 import ssafy.a706.backend.game.dto.GameStartRequest;
+import ssafy.a706.backend.game.dto.GameTurnSkipRequest;
+import ssafy.a706.backend.game.dto.PoseSubmitRequest;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.global.response.ErrorResponse;
@@ -37,6 +38,12 @@ public class GameController {
         gameSessionService.start(roomId, request, extractSender(principal));
     }
 
+    /** 게임④ 출제자 포즈 제출(-86) — 서버가 challenge 저장 후 POSE_SET을 방 전체에 배포한다. */
+    @MessageMapping("/rooms/{roomId}/game/pose-submit")
+    public void poseSubmit(@DestinationVariable String roomId, PoseSubmitRequest request, Principal principal) {
+        gameSessionService.submitPose(roomId, request, extractSender(principal));
+    }
+
     @MessageMapping("/rooms/{roomId}/game/progress")
     public void progress(@DestinationVariable String roomId, GameProgressRequest request, Principal principal) {
         gameSessionService.progress(roomId, request, extractSender(principal));
@@ -53,10 +60,13 @@ public class GameController {
         gameSessionService.draw(roomId, request, extractSender(principal));
     }
 
-    @MessageMapping("/rooms/{roomId}/game/draw-result")
-    public void drawResult(@DestinationVariable String roomId, GameDrawResultRequest request, Principal principal) {
-        gameSessionService.drawResult(roomId, request, extractSender(principal));
+    @MessageMapping("/rooms/{roomId}/game/turn-skip")
+    public void turnSkip(@DestinationVariable String roomId, GameTurnSkipRequest request, Principal principal) {
+        gameSessionService.turnSkip(roomId, request, extractSender(principal));
     }
+
+    // 채점 결과는 클라이언트가 보내지 않는다 — 서버가 GMS를 호출해 점수까지 계산한다.
+    // (REST POST /api/games/draw/judge, 명세 v0.2.22)
 
     private AuthPrincipal extractSender(Principal principal) {
         if (principal instanceof Authentication authentication
