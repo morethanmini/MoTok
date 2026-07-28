@@ -222,6 +222,15 @@ export function useRoomChat() {
     })
   }
 
+  /** 조기 차례 넘기기 발신 — 서버가 TURN_SKIPPED로 재방송하면 전원이 스케줄을 앞당긴다. */
+  function sendGameTurnSkip(turnIndex: number, remainingMs: number) {
+    if (!client?.connected || !currentRoomId) return
+    client.publish({
+      destination: `/app/rooms/${currentRoomId}/game/turn-skip`,
+      body: JSON.stringify({ turnIndex, remainingMs }),
+    })
+  }
+
   /** AI 채점 결과 발신 — 최초 1회만 수리(SETNX). DRAW_RESULT + 협동 GAME_END가 돌아온다. */
   function sendGameDrawResult(guesses: string[], answerRank: number, score: number) {
     if (!client?.connected || !currentRoomId) return
@@ -248,6 +257,7 @@ export function useRoomChat() {
     sendGameProgress,
     sendGameFinish,
     sendGameDraw,
+    sendGameTurnSkip,
     sendGameDrawResult,
   }
 }

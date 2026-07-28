@@ -71,6 +71,11 @@ public class GameSessionRepository {
         redisTemplate.<String, String>opsForHash().put(sessionKey(roomId), "status", GameSession.STATUS_ENDED);
     }
 
+    /** 조기 차례 넘기기(게임 10) — 당겨진 종료 시각 반영. */
+    public void updateEndAt(String roomId, long endAtMillis) {
+        redisTemplate.<String, String>opsForHash().put(sessionKey(roomId), "endAt", String.valueOf(endAtMillis));
+    }
+
     /**
      * 정산 1회 실행 가드 — 타이머 스레드와 "전원 완주" 조기 종료가 경합해도
      * Redis SETNX로 한쪽만 true를 받는다.

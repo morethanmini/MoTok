@@ -577,6 +577,14 @@ export type GameEvent =
       ops: DrawOp[]
     }
   | {
+      /** 조기 차례 넘기기(게임 10) — 전원이(발신자 포함, 에코 기준) remainingMs만큼 스케줄을 앞당긴다 */
+      type: 'TURN_SKIPPED'
+      sessionId: string
+      userId: string
+      turnIndex: number
+      remainingMs: number
+    }
+  | {
       /** AI 채점 결과(게임 10) — score는 순위 점수(1위 100 … 5위 20). 직후 협동 GAME_END가 온다 */
       type: 'DRAW_RESULT'
       sessionId: string
