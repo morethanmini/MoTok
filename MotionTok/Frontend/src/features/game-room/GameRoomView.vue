@@ -77,6 +77,8 @@ const roomVisibility = ref<Visibility>('PUBLIC')
 const participantCount = ref(1)
 /** 이미 방에 있는 참가자 — 친구 초대(-100) 목록에서 빼려고 들고 있는다. */
 const memberIds = ref<string[]>([])
+/** userId → 표시명. 게임④ 출제자 이름 표시용(LiveKit name은 미발행 시 identity로 폴백된다). */
+const memberNames = ref<Record<string, string>>({})
 
 /**
  * 방장 판정 — <b>이 화면의 유일한 방장 판별 근거</b>다. 상세 조회의 hostUserId와 내 토큰 sub를 직접 비교한다.
@@ -473,6 +475,38 @@ const iAmSetter = computed(
     !!activeSession.value?.setterUserId &&
     activeSession.value.setterUserId === myParticipantId.value,
 )
+/** 게임④(-9): 이번 라운드 출제자 표시명 — 방 상세의 displayName 우선, 늦게 들어온 참가자는 LiveKit name */
+const setterName = computed(() => {
+  const id = activeSession.value?.setterUserId
+  if (!id) return null
+  return (
+    memberNames.value[id] ??
+    lk.participants.value.find((p) => p.identity === id)?.name ??
+    '출제자'
+  )
+})
+/**
+ * 게임④(-9): 출제 중인 출제자의 카메라를 다른 참가자 타일에서 가린다 — 캠으로 포즈가
+ * 미리 보이면 문제가 성립하지 않는다(실기 피드백). 출제자는 게임 화면을 송출하지 않으므로
+ * 타일에 보이는 건 카메라 원본이다.
+ * 창은 타이머 없이 판별한다: GAME_START(poseChallenge=null) ~ POSE_SET 도착까지가 곧 출제 구간.
+ */
+const coveredSetterId = computed(() =>
+  activeGame.value?.id === 'shape' &&
+  activeSession.value?.setterUserId &&
+  !poseChallenge.value &&
+  !gameResults.value
+    ? activeSession.value.setterUserId
+    : null,
+)
+/**
+ * 타일에 씌울 가림막 문구. 참가자 타일은 레이아웃(정원 5~8인 side-tray / 그 외 others-tray)에
+ * 따라 세 군데에서 렌더되므로, 조건을 여기 한 곳에 두고 전부 이걸 쓴다 —
+ * 한 곳만 빠져도 그 레이아웃에서 출제 포즈가 새어나간다.
+ */
+function coverFor(slot: Slot): string | null {
+  return slot.view && slot.view.identity === coveredSetterId.value ? '🤫 출제 중 — 비밀!' : null
+}
 
 // 캔버스가 준비되면 송출 시작. 게임 캔버스에는 카메라 원본이 그려지지 않으므로(밤하늘+손 포인트)
 // 카메라를 숨긴 상태여도 계속 송출하고, 캡처가 끊겨 새 프레임이 없을 때만 가린다(정지 화면 방지).
@@ -966,6 +1000,7 @@ const startHint = computed(() =>
             :key="`left-${i}`"
             :view="slot.view"
             :host="slot.host"
+            :cover="coverFor(slot)"
             play-audio
             compact
           />
@@ -1010,6 +1045,7 @@ const startHint = computed(() =>
             :my-user-id="myParticipantId"
             :challenge="poseChallenge"
             :scores="scoreboardRows"
+            :setter-name="setterName"
             embedded
             @close="closeGame"
             @pose-submit="onPoseSubmit"
@@ -1067,6 +1103,7 @@ const startHint = computed(() =>
             :key="`right-${i}`"
             :view="slot.view"
             :host="slot.host"
+            :cover="coverFor(slot)"
             play-audio
             compact
           />
@@ -1077,6 +1114,7 @@ const startHint = computed(() =>
             :key="i"
             :view="slot.view"
             :host="slot.host"
+            :cover="coverFor(slot)"
             play-audio
           />
         </div>
