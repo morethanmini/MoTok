@@ -103,7 +103,8 @@ export function useRoomChat() {
       if (
         err.path?.endsWith('/chat') ||
         err.path?.endsWith('/game-suggest') ||
-        err.path?.includes('/game/')
+        err.path?.includes('/game/') ||
+        err.path?.includes('/rhythm/')
       ) {
         lastError.value = err
       }
@@ -240,10 +241,29 @@ export function useRoomChat() {
     })
   }
 
+  /**
+   * 전용 채널을 쓰는 기능(캐치캐치리듬 등)이 **같은 연결에 올라타기 위한 구멍**.
+   * 연결을 하나 더 여는 대신 이 두 함수만 노출한다 — 기능별 목적지·이벤트 타입을 여기에
+   * 넣기 시작하면 이 파일이 모든 게임의 집합소가 되므로 도메인 지식은 넘기지 않는다.
+   * 구독은 연결 성립 후에만 유효하다 — 호출부가 connected를 watch해서 (재)구독할 것.
+   */
+  function subscribeRaw(destination: string, onBody: (body: string) => void) {
+    return client?.subscribe(destination, (frame) => onBody(frame.body)) ?? null
+  }
+
+  /** @returns 발행 성공 여부 — 미연결이면 false */
+  function publishRaw(destination: string, body: unknown): boolean {
+    if (!client?.connected) return false
+    client.publish({ destination, body: JSON.stringify(body) })
+    return true
+  }
+
   onScopeDispose(disconnect)
 
   return {
     connected: readonly(connected),
+    subscribeRaw,
+    publishRaw,
     messages,
     gameEvents,
     lastError,

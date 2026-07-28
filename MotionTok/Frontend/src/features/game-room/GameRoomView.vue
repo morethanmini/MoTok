@@ -30,6 +30,10 @@ const FingerStarGame = defineAsyncComponent(
 const DrawingRelayGame = defineAsyncComponent(
   () => import('@/features/games/drawing-relay/DrawingRelayGame.vue'),
 )
+const CatchRhythmGame = defineAsyncComponent(
+  () => import('@/features/games/catch-rhythm/CatchRhythmGame.vue'),
+)
+import { useRhythmAutoJoin } from '@/features/games/catch-rhythm/useRhythmAutoJoin'
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -449,14 +453,17 @@ const gameComp = ref<{ canvas?: HTMLCanvasElement } | null>(null)
 // 라운드가 끝나면(GAME_END 수신) 결과 화면을 닫지 않아도 송출을 내린다 — gameTrack이 사라지면서
 // 모든 참가자 타일이 카메라로 복귀하고 게임/카메라 토글도 함께 사라진다. 다음 GAME_START에서
 // gameResults가 초기화되면 같은 watch가 재발행한다.
+// 캐치캐치리듬은 전용 채널이라 gameResults를 안 쓴다 — 컴포넌트가 RHYTHM_END 정산을
+// started/ended 이벤트로 알려주면 rhythmEnded가 같은 역할(정산 즉시 송출 내림)을 한다.
+const rhythmEnded = ref(false)
 watch(
-  [() => gameComp.value?.canvas ?? null, captureOn, gameResults],
-  async ([canvas, capOn, results]) => {
+  [() => gameComp.value?.canvas ?? null, captureOn, gameResults, rhythmEnded],
+  async ([canvas, capOn, results, rhythmDone]) => {
     if (!activeGame.value || !canvas) return
     // 그림으로 말해요 — 전원이 획 릴레이로 같은 도화지를 로컬 렌더링하므로 캔버스 송출이
     // 무의미하다. 송출하지 않으면 다른 참가자 타일은 게임 중에도 카메라 화면 그대로다.
     if (activeGame.value.id === 'draw') return
-    if (results) {
+    if (results || rhythmDone) {
       await lk.unpublishGameScreen()
       return
     }
@@ -546,11 +553,31 @@ function applyGameEvent(e: GameEvent) {
   }
 }
 
+// 방장이 리듬 라운드를 시작하면 방 전원이 자동 입장한다.
+// (비방장은 게임 화면을 열 이유가 없어 스스로 구독하지 못한다 — 그래서 여기서 듣는다)
+useRhythmAutoJoin(roomChat, roomCode, () => {
+  const entry = GAME_CATALOG.find((g) => g.id === 'rhythm')
+  if (entry) activeGame.value = entry
+  picker.value = false
+  if (!captureOn.value) flash('카메라를 켜면 게임에 참여할 수 있어요')
+})
+
 function openPicker() {
   picker.value = true
 }
 function launch(g: GameEntry) {
   picker.value = false
+  // 캐치캐치리듬은 전용 STOMP 채널을 쓴다 — 공용 게임 세션(GAME_START) 경로를 타지 않고
+  // 컴포넌트가 자기 생명주기를 소유한다. 난이도 선택·시작은 컴포넌트 안에서.
+  // 비방장은 여기로 새면 안 된다 — 아래 게임 제안 경로를 그대로 타야 한다.
+  if (g.id === 'rhythm' && (selfIsHost.value || !roomChat.connected.value)) {
+    if (!captureOn.value) {
+      flash('카메라를 켜고 시작해 주세요')
+      return
+    }
+    activeGame.value = g
+    return
+  }
   // 방장 + 서버 연결 + 플레이 가능 → 서버에 시작 요청. GAME_START가 방 전체에 돌아와 마운트된다.
   if (g.playable && roomChat.connected.value && selfIsHost.value) {
     if (!captureOn.value) {
@@ -601,6 +628,7 @@ function closeGame() {
   activeSession.value = null
   gameResults.value = null
   liveScores.value = {}
+  rhythmEnded.value = false
   drawFeed.value = []
 }
 
@@ -867,6 +895,20 @@ const startHint = computed(() =>
               (r: { guesses: string[]; answerRank: number; score: number }) =>
                 roomChat.sendGameDrawResult(r.guesses, r.answerRank, r.score)
             "
+          />
+          <!-- 캐치캐치리듬 — 전용 STOMP 채널이라 activeSession을 쓰지 않는다(자기 생명주기 소유).
+               roomChat은 구독/발행 구멍만 쓰고 리듬 도메인 지식은 컴포넌트 안에 있다. -->
+          <CatchRhythmGame
+            v-if="activeGame?.id === 'rhythm'"
+            ref="gameComp"
+            :video="selfVideoEl ?? null"
+            :room-id="roomCode"
+            :is-host="selfIsHost"
+            :my-user-id="myParticipantId"
+            :room-chat="roomChat"
+            @close="closeGame"
+            @started="rhythmEnded = false"
+            @ended="rhythmEnded = true"
           />
           <div class="self-label">
             <span class="c-g">{{ selfIsHost ? 'YOU · HOST' : 'YOU' }}</span>
