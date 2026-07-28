@@ -27,6 +27,9 @@ import CreateRoomModal, { type NewRoom } from '@/features/lobby/components/Creat
 const FingerStarGame = defineAsyncComponent(
   () => import('@/features/games/finger-star/FingerStarGame.vue'),
 )
+const BodyFitGame = defineAsyncComponent(
+  () => import('@/features/games/body-fit/BodyFitGame.vue'),
+)
 const DrawingRelayGame = defineAsyncComponent(
   () => import('@/features/games/drawing-relay/DrawingRelayGame.vue'),
 )
@@ -440,6 +443,8 @@ const suggestCooldown = ref(false)
 const activeGame = ref<GameEntry | null>(null)
 const activeSession = ref<ActiveGameSession | null>(null)
 const gameResults = ref<GameResultEntry[] | null>(null)
+/** 게임④(-86): POSE_SET으로 도착한 출제 포즈(랜드마크 JSON) — 벽 생성 입력 */
+const poseChallenge = ref<string | null>(null)
 /** 그림으로 말해요(게임 10) — DRAW/DRAW_RESULT 릴레이를 게임 컴포넌트로 전달하는 피드 */
 const drawFeed = ref<GameEvent[]>([])
 
@@ -448,22 +453,31 @@ const drawFeed = ref<GameEvent[]>([])
 // 표시되지 않는 쪽은 adaptiveStream·dynacast가 자동으로 쉬게 하므로 부하는 보는 만큼만 든다.
 const gameComp = ref<{ canvas?: HTMLCanvasElement } | null>(null)
 
+/** 게임④(-9): 이번 라운드 출제자가 나인가 — 출제자 화면은 빈 무대라 송출하지 않는다 */
+const iAmSetter = computed(
+  () =>
+    !!activeSession.value?.setterUserId &&
+    activeSession.value.setterUserId === myParticipantId.value,
+)
+
 // 캔버스가 준비되면 송출 시작. 게임 캔버스에는 카메라 원본이 그려지지 않으므로(밤하늘+손 포인트)
 // 카메라를 숨긴 상태여도 계속 송출하고, 캡처가 끊겨 새 프레임이 없을 때만 가린다(정지 화면 방지).
 // 라운드가 끝나면(GAME_END 수신) 결과 화면을 닫지 않아도 송출을 내린다 — gameTrack이 사라지면서
 // 모든 참가자 타일이 카메라로 복귀하고 게임/카메라 토글도 함께 사라진다. 다음 GAME_START에서
 // gameResults가 초기화되면 같은 watch가 재발행한다.
+// 게임④(-9) 출제자는 제외한다 — 관전 화면이라 남에게 보내봐야 빈 무대다. 로테이션으로
+// 라운드마다 바뀌므로 iAmSetter를 의존성에 넣어 출제 차례가 끝나면 다시 발행된다.
 // 캐치캐치리듬은 전용 채널이라 gameResults를 안 쓴다 — 컴포넌트가 RHYTHM_END 정산을
 // started/ended 이벤트로 알려주면 rhythmEnded가 같은 역할(정산 즉시 송출 내림)을 한다.
 const rhythmEnded = ref(false)
 watch(
-  [() => gameComp.value?.canvas ?? null, captureOn, gameResults, rhythmEnded],
-  async ([canvas, capOn, results, rhythmDone]) => {
+  [() => gameComp.value?.canvas ?? null, captureOn, gameResults, iAmSetter, rhythmEnded],
+  async ([canvas, capOn, results, setter, rhythmDone]) => {
     if (!activeGame.value || !canvas) return
     // 그림으로 말해요 — 전원이 획 릴레이로 같은 도화지를 로컬 렌더링하므로 캔버스 송출이
     // 무의미하다. 송출하지 않으면 다른 참가자 타일은 게임 중에도 카메라 화면 그대로다.
     if (activeGame.value.id === 'draw') return
-    if (results || rhythmDone) {
+    if (results || setter || rhythmDone) {
       await lk.unpublishGameScreen()
       return
     }
@@ -480,6 +494,15 @@ interface LiveScoreRow {
   score: number | null
 }
 const liveScores = ref<Record<string, LiveScoreRow>>({})
+/** 게임④(-9) 전용 — score(GRADE_POINTS 역산: 100/85/70/그 외)로 등급 배지를 보여준다 */
+const BODY_FIT_GRADE: Record<number, { label: string; color: string }> = {
+  100: { label: 'PERFECT', color: '#b98bff' },
+  85: { label: 'GREAT', color: '#45e0a8' },
+  70: { label: 'PASS', color: '#ffcf4d' },
+}
+function bodyFitGrade(score: number) {
+  return BODY_FIT_GRADE[score] ?? { label: 'FAIL', color: '#ff5d73' }
+}
 const scoreboardRows = computed(() => {
   const rows = Object.entries(liveScores.value).map(([userId, r]) => ({ userId, ...r }))
   rows.sort(
@@ -502,6 +525,7 @@ function applyGameEvent(e: GameEvent) {
     if (!entry) return
     gameResults.value = null
     liveScores.value = {}
+    poseChallenge.value = null
     drawFeed.value = []
     activeSession.value = {
       sessionId: e.sessionId,
@@ -509,6 +533,10 @@ function applyGameEvent(e: GameEvent) {
       startAt: e.startAt,
       endAt: e.endAt,
       clockOffset: e.serverNow - Date.now(),
+      setterUserId: e.setterUserId ?? null,
+      difficulty: e.difficulty ?? null,
+      roundNo: e.roundNo ?? null,
+      totalRounds: e.totalRounds ?? null,
       topicWord: e.topicWord ?? null,
       turnOrder: e.turnOrder ?? null,
       turnDurationSec: e.turnDurationSec ?? null,
@@ -521,6 +549,10 @@ function applyGameEvent(e: GameEvent) {
   }
   // 이하 이벤트는 현재 세션 것만 반영(닫은 뒤 늦게 도착한 프레임 방어)
   if (activeSession.value?.sessionId !== e.sessionId) return
+  if (e.type === 'POSE_SET') {
+    poseChallenge.value = e.challenge
+    return
+  }
   // 그리기 릴레이 — 게임 컴포넌트가 피드를 watch로 소비한다(자기 에코 무시 포함)
   if (e.type === 'DRAW' || e.type === 'DRAW_RESULT' || e.type === 'TURN_SKIPPED') {
     drawFeed.value = [...drawFeed.value, e]
@@ -569,7 +601,7 @@ function openPicker() {
 function roomPlayerCount(): number {
   return lk.participants.value.length || participantCount.value
 }
-function launch(g: GameEntry) {
+async function launch(g: GameEntry, difficulty?: string) {
   picker.value = false
   // 캐치캐치리듬은 전용 STOMP 채널을 쓴다 — 공용 게임 세션(GAME_START) 경로를 타지 않고
   // 컴포넌트가 자기 생명주기를 소유한다. 난이도 선택·시작은 컴포넌트 안에서.
@@ -593,7 +625,15 @@ function launch(g: GameEntry) {
       flash(`${g.name} 는 ${g.minPlayers}명부터 시작할 수 있어요`)
       return
     }
-    roomChat.startGame(g.gameId)
+    // 게임④(-9): 출제자는 관전하는 룰이라 1인 방에선 라운드가 성립 안 함 —
+    // 시작 시점 인원을 재조회해 혼자면 서버 세션 없이 로컬 연습 모드로 돌린다.
+    if (g.id === 'shape' && (await memberCountNow()) < 2) {
+      flash('혼자 있어서 연습 모드로 시작해요 — 출제와 플레이를 모두 해요')
+      activeSession.value = null
+      activeGame.value = g
+      return
+    }
+    roomChat.startGame(g.gameId, undefined, difficulty)
     return
   }
   // 서버 미연동 데모 — 로컬 솔로 플레이 폴백. 멀티 전용 게임(minPlayers>1)은 혼자
@@ -621,6 +661,15 @@ function launch(g: GameEntry) {
   setTimeout(() => (suggestCooldown.value = false), SUGGEST_COOLDOWN_MS)
 }
 
+/** 시작 클릭 시점의 실제 방 인원 — 조회 실패 시 2로 간주해 정상(서버 시작) 경로로 보낸다 */
+async function memberCountNow(): Promise<number> {
+  try {
+    return (await roomsApi.detail(roomCode.value)).members.length
+  } catch {
+    return 2
+  }
+}
+
 /** 게임 컴포넌트의 진행 상황(컴포넌트에서 300ms 스로틀) → 서버 중계 */
 function onGameProgress(starsLit: number, holdProgress: number) {
   if (activeSession.value && !gameResults.value) roomChat.sendGameProgress(starsLit, holdProgress)
@@ -636,12 +685,27 @@ function onGameFinished(r: { constellation: string; score: number; starsHit: num
   flash(`✨ ${r.score}점 · 별 ${r.starsHit}/${r.starsTotal}`)
 }
 
+/** 게임④(-86): 출제자가 캡처한 포즈(랜드마크 JSON)를 서버로 — POSE_SET이 방 전체에 돌아온다 */
+function onPoseSubmit(pose: string) {
+  if (activeSession.value && !gameResults.value) roomChat.sendPoseSubmit(pose)
+}
+
+function onBodyFitFinished(r: { score: number; grade: string; iou: number }) {
+  if (activeSession.value) {
+    // 서버가 최초 1회만 수리하고 PLAYER_FINISHED → (전원 완주 시) GAME_END를 배포한다.
+    roomChat.sendGameFinish(r.score, 0)
+    return
+  }
+  flash(`🧱 ${r.grade} · 일치율 ${Math.round(r.iou)}%`)
+}
+
 function closeGame() {
   void lk.unpublishGameScreen()
   activeGame.value = null
   activeSession.value = null
   gameResults.value = null
   liveScores.value = {}
+  poseChallenge.value = null
   rhythmEnded.value = false
   drawFeed.value = []
 }
@@ -892,6 +956,22 @@ const startHint = computed(() =>
             @progress="onGameProgress"
             @finished="onGameFinished"
           />
+          <!-- 게임④ 몸 끼워 맞추기(S15P11A706-9) — 출제 포즈(POSE_SET)는 challenge로 내려준다 -->
+          <BodyFitGame
+            v-else-if="activeGame?.id === 'shape'"
+            ref="gameComp"
+            :video="selfVideoEl ?? null"
+            :session="activeSession"
+            :results="gameResults"
+            :my-user-id="myParticipantId"
+            :challenge="poseChallenge"
+            :scores="scoreboardRows"
+            embedded
+            @close="closeGame"
+            @pose-submit="onPoseSubmit"
+            @progress="onGameProgress"
+            @finished="onBodyFitFinished"
+          />
           <!-- 그림으로 말해요 — 솔로(session=null)·멀티(명세 v0.2.20 턴 릴레이) -->
           <DrawingRelayGame
             v-else-if="activeGame?.id === 'draw'"
@@ -944,7 +1024,11 @@ const startHint = computed(() =>
         </div>
 
         <!-- 실시간 스코어보드 (게임 중, S15P11A706-82) -->
-        <div v-if="activeSession && !gameResults" class="px game-scoreboard">
+        <div
+          v-if="activeSession && !gameResults"
+          class="px game-scoreboard"
+          :class="{ bf: activeGame?.id === 'shape' }"
+        >
           <div class="gs-title">⭐ LIVE SCORE</div>
           <div
             v-for="row in scoreboardRows"
@@ -953,7 +1037,21 @@ const startHint = computed(() =>
             :class="{ me: row.userId === myParticipantId }"
           >
             <span class="gs-name">{{ row.nickname }}</span>
-            <span class="gs-val">{{ row.finished ? `${row.score}점 ✓` : `⭐ ${row.starsLit}` }}</span>
+            <span
+              v-if="activeGame?.id === 'shape' && row.finished"
+              class="gs-badge"
+              :style="{ color: bodyFitGrade(row.score ?? 0).color, borderColor: bodyFitGrade(row.score ?? 0).color }"
+            >
+              {{ bodyFitGrade(row.score ?? 0).label }}
+            </span>
+            <!-- 게임④는 별이 없다 — 진행 중이면 실시간 일치율(holdProgress)을 보여준다 -->
+            <span v-else class="gs-val">{{
+              row.finished
+                ? `${row.score}점 ✓`
+                : activeGame?.id === 'shape'
+                  ? `일치율 ${Math.round(row.holdProgress * 100)}%`
+                  : `⭐ ${row.starsLit}`
+            }}</span>
           </div>
           <div v-if="scoreboardRows.length === 0" class="gs-empty">진행 상황 수신 대기 중…</div>
         </div>
@@ -1267,6 +1365,14 @@ const startHint = computed(() =>
 .gs-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 110px; }
 .gs-val { color: #5cbf4a; white-space: nowrap; }
 .gs-empty { font-size: 7px; color: #a99f86; }
+.gs-badge { font-size: 7px; font-weight: 800; padding: 2px 6px; border: 1px solid; border-radius: 6px; white-space: nowrap; }
+
+/* 게임④(-9) 전용 다크 테마 — 인게임 화면(BodyFitGame)과 톤을 맞춘다 */
+.game-scoreboard.bf { background: rgba(18, 20, 43, 0.96); border-color: rgba(255, 255, 255, 0.12); }
+.game-scoreboard.bf .gs-title { color: #ffcf4d; }
+.game-scoreboard.bf .gs-row { color: #eef0ff; }
+.game-scoreboard.bf .gs-row.me .gs-name { color: #45e0a8; }
+.game-scoreboard.bf .gs-empty { color: #8d90b8; }
 
 /* 자기 타일 — 항상 가장 크게 */
 .self-tile.self-spot {

@@ -187,11 +187,24 @@ export function useRoomChat() {
 
   // ── 게임 세션 발신 (S15P11A706-115) ──────────
   /** 게임 시작(방장 전용 — 서버가 방장 검증). 수리되면 GAME_START가 방 전체에 배포된다. */
-  function startGame(gameId: number, constellationKey?: string) {
+  function startGame(gameId: number, constellationKey?: string, difficulty?: string) {
     if (!client?.connected || !currentRoomId) return
     client.publish({
       destination: `/app/rooms/${currentRoomId}/game/start`,
-      body: JSON.stringify({ gameId, constellationKey: constellationKey ?? null }),
+      body: JSON.stringify({
+        gameId,
+        constellationKey: constellationKey ?? null,
+        difficulty: difficulty ?? null,
+      }),
+    })
+  }
+
+  /** 게임④ 출제자 포즈 제출(-86) — 서버가 검증 후 POSE_SET을 방 전체에 배포한다. */
+  function sendPoseSubmit(pose: string) {
+    if (!client?.connected || !currentRoomId) return
+    client.publish({
+      destination: `/app/rooms/${currentRoomId}/game/pose-submit`,
+      body: JSON.stringify({ pose }),
     })
   }
 
@@ -274,6 +287,7 @@ export function useRoomChat() {
     sendChat,
     suggestGame,
     startGame,
+    sendPoseSubmit,
     sendGameProgress,
     sendGameFinish,
     sendGameDraw,
