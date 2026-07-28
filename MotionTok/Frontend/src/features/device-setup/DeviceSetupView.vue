@@ -5,6 +5,7 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { roomsApi } from '@/api'
 import { useCamera } from '@/composables/useCamera'
+import { useMicLevel } from '@/composables/useMicLevel'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
 import PixelButton from '@/components/common/PixelButton.vue'
 import BrandLogo from '@/components/common/BrandLogo.vue'
@@ -54,6 +55,16 @@ function pickCamera(e: Event) {
 function pickMic(e: Event) {
   void selectAudioDevice((e.target as HTMLSelectElement).value)
 }
+
+// 입력 레벨 미터 — 고른 마이크가 실제로 소리를 받는지 눈으로 확인시켜 준다.
+const MIC_SEGMENTS = 10
+const { level: micLevel } = useMicLevel(stream)
+// RMS를 그대로 쓰면 대화 소리에서도 막대가 거의 안 움직인다 — -60dB~0dB를 눈금 전체에 편다.
+const micBars = computed(() => {
+  if (micLevel.value <= 0) return 0
+  const db = 20 * Math.log10(micLevel.value)
+  return Math.round(Math.min(1, Math.max(0, (db + 60) / 60)) * MIC_SEGMENTS)
+})
 
 // 게임룸으로 넘어가는 건 이탈이 아니라 계속 진행이므로 퇴장 통보를 건너뛴다.
 let proceedingToRoom = false
@@ -186,6 +197,18 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
               {{ d.label || `마이크 ${i + 1}` }}
             </option>
           </select>
+          <!-- 입력 레벨 — 고른 마이크가 소리를 받고 있는지 바로 보인다 -->
+          <div v-if="isOn" class="meter" :aria-label="`마이크 입력 레벨 ${micBars}/${MIC_SEGMENTS}`">
+            <span
+              v-for="i in MIC_SEGMENTS"
+              :key="i"
+              class="seg"
+              :class="{ on: micOn && i <= micBars, hot: i > MIC_SEGMENTS - 2 }"
+            />
+          </div>
+          <p v-if="isOn" class="meter-hint">
+            {{ micOn ? '말해보세요 — 막대가 움직이면 정상이에요' : '마이크가 꺼져 있어요' }}
+          </p>
         </label>
         <!-- 권한 오류는 위 안내 박스가 이미 말해주므로, 여기선 장치 전환 실패만 알린다. -->
         <p v-if="error && isOn" class="field-err">{{ error }}</p>
@@ -323,6 +346,18 @@ const goInventory = () => router.push({ name: RouteName.Inventory })
 }
 .field select:disabled { background: #f1eef4; color: #8d8496; }
 .field-err { margin: 6px 0 0; color: var(--c-coral); font-size: 9px; }
+/* 입력 레벨 미터 — 픽셀 톤에 맞춰 칸으로 끊어 표시 */
+.meter { display: flex; gap: 3px; margin-top: 7px; }
+.meter .seg {
+  flex: 1;
+  height: 11px;
+  border: 2px solid var(--c-ink);
+  border-radius: 3px;
+  background: #efe9f2;
+}
+.meter .seg.on { background: #5cbf4a; }
+.meter .seg.hot.on { background: var(--c-coral); }
+.meter-hint { margin: 5px 0 0; color: #8d8496; font-size: 8px; font-weight: 400; }
 .items { display: flex; gap: 8px; margin-top: 8px; }
 .item { width: 52px; height: 48px; border: 2px solid var(--c-ink); border-radius: 12px; background: #fff; font-size: 23px; }
 .item.on { background: #d9ccfa; box-shadow: var(--shadow-sm); }
