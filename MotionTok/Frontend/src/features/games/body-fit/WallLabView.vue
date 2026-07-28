@@ -95,7 +95,7 @@ function initThree(canvas: HTMLCanvasElement) {
   scene.add(rig.group)
   stage.setFloorY(rig.floorY)
 
-  wall = createWall(cfg)
+  wall = createWall()
   scene.add(wall.mesh)
 }
 

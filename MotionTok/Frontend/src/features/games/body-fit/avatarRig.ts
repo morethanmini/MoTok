@@ -17,6 +17,8 @@ import {
   LEG_LEN,
   LEG_R_MUL,
   LEG_SPLAY,
+  STAGE_DROP,
+  STAGE_SCALE,
   TORSO_LEN,
   TORSO_RADIUS,
   UPPER_ARM_LEN,
@@ -69,23 +71,12 @@ export class AvatarRig {
   /** 마지막으로 적용된 골격 — 판정기가 이 값을 그대로 쓴다 */
   lastSolved: SolvedSkeleton | null = null
 
-  // sheen이 매트한 표면에 옅은 빛 산란을 얹어 점토 같은 부드러움을 낸다 (§5-2 목표 룩)
-  private readonly material = new THREE.MeshPhysicalMaterial({
-    color: 0xffffff,
-    roughness: 0.75,
-    metalness: 0,
-    sheen: 0.55,
-    sheenRoughness: 0.6,
-    sheenColor: 0xffffff,
-  })
-  /** 삐져나온 세그먼트용 — UI 스펙 §1-3 --overflow. emissive라 블룸에서 실제로 빛난다 */
-  private readonly overflowMaterial = new THREE.MeshPhysicalMaterial({
-    color: 0xff2d3f,
-    roughness: 0.75,
-    metalness: 0,
-    emissive: 0xff2d3f,
-    emissiveIntensity: 0.55,
-  })
+  // 납작한 실루엣 룩(2026-07-28) — MeshPhysicalMaterial(점토 셰이딩)에서 unlit 단색으로.
+  // 입체 음영을 지우면 아바타가 한 덩어리 실루엣으로 읽혀 무대와 톤이 갈리지 않는다.
+  // 되돌리려면 MeshPhysicalMaterial + roughness 0.85 + sheen 0.45 조합으로 복구.
+  private readonly material = new THREE.MeshBasicMaterial({ color: 0xd8c9a8 })
+  /** 삐져나온 세그먼트용 — UI 스펙 §1-3 --overflow */
+  private readonly overflowMaterial = new THREE.MeshBasicMaterial({ color: 0xdb4f30 })
 
   private readonly head: THREE.Mesh
   private readonly torso: THREE.Mesh
@@ -110,9 +101,10 @@ export class AvatarRig {
 
   constructor(cfg: BodyFitConfig['avatar']) {
     this.cfg = cfg
+    // 무대 구도용 축소 — 골격 계산은 전부 원래 단위로 하고 표시만 줄인다
+    this.group.scale.setScalar(STAGE_SCALE)
     const make = (parent: THREE.Object3D): THREE.Mesh => {
       const m = new THREE.Mesh(new THREE.BufferGeometry(), this.material)
-      m.castShadow = true
       parent.add(m)
       return m
     }
@@ -197,7 +189,10 @@ export class AvatarRig {
     // 다리 고정 포즈 — legs 그룹 로컬 좌표(원점 = 힙 중점)
     setBetween(this.legL, -HIP_HALF_WIDTH, 0, -HIP_HALF_WIDTH - LEG_SPLAY, -legLen)
     setBetween(this.legR, HIP_HALF_WIDTH, 0, HIP_HALF_WIDTH + LEG_SPLAY, -legLen)
-    this.floorY = -(TORSO_LEN + legLen + legR)
+    // STAGE_SCALE을 곱해 월드 값으로 내보낸다 — 소비자(stage.setFloorY)는 월드 Y를 기대하고,
+    // group에 같은 배율이 걸려 있어 실제 발바닥도 이 높이에 온다. STAGE_DROP까지 더해야
+    // 포디움이 내려앉은 아바타를 그대로 따라간다.
+    this.floorY = -(TORSO_LEN + legLen + legR) * STAGE_SCALE + STAGE_DROP
   }
 
   /** 매 프레임: 정규화 포즈 → 공유 솔버 → 각 메시의 position/quaternion 갱신 */
@@ -223,8 +218,14 @@ export class AvatarRig {
     // 다리 그룹은 힙 위치만 따라간다 (자세 고정, §5-4)
     this.legs.position.set(s.hip.x, s.hip.y, 0)
 
-    // 힙 앵커: 힙을 월드 (0, -TORSO_LEN)에 고정 — 발이 땅에 붙고 상체가 호를 그린다
-    this.group.position.set(s.anchor.x, s.anchor.y, 0)
+    // 힙 앵커: 힙을 월드 (0, -TORSO_LEN)에 고정 — 발이 땅에 붙고 상체가 호를 그린다.
+    // 앵커는 아바타 단위라 STAGE_SCALE을 곱해야 한다 — group.position은 자신의 scale을
+    // 받지 않으므로, 안 곱하면 몸을 기울일 때 구멍과 아바타가 어긋난다(2026-07-28).
+    this.group.position.set(
+      s.anchor.x * STAGE_SCALE,
+      s.anchor.y * STAGE_SCALE + STAGE_DROP,
+      0,
+    )
   }
 
   dispose() {
