@@ -3,20 +3,20 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import {
   gamesApi,
-  usersApi,
   ApiError,
   type Game,
   type LeaderboardEntry,
   type LeaderboardMode,
   type LeaderboardResponse,
-  type PublicUserProfile,
 } from '@/api'
 import { useAsyncData } from '@/composables/useAsyncData'
-import { useSessionStore } from '@/stores/session'
-import { askLogin } from '@/composables/useLoginRequired'
+import { useUserProfile } from '@/composables/useUserProfile'
+import { useToast } from '@/composables/useToast'
 import AppPage from '@/components/common/AppPage.vue'
 import PixelCard from '@/components/common/PixelCard.vue'
-import UserProfileModal from './components/UserProfileModal.vue'
+import PixelToast from '@/components/common/PixelToast.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
+import UserProfileModal from '@/components/common/UserProfileModal.vue'
 
 const MOCK_GAMES: Game[] = [
   { id: 1, name: '핑거 스타', description: '', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '손동작', thumbnailUrl: '', playable: true },
@@ -70,39 +70,30 @@ const pagedEntries = computed(() =>
 )
 
 // ── 다른 사용자 프로필 조회 (-96) ────────────────────────────
-// 공개 프로필도 회원 전용이라(SecurityConfig /api/users/**) 게스트·비로그인은 로그인 안내로 유도한다.
-const session = useSessionStore()
-
+// 조회·게스트 가드·오류 문구는 useUserProfile이 갖고 있다(친구 목록과 같은 규칙을 쓰기 위해).
+// 여기서는 리더보드 항목이 가진 수치만 모달에 얹는다.
+const viewer = useUserProfile()
 const selectedEntry = ref<LeaderboardEntry | null>(null)
-const selectedProfile = ref<PublicUserProfile | null>(null)
-const profileLoading = ref(false)
-const profileError = ref('')
+const { message: toast, flash } = useToast()
 
-async function openProfile(entry: LeaderboardEntry) {
-  if (!session.isMember) {
-    askLogin('다른 사용자의 프로필은 로그인 후 볼 수 있어요.')
-    return
-  }
+const profileStats = computed(() =>
+  selectedEntry.value
+    ? [
+        { label: '순위', value: `#${selectedEntry.value.rank}` },
+        { label: '최고 점수', value: selectedEntry.value.bestScore.toLocaleString() },
+        { label: '플레이', value: `${selectedEntry.value.playCount}회` },
+      ]
+    : [],
+)
+
+function openProfile(entry: LeaderboardEntry) {
   selectedEntry.value = entry
-  selectedProfile.value = null
-  profileError.value = ''
-  profileLoading.value = true
-  try {
-    selectedProfile.value = await usersApi.getProfile(entry.userId)
-  } catch (e) {
-    profileError.value =
-      e instanceof ApiError && e.status === 404
-        ? '탈퇴했거나 조회할 수 없는 계정이에요.'
-        : e instanceof ApiError
-          ? e.message
-          : '프로필을 불러오지 못했어요.'
-  } finally {
-    profileLoading.value = false
-  }
+  viewer.open(entry.userId, entry.nickname)
 }
 
 function closeProfile() {
   selectedEntry.value = null
+  viewer.close()
 }
 </script>
 
@@ -152,7 +143,17 @@ function closeProfile() {
             @click="openProfile(e)"
           >
             <td class="rank">{{ e.rank <= 3 ? ['🥇','🥈','🥉'][e.rank - 1] : `#${e.rank}` }}</td>
-            <td><button type="button" class="name">{{ e.nickname }}</button></td>
+            <td>
+              <span class="who">
+                <UserAvatar
+                  class="who-face"
+                  :src="e.avatarUrl"
+                  :fallback="e.nickname.charAt(0)"
+                  :alt="`${e.nickname} 프로필 사진`"
+                />
+                <button type="button" class="name">{{ e.nickname }}</button>
+              </span>
+            </td>
             <td>{{ e.bestScore.toLocaleString() }}</td>
             <td>{{ e.playCount }}회</td>
           </tr>
@@ -176,13 +177,17 @@ function closeProfile() {
     </PixelCard>
 
     <UserProfileModal
-      v-if="selectedEntry"
-      :entry="selectedEntry"
-      :profile="selectedProfile"
-      :loading="profileLoading"
-      :error="profileError"
+      v-if="viewer.isOpen.value"
+      :user-id="viewer.targetId.value!"
+      :profile="viewer.profile.value"
+      :nickname="viewer.nickname.value"
+      :loading="viewer.loading.value"
+      :error="viewer.error.value"
+      :stats="profileStats"
       @close="closeProfile"
+      @reported="flash"
     />
+    <PixelToast :message="toast" />
   </AppPage>
 </template>
 
@@ -207,6 +212,8 @@ function closeProfile() {
 .board tr.me { background: #fff7d9; box-shadow: inset 4px 0 0 var(--c-yellow); }
 .board tr.row { cursor: pointer; }
 .board tr.row:hover { background: var(--c-mint-soft); }
+.board .who { display: flex; align-items: center; gap: 8px; }
+.board .who-face { flex: none; width: 28px; height: 28px; border: 2px solid var(--c-ink); border-radius: 50%; background: var(--c-mint-soft); font-size: 12px; font-weight: 700; }
 .board .name { border: 0; background: transparent; padding: 0; font: inherit; text-decoration: underline; }
 .empty { margin: 20px 0; text-align: center; font-size: 11px; color: var(--c-muted); }
 

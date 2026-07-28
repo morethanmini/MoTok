@@ -1,10 +1,19 @@
 /** 신고 API (명세 §7). */
 import { http, httpEnvelope } from '../http'
-import type { ChatReportCreateRequest, ChatReportCreateResponse, ReportRequest } from '../types'
+import type {
+  ChatReportCreateRequest,
+  ChatReportCreateResponse,
+  ReportCreateResponse,
+  ReportRequest,
+} from '../types'
 
 export const reportsApi = {
-  /** POST /reports — 유저 신고 (백엔드 설계 단계, 미구현) */
-  report: (body: ReportRequest) => http.post<void>('/reports', body),
+  /**
+   * POST /reports — 사용자 신고(-112). 프로필 화면에서 특정 회원을 신고한다.
+   * 회원 전용(게스트 403). 피신고자 닉네임은 보내지 않는다 — 서버가 userId로 조회해 기록한다.
+   * 이미 처리 중인 신고가 있으면 409(USER_REPORT_DUPLICATE).
+   */
+  report: (body: ReportRequest) => http.post<ReportCreateResponse>('/reports', body),
 }
 
 /**

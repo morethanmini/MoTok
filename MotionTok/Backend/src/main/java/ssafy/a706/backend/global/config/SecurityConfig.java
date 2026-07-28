@@ -87,15 +87,25 @@ public class SecurityConfig {
                                     "/api/v1/live-rooms/quick-start",
                                     "/api/v1/live-rooms/join-by-invite-code",
                                     "/api/v1/live-rooms/*/join",
-                                    "/api/v1/live-rooms/*/members/*/kick").hasRole("USER")
+                                    "/api/v1/live-rooms/*/members/*/kick",
+                                    "/api/v1/live-rooms/*/invitations").hasRole("USER")
                             // 회원 전용 — 게스트 토큰(ROLE_GUEST)의 /users/me 접근을 403으로 차단한다
                             .requestMatchers("/api/users/**").hasRole("USER")
                             // 회원 전용 — 상점(-56)은 게스트가 RDB에 영속되지 않아(D5) 대상이 아니다
                             .requestMatchers("/api/shop/**").hasRole("USER")
                             // 회원 전용 — 친구(-57)도 같은 이유. 게스트 토큰이 오면 MemberPrincipal이 null이 되므로 필터에서 끊는다
                             .requestMatchers("/api/friends/**").hasRole("USER")
+                            // 회원 전용 — 방 초대(-100)는 친구에게만 보낼 수 있어 친구를 가질 수 없는 게스트는 대상이 아니다
+                            .requestMatchers("/api/invitations/**").hasRole("USER")
                             // 회원 전용 — 접속 상태는 친구에게 보여주기 위한 것이라 친구를 가질 수 없는 게스트는 대상이 아니다
                             .requestMatchers("/api/presence/**").hasRole("USER")
+                            // 회원 전용 — 업로드 key가 userId로 갈리므로(public/avatars/{userId}/) 게스트는 대상이 아니다.
+                            // 용도별 권한(SONG은 ADMIN)은 한 엔드포인트 안에서 갈려 경로 규칙으로 표현할 수 없어 컨트롤러가 확인한다.
+                            .requestMatchers("/api/uploads/**").hasRole("USER")
+                            // 회원 전용 — 사용자 신고(-112)는 신고자를 users 행으로 특정해 기록해야 하는데
+                            // 게스트는 RDB에 영속되지 않아(D5) 남길 신고자가 없다. 명시하지 않으면
+                            // anyRequest().authenticated()로 떨어져 게스트 토큰이 통과한다.
+                            .requestMatchers("/api/reports/**").hasRole("USER")
                             // 관리자 전용(-133) — role claim이 ADMIN인 토큰만(JwtAuthenticationFilter가 ROLE_ADMIN 부여)
                             .requestMatchers("/api/admin/**", "/api/v1/admin/**").hasRole("ADMIN")
                             // 나머지(개별 방 조회·나가기·화상 토큰·ICE·로그아웃 등)는 회원+게스트 공통 — 유효한 JWT 필수

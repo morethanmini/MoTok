@@ -9,10 +9,15 @@ import { useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { useSessionStore } from '@/stores/session'
 import BrandLogo from './BrandLogo.vue'
+import UserAvatar from './UserAvatar.vue'
 import BgmToggle from './BgmToggle.vue'
-import CoinIcon from './CoinIcon.vue'
 import ChargePointsModal from './ChargePointsModal.vue'
 import LoginRequiredModal from './LoginRequiredModal.vue'
+import lobbyIcon from '@/assets/header/nav-lobby.png'
+import gamesIcon from '@/assets/header/nav-games.png'
+import rankingIcon from '@/assets/header/nav-ranking.png'
+import shopIcon from '@/assets/header/nav-shop.png'
+import headerCoin from '@/assets/header/header-coin.png'
 
 const router = useRouter()
 const route = useRoute()
@@ -20,10 +25,10 @@ const session = useSessionStore()
 
 // 로비 헤더와 동일한 nav 구성
 const NAV = [
-  { name: RouteName.Lobby, label: '로비' },
-  { name: RouteName.GamesCatalog, label: '게임' },
-  { name: RouteName.Ranking, label: '랭킹' },
-  { name: RouteName.Shop, label: '상점' },
+  { name: RouteName.Lobby, label: '로비', icon: lobbyIcon },
+  { name: RouteName.GamesCatalog, label: '게임', icon: gamesIcon },
+  { name: RouteName.Ranking, label: '랭킹', icon: rankingIcon },
+  { name: RouteName.Shop, label: '상점', icon: shopIcon },
 ] as const
 
 const current = computed(() => route.name)
@@ -81,6 +86,8 @@ const accountMenuRef = ref<HTMLElement | null>(null)
 const nickname = computed(() =>
   session.isGuest ? (session.guestNickname ?? '게스트') : (session.profile?.nickname ?? '…'),
 )
+// 게스트에게는 프로필 자체가 없다(사진을 올릴 경로도 없다) — 기본 이모지로 둔다.
+const avatarUrl = computed(() => (session.isGuest ? null : (session.profile?.avatarUrl ?? null)))
 
 function toggleAccountMenu() {
   showAccountMenu.value = !showAccountMenu.value
@@ -115,24 +122,27 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
         :class="{ active: current === item.name }"
         @click="onNav(item.name)"
       >
-        {{ item.label }}
+        <img class="nav-icon" :src="item.icon" alt="" aria-hidden="true" />
+        <span>{{ item.label }}</span>
       </button>
     </nav>
 
     <div class="account">
       <BgmToggle />
       <button class="coin" title="포인트 충전" @click="showCharge = true">
-        <CoinIcon :size="15" /> {{ balance.toLocaleString() }} <b>＋</b>
+        <img class="coin-icon" :src="headerCoin" alt="" aria-hidden="true" /> {{ balance.toLocaleString() }} <b>＋</b>
       </button>
       <div class="avatar-wrap" ref="accountMenuRef">
         <button class="avatar-pill" title="계정 메뉴" @click="toggleAccountMenu">
           <span class="nickname">{{ nickname }}</span>
-          <span class="avatar-circle">😎</span>
+          <span class="avatar-pixel-frame">
+          <UserAvatar class="avatar-circle" :src="avatarUrl" :alt="`${nickname} 프로필 사진`" />
+          </span>
         </button>
         <div v-if="showAccountMenu" class="account-menu">
           <div class="menu-head">
             <span>{{ nickname }}</span>
-            <span><CoinIcon :size="12" /> {{ balance.toLocaleString() }}</span>
+            <span><img class="coin-icon menu-coin-icon" :src="headerCoin" alt="" aria-hidden="true" /> {{ balance.toLocaleString() }}</span>
           </div>
           <!-- 마이페이지·설정은 회원 전용 — 게스트에게는 헤더에서 숨긴다 -->
           <template v-if="!session.isGuest">
@@ -174,8 +184,35 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 .brand { min-width: 228px; }
 
 .nav { display: flex; gap: 8px; }
-.nav button { border: 0; background: transparent; padding: 11px 15px; border-radius: 12px; font-weight: 700; }
-.nav button.active { background: var(--c-yellow); border: 2px solid var(--c-ink); box-shadow: var(--shadow-sm); }
+.nav button { display: inline-flex; align-items: center; gap: 8px; border: 0; background: transparent; padding: 11px 15px; border-radius: 12px; font-weight: 700; }
+.nav-icon { width: 27px; height: 27px; object-fit: contain; image-rendering: pixelated; image-rendering: crisp-edges; }
+.nav button.active {
+  position: relative;
+  isolation: isolate;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 0;
+  background: #bb804d;
+  color: #2d211b !important;
+  box-shadow: 3px 3px 0 #e5cca0;
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
+}
+.nav button.active::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  inset: 3px;
+  background: linear-gradient(135deg, #fff2be 0%, #ffe89a 55%, #f7d979 100%);
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%, 6px 100%, 0 calc(100% - 6px), 0 6px);
+  box-shadow: inset 2px 2px 0 rgba(255,255,255,.75), inset -2px -2px 0 #e9c668;
+  pointer-events: none;
+}
+.nav button.active .nav-icon,
+.nav button.active span {
+  position: relative;
+  z-index: 1;
+  color: #2d211b !important;
+}
 
 .account { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .coin { height: 39px; padding: 0 12px; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; display: flex; align-items: center; gap: 7px; font-weight: 700; }
@@ -189,15 +226,32 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   align-items: center;
   gap: 8px;
 }
-.nickname { font-size: 14px; font-weight: 700; }
-.avatar-circle {
-  width: 43px;
-  height: 43px;
-  border: var(--border);
-  border-radius: 50%;
-  background: var(--c-mint-soft);
+.nickname { font-size: 17px; font-weight: 700; }
+.coin-icon { width: 18px; height: 18px; object-fit: contain; image-rendering: pixelated; }
+.menu-coin-icon { width: 14px; height: 14px; }
+.avatar-pixel-frame {
+  order: -1;
+  flex: none;
+  width: 50px;
+  height: 50px;
+  box-sizing: border-box;
   display: grid;
   place-items: center;
+  margin: -3.5px;
+  padding: 2.5px;
+  background: #5e4634;
+  clip-path: polygon(16px 0, 34px 0, 34px 3px, 40px 3px, 40px 6px, 44px 6px, 44px 10px, 47px 10px, 47px 16px, 50px 16px, 50px 34px, 47px 34px, 47px 40px, 44px 40px, 44px 44px, 40px 44px, 40px 47px, 34px 47px, 34px 50px, 16px 50px, 16px 47px, 10px 47px, 10px 44px, 6px 44px, 6px 40px, 3px 40px, 3px 34px, 0 34px, 0 16px, 3px 16px, 3px 10px, 6px 10px, 6px 6px, 10px 6px, 10px 3px, 16px 3px);
+  box-shadow: 2px 2px 0 #e3d8c7;
+  transform: scale(.86);
+}
+.avatar-circle {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background: #f8dca5;
+  clip-path: polygon(14px 0, 31px 0, 31px 3px, 36px 3px, 36px 6px, 40px 6px, 40px 10px, 43px 10px, 43px 14px, 45px 14px, 45px 31px, 43px 31px, 43px 36px, 40px 36px, 40px 40px, 36px 40px, 36px 43px, 31px 43px, 31px 45px, 14px 45px, 14px 43px, 9px 43px, 9px 40px, 5px 40px, 5px 36px, 2px 36px, 2px 31px, 0 31px, 0 14px, 2px 14px, 2px 10px, 5px 10px, 5px 6px, 9px 6px, 9px 3px, 14px 3px);
+  image-rendering: pixelated;
   font-size: 20px;
 }
 
@@ -245,5 +299,35 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   .top { gap: 14px; }
   .brand { min-width: 0; }
   .user-pill, .coin { display: none; }
+}
+
+/* Header remains shared, with the lobby's cream-and-gold game navigation language. */
+.top { min-height: 78px; background: rgba(255, 250, 240, .97); border-bottom-color: #bd6d45; }
+.nav button { color: #443127; border: 2px solid transparent; border-radius: 9px; font-size: 15px; }
+.coin { border-color: #d4b17a; border-radius: 9px; box-shadow: 2px 2px 0 #ead8b9; }
+@media (min-width: 851px) and (max-width: 1120px) {
+  .top { min-height: 68px; padding: 0 22px; gap: 14px; }
+  .brand :deep(.name) { font-size: 17px; }
+  .nav { gap: 2px; }
+  .nav button { padding: 8px 7px; font-size: 13px; }
+  .account { gap: 6px; }
+  .coin { height: 35px; padding: 0 9px; font-size: 12px; }
+  .coin-icon { width: 16px; height: 16px; }
+  .nickname { font-size: 15px; }
+  .avatar-pill { height: 38px; gap: 5px; }
+  .avatar-pixel-frame { transform: scale(.76); }
+}
+@media (max-width: 850px) {
+  .top { height: auto; min-height: 68px; padding: 10px 16px; gap: 12px; flex-wrap: wrap; }
+  .brand { min-width: 125px; }
+  .nav { order: 3; width: 100%; justify-content: space-between; }
+  .nav button { flex: 1; padding: 8px 6px; font-size: 12px; }
+  .account { gap: 6px; }
+}
+@media (max-width: 480px) {
+  .top { padding: 8px 12px; }
+  .brand :deep(.name) { font-size: 16px; }
+  .brand :deep(.mark) { width: 38px; height: 38px; font-size: 19px; }
+  .account .coin, .nickname { display: none; }
 }
 </style>

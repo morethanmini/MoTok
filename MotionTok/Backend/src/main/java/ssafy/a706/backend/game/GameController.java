@@ -9,6 +9,8 @@ import org.springframework.messaging.simp.annotation.SendToUser;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
+import ssafy.a706.backend.game.dto.GameDrawRequest;
+import ssafy.a706.backend.game.dto.GameDrawResultRequest;
 import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameProgressRequest;
 import ssafy.a706.backend.game.dto.GameStartRequest;
@@ -50,6 +52,17 @@ public class GameController {
     @MessageMapping("/rooms/{roomId}/game/finish")
     public void finish(@DestinationVariable String roomId, GameFinishRequest request, Principal principal) {
         gameSessionService.finish(roomId, request, extractSender(principal));
+    }
+
+    // ── 그림으로 말해요(게임 10, 명세 v0.2.20) ──
+    @MessageMapping("/rooms/{roomId}/game/draw")
+    public void draw(@DestinationVariable String roomId, GameDrawRequest request, Principal principal) {
+        gameSessionService.draw(roomId, request, extractSender(principal));
+    }
+
+    @MessageMapping("/rooms/{roomId}/game/draw-result")
+    public void drawResult(@DestinationVariable String roomId, GameDrawResultRequest request, Principal principal) {
+        gameSessionService.drawResult(roomId, request, extractSender(principal));
     }
 
     private AuthPrincipal extractSender(Principal principal) {

@@ -1,0 +1,127 @@
+<script setup lang="ts">
+/**
+ * 친구 초대 (-100) — 대기실에서 친구 목록을 열어 이 방으로 부른다.
+ *
+ * 이미 방에 있는 친구는 목록에서 뺀다. 오프라인 친구는 남겨 두되 상태를 적어 준다 —
+ * 초대는 5분 살아 있으므로 그 사이 들어오면 받을 수 있고, 막아 버리면 "왜 안 보이지"가 된다.
+ *
+ * 보낸 결과는 토스트가 아니라 줄마다 표시한다. 여러 명을 연달아 부르는 화면이라
+ * 누구까지 보냈는지가 목록 위에 그대로 남아 있어야 한다.
+ */
+import { computed, ref } from 'vue'
+import { friendsApi, invitationsApi, ApiError, type Friend } from '@/api'
+import { useAsyncData } from '@/composables/useAsyncData'
+import PixelModal from '@/components/common/PixelModal.vue'
+
+const props = defineProps<{ roomId: string; memberIds: string[] }>()
+defineEmits<{ close: [] }>()
+
+const NO_FRIENDS: Friend[] = []
+const { data: friends, loading } = useAsyncData(() => friendsApi.list(), NO_FRIENDS)
+
+const invitable = computed(() =>
+  friends.value.filter((f) => !props.memberIds.includes(String(f.userId))),
+)
+
+/** userId → 'sending' | 'sent'. 성공한 줄은 되돌리지 않는다(중복 발송은 서버도 409로 막는다). */
+const state = ref<Record<number, 'sending' | 'sent'>>({})
+const error = ref('')
+
+function statusLabel(f: Friend) {
+  if (f.presence === 'IN_ROOM') return '다른 방에서 게임 중'
+  return f.presence === 'ONLINE' ? '접속 중' : '오프라인'
+}
+
+async function invite(friend: Friend) {
+  if (state.value[friend.userId]) return
+  state.value[friend.userId] = 'sending'
+  error.value = ''
+  try {
+    await invitationsApi.send(props.roomId, friend.userId)
+    state.value[friend.userId] = 'sent'
+  } catch (e) {
+    delete state.value[friend.userId]
+    error.value = e instanceof ApiError ? e.message : '초대를 보내지 못했어요'
+  }
+}
+</script>
+
+<template>
+  <PixelModal @close="$emit('close')">
+    <h3 class="invite-title">👋 친구 초대</h3>
+    <p class="invite-desc">부른 친구는 로비에서 초대 카드를 받아요. 초대는 5분 뒤 사라져요.</p>
+
+    <p v-if="error" class="invite-error">{{ error }}</p>
+
+    <p v-if="loading" class="invite-empty">친구 목록을 불러오는 중…</p>
+    <p v-else-if="invitable.length === 0" class="invite-empty">
+      부를 수 있는 친구가 없어요.<br />친구 목록에서 친구를 추가해 보세요!
+    </p>
+    <ul v-else class="invite-list">
+      <li v-for="f in invitable" :key="f.userId" class="invite-row">
+        <i class="dot" :class="{ off: f.presence === 'OFFLINE' }" />
+        <div class="who">
+          <b>{{ f.nickname }}</b>
+          <small>{{ statusLabel(f) }}</small>
+        </div>
+        <button
+          class="invite-btn"
+          :class="{ done: state[f.userId] === 'sent' }"
+          :disabled="!!state[f.userId]"
+          @click="invite(f)"
+        >
+          {{ state[f.userId] === 'sent' ? '보냄 ✓' : state[f.userId] === 'sending' ? '…' : '초대' }}
+        </button>
+      </li>
+    </ul>
+  </PixelModal>
+</template>
+
+<style scoped>
+.invite-title { margin: 0 0 6px; font-size: 15px; }
+.invite-desc { margin: 0 0 12px; font-size: 9px; line-height: 1.6; color: var(--c-muted); }
+.invite-error {
+  margin: 0 0 10px;
+  padding: 7px 9px;
+  border: 2px solid var(--c-coral);
+  border-radius: 9px;
+  background: #ffeef0;
+  font-size: 9px;
+  color: #a3323c;
+}
+.invite-empty { margin: 20px 4px; font-size: 9px; line-height: 1.7; color: var(--c-muted); text-align: center; }
+
+.invite-list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow: auto; }
+.invite-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 2px;
+  border-bottom: 2px dashed #eaddea;
+}
+.invite-row:last-child { border: 0; }
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c-mint);
+  box-shadow: 0 0 0 3px var(--c-mint-soft);
+}
+.dot.off { background: #b3aab3; box-shadow: 0 0 0 3px #ece6ec; }
+.who { min-width: 0; }
+.who b { display: block; font-size: 10px; }
+.who small { display: block; margin-top: 3px; font-size: 8px; color: var(--c-muted); }
+.invite-btn {
+  margin-left: auto;
+  border: 2px solid var(--c-ink);
+  border-radius: 8px;
+  background: var(--c-yellow);
+  padding: 6px 10px;
+  font-size: 8px;
+  font-weight: 700;
+  box-shadow: var(--shadow-sm);
+}
+.invite-btn:disabled { box-shadow: none; }
+.invite-btn.done { background: var(--c-mint-soft); }
+</style>

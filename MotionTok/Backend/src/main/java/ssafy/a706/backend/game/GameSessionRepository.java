@@ -39,8 +39,10 @@ public class GameSessionRepository {
         Map<String, String> fields = new LinkedHashMap<>();
         fields.put("sessionId", session.sessionId());
         fields.put("gameId", String.valueOf(session.gameId()));
+        // 과제 payload는 게임에 따라 JSON일 수 있어 URL-encode로 안전하게 담는다 (-137).
+        // constellationKey는 -137에서 범용 challenge로 일반화됐다 — 별자리가 없는 게임
+        // (그림으로 말해요 등)은 null이 오고, 아래 가드가 Redis 해시 null 삽입을 막는다.
         if (session.challenge() != null) {
-            // 과제 payload는 게임에 따라 JSON일 수 있어 URL-encode로 안전하게 담는다 (-137)
             fields.put("challenge", URLEncoder.encode(session.challenge(), StandardCharsets.UTF_8));
         }
         if (session.setterUserId() != null) {

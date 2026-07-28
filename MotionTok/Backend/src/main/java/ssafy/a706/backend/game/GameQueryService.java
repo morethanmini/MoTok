@@ -96,7 +96,7 @@ public class GameQueryService {
             Leaderboard row = rows.get(scored.getKey());
             entries.add(new LeaderboardEntryResponse(
                     entries.size() + 1, scored.getKey(), user.getNickname(),
-                    scored.getValue(), row == null ? 0 : row.getPlayCount()));
+                    scored.getValue(), row == null ? 0 : row.getPlayCount(), user.getAvatarUrl()));
         }
         return new LeaderboardResponse(gameId, entries, myRank(gameId, mode, principal, entries));
     }
@@ -124,9 +124,12 @@ public class GameQueryService {
         if (row == null) {
             return null;
         }
+        // 노출 목록 밖이라 위에서 읽은 User 맵에 내가 없다. avatarUrl을 null로 두면 같은 필드가
+        // "목록 안이면 있고 밖이면 없는" 값이 되어 쓰는 쪽이 신뢰할 수 없으므로 한 건 더 읽는다.
+        String avatarUrl = userRepository.findById(member.id()).map(User::getAvatarUrl).orElse(null);
         return new LeaderboardEntryResponse(
                 (int) (zeroBased + 1), member.id(), member.displayName(),
-                row.getBestScore(), row.getPlayCount());
+                row.getBestScore(), row.getPlayCount(), avatarUrl);
     }
 
     /** Redis 유실 복구(-96 비기능): ZSET이 비었는데 DB 기록이 있으면 leaderboards에서 재적재. */
