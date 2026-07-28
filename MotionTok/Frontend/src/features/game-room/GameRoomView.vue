@@ -5,7 +5,7 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch 
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason } from '@/api'
+import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason } from '@/api'
 import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { useCamera } from '@/composables/useCamera'
@@ -175,6 +175,37 @@ const showHostWaiting = computed(
 )
 
 const selfVideoEl = ref<HTMLVideoElement>()
+const kickTarget = ref<ParticipantView | null>(null)
+const kicking = ref(false)
+const kickReason = ref<KickReason>('GAME_DISRUPTION')
+const KICK_REASONS: ReadonlyArray<{ code: KickReason; label: string }> = [
+  { code: 'MANNER_VIOLATION', label: '비매너 행위' },
+  { code: 'INAPPROPRIATE_PROFILE', label: '부적절한 프로필' },
+  { code: 'GAME_DISRUPTION', label: '게임 진행 방해' },
+  { code: 'SPAM_AD', label: '도배·광고' },
+  { code: 'OTHER', label: '기타' },
+]
+function openKick(target: ParticipantView | null) {
+  if (!amRoomHost.value || !target) return
+  kickReason.value = 'GAME_DISRUPTION'
+  kickTarget.value = target
+}
+function closeKick() {
+  if (!kicking.value) kickTarget.value = null
+}
+async function confirmKick() {
+  if (!kickTarget.value || kicking.value) return
+  kicking.value = true
+  try {
+    await roomsApi.kick(roomCode.value, kickTarget.value.identity, kickReason.value)
+    flash(`${kickTarget.value.name}님을 방에서 내보냈어요`)
+    kickTarget.value = null
+  } catch (e) {
+    flash(e instanceof ApiError ? e.message : '강퇴 처리에 실패했어요')
+  } finally {
+    kicking.value = false
+  }
+}
 const selfVideoAspect = ref(8 / 5)
 function syncSelfVideoAspect() {
   const video = selfVideoEl.value
@@ -851,6 +882,31 @@ watch(
     )
   },
 )
+
+// 강퇴·퇴장 멤버 이벤트(-71, -73)를 즉시 반영한다. 특히 내 ID가 대상이면 REST 요청 성공만으로
+// 화면이 남아 있지 않도록 LiveKit/카메라 연결을 끊고 확인 모달 없이 로비로 이동한다.
+watch(
+  () => roomChat.memberRemoved.value,
+  async (e) => {
+    if (!e) return
+    participantCount.value = e.participantCount
+    memberIds.value = memberIds.value.filter((id) => id !== e.userId)
+  },
+)
+watch(
+  () => roomChat.memberKicked.value,
+  async (e) => {
+    if (!e) return
+    participantCount.value = e.participantCount
+    memberIds.value = memberIds.value.filter((id) => id !== e.userId)
+    if (e.userId !== myParticipantId.value) return
+
+    await lk.disconnect()
+    camera.stop()
+    leavingIntentionally = true
+    await router.replace({ name: RouteName.Lobby, query: { kickedReason: e.reason } })
+  },
+)
 // 헤더 링크·뒤로가기 등으로 방을 벗어나려 하면 확인 모달. "나가기" 같은 의도된 이동은 통과.
 let leavingIntentionally = false
 const showLeaveConfirm = ref(false)
@@ -997,6 +1053,8 @@ const startHint = computed(() =>
             :cover="coverFor(slot)"
             play-audio
             compact
+            :can-kick="amRoomHost && !!slot.view"
+            @kick="openKick(slot.view)"
           />
         </div>
         <!-- 내 캠 — 항상 가장 크게 -->
@@ -1100,6 +1158,8 @@ const startHint = computed(() =>
             :cover="coverFor(slot)"
             play-audio
             compact
+            :can-kick="amRoomHost && !!slot.view"
+            @kick="openKick(slot.view)"
           />
         </div>
         <div v-else class="others-tray" :style="{ '--cols': othersColumns }">
@@ -1110,6 +1170,8 @@ const startHint = computed(() =>
             :host="slot.host"
             :cover="coverFor(slot)"
             play-audio
+            :can-kick="amRoomHost && !!slot.view"
+            @kick="openKick(slot.view)"
           />
         </div>
 
@@ -1303,6 +1365,26 @@ const startHint = computed(() =>
       </div>
     </PixelModal>
 
+    <PixelModal v-if="kickTarget" variant="lobby" @close="closeKick">
+      <div class="leave-confirm">
+        <span class="leave-icon" aria-hidden="true">⚠️</span>
+        <p class="leave-kicker">HOST CONTROL</p>
+        <h3 class="leave-title">{{ kickTarget.name }}님을 강퇴할까요?</h3>
+        <p class="leave-desc">강퇴 사유를 선택해 주세요. 강퇴된 참가자는 방이 유지되는 동안 재입장할 수 없어요.</p>
+        <div class="kick-reasons" role="radiogroup" aria-label="강퇴 사유">
+          <label v-for="reason in KICK_REASONS" :key="reason.code" class="kick-reason-option">
+            <input v-model="kickReason" type="radio" name="kick-reason" :value="reason.code" :disabled="kicking" />
+            {{ reason.label }}
+          </label>
+        </div>
+        <div class="leave-confirm-actions">
+          <PixelButton class="leave-cancel" block :disabled="kicking" @click="closeKick">취소</PixelButton>
+          <PixelButton class="leave-submit" block :disabled="kicking" @click="confirmKick">강퇴하기</PixelButton>
+        </div>
+      </div>
+    </PixelModal>
+
+
     <!-- 채팅 메시지 신고 -->
     <PixelModal v-if="reportTarget" @close="closeReport">
       <h3 class="report-title">🚩 메시지 신고</h3>
@@ -1455,6 +1537,10 @@ const startHint = computed(() =>
 }
 .leave-confirm-actions :deep(.leave-cancel) { background: #fff7e5; color: #4b372b; }
 .leave-confirm-actions :deep(.leave-submit) { background: #ef7775; color: #fff; }
+.kick-reasons { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: -7px 0 19px; text-align: left; }
+.kick-reason-option { display: flex; align-items: center; gap: 5px; min-height: 27px; padding: 4px 6px; border: 1px solid #d9c29e; border-radius: 5px; background: #fffaf0; color: #715a48; font-size: 8px; cursor: pointer; }
+.kick-reason-option:has(input:checked) { border-color: #d45c63; background: #ffe8e7; color: #a94d52; }
+.kick-reason-option input { accent-color: #d45c63; margin: 0; }
 
 .room-ribbon { flex: none; position: relative; height: 54px; padding: 0 28px; display: flex; align-items: center; gap: 14px; border-bottom: 2px solid rgba(56, 38, 61, .18); background: linear-gradient(110deg, rgba(207, 244, 231, .95), rgba(255, 240, 185, .95)); z-index: 5; }
 .room-ribbon .px-kicker { padding: 5px 9px; font-size: 8px; }
