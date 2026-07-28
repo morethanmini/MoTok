@@ -68,22 +68,10 @@ const podiumEntries = computed(() =>
 )
 const selectedGame = computed(() => games.value.find((game) => game.id === selected.value)?.name ?? '이번 게임')
 const viewer = useUserProfile()
-const selectedEntry = ref<LeaderboardEntry | null>(null)
 const { message: toast, flash } = useToast()
 
-const profileStats = computed(() => selectedEntry.value ? [
-  { label: '순위', value: `#${selectedEntry.value.rank}` },
-  { label: '최고 점수', value: selectedEntry.value.bestScore.toLocaleString() },
-  { label: '플레이', value: `${selectedEntry.value.playCount}회` },
-] : [])
-
 function openProfile(entry: LeaderboardEntry) {
-  selectedEntry.value = entry
   viewer.open(entry.userId, entry.nickname)
-}
-function closeProfile() {
-  selectedEntry.value = null
-  viewer.close()
 }
 function rankMark(rank: number) {
   return rank <= 3 ? ['👑', '✦', '●'][rank - 1] : String(rank).padStart(2, '0')
@@ -175,7 +163,7 @@ function selectGame(gameId: number) {
       </div>
     </section>
 
-    <UserProfileModal v-if="viewer.isOpen.value" :user-id="viewer.targetId.value!" :profile="viewer.profile.value" :nickname="viewer.nickname.value" :loading="viewer.loading.value" :error="viewer.error.value" :stats="profileStats" @close="closeProfile" @reported="flash" />
+    <UserProfileModal v-if="viewer.isOpen.value" :user-id="viewer.targetId.value!" :profile="viewer.profile.value" :nickname="viewer.nickname.value" :loading="viewer.loading.value" :error="viewer.error.value" @close="viewer.close" @reported="flash" />
     <PixelToast :message="toast" />
   </AppPage>
 </template>
