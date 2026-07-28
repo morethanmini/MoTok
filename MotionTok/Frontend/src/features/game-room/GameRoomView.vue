@@ -9,6 +9,9 @@ import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type 
 import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { useCamera } from '@/composables/useCamera'
+import { useDecoration } from '@/composables/useDecoration'
+import { useStickerCompositor } from '@/composables/useStickerCompositor'
+import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
 import { useRoomChat } from '@/composables/useRoomChat'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
@@ -49,6 +52,28 @@ const { message: toast, flash } = useToast(2600)
 const lk = useLiveKitRoom()
 const camera = useCamera()
 const CAMERA_CONSTRAINTS = { video: { width: 640, height: 400 }, audio: false } as const
+
+// 장착 스티커는 발행 트랙에 합성해서 내보낸다 — 원본 캡처에 그리면 모션 인식 입력이 오염되고,
+// 화면에만 얹으면 나만 보인다. 합성이 안 되는 환경에서는 원본 트랙으로 조용히 되돌아간다.
+const decor = useDecoration()
+const compositor = useStickerCompositor()
+
+/** 셀프 타일 영상 비율 — 스티커 오버레이가 레터박스를 빼고 영상 영역에만 그리도록. */
+const selfAspect = ref<number | null>(null)
+function onSelfVideoMeta(e: Event) {
+  const el = e.target as HTMLVideoElement
+  if (el.videoWidth && el.videoHeight) selfAspect.value = el.videoWidth / el.videoHeight
+}
+
+/** 발행에 쓸 트랙 — 스티커가 있으면 합성 트랙, 없거나 합성 실패면 원본 트랙. */
+async function publishableTrack(stream: MediaStream | null): Promise<MediaStreamTrack | null> {
+  const source = stream?.getVideoTracks()[0] ?? null
+  if (!stream || !source) return null
+  if (decor.sprites.value.length === 0) return source
+  // 이미 합성 중이면 그대로 쓴다 — 다시 시작하면 지금 발행돼 있는 복제본에 프레임이 끊긴다.
+  if (compositor.track.value) return compositor.track.value
+  return (await compositor.start(stream, () => decor.sprites.value)) ?? source
+}
 // 대기실 채팅 + 게임 제안 (STOMP, 명세 §7)
 const roomChat = useRoomChat()
 const myParticipantId = computed(() => readAccessClaims()?.sub ?? null)
@@ -204,8 +229,10 @@ onMounted(async () => {
   // 내 타일과 다른 사람 화면 모두 꺼져 보이고, 방 안에서 카메라를 켜면 그때 발행한다.
   const stream = await camera.start(CAMERA_CONSTRAINTS)
   if (!stream) flash('카메라를 켤 수 없어요(권한/장치 확인)')
+  // 장착 스티커를 먼저 읽어 두고 합성 트랙을 만든다(실패하면 원본 트랙으로 발행).
+  await decor.load()
   const ok = await lk.connect(roomCode.value, {
-    cameraTrack: initialCamOn.value ? (stream?.getVideoTracks()[0] ?? null) : null,
+    cameraTrack: initialCamOn.value ? await publishableTrack(stream) : null,
     microphone: initialMicOn.value,
   })
   if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
@@ -394,14 +421,14 @@ async function toggleCam() {
       flash('카메라 권한을 허용해 주세요')
       return
     }
-    const track = s.getVideoTracks()[0]
+    const track = await publishableTrack(s)
     if (connected.value && track) await lk.publishCameraTrack(track)
     return
   }
   if (connected.value) {
     // 발행된 카메라가 없으면(입장 시 발행 실패) 지금 발행한다
     if (!(await lk.toggleCamera())) {
-      const track = camera.stream.value?.getVideoTracks()[0]
+      const track = await publishableTrack(camera.stream.value)
       if (track) await lk.publishCameraTrack(track)
     }
     return
@@ -844,7 +871,24 @@ const startHint = computed(() =>
       <div class="cam-stage">
         <!-- 내 캠 — 항상 가장 크게 -->
         <div class="self-tile self-spot">
-          <video v-show="selfCamOn" ref="selfVideoEl" autoplay playsinline muted class="self-video" />
+          <video
+            v-show="selfCamOn"
+            ref="selfVideoEl"
+            autoplay
+            playsinline
+            muted
+            class="self-video"
+            @loadedmetadata="onSelfVideoMeta"
+          />
+          <!-- 내 <video>는 원본 캡처(게임 입력용)라 스티커가 없다. 발행 트랙에는 합성돼 나가므로
+               내 화면에도 같은 스티커를 얹어 준다. self-video는 좌우 반전이라 mirrored,
+               object-fit:contain으로 생기는 여백을 빼려고 실제 영상 비율을 넘긴다. -->
+          <StickerOverlay
+            v-if="selfCamOn"
+            :sprites="decor.sprites.value"
+            mirrored
+            :frame-aspect="selfAspect"
+          />
           <div v-if="!selfCamOn" class="cam-off">
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">
               <path d="M2 6h11v12H2zM16 10l6-4v12l-6-4" /><line x1="2" y1="2" x2="22" y2="22" />
