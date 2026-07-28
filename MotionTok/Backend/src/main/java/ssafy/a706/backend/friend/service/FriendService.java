@@ -14,6 +14,8 @@ import ssafy.a706.backend.friend.model.RequestAction;
 import ssafy.a706.backend.friend.repository.FriendshipRepository;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.global.notification.UserNotification;
+import ssafy.a706.backend.global.notification.UserNotifier;
 import ssafy.a706.backend.presence.model.PresenceSnapshot;
 import ssafy.a706.backend.presence.model.PresenceState;
 import ssafy.a706.backend.presence.service.PresenceService;
@@ -51,6 +53,8 @@ public class FriendService {
     private final FriendshipRepository friendshipRepository;
     private final UserRepository userRepository;
     private final PresenceService presenceService;
+    /** 요청·수락·해제를 상대 화면에 즉시 반영한다(-149) — 12초 폴링을 대신한다. */
+    private final UserNotifier userNotifier;
 
     /**
      * GET /friends — 방향과 무관하게 ACCEPTED인 상대들.
@@ -131,7 +135,10 @@ public class FriendService {
         try {
             Friendship saved = friendshipRepository.saveAndFlush(
                     Friendship.request(requesterId, target.getId()));
-            return FriendRequestItemResponse.of(saved, requester.getNickname(), target.getNickname());
+            FriendRequestItemResponse response =
+                    FriendRequestItemResponse.of(saved, requester.getNickname(), target.getNickname());
+            userNotifier.notify(target.getId(), UserNotification.friendRequest(response));
+            return response;
         } catch (DataIntegrityViolationException e) {
             // UNIQUE(requester_id, addressee_id) — 같은 방향으로 이미 보낸 요청이 있다.
             throw new BusinessException(ErrorCode.FRIEND_REQUEST_DUPLICATE);
@@ -153,6 +160,7 @@ public class FriendService {
 
         if (action == RequestAction.REJECT) {
             friendshipRepository.delete(request);
+            userNotifier.notify(request.getRequesterId(), UserNotification.friendListChanged());
             return;
         }
 
@@ -160,6 +168,8 @@ public class FriendService {
         friendshipRepository.findByRequesterIdAndAddresseeId(userId, request.getRequesterId())
                 .filter(Friendship::isPending)
                 .ifPresent(friendshipRepository::delete);
+        // 보낸 사람 화면에서 '대기 중'이 사라지고 친구 목록에 나타나야 한다.
+        userNotifier.notify(request.getRequesterId(), UserNotification.friendListChanged());
     }
 
     /**
@@ -173,6 +183,7 @@ public class FriendService {
             throw new BusinessException(ErrorCode.FRIEND_REQUEST_FORBIDDEN);
         }
         friendshipRepository.delete(request);
+        userNotifier.notify(request.getAddresseeId(), UserNotification.friendListChanged());
     }
 
     /**
@@ -203,6 +214,7 @@ public class FriendService {
                 .findFirst()
                 .orElseThrow(() -> new BusinessException(ErrorCode.FRIEND_NOT_FOUND));
         friendshipRepository.delete(accepted);
+        userNotifier.notify(friendId, UserNotification.friendListChanged());
     }
 
     private Friendship pendingRequest(Long requestId) {
@@ -231,7 +243,8 @@ public class FriendService {
                 .collect(Collectors.toMap(User::getId, Function.identity()));
     }
 
-    private static boolean isVisible(User user) {
+    /** 프레즌스 push 경로({@link FriendPresenceNotifier})도 조회와 같은 기준을 써야 해서 패키지에 연다. */
+    static boolean isVisible(User user) {
         return user.getDeletedAt() == null && user.getStatus() == UserStatus.ACTIVE;
     }
 }

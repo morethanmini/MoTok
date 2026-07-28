@@ -22,6 +22,7 @@ import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
+import ssafy.a706.backend.liveroom.service.LiveRoomService;
 import ssafy.a706.backend.signal.RoomMembershipReader;
 
 import java.time.Instant;
@@ -56,6 +57,9 @@ class GameSessionServiceTest {
     @Mock SimpMessagingTemplate messagingTemplate;
     @Mock TaskScheduler gameTaskScheduler;
     @Mock ApplicationEventPublisher eventPublisher;
+
+    /** 방 상태 전환이 서비스 경유로 바뀌었다(-148) — 그 안에 로비 실시간 갱신 알림이 붙어 있다. */
+    @Mock LiveRoomService liveRoomService;
 
     @InjectMocks GameSessionService service;
 
@@ -98,7 +102,7 @@ class GameSessionServiceTest {
 
         service.start(ROOM_ID, new GameStartRequest(1L, null, null), host);
 
-        verify(liveRoomRepository).updateStatus(ROOM_ID, "PLAYING");
+        verify(liveRoomService).changeStatus(ROOM_ID, "PLAYING");
         verify(gameTaskScheduler).schedule(any(Runnable.class), any(Instant.class));
         verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
         GameEventResponse event = eventCaptor.getValue();
@@ -306,7 +310,7 @@ class GameSessionServiceTest {
         endTaskCaptor.getValue().run();
 
         verify(sessionRepository).markEnded(ROOM_ID);
-        verify(liveRoomRepository).updateStatus(ROOM_ID, "WAITING");
+        verify(liveRoomService).changeStatus(ROOM_ID, "WAITING");
         // GAME_START 1회 + GAME_END 1회
         verify(messagingTemplate, org.mockito.Mockito.times(2))
                 .convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
@@ -386,7 +390,7 @@ class GameSessionServiceTest {
 
         verify(sessionRepository).addToTotal(ROOM_ID, "2", 70);
         verify(sessionRepository, never()).markEnded(any());
-        verify(liveRoomRepository, never()).updateStatus(eq(ROOM_ID), eq("WAITING"));
+        verify(liveRoomService, never()).changeStatus(eq(ROOM_ID), eq("WAITING"));
         ArgumentCaptor<GameSession> savedCaptor = ArgumentCaptor.forClass(GameSession.class);
         verify(sessionRepository).saveSession(eq(ROOM_ID), savedCaptor.capture());
         assertThat(savedCaptor.getValue().roundIndex()).isEqualTo(1);
@@ -425,7 +429,7 @@ class GameSessionServiceTest {
 
         verify(sessionRepository).addToTotal(ROOM_ID, "1", 90);
         verify(sessionRepository).markEnded(ROOM_ID);
-        verify(liveRoomRepository).updateStatus(ROOM_ID, "WAITING");
+        verify(liveRoomService).changeStatus(ROOM_ID, "WAITING");
         verify(messagingTemplate, org.mockito.Mockito.times(2))
                 .convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
         GameEventResponse end = eventCaptor.getValue();

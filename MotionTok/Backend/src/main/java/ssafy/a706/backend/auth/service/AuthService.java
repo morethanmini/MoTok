@@ -20,6 +20,7 @@ import ssafy.a706.backend.auth.principal.GuestPrincipal;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
+import ssafy.a706.backend.global.config.StompSessionRegistry;
 import ssafy.a706.backend.presence.service.PresenceService;
 import ssafy.a706.backend.user.entity.User;
 import ssafy.a706.backend.user.repository.UserRepository;
@@ -45,6 +46,7 @@ public class AuthService {
     private final OauthLinkService oauthLinkService;
     private final LiveRoomService liveRoomService;
     private final PresenceService presenceService;
+    private final StompSessionRegistry stompSessionRegistry;
     private final RejoinPolicy rejoinPolicy;
 
     public AvailabilityResponse checkEmail(String email) {
@@ -193,9 +195,15 @@ public class AuthService {
     /**
      * 로그아웃 — Redis에서 Refresh 토큰을 지우는 것이 곧 서버측 무효화다.
      * 접속 상태도 함께 지운다: TTL(60s)을 기다리면 이미 나간 사용자가 친구 목록에 온라인으로 남는다.
+     *
+     * <p>웹소켓까지 끊는 이유(-142) — STOMP 인증은 CONNECT 때 한 번뿐이라, 전역 연결로 바뀐 뒤로는
+     * 로그아웃해도 소켓이 살아 있으면 다음 하트비트가 방금 지운 프레즌스를 <b>되살린다</b>.
+     * 클라이언트가 연결을 닫아 주기를 믿지 않고 서버가 먼저 끊는다. 순서도 중요하다 —
+     * 소켓을 먼저 닫아야 그 사이에 들어오는 비트가 없다.</p>
      */
     public void logout(Long userId) {
         refreshTokenStore.delete(userId);
+        stompSessionRegistry.closeAllOf(userId);
         presenceService.clear(userId);
     }
 
