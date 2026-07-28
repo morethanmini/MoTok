@@ -1,12 +1,13 @@
 <script setup lang="ts">
 /**
  * 로비 진입 스플래시(로딩) 오버레이.
- * 여기서 손 인식 모델(MediaPipe)을 미리 받아 세션 싱글턴에 채워 둔다 — 첫 게임 진입이 즉시 시작된다.
+ * 여기서 모션 인식 모델(MediaPipe)을 <b>모두</b> 미리 받아 세션 싱글턴에 채워 둔다 —
+ * 첫 게임 진입이 즉시 시작된다. 손(7.8MB)·포즈(9.4MB) 두 개라 합쳐서 17MB 남짓이다.
  * 로딩바는 실제 다운로드 진행률을 따라가고, 100%에 닿으면 버튼 없이 스스로 로비로 진입한다.
  * (BGM은 useBgm이 첫 사용자 상호작용에서 자동 재생하므로 입장 버튼 제스처가 더는 필요 없다.)
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { preloadHandLandmarker } from '@/composables/useHandLandmarker'
+import { MOTION_MODELS } from '@/composables/motionModels'
 
 const emit = defineEmits<{ enter: [] }>()
 
@@ -25,11 +26,21 @@ function finish() {
   holdTimer = setTimeout(() => emit('enter'), 320)
 }
 
+/** 지금 받고 있는 모델 이름 — 17MB라 한 줄짜리 안내만으로는 멈춘 것처럼 보인다. */
+const loadingLabel = ref(MOTION_MODELS[0]?.label ?? '')
+
 onMounted(async () => {
-  // 로딩은 앞으로만 흐르게 한다(네트워크 재측정으로 바가 뒤로 튀지 않도록).
-  await preloadHandLandmarker((f) => {
-    progress.value = Math.max(progress.value, Math.round(f * 100))
-  })
+  // 순서대로 하나씩 받는다 — 동시에 받으면 대역폭을 나눠 써서 둘 다 늦게 끝난다.
+  let completed = 0
+  for (const model of MOTION_MODELS) {
+    loadingLabel.value = model.label
+    // 로딩은 앞으로만 흐르게 한다(네트워크 재측정으로 바가 뒤로 튀지 않도록).
+    await model.load((f) => {
+      progress.value = Math.max(progress.value, Math.round((completed + f * model.weight) * 100))
+    })
+    completed += model.weight
+    progress.value = Math.max(progress.value, Math.round(completed * 100))
+  }
   // 성공이든 실패든 로비로 보낸다 — 로비 자체는 모델이 필요 없고, 모델 오류는 게임 화면이 따로 안내한다.
   finish()
 })
@@ -46,7 +57,7 @@ onBeforeUnmount(() => clearTimeout(holdTimer))
         <div class="loading-fill" :style="{ width: `${Math.max(progress, 6)}%` }" />
       </div>
       <small>
-        {{ done ? '준비 완료! 로비로 이동할게요…' : `별과 게임을 불러오고 있어요… ${progress}%` }}
+        {{ done ? '준비 완료! 로비로 이동할게요…' : `${loadingLabel} 모델을 불러오고 있어요… ${progress}%` }}
       </small>
     </div>
   </div>
