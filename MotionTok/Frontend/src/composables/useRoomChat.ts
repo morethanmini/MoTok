@@ -24,6 +24,8 @@ import type {
   DrawOp,
   GameEvent,
   LiveRoomHostChangedEvent,
+  LiveRoomMemberKickedEvent,
+  LiveRoomMemberRemovedEvent,
   LiveRoomUpdatedEvent,
   StompErrorPayload,
 } from '@/api/types'
@@ -52,6 +54,10 @@ export function useRoomChat() {
   const roomUpdated = ref<LiveRoomUpdatedEvent | null>(null)
   /** 방장 변경(-72). 이걸 반영하지 않으면 방장이 나가도 새 방장에게 시작 권한이 안 붙는다. */
   const hostChanged = ref<LiveRoomHostChangedEvent | null>(null)
+  /** 퇴장·강퇴 알림(-71, -73). 대상 여부는 뷰에서 현재 사용자 ID와 비교한다. */
+  const memberRemoved = ref<LiveRoomMemberRemovedEvent | null>(null)
+  /** 강퇴 알림(-73). 사유가 포함되어 대상에게 안내할 수 있다. */
+  const memberKicked = ref<LiveRoomMemberKickedEvent | null>(null)
 
   function handleChatFrame(body: string) {
     try {
@@ -85,11 +91,15 @@ export function useRoomChat() {
    */
   function handleMembersFrame(body: string) {
     try {
-      const msg = JSON.parse(body) as Partial<LiveRoomUpdatedEvent & LiveRoomHostChangedEvent>
+      const msg = JSON.parse(body) as Partial<LiveRoomUpdatedEvent & LiveRoomHostChangedEvent & LiveRoomMemberKickedEvent>
       if (typeof msg.title === 'string' && typeof msg.maxPlayers === 'number') {
         roomUpdated.value = msg as LiveRoomUpdatedEvent
       } else if (typeof msg.hostUserId === 'string') {
         hostChanged.value = msg as LiveRoomHostChangedEvent
+      } else if (typeof msg.userId === 'string' && typeof msg.participantCount === 'number' && typeof msg.reason === 'string') {
+        memberKicked.value = msg as LiveRoomMemberKickedEvent
+      } else if (typeof msg.userId === 'string' && typeof msg.participantCount === 'number') {
+        memberRemoved.value = msg as LiveRoomMemberRemovedEvent
       }
     } catch {
       // 무시
@@ -121,6 +131,8 @@ export function useRoomChat() {
     lastError.value = null
     roomUpdated.value = null
     hostChanged.value = null
+    memberRemoved.value = null
+    memberKicked.value = null
 
     return new Promise((resolve) => {
       const c = new Client({
@@ -245,14 +257,8 @@ export function useRoomChat() {
     })
   }
 
-  /** AI 채점 결과 발신 — 최초 1회만 수리(SETNX). DRAW_RESULT + 협동 GAME_END가 돌아온다. */
-  function sendGameDrawResult(guesses: string[], answerRank: number, score: number) {
-    if (!client?.connected || !currentRoomId) return
-    client.publish({
-      destination: `/app/rooms/${currentRoomId}/game/draw-result`,
-      body: JSON.stringify({ guesses, answerRank, score }),
-    })
-  }
+  // AI 채점 결과는 클라이언트가 보내지 않는다 — 서버가 GMS를 호출해 점수까지 계산하고
+  // DRAW_RESULT + 협동 GAME_END를 방송한다(REST POST /games/draw/judge, 명세 v0.2.22).
 
   /**
    * 전용 채널을 쓰는 기능(캐치캐치리듬 등)이 **같은 연결에 올라타기 위한 구멍**.
@@ -282,6 +288,8 @@ export function useRoomChat() {
     lastError,
     roomUpdated,
     hostChanged,
+    memberRemoved,
+    memberKicked,
     connect,
     disconnect,
     sendChat,
@@ -292,6 +300,5 @@ export function useRoomChat() {
     sendGameFinish,
     sendGameDraw,
     sendGameTurnSkip,
-    sendGameDrawResult,
   }
 }
