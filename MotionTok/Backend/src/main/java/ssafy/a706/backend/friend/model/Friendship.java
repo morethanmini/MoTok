@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
@@ -36,7 +37,15 @@ import java.time.LocalDateTime;
         uniqueConstraints = @UniqueConstraint(
                 name = "uk_friendship_requester_addressee",
                 columnNames = {"requester_id", "addressee_id"}
-        )
+        ),
+        // 친구 조회는 (requester = 나 OR addressee = 나)를 OR로 묶는다. UNIQUE 제약이 requester로
+        // 시작하는 복합 인덱스라 앞 분기만 그 인덱스를 타고, addressee 분기는 받쳐 줄 인덱스가 없어
+        // 풀스캔으로 떨어진다. 12초 폴링에서는 티가 안 났지만 프레즌스 전이마다 도는 push 경로(-149)
+        // 에서는 그대로 병목이 되므로 양쪽 방향에 인덱스를 세운다.
+        indexes = {
+                @Index(name = "idx_friendship_addressee_status", columnList = "addressee_id, status"),
+                @Index(name = "idx_friendship_requester_status", columnList = "requester_id, status")
+        }
 )
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)

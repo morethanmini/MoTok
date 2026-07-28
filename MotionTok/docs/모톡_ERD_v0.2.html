@@ -116,6 +116,7 @@ erDiagram
   USER ||--o{ GAME_SESSION_RESULT : "전적"
   GAME ||--o{ LEADERBOARD : "게임별 랭킹"
   USER ||--o{ LEADERBOARD : "기록 보유"
+  USER ||--o| USER_CONNECT_TIME : "누적 접속시간"
   SONG ||--o{ CHART : "채보"
   USER ||--o{ SONG : "커스텀 곡 업로드"
   USER ||--o{ CHART : "커스텀 채보 제작"
@@ -251,6 +252,11 @@ erDiagram
     int play_count
     datetime updated_at
   }
+  USER_CONNECT_TIME {
+    bigint user_id PK "users.id 그대로 - FK 제약 없음"
+    bigint total_seconds "누적 접속시간(초)"
+    datetime updated_at
+  }
   SONG {
     bigint id PK
     varchar title
@@ -328,6 +334,12 @@ erDiagram
   <div class="callout"><b>RDB에 없는 것(의도된 부재)</b> — 방/참가자/초대코드/진행 중 세션·점수판/실시간 랭킹 캐시 → <b>Redis</b>(키 설계 v0.1).
   게스트 프로필·기록 → <b>클라이언트 로컬</b>. Refresh Token·비밀번호 재설정 토큰 → <b>Redis</b>(TTL이 만료 정책 그 자체 —
   키 설계 문서에 <code>auth:refresh:{userId}</code>, <code>auth:pwreset:{token}</code> 추가 권장).</div>
+
+  <div class="callout"><b>구현 현황(2026-07-28 · -141 친구 상세)</b> — <code>USER_CONNECT_TIME</code>(<code>user_connect_times</code>) 신설:
+  회원별 <b>누적 접속시간</b>의 유일한 영속 원천. 라이브 누적은 Redis <code>conntime:{userId}</code> 버퍼(하트비트 델타 INCRBY)가 맡고,
+  오프라인 전환·로그아웃 시점에 여기로 flush된다(write-behind — 키맵 참조). <code>user_id</code>는 users.id 그대로의 PK이며
+  FK 제약 없는 Long 참조(FRIENDSHIP·LEADERBOARD와 동일 컨벤션). users 컬럼이 아닌 별도 테이블인 이유 — 공유 엔티티(User) 불가침 +
+  주기 갱신 핫로우 격리. 집계는 배포 시점부터 시작(과거 소급 없음). 전적 조회(-97·-141)는 예정대로 <b>LEADERBOARD만으로</b> 서빙(추가 테이블 없음).</div>
 
   <div class="callout"><b>구현 현황(2026-07-24 · -132 채팅 신고)</b> — 설계 <code>REPORT</code>가 <code>chat_reports</code>로 구현됨(대기실 채팅 신고 특화). 설계 대비 확장: ① 신고 대상이 유저가 아니라 <b>채팅 한 건</b>(room_id+chat_id, Redis Stream <code>room:{roomId}:chat</code> — 키맵 참조) ② 방·채팅이 휘발성이라 원문·닉네임·<b>전후 ±10 맥락(context_json, 시간순·대상 포함)</b>을 신고 시점에 통째로 스냅샷 ③ user FK 대신 값 저장(닉 변경·탈퇴 후에도 신고 시점 표시명 보존, 회원 전용 — 게스트는 다인 방 입장 불가) ④ status에 REVIEWING·REJECTED 추가(관리자 처리 -133). 관리자 API: <code>/api/v1/admin/chat-reports</code>(ADMIN role claim 인가). <code>SANCTION</code>(제재)은 여전히 설계 단계.</div>
 

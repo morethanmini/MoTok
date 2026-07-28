@@ -2,12 +2,19 @@ package ssafy.a706.backend.global.config;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
+import org.springframework.scheduling.TaskScheduler;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
+import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
+import org.springframework.web.socket.config.annotation.WebSocketTransportRegistration;
+import org.springframework.web.socket.handler.WebSocketHandlerDecorator;
 import ssafy.a706.backend.auth.stomp.StompAuthChannelInterceptor;
 
 import java.util.Arrays;
@@ -44,7 +51,18 @@ import java.util.Arrays;
 @RequiredArgsConstructor
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
+    /**
+     * STOMP 프로토콜 하트비트 간격(ms). 죽은 연결을 양쪽이 알아채기 위한 <b>전송 계층</b> 장치다.
+     *
+     * <p>애플리케이션 프레즌스 비트(20초, {@code /app/presence/heartbeat})와는 층이 다르다 —
+     * 이쪽은 "소켓이 살아 있나"만 보고 내용이 없으며, 저쪽은 "이 사람이 어느 방에 있나"를 싣고
+     * 접속시간 델타(-141)의 원천이 된다. 로그인 내내 유지되는 전역 연결(-142)에서는 중간
+     * 프록시가 유휴 커넥션을 끊을 수 있어 이 층이 특히 필요해졌다.</p>
+     */
+    private static final long STOMP_HEARTBEAT_MS = 10_000;
+
     private final StompAuthChannelInterceptor stompAuthChannelInterceptor;
+    private final StompSessionRegistry stompSessionRegistry;
 
     @Value("${app.cors.allowed-origins}")
     private String allowedOrigins;
@@ -84,8 +102,26 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
      */
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {
-        registry.enableSimpleBroker("/topic", "/queue");
+        registry.enableSimpleBroker("/topic", "/queue")
+                .setHeartbeatValue(new long[]{STOMP_HEARTBEAT_MS, STOMP_HEARTBEAT_MS})
+                .setTaskScheduler(brokerHeartbeatScheduler());
         registry.setApplicationDestinationPrefixes("/app");
+    }
+
+    /**
+     * STOMP 프로토콜 하트비트 전용 스케줄러.
+     *
+     * <p>{@code setHeartbeatValue}를 쓰려면 스케줄러가 반드시 있어야 한다(없으면 부팅 시 실패).
+     * 애플리케이션 스케줄러(@Scheduled)와 분리하는 이유는, 접속시간 정산 스윕 같은 작업이 길어질 때
+     * 하트비트가 밀려 멀쩡한 연결이 끊긴 것으로 오인되는 걸 막기 위해서다.</p>
+     */
+    @Bean
+    public TaskScheduler brokerHeartbeatScheduler() {
+        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(1);
+        scheduler.setThreadNamePrefix("stomp-heartbeat-");
+        scheduler.setDaemon(true);
+        return scheduler;
     }
 
     /**
@@ -95,5 +131,29 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void configureClientInboundChannel(ChannelRegistration registration) {
         registration.interceptors(stompAuthChannelInterceptor);
+    }
+
+    /**
+     * 전송 계층에서 {@code WebSocketSession} 자체를 붙잡아 레지스트리에 넣는다.
+     *
+     * <p>STOMP 계층은 세션 <b>ID</b>만 다뤄서 "이 연결을 지금 끊어라"를 표현할 수 없다.
+     * 로그아웃 시 서버가 먼저 소켓을 닫으려면(안 그러면 폐기된 자격의 연결이 계속 살아 있다)
+     * 실제 세션 객체가 필요하고, 그건 이 데코레이터에서만 얻을 수 있다.</p>
+     */
+    @Override
+    public void configureWebSocketTransport(WebSocketTransportRegistration registration) {
+        registration.addDecoratorFactory(handler -> new WebSocketHandlerDecorator(handler) {
+            @Override
+            public void afterConnectionEstablished(WebSocketSession session) throws Exception {
+                stompSessionRegistry.register(session);
+                super.afterConnectionEstablished(session);
+            }
+
+            @Override
+            public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
+                stompSessionRegistry.unregister(session.getId());
+                super.afterConnectionClosed(session, status);
+            }
+        });
     }
 }
