@@ -571,9 +571,21 @@ watch(phase, (p) => {
   else if (p === 'setting') audio.play('setting', { tailMs: s ? s.startAt + SETTING_MS - srv : 3000 })
   else if (p === 'incoming')
     audio.play('approach', { tailMs: s ? s.endAt - srv : cfg.wall.approachMs })
-  else if (p === 'result') audio.play('ingame', { loop: true })
-  else audio.stop() // idle · stale
+  // result에서는 아무것도 틀지 않는다. 중간 라운드의 result는 다음 GAME_START가 올 때까지
+  // 0.2~1.5초뿐이라, 여기서 곡을 걸면 시작하자마자 잘려 딸꾹질처럼 들린다.
+  // 인게임 곡은 아래 results watch에서 "진짜 끝났을 때"만 튼다.
+  // 단, 이미 결과가 와 있으면 멈추지 않는다 — GAME_END가 페이즈 전환보다 먼저 도착하면
+  // (rAF가 멈춘 창은 페이즈 갱신이 200ms까지 늦는다) 뒤늦은 stop이 최종 음악을 꺼버린다.
+  else if (!props.results) audio.stop() // result · idle · stale
 })
+
+/** 최종 결과 오버레이 — 여기가 기획상 ⑤최종 결과(=①인게임 베드) 자리다 */
+watch(
+  () => props.results,
+  (r) => {
+    if (r) audio.play('ingame', { loop: true })
+  },
+)
 
 // 관전 화면의 구멍 캔버스는 v-if라 출제 포즈가 도착한 시점엔 아직 DOM에 없다 —
 // 패널이 붙은 뒤 한 번 더 그린다(adoptSetterPose의 drawHole은 그때 no-op이었다).
