@@ -33,8 +33,7 @@ const MOCK_GAMES: Game[] = [
   { id: 2, name: '모션 피싱', description: '온몸으로 즐기는 낚시', mode: 'SOLO', minPlayers: 1, maxPlayers: 4, supportsBot: false, category: '전신', thumbnailUrl: '', playable: true },
   { id: 3, name: '리듬 펀치', description: '비트에 맞춰 펀치!', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '리듬', thumbnailUrl: '', playable: true },
   { id: 5, name: '포즈 매치', description: '화면 속 포즈를 따라해요', mode: 'VERSUS', minPlayers: 2, maxPlayers: 8, supportsBot: true, category: '전신', thumbnailUrl: '', playable: false },
-  // 정식 규칙은 4인부터 — 게스트 로컬 테스트(1인 노출)를 위해 명세 확정 전까지 minPlayers 1
-  { id: 6, name: '그림으로 말해요', description: '그림 이어그리기 · AI가 맞혀요', mode: 'COOP', minPlayers: 1, maxPlayers: 8, supportsBot: false, category: '파티', thumbnailUrl: '', playable: true },
+  { id: 6, name: '그림으로 말해요', description: '그림 이어그리기 · AI가 맞혀요', mode: 'COOP', minPlayers: 3, maxPlayers: 8, supportsBot: false, category: '파티', thumbnailUrl: '', playable: true },
 ]
 
 const { data: games } = useAsyncData(() => gamesApi.list(), MOCK_GAMES)
@@ -47,6 +46,12 @@ const visibleGames = computed(() =>
 const detail = ref<GameDetail | null>(null)
 const detailOpen = ref(false)
 const selected = ref<Game | null>(null)
+/**
+ * 이 화면의 플레이 버튼은 "혼자 방을 만들어 바로 시작"이라, 여러 명이 있어야 진행되는 게임
+ * (그림으로 말해요 같은 이어그리기)은 설명만 보여주고 방을 만들지 않는다 — 로비에서 사람을
+ * 모아 시작해야 한다.
+ */
+const soloPlayable = computed(() => !!selected.value?.playable && selected.value.minPlayers <= 1)
 
 async function openDetail(g: Game) {
   selected.value = g
@@ -72,7 +77,7 @@ const starting = ref(false)
 
 async function play() {
   const g = selected.value
-  if (!g?.playable || starting.value) return
+  if (!soloPlayable.value || !g || starting.value) return
   if (session.isGuest) {
     if (!session.guestRoomId) {
       flash('게스트 세션 정보가 없어요. 처음 화면에서 다시 시작해 주세요.')
@@ -150,15 +155,14 @@ function goDevice(g: Game, roomId: string) {
         <p class="sec-label">조작 방법</p>
         <p class="sec">{{ detail.controls }}</p>
       </template>
+      <!-- 여러 명이 있어야 하는 게임은 여기서 방을 만들지 않는다 — 안내만 -->
+      <p v-if="selected?.playable && !soloPlayable" class="multi-only">
+        👥 {{ selected.minPlayers }}명부터 즐길 수 있는 게임이에요. 로비에서 방을 만들고 친구를
+        모아 시작해 주세요.
+      </p>
       <div class="modal-actions">
         <PixelButton block @click="detailOpen = false">닫기</PixelButton>
-        <PixelButton
-          v-if="selected?.playable"
-          variant="mint"
-          block
-          :disabled="starting"
-          @click="play"
-        >
+        <PixelButton v-if="soloPlayable" variant="mint" block :disabled="starting" @click="play">
           ▶ 플레이
         </PixelButton>
       </div>
@@ -215,5 +219,14 @@ function goDevice(g: Game, roomId: string) {
 h3 { margin: 0 0 12px; }
 .sec-label { margin: 12px 0 4px; font-size: 9px; font-weight: 700; color: var(--c-blue); }
 .sec { margin: 0 0 8px; font-size: 11px; line-height: 1.6; color: #55495a; }
+.multi-only {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 2px solid var(--c-ink-soft);
+  border-radius: 11px;
+  background: #fff1d2;
+  font-size: 10px;
+  line-height: 1.7;
+}
 .modal-actions { display: flex; gap: 9px; margin-top: 16px; }
 </style>

@@ -68,6 +68,7 @@ public enum ErrorCode {
     SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "존재하지 않는 세션입니다."),
     GAME_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "GAME_NOT_IN_ROOM", "방 참가자만 게임에 참여할 수 있습니다."),
     GAME_SESSION_ALREADY_ACTIVE(HttpStatus.CONFLICT, "GAME_SESSION_ALREADY_ACTIVE", "이미 게임이 진행 중입니다."),
+    GAME_NOT_ENOUGH_PLAYERS(HttpStatus.CONFLICT, "GAME_NOT_ENOUGH_PLAYERS", "게임 시작에 필요한 인원이 부족합니다."),
 
     // signal
     SIGNAL_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "SIGNAL_NOT_IN_ROOM", "방 참가자만 시그널을 보낼 수 있습니다."),

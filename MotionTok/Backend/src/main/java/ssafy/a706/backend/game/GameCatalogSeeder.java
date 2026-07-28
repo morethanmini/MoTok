@@ -27,8 +27,10 @@ public class GameCatalogSeeder implements ApplicationRunner {
 
     /** 그림으로 말해요 총 그리기 시간(초) — FE drawing-relay/logic.ts TOTAL_SECONDS와 동기화 필수. */
     private static final int DRAW_TOTAL_SEC = 90;
+    /** 시작 최소 인원 — 이어그리기라 혼자 할 수 없다(FE logic.ts MIN_PLAYERS와 동기화). */
+    private static final int DRAW_MIN_PLAYERS = 3;
     private static final String DRAW_RULES =
-            "총 1분 30초를 인원수로 나눠 한 도화지에 그림을 이어 그리는 협동 게임이에요. "
+            "총 1분 30초를 인원수로 나눠 한 도화지에 그림을 이어 그리는 협동 게임이에요(3명부터). "
                     + "완성 그림을 본 AI가 무엇인지 5가지로 추측하고, 그 안에 주제어가 있으면 순위에 따라 점수를 받아요.";
     private static final String DRAW_CONTROLS =
             "펜 손(기본 오른손) 엄지+검지를 집으면 그려지고, 지우개 손(기본 왼손) 주먹을 쥐고 문지르면 지워져요.";
@@ -62,15 +64,14 @@ public class GameCatalogSeeder implements ApplicationRunner {
         }
 
         // 그림으로 말해요(명세 v0.2.20) — roundDurationSec은 총 그리기 시간,
-        // 인당 시간은 세션 시작 시 ceil(총 시간/인원)로 분배된다. 정식 최소 인원 4인 표기이며
-        // 시작 시 인원 검증은 후속(테스트 기간에는 소인원 시작 허용).
+        // 인당 시간은 세션 시작 시 ceil(총 시간/인원)로 분배된다. 최소 인원은 세션 시작에서 강제한다.
         Game draw = gameRepository.findById(10L).orElse(null);
         if (draw == null) {
             gameRepository.save(Game.builder()
                     .id(10L)
                     .name("그림으로 말해요")
                     .mode("COOP")
-                    .minPlayers(4)
+                    .minPlayers(DRAW_MIN_PLAYERS)
                     .maxPlayers(8)
                     .roundDurationSec(DRAW_TOTAL_SEC)
                     .countdownSec(3)
@@ -81,12 +82,13 @@ public class GameCatalogSeeder implements ApplicationRunner {
                     .controls(DRAW_CONTROLS)
                     .build());
             log.info("game catalog seeded: id=10 그림으로 말해요");
-        } else if (draw.getRoundDurationSec() != DRAW_TOTAL_SEC) {
-            // 밸런스 조정 전에 시딩된 행 — 총 시간과 규칙 문구만 백필한다(멱등).
-            draw.updateRoundDuration(DRAW_TOTAL_SEC);
+        } else if (draw.getRoundDurationSec() != DRAW_TOTAL_SEC || draw.getMinPlayers() != DRAW_MIN_PLAYERS) {
+            // 규칙 조정 전에 시딩된 행 — 총 시간·최소 인원·안내 문구를 백필한다(멱등).
+            draw.updateSessionRules(DRAW_TOTAL_SEC, DRAW_MIN_PLAYERS);
             draw.updateGuide(DRAW_RULES, DRAW_CONTROLS);
             gameRepository.save(draw);
-            log.info("game catalog backfilled: id=10 roundDurationSec={}", DRAW_TOTAL_SEC);
+            log.info("game catalog backfilled: id=10 roundDurationSec={} minPlayers={}",
+                    DRAW_TOTAL_SEC, DRAW_MIN_PLAYERS);
         }
     }
 }

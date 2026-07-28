@@ -160,6 +160,12 @@ public class GameSessionService {
         if (members.isEmpty()) {
             throw new BusinessException(ErrorCode.GAME_NOT_IN_ROOM);
         }
+        // 이어그리기라 혼자서는 성립하지 않는다 — 카탈로그 최소 인원(games.min_players)을 강제한다.
+        if (members.size() < game.getMinPlayers()) {
+            throw new BusinessException(ErrorCode.GAME_NOT_ENOUGH_PLAYERS,
+                    String.format("%d명부터 시작할 수 있는 게임입니다. (현재 %d명)",
+                            game.getMinPlayers(), members.size()));
+        }
         List<String> turnOrder = new ArrayList<>(members.stream().map(LiveRoomMemberValue::userId).toList());
         Collections.shuffle(turnOrder);
         int playerCount = turnOrder.size();
