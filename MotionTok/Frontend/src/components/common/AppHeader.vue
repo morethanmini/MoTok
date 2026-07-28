@@ -7,6 +7,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
+import { readAccessClaims } from '@/api'
 import { useSessionStore } from '@/stores/session'
 import BrandLogo from './BrandLogo.vue'
 import UserAvatar from './UserAvatar.vue'
@@ -64,11 +65,12 @@ function toLogin() {
 }
 
 // 포인트 잔액 + 충전 모달
-const balance = ref(session.profile?.pointBalance ?? 1250)
+// 세션 프로필을 그대로 따라간다 — 스냅샷(ref)으로 들고 있으면 상점에서 구매해 잔액이 줄어도
+// 헤더만 옛 값으로 남는다. 갱신은 프로필 한 곳에만 쓴다.
+const balance = computed(() => session.profile?.pointBalance ?? 0)
 const showCharge = ref(false)
 function onCharged(amount: number) {
-  balance.value += amount
-  if (session.profile) session.profile.pointBalance = balance.value
+  if (session.profile) session.profile.pointBalance = balance.value + amount
 }
 
 // 로그아웃 — 게스트/회원 공통(세션 정리 후 시작 화면으로)
@@ -77,6 +79,17 @@ async function onLogout() {
   await session.logout()
   router.push({ name: RouteName.Start })
 }
+
+/**
+ * 관리자 여부 — 라우터 가드(router/index.ts)와 같은 근거인 토큰 role claim을 쓴다.
+ * 프로필 role로 판단하면 claim이 없는 구 토큰일 때 메뉴는 보이는데 눌렀더니 튕긴다.
+ * claims는 스토리지에서 읽어 반응형이 아니라, 로그인·세션 복원 시점에 다시 계산되도록
+ * session.profile을 의존성으로 함께 읽는다.
+ */
+const isAdmin = computed(() => {
+  void session.profile
+  return session.isMember && readAccessClaims()?.role === 'ADMIN'
+})
 
 // 아바타 클릭 시 토글되는 계정 메뉴
 const showAccountMenu = ref(false)
@@ -146,6 +159,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
           </div>
           <!-- 마이페이지·설정은 회원 전용 — 게스트에게는 헤더에서 숨긴다 -->
           <template v-if="!session.isGuest">
+            <button v-if="isAdmin" class="menu-item" @click="onMenuNav(RouteName.Admin)">게임 관리</button>
             <button class="menu-item" @click="onMenuNav(RouteName.MyPage)">마이페이지</button>
             <button class="menu-item" @click="onMenuNav(RouteName.AccountSettings)">설정</button>
           </template>

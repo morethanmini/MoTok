@@ -1,11 +1,16 @@
 package ssafy.a706.backend.report;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import ssafy.a706.backend.report.enums.ReportStatus;
 
 import java.util.Collection;
 
 public interface UserReportRepository extends JpaRepository<UserReport, Long> {
+
+    /** 관리자 목록(-112) 상태 필터 조회. 필터가 없으면 findAll(pageable)을 쓴다. */
+    Page<UserReport> findByStatus(ReportStatus status, Pageable pageable);
 
     /**
      * 같은 사람이 같은 대상을 <b>처리 안 된 상태로</b> 또 신고했는지.
