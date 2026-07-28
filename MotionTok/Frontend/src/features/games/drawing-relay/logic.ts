@@ -150,66 +150,6 @@ export function trimStrokeTail(
   return kept.length > 0 ? kept : points.slice(0, 1)
 }
 
-// ── AI 채점 ───────────────────────────────────
-
-/** 추측 순위(1~5)별 점수 — 1순위 100점, 3순위 60점 … */
-export const RANK_SCORES = [100, 80, 60, 40, 20] as const
-
-export function scoreForRank(rank: number): number {
-  return RANK_SCORES[rank - 1] ?? 0
-}
-
-/** 비교용 정규화 — 공백·따옴표·구두점 제거 + 소문자화 */
-export function normalizeWord(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/["'`.,!?~()[\]{}]/g, '')
-    .replace(/\s+/g, '')
-}
-
-/**
- * 주제어가 추측 목록의 몇 순위인지(1-based). 없으면 0.
- * 정확 일치 우선, 두 글자 이상일 때만 포함 관계도 인정한다
- * ("사과나무" 추측 ↔ 주제 "사과"는 정답, 주제 "배" ↔ 추측 "배구"는 오답).
- */
-export function findAnswerRank(topic: string, guesses: string[]): number {
-  const t = normalizeWord(topic)
-  if (!t) return 0
-  for (let i = 0; i < guesses.length; i++) {
-    const g = normalizeWord(guesses[i] ?? '')
-    if (!g) continue
-    if (g === t) return i + 1
-    if (t.length >= 2 && g.includes(t)) return i + 1
-    if (g.length >= 2 && t.includes(g)) return i + 1
-  }
-  return 0
-}
-
-/**
- * AI 응답 텍스트 → 추측 단어 목록(최대 5개).
- * JSON 배열 응답을 우선 파싱하고, 아니면 "1. 사과" / "- 사과" 형태의 줄 목록으로 파싱한다.
- */
-export function parseGuesses(text: string): string[] {
-  const jsonMatch = text.match(/\[[\s\S]*?\]/)
-  if (jsonMatch) {
-    try {
-      const arr: unknown = JSON.parse(jsonMatch[0])
-      if (Array.isArray(arr)) {
-        const words = arr.map((v) => String(v).trim()).filter(Boolean)
-        if (words.length > 0) return words.slice(0, 5)
-      }
-    } catch {
-      /* JSON 형식이 아니면 줄 목록 파싱으로 폴백 */
-    }
-  }
-  return text
-    .split(/\r?\n/)
-    .map((line) =>
-      line
-        .replace(/^\s*(?:[-*•]|\d+\s*[.)순위:]+)\s*/, '')
-        .replace(/["'`]/g, '')
-        .trim(),
-    )
-    .filter(Boolean)
-    .slice(0, 5)
-}
+// AI 채점(추측 파싱·주제어 매칭·순위 점수)은 서버로 옮겼다 — 배포 환경에서 GMS 키를
+// 프론트에 둘 수 없어 호출 주체가 서버가 됐고, 점수도 서버 권위가 됐다.
+// 백엔드 game/draw/DrawJudge.java 참고. (명세 v0.2.22)
