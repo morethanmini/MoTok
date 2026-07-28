@@ -807,10 +807,10 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
     <!-- 하단 바: 손 인식·도구 상태 · 마우스 도구 토글 · 차례 마치기 -->
     <div class="dr-bottombar">
       <span :class="{ on: penDetected }">
-        ✏️ 펜·{{ penHandLabel }} {{ penDetected ? (penDrawing ? '그리는 중' : '이동') : '—' }}
+        ✏️ 펜·{{ penHandLabel }} 엄지검지 {{ penDetected ? (penDrawing ? '그리는 중' : '이동') : '—' }}
       </span>
       <span :class="{ on: erasing }">
-        🧽 지우개·{{ eraseHandLabel }} {{ eraseDetected ? (erasing ? '지우는 중' : '대기') : '—' }}
+        🧽 지우개·{{ eraseHandLabel }} 주먹 {{ eraseDetected ? (erasing ? '지우는 중' : '대기') : '—' }}
       </span>
       <span v-if="!gotFrame" class="dr-hint">카메라 영상을 기다리는 중…</span>
       <!-- 차례 넘기기 — 멀티 관전자에게는 숨김. 멀티는 TURN_SKIPPED 릴레이로
@@ -950,7 +950,9 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
   object-fit: contain;
 }
 
-/* 상단바 — 주제어는 게임 내내 필요한 핵심 정보라 오버레이 위(z-index)에 항상 보이게 둔다 */
+/* 상단바 — 주제어는 게임 내내 필요한 핵심 정보라 오버레이 위(z-index)에 항상 보이게 둔다.
+   칩을 타일 좌상단 모서리에 딱 붙여 게임룸의 YOU·HOST 라벨(top 8/left 8)을 덮는다 — 게임 중엔
+   그 라벨보다 주제어가 우선이고, 겹쳐 보이는 것보다 깔끔하다. */
 .dr-topbar {
   position: absolute;
   top: 0;
@@ -960,7 +962,7 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 14px 18px;
+  padding: 0 10px 0 0;
   background: linear-gradient(rgba(239, 233, 220, 0.96), rgba(239, 233, 220, 0));
   pointer-events: none;
 }
@@ -969,9 +971,10 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
 }
 .dr-topic {
   font-size: 26px; font-weight: 700; white-space: nowrap;
-  padding: 6px 16px; border-radius: 12px;
-  background: #ffd23f; color: #3a2c05; border: 3px solid #2b2b33;
-  box-shadow: 2px 2px 0 rgba(43, 43, 51, 0.35);
+  padding: 10px 18px 8px 14px; border-radius: 0 0 14px 0;
+  background: #ffd23f; color: #3a2c05;
+  border: 3px solid #2b2b33; border-top: none; border-left: none;
+  box-shadow: 3px 3px 0 rgba(43, 43, 51, 0.25);
 }
 /* 멀티에서 "OO님이 그리고 있어요!"가 길어질 수 있어 좁은 화면에서는 말줄임으로 우아하게 줄인다 */
 .dr-painter {
@@ -986,16 +989,17 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
   background: rgba(239, 233, 220, 0.85); color: #2b2b33; font-size: 18px; cursor: pointer;
 }
 
+/* 하단바 — 상태는 좌하단, 차례 버튼은 우하단 모서리에 붙인다 */
 .dr-bottombar {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
   display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 14px 18px;
-  font-size: 16px;
+  align-items: flex-end;
+  gap: 14px;
+  padding: 8px 10px;
+  font-size: 14px;
   color: #6d6555;
   background: linear-gradient(rgba(239, 233, 220, 0), rgba(239, 233, 220, 0.96));
   pointer-events: none;
@@ -1007,7 +1011,7 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
 .dr-hint { color: #b0452b; }
 .dr-pass {
   margin-left: auto;
-  padding: 14px 22px; font-family: inherit; font-size: 17px; font-weight: 700; cursor: pointer;
+  padding: 12px 18px; font-family: inherit; font-size: 15px; font-weight: 700; cursor: pointer;
   background: #2b2b33; color: #f6f1e5; border: none; border-radius: 12px;
 }
 .dr-pass:disabled { opacity: 0.5; cursor: default; }
@@ -1021,11 +1025,11 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 10px;
   background: rgba(43, 39, 30, 0.78);
   color: #f6f1e5;
   text-align: center;
-  padding: 84px 24px 24px;
+  padding: 60px 24px 16px;
   overflow-y: auto;
 }
 .dr-overlay-light { background: rgba(43, 39, 30, 0.55); }
@@ -1046,18 +1050,18 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
 }
 .dr-swap input { accent-color: #ffd23f; width: 18px; height: 18px; }
 .dr-start {
-  padding: 16px 28px; font-family: inherit; font-size: 18px; font-weight: 700; cursor: pointer;
+  padding: 13px 22px; font-family: inherit; font-size: 16px; font-weight: 700; cursor: pointer;
   background: #e0642f; color: #fff4e8; border: none; border-radius: 14px;
 }
 .dr-start:disabled { opacity: 0.45; cursor: not-allowed; }
 .dr-quit {
-  padding: 16px 28px; font-family: inherit; font-size: 18px; cursor: pointer;
+  padding: 13px 22px; font-family: inherit; font-size: 16px; cursor: pointer;
   background: transparent; color: #f6f1e5; border: 2px solid rgba(255, 255, 255, 0.3); border-radius: 14px;
 }
-.dr-actions { display: flex; gap: 14px; }
-.dr-tier { font-size: 24px; margin: 0; line-height: 1.6; }
-.dr-score { font-size: 64px; color: #ffd23f; margin: 0; line-height: 1.1; }
-.dr-score small { font-size: 20px; margin-left: 6px; }
+.dr-actions { display: flex; gap: 12px; }
+.dr-tier { font-size: 18px; margin: 0; line-height: 1.5; }
+.dr-score { font-size: 48px; color: #ffd23f; margin: 0; line-height: 1.1; }
+.dr-score small { font-size: 16px; margin-left: 6px; }
 .dr-sub { font-size: 15px; color: #cfc6b2; margin: 0; }
 
 /* 결과 — 큰 폰트에서도 안 넘치게 줄바꿈 허용 */
@@ -1070,8 +1074,8 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
   max-width: 92%;
 }
 .dr-preview {
-  width: 270px;
-  max-width: 42vw;
+  width: 220px;
+  max-width: 40vw;
   border: 3px solid #f6f1e5;
   border-radius: 10px;
   background: #fdfdf8;
@@ -1082,12 +1086,12 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   text-align: left;
 }
 .dr-guesses li {
-  font-size: 17px;
-  padding: 8px 14px;
+  font-size: 15px;
+  padding: 6px 12px;
   background: rgba(255, 255, 255, 0.07);
   border: 2px solid rgba(255, 255, 255, 0.14);
   border-radius: 10px;
