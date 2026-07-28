@@ -4,8 +4,14 @@
  */
 import { onBeforeUnmount, ref, shallowRef } from 'vue'
 
-/** 장치 설정에서 고른 카메라를 게임룸까지 이어 쓰기 위한 저장 키. */
+/** 장치 설정에서 고른 카메라·마이크를 게임룸까지 이어 쓰기 위한 저장 키. */
 const VIDEO_DEVICE_KEY = 'motiontok.videoDeviceId'
+const AUDIO_DEVICE_KEY = 'motiontok.audioDeviceId'
+
+/** 저장된 마이크 선택 — 게임룸은 LiveKit이 직접 마이크를 잡으므로 여기서만 읽어 간다. */
+export function preferredAudioDeviceId(): string | null {
+  return localStorage.getItem(AUDIO_DEVICE_KEY)
+}
 
 export function useCamera() {
   const stream = shallowRef<MediaStream | null>(null)
@@ -14,33 +20,46 @@ export function useCamera() {
   // 스트림 전체를 껐다 켜지 않고도 카메라/마이크를 개별로 끄고 켤 수 있도록(트랙 enabled 토글).
   const camOn = ref(true)
   const micOn = ref(true)
-  /** 연결된 카메라 목록. 라벨은 권한 허용 후에만 채워지므로 start() 성공 후에 읽는다. */
+  /** 연결된 장치 목록. 라벨은 권한 허용 후에만 채워지므로 start() 성공 후에 읽는다. */
   const videoDevices = ref<MediaDeviceInfo[]>([])
-  /** 지금 쓰고 있는 카메라 — 저장값으로 시작해 실제 트랙 기준으로 맞춘다. */
+  const audioDevices = ref<MediaDeviceInfo[]>([])
+  /** 지금 쓰고 있는 장치 — 저장값으로 시작해 실제 트랙 기준으로 맞춘다. */
   const videoDeviceId = ref<string | null>(localStorage.getItem(VIDEO_DEVICE_KEY))
-  /** 카메라 전환 시 같은 조건으로 다시 잡으려고 마지막 요청 조건을 들고 있는다. */
+  const audioDeviceId = ref<string | null>(preferredAudioDeviceId())
+  /** 장치 전환 시 같은 조건으로 다시 잡으려고 마지막 요청 조건을 들고 있는다. */
   let lastVideoConstraints: MediaTrackConstraints = {}
+  let lastAudioConstraints: MediaTrackConstraints = {}
 
   async function refreshDevices() {
     const list = await navigator.mediaDevices.enumerateDevices()
     videoDevices.value = list.filter((d) => d.kind === 'videoinput')
+    audioDevices.value = list.filter((d) => d.kind === 'audioinput')
   }
 
-  /** 실제로 잡힌 카메라를 선택 상태로 반영한다 — 요청한 장치가 거절될 수 있어 트랙이 기준이다. */
+  /** 실제로 잡힌 장치를 선택 상태로 반영한다 — 요청한 장치가 거절될 수 있어 트랙이 기준이다. */
   function syncDeviceIds(s: MediaStream) {
     const videoId = s.getVideoTracks()[0]?.getSettings().deviceId
-    if (!videoId) return
-    videoDeviceId.value = videoId
-    localStorage.setItem(VIDEO_DEVICE_KEY, videoId)
+    if (videoId) {
+      videoDeviceId.value = videoId
+      localStorage.setItem(VIDEO_DEVICE_KEY, videoId)
+    }
+    const audioId = s.getAudioTracks()[0]?.getSettings().deviceId
+    if (audioId) {
+      audioDeviceId.value = audioId
+      localStorage.setItem(AUDIO_DEVICE_KEY, audioId)
+    }
   }
 
   async function start(constraints: MediaStreamConstraints = { video: { width: 640, height: 400 }, audio: false }) {
     const video = typeof constraints.video === 'object' ? constraints.video : {}
+    const audio = typeof constraints.audio === 'object' ? constraints.audio : {}
     lastVideoConstraints = video
-    // 앞서 고른 카메라가 있으면 이어서 쓴다(장치 설정 → 게임룸). exact가 아닌 ideal이라
-    // 그 사이 장치를 뽑았어도 기본 카메라로 떨어질 뿐 실패하지 않는다.
+    lastAudioConstraints = audio
+    // 앞서 고른 장치가 있으면 이어서 쓴다(장치 설정 → 게임룸). exact가 아닌 ideal이라
+    // 그 사이 장치를 뽑았어도 기본 장치로 떨어질 뿐 실패하지 않는다.
     const req: MediaStreamConstraints = { ...constraints }
     if (constraints.video && videoDeviceId.value) req.video = { ...video, deviceId: videoDeviceId.value }
+    if (constraints.audio && audioDeviceId.value) req.audio = { ...audio, deviceId: audioDeviceId.value }
     try {
       const s = await navigator.mediaDevices.getUserMedia(req)
       stream.value = s
@@ -94,6 +113,25 @@ export function useCamera() {
     swapTrack(current, track)
   }
 
+  /** 마이크 전환. */
+  async function selectAudioDevice(deviceId: string) {
+    const current = stream.value
+    if (!current || !deviceId || deviceId === audioDeviceId.value) return
+    let next: MediaStream
+    try {
+      next = await navigator.mediaDevices.getUserMedia({
+        audio: { ...lastAudioConstraints, deviceId: { exact: deviceId } },
+      })
+    } catch {
+      error.value = '선택한 마이크를 사용할 수 없어요'
+      return
+    }
+    const track = next.getAudioTracks()[0]
+    if (!track) return
+    track.enabled = micOn.value
+    swapTrack(current, track)
+  }
+
   function stop() {
     stream.value?.getTracks().forEach((t) => t.stop())
     stream.value = null
@@ -118,7 +156,7 @@ export function useCamera() {
     micOn.value = next
   }
 
-  // 카메라를 꽂거나 뽑으면 목록을 다시 읽는다(권한 허용 후에 연결한 웹캠도 선택지에 나오도록).
+  // 장치를 꽂거나 뽑으면 목록을 다시 읽는다(권한 허용 후에 연결한 웹캠·헤드셋도 선택지에 나오도록).
   const onDeviceChange = () => void refreshDevices()
   navigator.mediaDevices.addEventListener('devicechange', onDeviceChange)
 
@@ -134,11 +172,14 @@ export function useCamera() {
     camOn,
     micOn,
     videoDevices,
+    audioDevices,
     videoDeviceId,
+    audioDeviceId,
     start,
     stop,
     toggleCam,
     toggleMic,
     selectVideoDevice,
+    selectAudioDevice,
   }
 }

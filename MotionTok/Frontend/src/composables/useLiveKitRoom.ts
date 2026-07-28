@@ -115,14 +115,24 @@ export function useLiveKitRoom() {
   /** 방 접속: 토큰 발급 → connect → 카메라/마이크 발행. 실패 시 error 세팅 후 정리. */
   async function connect(
     roomId: string,
-    opts: { cameraTrack?: MediaStreamTrack | null; microphone?: boolean } = {},
+    opts: {
+      cameraTrack?: MediaStreamTrack | null
+      microphone?: boolean
+      /** 장치 설정에서 고른 마이크 — 카메라와 달리 마이크 트랙은 LiveKit이 직접 잡으므로 여기로 넘긴다. */
+      microphoneDeviceId?: string | null
+    } = {},
   ): Promise<boolean> {
-    const { cameraTrack = null, microphone = true } = opts
+    const { cameraTrack = null, microphone = true, microphoneDeviceId = null } = opts
     await disconnect()
     error.value = null
     try {
       const { url, token } = await sfuApi.videoToken(roomId)
-      const r = new Room({ adaptiveStream: true, dynacast: true })
+      // audioCaptureDefaults로 넣어야 방 안에서 마이크를 껐다 켤 때 새로 잡는 트랙도 같은 장치를 쓴다.
+      const r = new Room({
+        adaptiveStream: true,
+        dynacast: true,
+        audioCaptureDefaults: microphoneDeviceId ? { deviceId: microphoneDeviceId } : undefined,
+      })
       room = r
       bindEvents(r)
       await r.connect(url, token)
