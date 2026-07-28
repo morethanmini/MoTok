@@ -434,11 +434,14 @@ const gameComp = ref<{ canvas?: HTMLCanvasElement } | null>(null)
 // 라운드가 끝나면(GAME_END 수신) 결과 화면을 닫지 않아도 송출을 내린다 — gameTrack이 사라지면서
 // 모든 참가자 타일이 카메라로 복귀하고 게임/카메라 토글도 함께 사라진다. 다음 GAME_START에서
 // gameResults가 초기화되면 같은 watch가 재발행한다.
+// 캐치캐치리듬은 전용 채널이라 gameResults를 안 쓴다 — 컴포넌트가 RHYTHM_END 정산을
+// started/ended 이벤트로 알려주면 rhythmEnded가 같은 역할(정산 즉시 송출 내림)을 한다.
+const rhythmEnded = ref(false)
 watch(
-  [() => gameComp.value?.canvas ?? null, captureOn, gameResults],
-  async ([canvas, capOn, results]) => {
+  [() => gameComp.value?.canvas ?? null, captureOn, gameResults, rhythmEnded],
+  async ([canvas, capOn, results, rhythmDone]) => {
     if (!activeGame.value || !canvas) return
-    if (results) {
+    if (results || rhythmDone) {
       await lk.unpublishGameScreen()
       return
     }
@@ -593,6 +596,7 @@ function closeGame() {
   activeSession.value = null
   gameResults.value = null
   liveScores.value = {}
+  rhythmEnded.value = false
 }
 
 function copyCode() {
@@ -824,6 +828,8 @@ const startHint = computed(() =>
             :my-user-id="myParticipantId"
             :room-chat="roomChat"
             @close="closeGame"
+            @started="rhythmEnded = false"
+            @ended="rhythmEnded = true"
           />
           <div class="self-label">
             <span class="c-g">{{ selfIsHost ? 'YOU · HOST' : 'YOU' }}</span>
