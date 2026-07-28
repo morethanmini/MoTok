@@ -74,6 +74,10 @@ deploy-backend:
       add S3_ACCESS_KEY "$S3_ACCESS_KEY"
       add S3_SECRET_KEY "$S3_SECRET_KEY"
       add S3_PUBLIC_BASE_URL "$S3_PUBLIC_BASE_URL"
+      # 그림으로 말해요 AI 채점(GMS) — 미등록 시 채점만 실패(앱 기동엔 영향 없음).
+      # API_URL 은 SSAFY GMS 릴레이로 고정이라 application.yaml 기본값을 쓴다.
+      add GMS_API_KEY "$GMS_API_KEY"
+      add GMS_MODEL "$GMS_MODEL"
     # ── 빌드 + 실행 (변경분만 재빌드) ──
     - docker compose -f docker-compose.prod.yml up -d --build
     # 재생성된 컨테이너(livekit 등)의 새 IP 를 nginx 가 다시 해석하도록 reload (무중단)
