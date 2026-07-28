@@ -375,6 +375,14 @@ onBeforeUnmount(() => {
             >
             <input v-model.number="cfg.filter.beta" type="range" min="0" max="2" step="0.01" />
           </label>
+          <!-- 위 신뢰도 표시와 같이 보면 효과를 바로 확인할 수 있다 — 팔을 접어
+               팔꿈치 신뢰도가 떨어질 때 이 값을 올리면 그 관절만 조용해진다 -->
+          <label>
+            <span
+              >신뢰도 감쇠 <b>{{ cfg.filter.visTighten.toFixed(2) }}</b></span
+            >
+            <input v-model.number="cfg.filter.visTighten" type="range" min="0" max="1" step="0.05" />
+          </label>
         </section>
 
         <section>

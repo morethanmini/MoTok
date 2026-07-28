@@ -16,6 +16,9 @@ export interface BodyFitConfig {
     minCutoff: number
     /** 속도 계수. 높을수록 빠른 움직임의 지연이 줄고, 너무 높으면 빠른 구간 떨림이 살아난다 */
     beta: number
+    /** 신뢰도 낮은 관절 추가 감쇠(0=끔, 1=최대). 접은 팔의 팔꿈치처럼 visibility가
+     *  떨어지는 관절만 골라 누른다 — 잘 보이는 관절 반응성은 그대로 */
+    visTighten: number
   }
   /** 아바타 비율 — 표준 골격 상수는 avatarRig.ts, 여기는 그 배율·반경 */
   avatar: {
@@ -77,9 +80,14 @@ export type DifficultyKey = 'easy' | 'normal' | 'hard'
 export function defaultConfig(): BodyFitConfig {
   return {
     filter: {
-      minCutoff: 1.2,
+      // 1.2는 정지 상태가 떨렸다(2026-07-28 실기, 랩에서 0.6이 적당)
+      minCutoff: 0.6,
       // 0.4는 빠른 동작이 뭉뚝하게 눌렸다(2026-07-27 실기) — 속도 추종을 올림
       beta: 0.8,
+      // 팔을 접으면 팔꿈치 visibility가 0.99→0.50으로 떨어지는데 문턱(0.3)은 넘어
+      // 그대로 쓰이면서 떨렸다(2026-07-28 실기). 그 관절만 강하게 누른다.
+      // 0.8은 과했고 0.6이 떨림/반응성 균형점(랩에서 확인)
+      visTighten: 0.6,
     },
     avatar: {
       // 1.6이면 팔 길이가 인체 비율(어깨너비 대비 ~1.3배)과 맞아 교차 포즈가 1:1로 매핑된다.
