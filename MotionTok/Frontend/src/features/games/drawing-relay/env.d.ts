@@ -6,6 +6,6 @@ interface ImportMetaEnv {
   readonly VITE_GMS_KEY?: string
   /** GMS 릴레이 주소 재정의 (기본: /gmsapi 상대 경로 — vite.config.ts dev 프록시 경유) */
   readonly VITE_GMS_API_URL?: string
-  /** 채점 비전 모델 (기본: gpt-4o) */
+  /** 채점 비전 모델 — 필수. 미설정 시 채점 단계에서 에러(기본 모델 대체 없음) */
   readonly VITE_GMS_MODEL?: string
 }
