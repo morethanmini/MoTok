@@ -71,29 +71,12 @@ const pagedEntries = computed(() =>
 
 // ── 다른 사용자 프로필 조회 (-96) ────────────────────────────
 // 조회·게스트 가드·오류 문구는 useUserProfile이 갖고 있다(친구 목록과 같은 규칙을 쓰기 위해).
-// 여기서는 리더보드 항목이 가진 수치만 모달에 얹는다.
+// 순위·점수 수치는 이제 모달이 게임별 전적(-141)으로 직접 그리므로 여기서 얹지 않는다.
 const viewer = useUserProfile()
-const selectedEntry = ref<LeaderboardEntry | null>(null)
 const { message: toast, flash } = useToast()
 
-const profileStats = computed(() =>
-  selectedEntry.value
-    ? [
-        { label: '순위', value: `#${selectedEntry.value.rank}` },
-        { label: '최고 점수', value: selectedEntry.value.bestScore.toLocaleString() },
-        { label: '플레이', value: `${selectedEntry.value.playCount}회` },
-      ]
-    : [],
-)
-
 function openProfile(entry: LeaderboardEntry) {
-  selectedEntry.value = entry
   viewer.open(entry.userId, entry.nickname)
-}
-
-function closeProfile() {
-  selectedEntry.value = null
-  viewer.close()
 }
 </script>
 
@@ -183,8 +166,7 @@ function closeProfile() {
       :nickname="viewer.nickname.value"
       :loading="viewer.loading.value"
       :error="viewer.error.value"
-      :stats="profileStats"
-      @close="closeProfile"
+      @close="viewer.close()"
       @reported="flash"
     />
     <PixelToast :message="toast" />
