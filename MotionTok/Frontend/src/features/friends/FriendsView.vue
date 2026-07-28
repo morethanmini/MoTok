@@ -197,7 +197,7 @@ async function removeFriend(f: Friend) {
     </PixelCard>
     <PixelToast :message="toast" />
     <AddFriendModal v-if="showAddModal" v-model="target" @close="showAddModal = false" @send="sendRequest" />
-    <!-- 랭킹과 같은 모달·같은 조회 규칙. 친구 목록에는 순위 같은 수치가 없어 stats를 넘기지 않는다. -->
+    <!-- 랭킹과 같은 모달·같은 조회 규칙. 가입일·접속시간·게임별 전적(-141)은 모달이 직접 그린다. -->
     <UserProfileModal
       v-if="viewer.isOpen.value"
       :user-id="viewer.targetId.value!"
