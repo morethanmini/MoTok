@@ -61,6 +61,15 @@ public class PresenceRepository {
         redis.delete(KEY_PREFIX + userId);
     }
 
+    /**
+     * 마지막 하트비트 시각(epoch ms). 키가 없으면(오프라인·세션 첫 비트) null.
+     * 접속시간(-141)이 직전 비트와의 간격(delta)을 계산하는 원천 — touch가 덮어쓰기 전에 읽어야 한다.
+     */
+    public Long lastHeartbeatAt(Long userId) {
+        Object value = redis.opsForHash().get(KEY_PREFIX + userId, FIELD_HEARTBEAT_AT);
+        return value == null ? null : Long.parseLong(value.toString());
+    }
+
     public PresenceSnapshot find(Long userId) {
         return findAll(List.of(userId)).getOrDefault(userId, PresenceSnapshot.OFFLINE);
     }

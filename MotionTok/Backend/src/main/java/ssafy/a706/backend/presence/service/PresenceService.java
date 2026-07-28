@@ -2,6 +2,7 @@ package ssafy.a706.backend.presence.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import ssafy.a706.backend.conntime.service.ConnectTimeService;
 import ssafy.a706.backend.presence.model.PresenceSnapshot;
 import ssafy.a706.backend.presence.repository.PresenceRepository;
 
@@ -24,10 +25,15 @@ public class PresenceService {
     private static final int HEARTBEAT_DIVISOR = 3;
 
     private final PresenceRepository presenceRepository;
+    private final ConnectTimeService connectTimeService;
 
     /** 하트비트 1회 — 상태를 갱신하고 다음 호출까지의 간격(초)을 돌려준다. */
     public long heartbeat(Long userId, String roomId) {
-        presenceRepository.touch(userId, roomId, System.currentTimeMillis());
+        long now = System.currentTimeMillis();
+        // 직전 비트 시각은 touch가 덮어쓰기 전에 읽는다 — 접속시간 델타 누적(-141).
+        Long prevBeatAt = presenceRepository.lastHeartbeatAt(userId);
+        presenceRepository.touch(userId, roomId, now);
+        connectTimeService.accumulate(userId, prevBeatAt, now);
         return intervalSeconds();
     }
 
@@ -35,9 +41,13 @@ public class PresenceService {
         return PresenceRepository.TTL.toSeconds() / HEARTBEAT_DIVISOR;
     }
 
-    /** 로그아웃 — TTL을 기다리지 않고 즉시 오프라인으로 만든다. */
+    /** 로그아웃 — TTL을 기다리지 않고 즉시 오프라인으로 만든다. 접속시간도 이 자리에서 정산한다(-141). */
     public void clear(Long userId) {
+        long now = System.currentTimeMillis();
+        // 마지막 비트~로그아웃 사이 꼬리 구간까지 셈한 뒤 지운다. 지우고 나면 비트 시각을 알 수 없다.
+        connectTimeService.accumulate(userId, presenceRepository.lastHeartbeatAt(userId), now);
         presenceRepository.delete(userId);
+        connectTimeService.flush(userId);
     }
 
     public PresenceSnapshot find(Long userId) {

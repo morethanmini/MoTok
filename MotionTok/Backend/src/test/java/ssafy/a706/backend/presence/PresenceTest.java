@@ -4,6 +4,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import ssafy.a706.backend.conntime.service.ConnectTimeService;
 import ssafy.a706.backend.presence.model.PresenceSnapshot;
 import ssafy.a706.backend.presence.model.PresenceState;
 import ssafy.a706.backend.presence.repository.PresenceRepository;
@@ -40,7 +41,8 @@ class PresenceTest {
     @Test
     @DisplayName("하트비트 간격은 TTL보다 충분히 짧다 — 한 번 놓쳐도 오프라인으로 튀지 않아야 한다")
     void heartbeatIntervalLeavesRoomForOneMiss() {
-        PresenceService service = new PresenceService(mock(PresenceRepository.class));
+        PresenceService service = new PresenceService(
+                mock(PresenceRepository.class), mock(ConnectTimeService.class));
         long interval = service.intervalSeconds();
         long ttl = PresenceRepository.TTL.toSeconds();
 
