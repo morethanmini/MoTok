@@ -9,7 +9,7 @@
  * 서버 타이머)는 -86/-48에서 세션 이벤트에 연결한다. 화면 구성 요소(게이지·타이머·
  * 썸네일·접근 바·등급 팝업·캠 스켈레톤 PiP)는 멀티에서도 그대로 쓰인다.
  */
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import type { GameResultEntry } from '@/api/types'
 import { usePoseLandmarker, type PoseLandmarkerResult } from '@/composables/usePoseLandmarker'
 import type { ActiveGameSession } from '../session'
@@ -24,7 +24,13 @@ import {
   type SolvedSkeleton,
 } from './skeleton'
 import { drawSilhouette } from './silhouette'
-import { holeMarginFor, judgeRound, type RoundJudgment } from './judge'
+import {
+  gradeOf as gradeFromIou,
+  holeMarginFor,
+  judgeRound,
+  poseDifficulty,
+  type RoundJudgment,
+} from './judge'
 import { createStage, type Stage } from './stage'
 import { createWall, type WallHandle } from './wall'
 
@@ -72,6 +78,8 @@ const glCanvasRef = ref<HTMLCanvasElement>()
 const viewportRef = ref<HTMLDivElement>()
 const pipOverlayRef = ref<HTMLCanvasElement>()
 const thumbRef = ref<HTMLCanvasElement>()
+/** 출제자 관전 화면의 큰 구멍 — 썸네일과 달리 "벽에 뚫린 구멍" 자체를 보여준다 */
+const holeRef = ref<HTMLCanvasElement>()
 
 /** stale = 벽 도착 후 다음 라운드 이벤트가 끊긴 상태(복구 대기) — 아래 STALE_MS 참고 */
 type Phase = 'idle' | 'wait' | 'setting' | 'incoming' | 'result' | 'stale'
@@ -97,6 +105,10 @@ const GRADE_POINTS: Record<Grade, number> = { PERFECT: 100, GREAT: 85, PASS: 70,
 /** 관전 화면용 — 서버가 돌려준 점수를 등급으로 역산한다(GRADE_POINTS의 역함수) */
 function gradeOf(score: number | null): Grade {
   return (Object.keys(GRADE_POINTS) as Grade[]).find((g) => GRADE_POINTS[g] === score) ?? 'FAIL'
+}
+/** 관전 화면 링 색 — 진행 중인 도전자의 실시간 일치율(0~1)을 등급 색으로 */
+function liveGradeOf(holdProgress: number): Grade {
+  return gradeFromIou(holdProgress * 100, cfg)
 }
 
 /** 삐져나온 신체 부위 안내(실기 피드백) — 어디가 안 맞는지 말로도 짚어준다 */
@@ -206,17 +218,14 @@ const totalRoundsLabel = computed(() =>
   isMultiplayer.value && props.session?.totalRounds ? `/${props.session.totalRounds}` : '',
 )
 
-const gaugeGrade = computed<Grade>(() => {
-  const iou = liveIou.value
-  if (iou >= cfg.judge.grade.perfect) return 'PERFECT'
-  if (iou >= cfg.judge.grade.great) return 'GREAT'
-  if (iou >= cfg.judge.grade.pass) return 'PASS'
-  return 'FAIL'
-})
+const gaugeGrade = computed<Grade>(() => gradeFromIou(liveIou.value, cfg))
 
 /** 원형 게이지 — 반지름 52, 둘레 기준 dashoffset */
 const GAUGE_R = 52
 const GAUGE_C = 2 * Math.PI * GAUGE_R
+/** 관전 화면 도전자 링 — 40×40 viewBox 기준 */
+const RING_R = 16
+const RING_C = 2 * Math.PI * RING_R
 const gaugeOffset = computed(() => GAUGE_C * (1 - Math.min(liveIou.value, 100) / 100))
 const gaugeTicks = computed(() => [
   { pct: cfg.judge.grade.pass, label: 'PASS' },
@@ -323,6 +332,50 @@ function drawThumbnail(setter: SolvedSkeleton) {
   drawSilhouette(ctx, setter, cfg, 0)
 }
 
+/**
+ * 관전 화면의 큰 구멍 — 석판을 칠한 뒤 실루엣 모양으로 도려낸다(destination-out).
+ * 판정에 쓰는 것과 같은 drawSilhouette + 같은 holeMargin이라, 화면의 구멍과
+ * 실제 통과 판정 범위가 정의상 일치한다.
+ */
+function drawHole() {
+  const canvas = holeRef.value
+  const ctx = canvas?.getContext('2d')
+  if (!canvas || !ctx || !setterPose) return
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  ctx.fillStyle = '#3a332e'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.save()
+  ctx.globalCompositeOperation = 'destination-out'
+  ctx.fillStyle = '#000'
+  ctx.strokeStyle = '#000'
+  drawSilhouette(ctx, setterPose, cfg, holeMargin)
+  ctx.restore()
+}
+
+/** 관전 화면: 지금 이 순간 구멍에 못 맞고 있는 사람 수 — 벽이 다가올수록 요동친다 */
+const caughtCount = computed(
+  () =>
+    (props.scores ?? []).filter((r) =>
+      r.finished ? (r.score ?? 0) < GRADE_POINTS.PASS : r.holdProgress * 100 < cfg.judge.grade.pass,
+    ).length,
+)
+/**
+ * 별점 5★의 기준이 되는 poseDifficulty 값 — 실측 보정 노브.
+ * 이론 상한은 1.0이지만 실제 사람 포즈는 0.6을 넘기 어렵다(랩 측정: 차렷 0.04,
+ * T자 0.23, 만세 0.44, 양팔 접어 머리 위 0.53). 1.0으로 나누면 4·5★이 안 나온다.
+ */
+const DIFFICULTY_FULL = 0.7
+/** 내가 낸 문제의 체감 난이도 별점(1~5) — 표시 전용 휴리스틱, 점수와 무관 */
+const holeStars = ref(0)
+const starBar = computed(() => '★'.repeat(holeStars.value) + '☆'.repeat(5 - holeStars.value))
+
+/** 출제 포즈가 확정된 뒤 파생 표시물(썸네일·큰 구멍·난이도)을 한 번에 갱신한다 */
+function adoptSetterPose(solved: SolvedSkeleton) {
+  drawThumbnail(solved)
+  drawHole()
+  holeStars.value = 1 + Math.round(Math.min(1, poseDifficulty(solved) / DIFFICULTY_FULL) * 4)
+}
+
 /** 실시간 판정(4Hz) — 게이지 갱신 + 삐져나온 세그먼트 즉시 빨강 (§7-4) */
 function liveJudge(now: number) {
   if (setterPose && rig.lastSolved && now - lastLiveJudge > 250) {
@@ -359,7 +412,7 @@ function tickSolo(now: number) {
       wall.build(setterPose, holeMargin, cfg)
       wall.mesh.position.z = WALL_START_Z
       wall.mesh.visible = true
-      drawThumbnail(setterPose)
+      adoptSetterPose(setterPose)
       approachStart = now
       lastLiveJudge = 0
       phase.value = 'incoming'
@@ -473,6 +526,7 @@ watch(
     liveIou.value = 0
     liveOverflow.value = []
     setterPose = null
+    holeStars.value = 0
     poseSubmitted = false
     finishedSent = false
     round.value = s.roundNo ?? 1
@@ -495,13 +549,21 @@ watch(
       wall.build(setterPose, holeMargin, cfg)
       wall.mesh.position.z = WALL_START_Z
       wall.mesh.visible = true
-      drawThumbnail(setterPose)
+      adoptSetterPose(setterPose)
       lastLiveJudge = 0
     } catch {
       /* 손상된 포즈 payload — 벽 없이 진행되면 도착 시 FAIL 처리된다 */
     }
   },
 )
+
+// 관전 화면의 구멍 캔버스는 v-if라 출제 포즈가 도착한 시점엔 아직 DOM에 없다 —
+// 패널이 붙은 뒤 한 번 더 그린다(adoptSetterPose의 drawHole은 그때 no-op이었다).
+watch(spectating, async (on) => {
+  if (!on) return
+  await nextTick()
+  drawHole()
+})
 
 /** 캠 PiP 스켈레톤 오버레이 — "내 몸 → 인식 → 아바타" 인과 증명 (§6-3) */
 function drawPip(lm: LandmarkPoint[] | null) {
@@ -669,19 +731,42 @@ onBeforeUnmount(() => {
             <div class="fill" :style="{ width: approachPct + '%' }"></div>
           </div>
 
-          <!-- 게임④(-9) 출제자 관전 화면 — 내가 낸 문제로 남들이 어디까지 맞췄는지만 본다 -->
+          <!-- 게임④(-9) 출제자 관전 화면 — 내가 낸 구멍이 주인공이고, 도전자는 그 옆 링으로 본다 -->
           <div v-if="spectating" class="spectate-panel">
-            <p class="sp-title">👀 내 포즈로 도전 중</p>
-            <ul v-if="scores?.length" class="sp-rows">
-              <li v-for="row in scores" :key="row.userId">
-                <span class="sp-name">{{ row.nickname }}</span>
-                <b v-if="row.finished" :style="{ color: GRADE_COLOR[gradeOf(row.score)] }">
-                  {{ gradeOf(row.score) }}
-                </b>
-                <span v-else class="sp-live">{{ Math.round(row.holdProgress * 100) }}%</span>
-              </li>
-            </ul>
-            <p v-else class="sp-empty">참가자 진행 상황을 기다리는 중…</p>
+            <p class="sp-title">🧱 내가 만든 구멍</p>
+
+            <div class="sp-stage">
+              <canvas ref="holeRef" class="sp-hole" width="240" height="240"></canvas>
+
+              <ul v-if="scores?.length" class="sp-rings">
+                <li v-for="row in scores" :key="row.userId">
+                  <svg viewBox="0 0 40 40" class="sp-ring">
+                    <circle cx="20" cy="20" :r="RING_R" class="rt" />
+                    <circle
+                      cx="20"
+                      cy="20"
+                      :r="RING_R"
+                      class="rf"
+                      :stroke="GRADE_COLOR[row.finished ? gradeOf(row.score) : liveGradeOf(row.holdProgress)]"
+                      :stroke-dasharray="RING_C"
+                      :stroke-dashoffset="RING_C * (1 - Math.min(1, row.holdProgress))"
+                    />
+                    <text x="20" y="24" class="rn">
+                      {{ row.finished ? '✓' : Math.round(row.holdProgress * 100) }}
+                    </text>
+                  </svg>
+                  <span class="sp-name">{{ row.nickname }}</span>
+                </li>
+              </ul>
+              <p v-else class="sp-empty">참가자 진행 상황을 기다리는 중…</p>
+            </div>
+
+            <p class="sp-caught" :class="{ hot: caughtCount > 0 }">
+              지금 <b>{{ caughtCount }}</b> / {{ scores?.length ?? 0 }}명 걸림{{
+                caughtCount > 0 ? ' 🔥' : ''
+              }}
+            </p>
+            <p v-if="holeStars" class="sp-diff">난이도 <b>{{ starBar }}</b></p>
           </div>
         </div>
       </div>
@@ -1243,42 +1328,102 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
-  padding: 24px;
+  gap: 10px;
+  padding: 16px;
+  overflow: hidden;
 }
 .sp-title {
   font-size: 15px;
   font-weight: 800;
   color: var(--bf-gold);
 }
-.sp-rows {
+/* 구멍(주인공)과 도전자 링을 나란히 — 좁으면 링이 아래로 내려간다 */
+.sp-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+/* 석판을 도려낸 구멍 — 뚫린 자리로 어두운 무대가 보인다.
+   게임룸 셀프 타일에 얹히면 세로가 먼저 좁아지므로 높이 기준으로 잰다(가로 기준이면 넘친다) */
+.sp-hole {
+  flex: 0 0 auto;
+  aspect-ratio: 1;
+  height: min(200px, 50%);
+  width: auto;
+  border: 2px solid var(--bf-gold);
+  border-radius: var(--bf-radius-sm);
+  box-shadow: var(--bf-shadow-sm);
+}
+.sp-rings {
   list-style: none;
   margin: 0;
   padding: 0;
-  width: min(320px, 100%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  max-width: 180px;
+}
+.sp-rings li {
+  width: 52px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-.sp-rows li {
-  display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  background: rgba(255, 236, 200, 0.06);
-  border: var(--bf-line);
-  border-radius: var(--bf-radius-sm);
+  gap: 2px;
+}
+.sp-ring {
+  width: 52px;
+  height: 52px;
+}
+.sp-ring .rt {
+  fill: none;
+  stroke: var(--bf-panel-2);
+  stroke-width: 5;
+}
+.sp-ring .rf {
+  fill: none;
+  stroke-width: 5;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 20px 20px;
+  transition: stroke-dashoffset 250ms linear, stroke 250ms linear;
+}
+.sp-ring .rn {
+  fill: var(--bf-text);
   font-size: 13px;
+  font-weight: 800;
+  text-anchor: middle;
+  font-variant-numeric: tabular-nums;
 }
 .sp-name {
+  max-width: 52px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.sp-live {
-  font-variant-numeric: tabular-nums;
+  font-size: 10px;
   color: var(--bf-muted);
+}
+.sp-caught {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--bf-muted);
+}
+.sp-caught b {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+.sp-caught.hot {
+  color: var(--bf-coral);
+}
+.sp-diff {
+  font-size: 13px;
+  color: var(--bf-muted);
+}
+.sp-diff b {
+  color: var(--bf-gold);
+  letter-spacing: 0.1em;
 }
 .sp-empty {
   font-size: 12px;
