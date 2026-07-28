@@ -13,6 +13,7 @@ import { useLoginRequired } from '@/composables/useLoginRequired'
 import { useAccessDenied } from '@/composables/useAccessDenied'
 import { useGuestSignupPrompt } from '@/composables/useGuestSignupPrompt'
 import { usePresenceHeartbeat } from '@/composables/usePresenceHeartbeat'
+import { useGlobalStomp } from '@/composables/useGlobalStomp'
 import LoginRequiredModal from '@/components/common/LoginRequiredModal.vue'
 import GuestSignupPromptModal from '@/components/common/GuestSignupPromptModal.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
@@ -24,6 +25,9 @@ const { message: loginRequired, close: closeLoginRequired } = useLoginRequired()
 const { message: accessDenied, close: closeAccessDenied } = useAccessDenied()
 const { open: guestPrompt, close: closeGuestPrompt } = useGuestSignupPrompt()
 
+// 전역 STOMP 연결 — 회원 세션이 서면 열고 사라지면 끊는다(-142).
+// 하트비트·친구 상태·로비 방 목록·초대·귓속말이 전부 이 연결 하나를 나눠 쓴다.
+useGlobalStomp()
 // 접속 상태 하트비트 — 화면과 무관하게 앱 수명 동안 돌아야 하므로 여기서 한 번만 켠다(-57).
 usePresenceHeartbeat()
 
