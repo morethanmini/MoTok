@@ -25,6 +25,12 @@ public class GameCatalogSeeder implements ApplicationRunner {
     private static final String FINGER_STAR_CONTROLS =
             "카메라에 두 손이 잘 보이도록 자리를 잡고, 열 손가락 끝을 움직여 화면 속 별 위에 올려놓아요.";
 
+    private static final String DRAW_RULES =
+            "총 4분을 인원수로 나눠 한 도화지에 그림을 이어 그리는 협동 게임이에요. "
+                    + "완성 그림을 본 AI가 무엇인지 5가지로 추측하고, 그 안에 주제어가 있으면 순위에 따라 점수를 받아요.";
+    private static final String DRAW_CONTROLS =
+            "펜 손(기본 오른손) 엄지+검지를 집으면 그려지고, 지우개 손(기본 왼손) 주먹을 쥐고 문지르면 지워져요.";
+
     private final GameRepository gameRepository;
 
     private static final String BODY_FIT_RULES =
@@ -58,6 +64,27 @@ public class GameCatalogSeeder implements ApplicationRunner {
             existing.updateGuide(FINGER_STAR_RULES, FINGER_STAR_CONTROLS);
             gameRepository.save(existing);
             log.info("game catalog backfilled: id=1 rules/controls");
+        }
+
+        // 그림으로 말해요(명세 v0.2.20) — roundDurationSec은 총 그리기 시간(240),
+        // 인당 시간은 세션 시작 시 ceil(240/인원)로 분배된다. 정식 최소 인원 4인 표기이며
+        // 시작 시 인원 검증은 후속(테스트 기간에는 소인원 시작 허용).
+        if (gameRepository.findById(10L).isEmpty()) {
+            gameRepository.save(Game.builder()
+                    .id(10L)
+                    .name("그림으로 말해요")
+                    .mode("COOP")
+                    .minPlayers(4)
+                    .maxPlayers(8)
+                    .roundDurationSec(240)
+                    .countdownSec(3)
+                    .supportsBot(false)
+                    .active(true)
+                    .category("PARTY")
+                    .rules(DRAW_RULES)
+                    .controls(DRAW_CONTROLS)
+                    .build());
+            log.info("game catalog seeded: id=10 그림으로 말해요");
         }
     }
 

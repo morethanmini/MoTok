@@ -8,6 +8,8 @@ export interface GameEntry {
   emoji: string
   thumb: string
   playable: boolean
+  /** 카메라 없이도 플레이 가능(마우스 폴백) — 시작 시 카메라 강제를 건너뛴다 */
+  cameraOptional?: boolean
   /** 게임 선택창 상세 패널에 보여줄 설명 */
   description: string
   /** 게임 선택창 상세 패널의 플레이 방법 단계 */
@@ -27,9 +29,14 @@ export const GAME_CATALOG: GameEntry[] = [
     howToPlay: ['카메라에 두 손이 잘 보이도록 위치를 잡아요', '열 손가락을 움직여 모든 별을 동시에 켜요', '그대로 10초간 유지하면 완성 — 모양이 비슷할수록 고득점!'],
   },
   {
-    id: 'fishing', gameId: 2, name: 'MOTION FISH', tag: '두 손으로 낚시하기', emoji: '🎣', thumb: '#dff1fb', playable: false,
-    description: '양손으로 낚싯대를 던지고 당기는 동작을 따라 하며 물고기를 낚는 협동 게임이에요.',
-    howToPlay: ['한 손으로 낚싯대를 던지는 동작을 해요', '물고기가 미끼를 물면 반대 방향으로 손을 당겨요', '제한 시간 안에 가장 많이 낚으면 승리!'],
+    id: 'draw', gameId: 10, name: '그림으로 말해요', tag: '이어 그리기 · AI 채점', emoji: '🎨', thumb: '#fdeee0', playable: true, cameraOptional: true,
+    description: '총 4분을 인원수로 나눠 한 도화지에 그림을 이어 그리는 협동 게임이에요. 완성 그림을 본 AI가 무엇인지 5가지로 추측하고, 그 안에 주제어가 있으면 순위에 따라 점수를 받아요.',
+    howToPlay: ['주제어를 확인하고 자기 차례에 이어 그려요', '오른손 엄지+검지를 집으면 그리기, 왼손 주먹으로 문지르면 지우개 (왼손잡이 모드 지원)', '모두 그리면 AI가 추측 — 1순위로 맞히면 100점!'],
+  },
+  {
+    id: 'rhythm', gameId: 2, name: '캐치캐치리듬', tag: '날아오는 음표 잡기', emoji: '🐾', thumb: '#ffe6d8', playable: true,
+    description: '날아오는 음표 버블을 손으로 잡는 리듬 게임이에요. 방 전원이 똑같은 채보로 동시에 플레이하고 점수로 겨뤄요.',
+    howToPlay: ['카메라에 두 손이 잘 보이도록 위치를 잡아요', '음표가 다가와 커지는 순간 그 위에서 주먹을 쥐어요', '쥔 채로 쓸고 다니면 안 잡혀요 — 잡을 때마다 새로 쥐어야 해요'],
   },
   {
     id: 'dance', gameId: 3, name: 'DANCE BATTLE', tag: '리듬 · 풀바디 모션', emoji: '💃', thumb: '#fbf3d9', playable: false,

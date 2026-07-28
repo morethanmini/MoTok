@@ -14,10 +14,15 @@ import AppPage from '@/components/common/AppPage.vue'
 import PixelCard from '@/components/common/PixelCard.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
+import UserProfileModal from '@/components/common/UserProfileModal.vue'
 import AddFriendModal from './components/AddFriendModal.vue'
 import { useToast } from '@/composables/useToast'
+import { useUserProfile } from '@/composables/useUserProfile'
 
 const { message: toast, flash } = useToast()
+/** 친구를 누르면 공개 프로필(-96). 랭킹 화면과 같은 컴포저블·모달을 쓴다. */
+const viewer = useUserProfile()
 
 // 백엔드(-57)가 연동됐으므로 목업 폴백을 두지 않는다 — 가짜 친구가 보이면 API 실패를 알아챌 수 없다.
 // 로드 실패 시에는 빈 목록 + 각 탭의 "없어요" 안내가 그대로 노출된다.
@@ -133,12 +138,28 @@ async function removeFriend(f: Friend) {
 
       <!-- 친구 목록 -->
       <ul v-if="tab === 'friends'" class="list">
-        <li v-for="f in friends" :key="f.userId">
-          <div class="req-avatar">{{ f.nickname.charAt(0) }}</div>
+        <!--
+          박스 전체가 프로필 열기 버튼이다(랭킹 표 행과 같은 방식).
+          안쪽 닉네임을 button으로 두는 건 키보드 접근용 — 클릭은 li로 버블링되므로 핸들러는 하나뿐이다.
+          오른쪽 조작 영역은 click.stop — 삭제를 누르려다 프로필이 열리면 안 된다.
+        -->
+        <li
+          v-for="f in friends"
+          :key="f.userId"
+          class="clickable"
+          @click="viewer.open(f.userId, f.nickname)"
+        >
+          <!-- 사진이 없거나 못 불러온 친구는 닉네임 첫 글자로 떨어진다(UserAvatar가 처리) -->
+          <UserAvatar
+            class="req-avatar"
+            :src="f.avatarUrl"
+            :fallback="f.nickname.charAt(0)"
+            :alt="`${f.nickname} 프로필 사진`"
+          />
           <div class="who">
-            <b class="req-nick">{{ f.nickname }}</b>
+            <button type="button" class="req-nick name-btn">{{ f.nickname }}</button>
           </div>
-          <div class="friend-actions">
+          <div class="friend-actions" @click.stop>
             <PixelButton v-if="manageMode" variant="mint" @click="removeFriend(f)">삭제</PixelButton>
             <span v-else class="presence-badge">
               <i class="dot" :style="{ background: presenceColor[f.presence] }" />
@@ -176,6 +197,17 @@ async function removeFriend(f: Friend) {
     </PixelCard>
     <PixelToast :message="toast" />
     <AddFriendModal v-if="showAddModal" v-model="target" @close="showAddModal = false" @send="sendRequest" />
+    <!-- 랭킹과 같은 모달·같은 조회 규칙. 친구 목록에는 순위 같은 수치가 없어 stats를 넘기지 않는다. -->
+    <UserProfileModal
+      v-if="viewer.isOpen.value"
+      :user-id="viewer.targetId.value!"
+      :profile="viewer.profile.value"
+      :nickname="viewer.nickname.value"
+      :loading="viewer.loading.value"
+      :error="viewer.error.value"
+      @close="viewer.close()"
+      @reported="flash"
+    />
   </AppPage>
 </template>
 
@@ -206,7 +238,11 @@ async function removeFriend(f: Friend) {
 }
 .who small { display: block; font-size: 9px; color: var(--c-muted); margin-top: 3px; }
 .list li > :nth-child(3) { margin-left: auto; }
-.friend-actions { display: flex; align-items: center; gap: 8px; }
+.list li.clickable { cursor: pointer; }
+.list li.clickable:hover { border-color: var(--c-ink); background: var(--c-mint-soft); }
+/* 키보드 접근용 버튼 — 보이는 모양은 원래 <b> 그대로다 */
+.name-btn { display: block; padding: 0; border: 0; background: transparent; font: inherit; color: inherit; cursor: pointer; }
+.friend-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .friend-actions :deep(.px-btn) { height: 32px; padding: 0 12px; font-size: 10px; }
 .presence-badge { display: flex; align-items: center; gap: 6px; font-size: 9px; color: var(--c-muted); }
 .requests-list .req-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
