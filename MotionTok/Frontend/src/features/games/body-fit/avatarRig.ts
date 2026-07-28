@@ -71,12 +71,26 @@ export class AvatarRig {
   /** 마지막으로 적용된 골격 — 판정기가 이 값을 그대로 쓴다 */
   lastSolved: SolvedSkeleton | null = null
 
-  // 납작한 실루엣 룩(2026-07-28) — MeshPhysicalMaterial(점토 셰이딩)에서 unlit 단색으로.
-  // 입체 음영을 지우면 아바타가 한 덩어리 실루엣으로 읽혀 무대와 톤이 갈리지 않는다.
-  // 되돌리려면 MeshPhysicalMaterial + roughness 0.85 + sheen 0.45 조합으로 복구.
-  private readonly material = new THREE.MeshBasicMaterial({ color: 0xd8c9a8 })
+  // "납작한 배경 + 입체 주인공" — 무대는 unlit 단색이고 아바타만 조명을 받는다.
+  // 무대 재질이 전부 MeshBasicMaterial이라 조명·환경맵을 통째로 무시하므로,
+  // 조명을 켜도 여기에만 걸린다(격리가 공짜다).
+  // sheen이 매트 표면에 옅은 산란을 얹어 레퍼런스의 점토/석고 같은 부드러움을 낸다.
+  private readonly material = new THREE.MeshPhysicalMaterial({
+    color: 0xe8dcc4, // 크림 — 순백은 무대에서 떠 보였고, 사암 단색은 너무 가라앉았다
+    roughness: 0.82,
+    metalness: 0,
+    sheen: 0.6,
+    sheenRoughness: 0.55,
+    sheenColor: 0xfff0d8,
+  })
   /** 삐져나온 세그먼트용 — UI 스펙 §1-3 --overflow */
-  private readonly overflowMaterial = new THREE.MeshBasicMaterial({ color: 0xdb4f30 })
+  private readonly overflowMaterial = new THREE.MeshPhysicalMaterial({
+    color: 0xdb4f30,
+    roughness: 0.75,
+    metalness: 0,
+    emissive: 0xdb4f30,
+    emissiveIntensity: 0.4,
+  })
 
   private readonly head: THREE.Mesh
   private readonly torso: THREE.Mesh
