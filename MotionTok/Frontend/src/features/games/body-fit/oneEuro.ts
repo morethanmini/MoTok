@@ -20,8 +20,10 @@ export interface OneEuroParams {
    *
    * 그래서 visibility가 낮은 관절만 골라 minCutoff와 beta를 함께 낮춘다.
    * 잘 보이는 관절의 반응성은 건드리지 않는다.
+   *
+   * 선택 항목 — 생략하면 감쇠 없이 순수 One Euro로 동작한다(기존 호출부 호환).
    */
-  visTighten: number
+  visTighten?: number
 }
 
 /** 이 값 이상이면 신뢰도 감쇠를 걸지 않는다 — 잘 보이는 관절은 원래 반응성 유지 */
