@@ -25,10 +25,12 @@ import {
 } from './skeleton'
 import { drawSilhouette } from './silhouette'
 import {
+  GRADE_POINTS,
   gradeOf as gradeFromIou,
   holeMarginFor,
   judgeRound,
   poseDifficulty,
+  scoreFor,
   type RoundJudgment,
 } from './judge'
 import { createStage, type Stage } from './stage'
@@ -101,8 +103,8 @@ const GRADE_COLOR: Record<Grade, string> = {
   PASS: 'var(--bf-gold)',
   FAIL: 'var(--bf-coral)',
 }
-const GRADE_POINTS: Record<Grade, number> = { PERFECT: 100, GREAT: 85, PASS: 70, FAIL: 0 }
-/** 관전 화면용 — 서버가 돌려준 점수를 등급으로 역산한다(GRADE_POINTS의 역함수) */
+/** 관전 화면용 — 서버가 돌려준 점수를 등급으로 역산한다(GRADE_POINTS의 역함수).
+ *  실패 점수는 FAIL_MAX_SCORE 이하라 어떤 등급 점수와도 겹치지 않는다(judge.ts 주석 참고). */
 function gradeOf(score: number | null): Grade {
   return (Object.keys(GRADE_POINTS) as Grade[]).find((g) => GRADE_POINTS[g] === score) ?? 'FAIL'
 }
@@ -426,9 +428,9 @@ function tickSolo(now: number) {
 
     if (t >= 1 && setterPose && rig.lastSolved) {
       const result = finalizeJudgment()
-      totalScore.value += GRADE_POINTS[result.grade]
+      totalScore.value += scoreFor(result)
       history.value.unshift({ round: round.value, grade: result.grade, iou: result.iou })
-      emit('finished', { score: GRADE_POINTS[result.grade], grade: result.grade, iou: result.iou })
+      emit('finished', { score: scoreFor(result), grade: result.grade, iou: result.iou })
       resultAt = now
       phase.value = 'result'
     }
@@ -480,7 +482,7 @@ function tickMulti(now: number) {
     finishedSent = true
     if (!isSetter.value) {
       const result = finalizeJudgment()
-      emit('finished', { score: GRADE_POINTS[result.grade], grade: result.grade, iou: result.iou })
+      emit('finished', { score: scoreFor(result), grade: result.grade, iou: result.iou })
     }
   }
   // 다음 라운드 GAME_START(또는 GAME_END)가 안 오면 여기서 영원히 멈춘다 — 재연결 공백에
@@ -724,7 +726,8 @@ onBeforeUnmount(() => {
 
           <div v-if="judgment" class="grade-pop" :style="{ color: GRADE_COLOR[judgment.grade] }">
             <strong>{{ judgment.grade }}</strong>
-            <span>일치율 {{ judgment.iou.toFixed(0) }}%</span>
+            <!-- FAIL도 일치율만큼 점수를 받는다 — 안 보여주면 0점처럼 느껴진다 -->
+            <span>일치율 {{ judgment.iou.toFixed(0) }}% · +{{ scoreFor(judgment) }}점</span>
           </div>
 
           <div v-if="phase === 'incoming' && !spectating" class="approach-bar" :class="{ urgent: timerSec <= 2 }">
