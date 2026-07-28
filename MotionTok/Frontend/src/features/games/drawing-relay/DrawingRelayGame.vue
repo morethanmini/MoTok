@@ -56,6 +56,8 @@ const props = defineProps<{
   myUserId?: string | null
   /** 멀티 DRAW/DRAW_RESULT 릴레이 피드(게임룸이 수신 순서대로 append) */
   drawEvents?: GameEvent[] | null
+  /** userId → 닉네임 — 현재 화가 표시("xx님이 그리고 있어요!")용 */
+  names?: Record<string, string> | null
 }>()
 const emit = defineEmits<{
   close: []
@@ -76,7 +78,7 @@ const SMOOTHING = 0.45
 const PEN_COLOR = '#26262e'
 const PEN_WIDTH = 5
 const PAPER_COLOR = '#fdfdf8'
-const ERASER_WIDTH = 36
+const ERASER_WIDTH = 60
 /** 주먹(지우개) 전환에 필요한 연속 프레임 수 — 순간 오인식으로 지워지는 것 방지 */
 const FIST_CONFIRM_FRAMES = 3
 
@@ -140,6 +142,11 @@ const myTurn = computed(
 const amLastPainter = computed(() => {
   const order = props.session?.turnOrder
   return !!order?.length && order[order.length - 1] === props.myUserId
+})
+/** 현재(또는 다가오는) 화가의 닉네임 — 모르면 null(순번으로 폴백 표시) */
+const painterName = computed(() => {
+  const id = props.session?.turnOrder?.[turnIndex.value]
+  return (id && props.names?.[id]) || null
 })
 /** 채점 대기 경과(초) — 관전자 폴백 채점 버튼 노출 판단 */
 const resultWaitSec = ref(0)
@@ -779,7 +786,13 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
       <span class="dr-topic">🎨 주제어: {{ phase === 'ready' ? '???' : topic }}</span>
       <span class="dr-painter">
         화가 {{ turnIndex + 1 }} / {{ playerCount
-        }}{{ isMultiplayer ? (myTurn ? ' · 내 차례!' : ' · 관전 중') : '' }}
+        }}{{
+          isMultiplayer
+            ? myTurn
+              ? ' · 내 차례!'
+              : ` · ${painterName ? `${painterName}님이` : '다른 화가가'} 그리고 있어요!`
+            : ''
+        }}
       </span>
       <div class="dr-time-track">
         <div
@@ -847,7 +860,10 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
     <!-- 차례 교대 -->
     <div v-if="phase === 'handover'" class="dr-overlay dr-overlay-light">
       <p class="dr-guide">
-        <b>{{ turnIndex + 1 }}번째 화가</b> 차례!<br />주제어: <b>{{ topic }}</b>
+        <b>{{
+          isMultiplayer && painterName ? `${painterName}님` : `${turnIndex + 1}번째 화가`
+        }}</b>
+        차례!<br />주제어: <b>{{ topic }}</b>
       </p>
       <p class="dr-countdown">{{ handoverLeft }}</p>
       <p class="dr-sub">
@@ -855,7 +871,7 @@ const playerOptions = Array.from({ length: MAX_PLAYERS }, (_, i) => i + 1)
           isMultiplayer
             ? myTurn
               ? '내 차례예요 — 이어서 그려주세요!'
-              : '다른 화가가 이어 그려요 — 같은 도화지가 실시간으로 보여요'
+              : `${painterName ? `${painterName}님이` : '다른 화가가'} 이어 그려요 — 같은 도화지가 실시간으로 보여요`
             : `이어서 그려주세요 — 인당 ${turnSeconds}초`
         }}
       </p>
