@@ -33,7 +33,7 @@ const props = defineProps<{
   }
 }>()
 
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; started: []; ended: [] }>()
 
 /** 솔로 폴백 전용 — 대전은 서버가 라운드 길이를 정한다 */
 const SOLO_ROUND_MS = 60_000
@@ -139,7 +139,17 @@ watch(
       errorMsg.value = ''
       submitted.value = false
       soloSeed.value = null
+      emit('started')
     }
+  },
+)
+
+// 라운드 정산(RHYTHM_END) → 부모에게 알린다. 별자리의 GAME_END와 같은 계약 —
+// 부모가 전원의 게임 화면 송출을 내려서, 결과 화면을 닫지 않아도 모든 타일이 카메라로 복귀한다.
+watch(
+  () => session.results.value,
+  (r) => {
+    if (r) emit('ended')
   },
 )
 </script>
