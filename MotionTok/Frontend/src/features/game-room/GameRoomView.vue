@@ -565,6 +565,10 @@ useRhythmAutoJoin(roomChat, roomCode, () => {
 function openPicker() {
   picker.value = true
 }
+/** 지금 방에 있는 인원 — LiveKit 참가자(본인 포함)가 실시간, 상세 조회 값은 폴백 */
+function roomPlayerCount(): number {
+  return lk.participants.value.length || participantCount.value
+}
 function launch(g: GameEntry) {
   picker.value = false
   // 캐치캐치리듬은 전용 STOMP 채널을 쓴다 — 공용 게임 세션(GAME_START) 경로를 타지 않고
@@ -584,10 +588,20 @@ function launch(g: GameEntry) {
       flash('카메라를 켜고 시작해 주세요')
       return
     }
+    // 최소 인원은 서버도 거부하지만, 먼저 알려주는 편이 친절하다(이어그리기는 3인부터)
+    if (g.minPlayers && roomPlayerCount() < g.minPlayers) {
+      flash(`${g.name} 는 ${g.minPlayers}명부터 시작할 수 있어요`)
+      return
+    }
     roomChat.startGame(g.gameId)
     return
   }
-  // 서버 미연동 데모 — 로컬 솔로 플레이 폴백
+  // 서버 미연동 데모 — 로컬 솔로 플레이 폴백. 멀티 전용 게임(minPlayers>1)은 혼자
+  // 진행할 수 없으므로 폴백에서 제외한다(그림으로 말해요는 이어그리기라 3인부터).
+  if (g.playable && !roomChat.connected.value && (g.minPlayers ?? 1) > 1) {
+    flash(`${g.name} 는 실시간 서버에 연결된 뒤 ${g.minPlayers}명부터 시작할 수 있어요`)
+    return
+  }
   if (g.playable && !roomChat.connected.value) {
     if (!captureOn.value) {
       flash('카메라를 켜야 게임을 플레이할 수 있어요')

@@ -92,8 +92,9 @@ public class Game {
         this.controls = controls;
     }
 
-    /** 라운드 길이 갱신 — 이미 시딩된 행의 밸런스 조정 백필용(시더는 멱등이라 insert만으로는 못 바꾼다). */
-    public void updateRoundDuration(int roundDurationSec) {
+    /** 라운드 길이·최소 인원 갱신 — 이미 시딩된 행의 규칙 조정 백필용(시더는 멱등이라 insert만으로는 못 바꾼다). */
+    public void updateSessionRules(int roundDurationSec, int minPlayers) {
         this.roundDurationSec = roundDurationSec;
+        this.minPlayers = minPlayers;
     }
 }
