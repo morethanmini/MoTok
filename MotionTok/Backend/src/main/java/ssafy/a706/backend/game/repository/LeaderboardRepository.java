@@ -18,4 +18,7 @@ public interface LeaderboardRepository extends JpaRepository<Leaderboard, Long> 
 
     /** 리더보드 화면 hydration(플레이 횟수)용 일괄 조회. */
     List<Leaderboard> findAllByGameIdAndModeAndUserIdIn(Long gameId, LeaderboardMode mode, Collection<Long> userIds);
+
+    /** 한 회원의 전 게임·모드 기록 — 전적 조회(-97 내 전적, -141 친구 상세)용 역방향 조회. */
+    List<Leaderboard> findAllByUserId(Long userId);
 }
