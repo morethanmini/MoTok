@@ -5,7 +5,7 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch 
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason } from '@/api'
+import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason } from '@/api'
 import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { useCamera } from '@/composables/useCamera'
@@ -77,6 +77,8 @@ const roomVisibility = ref<Visibility>('PUBLIC')
 const participantCount = ref(1)
 /** 이미 방에 있는 참가자 — 친구 초대(-100) 목록에서 빼려고 들고 있는다. */
 const memberIds = ref<string[]>([])
+/** userId → 표시명(상세 조회 기준). 게임④ 출제자 이름·그림으로 말해요 화가 표시가 함께 쓴다. */
+const memberNames = ref<Record<string, string>>({})
 
 /**
  * 방장 판정 — <b>이 화면의 유일한 방장 판별 근거</b>다. 상세 조회의 hostUserId와 내 토큰 sub를 직접 비교한다.
@@ -104,8 +106,7 @@ function applyDetail(d: LiveRoomDetail) {
   memberNames.value = Object.fromEntries(d.members.map((m) => [m.userId, m.displayName]))
 }
 
-/** userId → 닉네임 — 상세 조회 멤버를 기본으로 LiveKit 참가자 이름으로 보강(그림으로 말해요 화가 표시). */
-const memberNames = ref<Record<string, string>>({})
+/** userId → 닉네임 — 상세 조회 멤버를 기본으로 LiveKit 참가자 이름으로 보강(뒤늦게 들어온 참가자 대응). */
 const participantNames = computed<Record<string, string>>(() => {
   const names = { ...memberNames.value }
   for (const p of lk.participants.value) {
@@ -131,7 +132,15 @@ const otherSlots = computed<Slot[]>(() => {
 })
 // 내 캠은 왼쪽에 크게 고정, 나머지는 오른쪽 좁은 트레이에 인원수(2~8명)에 맞춰 세로로 쌓는다.
 // 1~2명: 1열(위아래로 쌓임). 3명 이상: 2열.
-const othersColumns = computed(() => (otherSlots.value.length <= 2 ? 1 : 2))
+const othersColumns = computed(() => {
+  if (otherSlots.value.length <= 2) return 1
+  if (otherSlots.value.length <= 4) return 2
+  return 3
+})
+const isEightPlayerLayout = computed(() => capacity.value === 8)
+const isSideBySideLayout = computed(() => capacity.value >= 5 && capacity.value <= 8)
+const leftSideSlots = computed(() => otherSlots.value.slice(0, capacity.value <= 6 ? 2 : 3))
+const rightSideSlots = computed(() => otherSlots.value.slice(capacity.value <= 6 ? 2 : 3, 7))
 
 // ── 자기 타일 상태 — 프리뷰·게임 참여 가능 여부는 로컬 캡처 기준, "보이는지"는 발행 상태 기준 ──
 const demoMic = ref(initialMicOn.value)
@@ -166,6 +175,43 @@ const showHostWaiting = computed(
 )
 
 const selfVideoEl = ref<HTMLVideoElement>()
+const kickTarget = ref<ParticipantView | null>(null)
+const kicking = ref(false)
+const kickReason = ref<KickReason>('GAME_DISRUPTION')
+const KICK_REASONS: ReadonlyArray<{ code: KickReason; label: string }> = [
+  { code: 'MANNER_VIOLATION', label: '비매너 행위' },
+  { code: 'INAPPROPRIATE_PROFILE', label: '부적절한 프로필' },
+  { code: 'GAME_DISRUPTION', label: '게임 진행 방해' },
+  { code: 'SPAM_AD', label: '도배·광고' },
+  { code: 'OTHER', label: '기타' },
+]
+function openKick(target: ParticipantView | null) {
+  if (!amRoomHost.value || !target) return
+  kickReason.value = 'GAME_DISRUPTION'
+  kickTarget.value = target
+}
+function closeKick() {
+  if (!kicking.value) kickTarget.value = null
+}
+async function confirmKick() {
+  if (!kickTarget.value || kicking.value) return
+  kicking.value = true
+  try {
+    await roomsApi.kick(roomCode.value, kickTarget.value.identity, kickReason.value)
+    flash(`${kickTarget.value.name}님을 방에서 내보냈어요`)
+    kickTarget.value = null
+  } catch (e) {
+    flash(e instanceof ApiError ? e.message : '강퇴 처리에 실패했어요')
+  } finally {
+    kicking.value = false
+  }
+}
+const selfVideoAspect = ref(8 / 5)
+function syncSelfVideoAspect() {
+  const video = selfVideoEl.value
+  if (!video?.videoWidth || !video.videoHeight) return
+  selfVideoAspect.value = video.videoWidth / video.videoHeight
+}
 // 모션 인식 입력은 항상 로컬 캡처 스트림을 쓴다 — 카메라를 꺼도(발행 mute) 스트림 연결은
 // 유지되어 게임 입력이 계속 흐른다. 프리뷰 표시 여부만 selfCamOn(발행 상태)으로 가린다.
 watch(
@@ -459,6 +505,33 @@ const iAmSetter = computed(
     !!activeSession.value?.setterUserId &&
     activeSession.value.setterUserId === myParticipantId.value,
 )
+/** 게임④(-9): 이번 라운드 출제자 표시명 — 이름 조회는 participantNames 하나로 통일한다 */
+const setterName = computed(() => {
+  const id = activeSession.value?.setterUserId
+  return id ? (participantNames.value[id] ?? '출제자') : null
+})
+/**
+ * 게임④(-9): 출제 중인 출제자의 카메라를 다른 참가자 타일에서 가린다 — 캠으로 포즈가
+ * 미리 보이면 문제가 성립하지 않는다(실기 피드백). 출제자는 게임 화면을 송출하지 않으므로
+ * 타일에 보이는 건 카메라 원본이다.
+ * 창은 타이머 없이 판별한다: GAME_START(poseChallenge=null) ~ POSE_SET 도착까지가 곧 출제 구간.
+ */
+const coveredSetterId = computed(() =>
+  activeGame.value?.id === 'shape' &&
+  activeSession.value?.setterUserId &&
+  !poseChallenge.value &&
+  !gameResults.value
+    ? activeSession.value.setterUserId
+    : null,
+)
+/**
+ * 타일에 씌울 가림막 문구. 참가자 타일은 레이아웃(정원 5~8인 side-tray / 그 외 others-tray)에
+ * 따라 세 군데에서 렌더되므로, 조건을 여기 한 곳에 두고 전부 이걸 쓴다 —
+ * 한 곳만 빠져도 그 레이아웃에서 출제 포즈가 새어나간다.
+ */
+function coverFor(slot: Slot): string | null {
+  return slot.view && slot.view.identity === coveredSetterId.value ? '🤫 출제 중 — 비밀!' : null
+}
 
 // 캔버스가 준비되면 송출 시작. 게임 캔버스에는 카메라 원본이 그려지지 않으므로(밤하늘+손 포인트)
 // 카메라를 숨긴 상태여도 계속 송출하고, 캡처가 끊겨 새 프레임이 없을 때만 가린다(정지 화면 방지).
@@ -809,10 +882,36 @@ watch(
     )
   },
 )
+
+// 강퇴·퇴장 멤버 이벤트(-71, -73)를 즉시 반영한다. 특히 내 ID가 대상이면 REST 요청 성공만으로
+// 화면이 남아 있지 않도록 LiveKit/카메라 연결을 끊고 확인 모달 없이 로비로 이동한다.
+watch(
+  () => roomChat.memberRemoved.value,
+  async (e) => {
+    if (!e) return
+    participantCount.value = e.participantCount
+    memberIds.value = memberIds.value.filter((id) => id !== e.userId)
+  },
+)
+watch(
+  () => roomChat.memberKicked.value,
+  async (e) => {
+    if (!e) return
+    participantCount.value = e.participantCount
+    memberIds.value = memberIds.value.filter((id) => id !== e.userId)
+    if (e.userId !== myParticipantId.value) return
+
+    await lk.disconnect()
+    camera.stop()
+    leavingIntentionally = true
+    await router.replace({ name: RouteName.Lobby, query: { kickedReason: e.reason } })
+  },
+)
 // 헤더 링크·뒤로가기 등으로 방을 벗어나려 하면 확인 모달. "나가기" 같은 의도된 이동은 통과.
 let leavingIntentionally = false
 const showLeaveConfirm = ref(false)
 let resolveLeave: ((ok: boolean) => void) | null = null
+let leaveToLobbyAfterConfirm = false
 onBeforeRouteLeave(() => {
   if (leavingIntentionally) return true
   showLeaveConfirm.value = true
@@ -820,9 +919,18 @@ onBeforeRouteLeave(() => {
 })
 async function answerLeave(ok: boolean) {
   showLeaveConfirm.value = false
-  if (ok) await notifyLeave()
-  resolveLeave?.(ok)
+  const routeLeaveResolver = resolveLeave
   resolveLeave = null
+  if (ok) {
+    await notifyLeave()
+    if (leaveToLobbyAfterConfirm) {
+      leavingIntentionally = true
+      leaveToLobbyAfterConfirm = false
+      await router.push({ name: RouteName.Lobby })
+    }
+  }
+  leaveToLobbyAfterConfirm = false
+  routeLeaveResolver?.(ok)
 }
 
 // 백엔드 퇴장 통보 + LiveKit 연결 정리. "LEAVE" 버튼과 확인 모달("나가기") 양쪽 경로에서 공유.
@@ -840,9 +948,8 @@ async function notifyLeave() {
 }
 
 async function leave() {
-  leavingIntentionally = true
-  await notifyLeave()
-  router.push({ name: RouteName.Lobby })
+  leaveToLobbyAfterConfirm = true
+  showLeaveConfirm.value = true
 }
 
 // ── 친구 초대 (-100, 대기실 전용) ─────────────
@@ -907,18 +1014,6 @@ const startHint = computed(() =>
         ⚙
       </button>
 
-      <!-- 게임 시작 — 바 정중앙. 힌트 문구는 54px 바에 두 줄이 안 들어가 title 툴팁으로 옮겼다. -->
-      <button
-        class="px start-btn"
-        :class="{ suggest: !amRoomHost }"
-        :disabled="pickerLocked || (detailLoaded && !amRoomHost && suggestCooldown)"
-        :title="startHint"
-        @click="openPicker"
-      >
-        <span class="play-ico">▶</span>
-        <span class="start-title">{{ startLabel }}</span>
-      </button>
-
       <!-- 방 코드 (하단 바에서 이동) -->
       <div class="code-box">
         <span class="px code-cap">ROOM CODE</span>
@@ -933,10 +1028,46 @@ const startHint = computed(() =>
 
     <!-- 본문: 내 캠을 크게, 나머지는 인원수에 맞춰 그리드로 배치 -->
     <main class="room-main">
-      <div class="cam-stage">
+      <div
+        class="cam-stage"
+        :class="{
+          crowded: otherSlots.length > 4,
+          'side-layout': isSideBySideLayout,
+          'five-player': capacity === 5,
+          'four-player': capacity === 4,
+          'three-player': capacity === 3,
+          'two-player': capacity === 2,
+        }"
+        :style="capacity === 2 ? { '--two-player-aspect': selfVideoAspect * 2 } : undefined"
+      >
+        <div
+          v-if="isSideBySideLayout"
+          class="side-tray"
+          :class="capacity <= 6 ? 'side-tray-left-two' : 'side-tray-left'"
+        >
+          <ParticipantTile
+            v-for="(slot, i) in leftSideSlots"
+            :key="`left-${i}`"
+            :view="slot.view"
+            :host="slot.host"
+            :cover="coverFor(slot)"
+            play-audio
+            compact
+            :can-kick="amRoomHost && !!slot.view"
+            @kick="openKick(slot.view)"
+          />
+        </div>
         <!-- 내 캠 — 항상 가장 크게 -->
-        <div class="self-tile self-spot">
-          <video v-show="selfCamOn" ref="selfVideoEl" autoplay playsinline muted class="self-video" />
+        <div class="self-tile self-spot" :style="{ '--camera-aspect': selfVideoAspect }">
+          <video
+            v-show="selfCamOn"
+            ref="selfVideoEl"
+            autoplay
+            playsinline
+            muted
+            class="self-video"
+            @loadedmetadata="syncSelfVideoAspect"
+          />
           <div v-if="!selfCamOn" class="cam-off">
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">
               <path d="M2 6h11v12H2zM16 10l6-4v12l-6-4" /><line x1="2" y1="2" x2="22" y2="22" />
@@ -966,6 +1097,7 @@ const startHint = computed(() =>
             :my-user-id="myParticipantId"
             :challenge="poseChallenge"
             :scores="scoreboardRows"
+            :setter-name="setterName"
             embedded
             @close="closeGame"
             @pose-submit="onPoseSubmit"
@@ -1010,13 +1142,33 @@ const startHint = computed(() =>
         </div>
 
         <!-- 나머지 참가자 — 인원수(2~8명)에 맞춰 열 수가 달라지는 그리드 -->
-        <div class="others-tray" :style="{ '--cols': othersColumns }">
+        <div
+          v-if="isSideBySideLayout"
+          class="side-tray"
+          :class="isEightPlayerLayout ? 'side-tray-right' : capacity === 5 ? 'side-tray-right-two' : 'side-tray-right-three'"
+        >
+          <ParticipantTile
+            v-for="(slot, i) in rightSideSlots"
+            :key="`right-${i}`"
+            :view="slot.view"
+            :host="slot.host"
+            :cover="coverFor(slot)"
+            play-audio
+            compact
+            :can-kick="amRoomHost && !!slot.view"
+            @kick="openKick(slot.view)"
+          />
+        </div>
+        <div v-else class="others-tray" :style="{ '--cols': othersColumns }">
           <ParticipantTile
             v-for="(slot, i) in otherSlots"
             :key="i"
             :view="slot.view"
             :host="slot.host"
+            :cover="coverFor(slot)"
             play-audio
+            :can-kick="amRoomHost && !!slot.view"
+            @kick="openKick(slot.view)"
           />
         </div>
 
@@ -1072,6 +1224,16 @@ const startHint = computed(() =>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="2" y="4" width="20" height="13" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>
         </button>
         <button class="ctrl" title="아바타"><span class="px">☻</span></button>
+        <button
+          class="px start-btn"
+          :class="{ suggest: !amRoomHost }"
+          :disabled="pickerLocked || (detailLoaded && !amRoomHost && suggestCooldown)"
+          :title="startHint"
+          @click="openPicker"
+        >
+          <span class="play-ico">▶</span>
+          <span class="start-title">{{ startLabel }}</span>
+        </button>
       </div>
 
       <!-- 채팅 독 -->
@@ -1187,14 +1349,38 @@ const startHint = computed(() =>
       @create="submitSettings"
     />
 
-    <PixelModal v-if="showLeaveConfirm" @close="answerLeave(false)">
-      <h3 class="leave-title">🚪 게임을 떠나시겠어요?</h3>
-      <p class="leave-desc">지금 나가면 진행 중인 방에서 나가게 돼요.</p>
-      <div class="leave-actions">
-        <PixelButton block @click="answerLeave(false)">취소</PixelButton>
-        <PixelButton variant="primary" block @click="answerLeave(true)">나가기</PixelButton>
+    <PixelModal v-if="showLeaveConfirm" variant="lobby" @close="answerLeave(false)">
+      <div class="leave-confirm">
+        <span class="leave-icon" aria-hidden="true">🚪</span>
+        <p class="leave-kicker">ROOM EXIT</p>
+        <h3 class="leave-title">정말 떠나시겠습니까?</h3>
+        <p class="leave-desc">나가면 현재 방과의 연결이 종료돼요.<br />친구들과 다시 만나려면 방에 재입장해야 합니다.</p>
+        <div class="leave-confirm-actions">
+          <PixelButton class="leave-cancel" block @click="answerLeave(false)">계속 놀기</PixelButton>
+          <PixelButton class="leave-submit" block @click="answerLeave(true)">나가기</PixelButton>
+        </div>
       </div>
     </PixelModal>
+
+    <PixelModal v-if="kickTarget" variant="lobby" @close="closeKick">
+      <div class="leave-confirm">
+        <span class="leave-icon" aria-hidden="true">⚠️</span>
+        <p class="leave-kicker">HOST CONTROL</p>
+        <h3 class="leave-title">{{ kickTarget.name }}님을 강퇴할까요?</h3>
+        <p class="leave-desc">강퇴 사유를 선택해 주세요. 강퇴된 참가자는 방이 유지되는 동안 재입장할 수 없어요.</p>
+        <div class="kick-reasons" role="radiogroup" aria-label="강퇴 사유">
+          <label v-for="reason in KICK_REASONS" :key="reason.code" class="kick-reason-option">
+            <input v-model="kickReason" type="radio" name="kick-reason" :value="reason.code" :disabled="kicking" />
+            {{ reason.label }}
+          </label>
+        </div>
+        <div class="leave-confirm-actions">
+          <PixelButton class="leave-cancel" block :disabled="kicking" @click="closeKick">취소</PixelButton>
+          <PixelButton class="leave-submit" block :disabled="kicking" @click="confirmKick">강퇴하기</PixelButton>
+        </div>
+      </div>
+    </PixelModal>
+
 
     <!-- 채팅 메시지 신고 -->
     <PixelModal v-if="reportTarget" @close="closeReport">
@@ -1322,6 +1508,36 @@ const startHint = computed(() =>
 .leave-title { margin: 0 0 8px; font-size: 15px; }
 .leave-desc { margin: 0 0 18px; font-size: 11px; color: var(--c-muted); line-height: 1.6; }
 .leave-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.leave-confirm { text-align: center; color: #403124; }
+.leave-icon {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  margin: 0 auto 12px;
+  place-items: center;
+  border: 3px solid #b78d5d;
+  border-radius: 12px;
+  background: #fff0b9;
+  box-shadow: 3px 3px 0 #e2d0b5;
+  font-size: 26px;
+}
+.leave-kicker { margin: 0 0 7px; color: #9e6b43; font-size: 9px; letter-spacing: 1px; }
+.leave-confirm .leave-title { margin-bottom: 10px; font-size: 19px; }
+.leave-confirm .leave-desc { margin-bottom: 22px; color: #806e5e; font-size: 11px; }
+.leave-confirm-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.leave-confirm-actions :deep(.px-btn) {
+  height: 46px;
+  border: 3px solid #925c47;
+  border-radius: 7px;
+  box-shadow: inset 2px 2px 0 rgba(255, 255, 255, .42), inset -2px -3px 0 rgba(120, 58, 47, .18), 3px 3px 0 #a66b50;
+  font-size: 12px;
+}
+.leave-confirm-actions :deep(.leave-cancel) { background: #fff7e5; color: #4b372b; }
+.leave-confirm-actions :deep(.leave-submit) { background: #ef7775; color: #fff; }
+.kick-reasons { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: -7px 0 19px; text-align: left; }
+.kick-reason-option { display: flex; align-items: center; gap: 5px; min-height: 27px; padding: 4px 6px; border: 1px solid #d9c29e; border-radius: 5px; background: #fffaf0; color: #715a48; font-size: 8px; cursor: pointer; }
+.kick-reason-option:has(input:checked) { border-color: #d45c63; background: #ffe8e7; color: #a94d52; }
+.kick-reason-option input { accent-color: #d45c63; margin: 0; }
 
 .room-ribbon { flex: none; position: relative; height: 54px; padding: 0 28px; display: flex; align-items: center; gap: 14px; border-bottom: 2px solid rgba(56, 38, 61, .18); background: linear-gradient(110deg, rgba(207, 244, 231, .95), rgba(255, 240, 185, .95)); z-index: 5; }
 .room-ribbon .px-kicker { padding: 5px 9px; font-size: 8px; }
@@ -1339,7 +1555,7 @@ const startHint = computed(() =>
 
 /* 캠 영역 — 내 캠(왼쪽, 크게) + 나머지 참가자(오른쪽, 인원수에 맞춰 그리드). 화면 안에 스크롤 없이 모두 들어가고,
    카메라 비율은 유지하되 박스를 꽉 채우지는 않는다(letterbox는 object-fit: contain으로 처리). */
-.cam-stage { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: row; gap: 14px; }
+.cam-stage { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: row; align-items: center; gap: 14px; }
 
 /* 게임 중 실시간 스코어보드 — 참가자 트레이 위 오버레이 */
 .game-scoreboard {
@@ -1393,8 +1609,34 @@ const startHint = computed(() =>
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(var(--cols, 1), 1fr);
-  grid-auto-rows: 1fr;
+  grid-auto-rows: minmax(0, 1fr);
+  align-items: center;
   gap: 12px;
+}
+.side-tray {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  display: grid;
+  gap: 12px;
+  align-items: center;
+}
+.side-tray-left { grid-template-rows: repeat(3, minmax(0, 1fr)); }
+.side-tray-left-two { grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.side-tray-right { grid-template-rows: repeat(4, minmax(0, 1fr)); }
+.side-tray-right-two { grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.side-tray-right-three { grid-template-rows: repeat(3, minmax(0, 1fr)); }
+.side-tray :deep(.tile) {
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+  justify-self: center;
+}
+.side-tray-left-two :deep(.tile), .side-tray-right-two :deep(.tile) {
+  width: 100%;
+  height: auto;
+  max-width: none;
+  justify-self: stretch;
 }
 
 /* 게임 시작 (상단 바 정중앙)
@@ -1561,4 +1803,241 @@ const startHint = computed(() =>
 .toast-leave-to { opacity: 0; }
 
 @keyframes px-bubble { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+/* Lobby visual language: warm paper, garden pastels, and soft wood outlines. */
+.room-shell {
+  --room-paper: #fffdf7;
+  --room-wood: #d9b77f;
+  --room-ink: #403124;
+  --room-muted: #806e5e;
+  --room-shadow: #dfcdb0;
+  background-color: #fffaf0;
+  background-image:
+    linear-gradient(0deg, rgba(204, 169, 115, .11) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(204, 169, 115, .08) 1px, transparent 1px);
+  background-size: 16px 16px;
+  color: var(--room-ink);
+}
+
+.room-ribbon {
+  height: 68px;
+  padding: 0 42px;
+  border-bottom: 3px solid var(--room-wood);
+  background: rgba(255, 250, 240, .94);
+  box-shadow: 0 4px 0 rgba(217, 183, 127, .2);
+}
+.room-ribbon .px-kicker {
+  padding: 9px 13px;
+  border: 2px solid #b78d5d;
+  border-radius: 7px;
+  background: #d7e7ad;
+  color: var(--room-ink);
+  box-shadow: 2px 2px 0 #e2d0b5;
+}
+.room-ribbon .px-kicker i { background: #ef7775; }
+.ribbon-report, .ribbon-invite, .ribbon-settings {
+  border-color: #b78d5d;
+  border-radius: 7px;
+  background: #fff7e5;
+  box-shadow: 2px 2px 0 #e2d0b5;
+}
+.ribbon-report:hover { background: #ffe2e3; }
+.ribbon-invite:hover, .ribbon-settings:hover { background: #d8f4ec; }
+.code-box {
+  border-color: #b78d5d;
+  border-radius: 7px;
+  background: #fffdf7;
+  box-shadow: 2px 2px 0 #e2d0b5;
+}
+.code-cap { color: var(--room-muted); }
+.code-val { color: #bd6d45; }
+.copy { border-color: #b78d5d; border-radius: 5px; background: #fff0b9; color: var(--room-ink); }
+
+.start-btn {
+  border: 3px solid #925c47;
+  border-radius: 7px;
+  background: #ef6d70;
+  box-shadow: inset 2px 2px 0 rgba(255, 255, 255, .4), inset -2px -3px 0 rgba(120, 58, 47, .2), 4px 4px 0 #a66b50;
+}
+.start-btn.suggest { background: #e7c996; color: var(--room-ink); }
+.controls .start-btn {
+  position: static;
+  transform: none;
+  height: 50px;
+  padding: 0 16px;
+  white-space: nowrap;
+}
+
+.room-main { gap: 18px; padding: 26px 46px; }
+.cam-stage {
+  padding: 12px;
+  gap: 16px;
+  border: 2px dashed #dfc9a6;
+  border-radius: 18px;
+  background: rgba(255, 253, 247, .65);
+}
+.self-tile {
+  border-color: var(--room-wood);
+  border-radius: 16px;
+  background: var(--room-paper);
+  box-shadow: none;
+}
+.self-tile.self-spot {
+  flex: 0 0 62%;
+}
+.cam-stage.crowded .self-tile.self-spot { flex-basis: 55%; }
+.cam-stage.side-layout { justify-content: center; gap: 16px; }
+.cam-stage.side-layout .self-tile.self-spot {
+  flex-basis: 58%;
+  align-self: stretch;
+  aspect-ratio: 8 / 5;
+}
+.cam-stage.five-player .self-tile.self-spot {
+  flex-basis: 42%;
+  align-self: center;
+}
+.cam-stage.four-player {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: 32 / 15;
+  align-self: center;
+  align-items: stretch;
+}
+.cam-stage.four-player .self-tile.self-spot {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  width: auto;
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  aspect-ratio: 8 / 5;
+  place-self: center;
+}
+.cam-stage.four-player .others-tray { display: contents; }
+.cam-stage.four-player .others-tray :deep(.tile) {
+  width: auto;
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  aspect-ratio: 8 / 5;
+  place-self: center;
+}
+.cam-stage.three-player {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: 12 / 5;
+  align-self: center;
+  align-items: stretch;
+}
+.cam-stage.three-player .self-tile.self-spot {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  width: auto;
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  aspect-ratio: 8 / 5;
+  place-self: center;
+}
+.cam-stage.three-player .others-tray { display: contents; }
+.cam-stage.three-player .others-tray :deep(.tile) {
+  width: auto;
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  aspect-ratio: 8 / 5;
+  place-self: center;
+}
+.cam-stage.two-player {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+  flex: 0 1 auto;
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+  aspect-ratio: var(--two-player-aspect, 16 / 5);
+  gap: 12px;
+  align-self: center;
+  align-items: stretch;
+}
+.cam-stage.two-player .self-tile.self-spot {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  aspect-ratio: var(--camera-aspect, 8 / 5);
+  place-self: stretch;
+}
+.cam-stage.two-player .others-tray { display: contents; }
+.cam-stage.two-player .others-tray :deep(.tile) {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  aspect-ratio: var(--camera-aspect, 8 / 5);
+  place-self: stretch;
+}
+.self-video { object-fit: cover; background: #f7ecd6; }
+.cam-stage.side-layout .self-video { object-fit: cover; }
+.cam-off { background: linear-gradient(135deg, #bfe9ff, #d7e7ad); color: var(--room-muted); }
+.cam-on-btn { border-color: #925c47; border-radius: 7px; background: #4078cf; box-shadow: 3px 3px 0 #a66b50; }
+.self-label {
+  border-color: #b78d5d;
+  border-radius: 6px;
+  background: #fffdf7;
+  color: var(--room-ink);
+  box-shadow: 2px 2px 0 #e2d0b5;
+}
+.c-g { color: #5b8d45; }
+.game-scoreboard {
+  border-color: var(--room-wood);
+  border-radius: 12px;
+  background: rgba(255, 253, 247, .97);
+  box-shadow: 3px 3px 0 var(--room-shadow);
+}
+.gs-title, .gs-row.me .gs-name { color: #bd6d45; }
+.gs-row { color: var(--room-ink); }
+.gs-val { color: #5b8d45; }
+
+.room-footer {
+  padding: 16px 40px;
+  border-top: 3px solid var(--room-wood);
+  background: rgba(255, 250, 240, .96);
+}
+.ctrl, .chat-dock, .leave {
+  border-color: #b78d5d;
+  border-radius: 7px;
+  box-shadow: 3px 3px 0 #e2d0b5;
+}
+.ctrl { background: #fffdf7; color: var(--room-ink); }
+.ctrl.on { background: #d7e7ad; color: #5b8d45; }
+.ctrl.off { background: #ffe2e3; color: #d45c63; }
+.chat-dock { background: #fffdf7; }
+.chat-dock input { color: var(--room-ink); }
+.chat-send { border-color: #925c47; border-radius: 6px; background: #e7c996; color: var(--room-ink); }
+.chat-expand { border-color: #b78d5d; border-radius: 6px; background: #fff7e5; color: var(--room-muted); }
+.chat-expand.active { background: #d7e7ad; color: var(--room-ink); }
+.bubble { border-color: #dfc9a6; border-radius: 9px; background: #fffdf7; box-shadow: 2px 2px 0 #e2d0b5; }
+.bubble.me { background: #fff0b9; }
+.bubble.suggest { background: #d8f4ec; }
+.bubble-name { color: #5b8d45; }
+.bubble-name.me { color: #bd6d45; }
+.suggest-pick { border-color: #925c47; border-radius: 6px; background: #e7c996; color: var(--room-ink); }
+.chat-full { border-color: var(--room-wood); border-radius: 12px; background: rgba(255, 253, 247, .95); box-shadow: 4px 4px 0 var(--room-shadow); }
+.chat-full-head { color: var(--room-ink); border-bottom-color: #ead9bd; }
+.chat-full-close { border-color: #b78d5d; border-radius: 5px; background: #fff7e5; color: var(--room-ink); }
+.leave { border-color: #925c47; border-radius: 7px; background: #ef7775; box-shadow: 3px 3px 0 #a66b50; }
+
+@media (max-width: 1280px) {
+  .room-ribbon { padding: 0 28px; }
+  .room-main { padding: 20px 28px; }
+  .room-footer { padding: 14px 26px; }
+}
 </style>
