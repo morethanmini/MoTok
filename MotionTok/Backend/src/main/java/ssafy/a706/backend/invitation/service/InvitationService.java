@@ -7,6 +7,8 @@ import ssafy.a706.backend.friend.model.FriendshipStatus;
 import ssafy.a706.backend.friend.repository.FriendshipRepository;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.global.notification.UserNotification;
+import ssafy.a706.backend.global.notification.UserNotifier;
 import ssafy.a706.backend.invitation.controller.dto.InvitationItemResponse;
 import ssafy.a706.backend.invitation.model.Invitation;
 import ssafy.a706.backend.invitation.repository.InvitationRepository;
@@ -21,10 +23,12 @@ import java.util.UUID;
 /**
  * 대기실 친구 초대(-100).
  *
- * <p><b>전달은 푸시가 아니라 저장 + 폴링이다.</b> STOMP는 게임룸에서만 연결되는데 초대를 받는 사람은
- * 정의상 게임룸 밖(로비)에 있다. 지금 구조에서 개인에게 푸시할 통로가 없어, 초대를 Redis에 남기고
- * 로비가 방 목록·친구 목록과 같은 주기로 가져가게 했다. 설계상의 개인 알림 채널
- * ({@code /user/queue/notifications})이 살아나면 저장은 그대로 두고 푸시만 얹으면 된다.</p>
+ * <p><b>전달은 저장 + 푸시다.</b> 예전에는 STOMP가 게임룸에서만 연결되는데 초대를 받는 사람은 정의상
+ * 게임룸 밖(로비)에 있어, 개인에게 푸시할 통로가 아예 없었다. 그래서 초대를 Redis에 남기고 로비가
+ * 12초 주기로 가져가게 했고 알림은 최대 그만큼 늦게 떴다. 전역 STOMP 연결(-142)로 개인 알림 채널
+ * ({@code /user/queue/notifications})이 살아나면서, 저장은 그대로 두고 푸시를 얹었다.
+ * 저장을 남긴 이유는 푸시가 유실될 수 있어서다 — 상대가 재연결 중이면 그 프레임은 사라지므로,
+ * 클라이언트는 연결이 성립할 때마다 {@code GET /invitations}로 놓친 것을 메운다.</p>
  *
  * <p>초대를 보낼 수 있는 조건은 셋이다 — <b>친구여야</b> 하고(아무 userId나 넣어 초대를 흩뿌리지
  * 못하게), <b>내가 그 방에 있어야</b> 하며(방장 전용은 아니다. 같이 있는 사람을 부르는 건 참가자 모두의
@@ -39,6 +43,7 @@ public class InvitationService {
     private final InvitationRepository invitationRepository;
     private final FriendshipRepository friendshipRepository;
     private final LiveRoomService liveRoomService;
+    private final UserNotifier userNotifier;
 
     /** POST /v1/live-rooms/{roomId}/invitations — 대기 중인 내 방으로 친구를 부른다. */
     public void invite(MemberPrincipal inviter, String roomId, Long friendId) {
@@ -64,14 +69,17 @@ public class InvitationService {
             throw new BusinessException(ErrorCode.INVITATION_DUPLICATE);
         }
 
-        invitationRepository.save(new Invitation(
+        Invitation invitation = new Invitation(
                 UUID.randomUUID().toString(),
                 room.roomId(),
                 room.title(),
                 room.inviteCode(),
                 friendId,
                 inviter.displayName(),
-                Instant.now()));
+                Instant.now());
+        invitationRepository.save(invitation);
+        // 저장은 그대로 두고 푸시만 얹는다 — 접속 중이 아니면 푸시는 사라지지만 GET /invitations가 받쳐 준다.
+        userNotifier.notify(friendId, UserNotification.roomInvitation(InvitationItemResponse.from(invitation)));
     }
 
     /** GET /invitations — 내가 받은, 아직 살아 있는 초대. 최신순. */

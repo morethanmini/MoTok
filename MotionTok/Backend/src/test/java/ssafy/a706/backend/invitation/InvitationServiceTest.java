@@ -14,6 +14,7 @@ import ssafy.a706.backend.invitation.repository.InvitationRepository;
 import ssafy.a706.backend.invitation.service.InvitationService;
 import ssafy.a706.backend.liveroom.controller.dto.LiveRoomDetailResponse;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
+import ssafy.a706.backend.global.notification.UserNotifier;
 
 import java.time.Instant;
 import java.util.List;
@@ -45,8 +46,9 @@ class InvitationServiceTest {
     private final InvitationRepository invitationRepository = mock(InvitationRepository.class);
     private final FriendshipRepository friendshipRepository = mock(FriendshipRepository.class);
     private final LiveRoomService liveRoomService = mock(LiveRoomService.class);
+    private final UserNotifier userNotifier = mock(UserNotifier.class);
     private final InvitationService service =
-            new InvitationService(invitationRepository, friendshipRepository, liveRoomService);
+            new InvitationService(invitationRepository, friendshipRepository, liveRoomService, userNotifier);
 
     private final MemberPrincipal me = new MemberPrincipal(ME, "나");
 

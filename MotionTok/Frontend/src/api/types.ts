@@ -104,6 +104,8 @@ export interface PublicUserProfile {
   createdAt: string
   /** 프로필 사진 URL. 공개 정보라 랭킹 등에서 함께 보여준다. null이면 기본 아바타 */
   avatarUrl?: string | null
+  /** 총 접속시간(초, -141 친구 상세). 집계 시작(배포) 이전 접속은 포함하지 않는다 */
+  totalConnectSeconds: number
 }
 
 /**
@@ -133,6 +135,8 @@ export interface PointHistoryPage {
 export interface GameRecord {
   gameId: number
   gameName: string
+  /** SOLO | MULTI — 리더보드(-96)와 같은 구분. 같은 게임이라도 모드별로 행이 따로 온다 */
+  mode?: LeaderboardMode
   playCount: number
   bestScore: number
   rankNo: number
@@ -192,8 +196,11 @@ export interface AiItemRequest {
 
 // ── 라이브룸 (구 rooms → live-rooms, 명세 §4) ──────
 export type Visibility = 'PUBLIC' | 'PRIVATE'
-// 백엔드 status는 String. 생성 시 WAITING, 게임 시작 시 IN_GAME(예정).
-export type RoomStatus = 'WAITING' | 'IN_GAME'
+// 백엔드 status는 String. 생성 시 WAITING, 게임 시작 시 PLAYING.
+// (오래 'IN_GAME'으로 적혀 있었는데 서버가 쓰는 값은 'PLAYING'이라 게임 중 방의 입장 차단이
+//  한 번도 동작하지 않았다 — 라벨 분기가 우연히 맞아떨어져 눈에 띄지 않던 버그. 로비 실시간
+//  계약을 새로 정하는 -148에서 서버 값 기준으로 통일했다.)
+export type RoomStatus = 'WAITING' | 'PLAYING'
 
 /** GET /v1/live-rooms 목록 항목 (LiveRoomSummaryResponse) */
 export interface LiveRoomSummary {
@@ -354,6 +361,39 @@ export interface Constellation {
 
 // ── 친구 ──────────────────────────────────
 export type Presence = 'ONLINE' | 'OFFLINE' | 'IN_ROOM'
+
+/** /topic/lobby/rooms 배치 원소 — 로비 방 목록 델타(-148). CLOSED면 room이 없다. */
+export interface LobbyRoomEvent {
+  type: 'ROOM_CREATED' | 'ROOM_UPDATED' | 'ROOM_CLOSED'
+  roomId: string
+  room: LiveRoomSummary | null
+}
+
+/** /user/queue/presence — 하트비트 간격 정정(BEAT)과 친구 상태 델타(FRIEND)가 함께 흐른다(-143/-149). */
+export interface PresenceQueueMessage {
+  type: 'BEAT' | 'FRIEND'
+  intervalSeconds: number | null
+  userId: number | null
+  presence: Presence | null
+  currentRoomId: string | null
+}
+
+/** /user/queue/notifications — 방 초대·친구 요청 알림 봉투(-100/-57). */
+export interface UserNotification<T = unknown> {
+  type: 'ROOM_INVITATION' | 'FRIEND_REQUEST' | 'FRIEND_LIST_CHANGED'
+  payload: T | null
+}
+
+/** /user/queue/whisper — 친구 귓속말 한 건(-150). */
+export interface WhisperMessage {
+  whisperId: string
+  conversationWith: number
+  senderId: number
+  senderNickname: string
+  text: string
+  sentAt: string
+  mine: boolean
+}
 export interface Friend {
   userId: number
   nickname: string
