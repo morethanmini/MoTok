@@ -10,10 +10,10 @@ import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.game.dto.GameDrawRequest;
-import ssafy.a706.backend.game.dto.GameDrawResultRequest;
 import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameProgressRequest;
 import ssafy.a706.backend.game.dto.GameStartRequest;
+import ssafy.a706.backend.game.dto.GameTurnSkipRequest;
 import ssafy.a706.backend.game.dto.PoseSubmitRequest;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
@@ -60,10 +60,13 @@ public class GameController {
         gameSessionService.draw(roomId, request, extractSender(principal));
     }
 
-    @MessageMapping("/rooms/{roomId}/game/draw-result")
-    public void drawResult(@DestinationVariable String roomId, GameDrawResultRequest request, Principal principal) {
-        gameSessionService.drawResult(roomId, request, extractSender(principal));
+    @MessageMapping("/rooms/{roomId}/game/turn-skip")
+    public void turnSkip(@DestinationVariable String roomId, GameTurnSkipRequest request, Principal principal) {
+        gameSessionService.turnSkip(roomId, request, extractSender(principal));
     }
+
+    // 채점 결과는 클라이언트가 보내지 않는다 — 서버가 GMS를 호출해 점수까지 계산한다.
+    // (REST POST /api/games/draw/judge, 명세 v0.2.22)
 
     private AuthPrincipal extractSender(Principal principal) {
         if (principal instanceof Authentication authentication
