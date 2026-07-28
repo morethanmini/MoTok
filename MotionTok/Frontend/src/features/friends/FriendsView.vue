@@ -19,6 +19,11 @@ import UserProfileModal from '@/components/common/UserProfileModal.vue'
 import AddFriendModal from './components/AddFriendModal.vue'
 import { useToast } from '@/composables/useToast'
 import { useUserProfile } from '@/composables/useUserProfile'
+import lobbyFriendCats from '@/assets/lobby/lobby-friend-cats.png'
+import lobbyCloudA from '@/assets/lobby/lobby-cloud-a.png'
+import lobbyCloudB from '@/assets/lobby/lobby-cloud-b.png'
+import lobbyGardenGrassTile from '@/assets/lobby/lobby-garden-grass-tile.png'
+import lobbyEmptyCatToys from '@/assets/lobby/lobby-empty-cat-toys.png'
 
 const { message: toast, flash } = useToast()
 /** 친구를 누르면 공개 프로필(-96). 랭킹 화면과 같은 컴포저블·모달을 쓴다. */
@@ -117,12 +122,31 @@ async function removeFriend(f: Friend) {
 </script>
 
 <template>
-  <AppPage title="친구" max-width="640px" title-style="plain">
-    <PixelCard>
+  <AppPage class="friends-page" title="친구" max-width="760px" title-style="none">
+    <template #hero>
+      <section class="friends-hero">
+        <img class="hero-cloud cloud-a pixel-image" :src="lobbyCloudA" alt="" aria-hidden="true" />
+        <img class="hero-cloud cloud-b pixel-image" :src="lobbyCloudB" alt="" aria-hidden="true" />
+        <div class="hero-copy">
+          <h1>내 친구</h1>
+          <p>친구와 함께 게임을 즐겨보세요!</p>
+        </div>
+        <img class="hero-cat pixel-image" :src="lobbyFriendCats" alt="나란히 앉아 있는 두 고양이 캐릭터" />
+        <div class="hero-grass pixel-image" :style="{ backgroundImage: `url(${lobbyGardenGrassTile})` }" aria-hidden="true" />
+      </section>
+    </template>
+
+    <PixelCard class="friends-card" pad="18px">
       <div class="tabs">
-        <button class="tab-btn" :class="{ on: tab === 'friends' }" @click="tab = 'friends'">친구 {{ friends.length }}</button>
-        <button class="tab-btn" :class="{ on: tab === 'received' }" @click="tab = 'received'">받은 요청 {{ requests.length }}</button>
-        <button class="tab-btn" :class="{ on: tab === 'sent' }" @click="tab = 'sent'">보낸 요청 {{ sent.length }}</button>
+        <button class="tab-btn" :class="{ on: tab === 'friends' }" @click="tab = 'friends'">
+          <span>친구</span><b>{{ friends.length }}</b>
+        </button>
+        <button class="tab-btn" :class="{ on: tab === 'received' }" @click="tab = 'received'">
+          <span>받은 요청</span><b>{{ requests.length }}</b>
+        </button>
+        <button class="tab-btn" :class="{ on: tab === 'sent' }" @click="tab = 'sent'">
+          <span>보낸 요청</span><b>{{ sent.length }}</b>
+        </button>
         <div class="right-actions">
           <PixelButton
             v-if="tab === 'friends'"
@@ -167,7 +191,10 @@ async function removeFriend(f: Friend) {
             </span>
           </div>
         </li>
-        <li v-if="friends.length === 0" class="empty">친구가 없어요</li>
+        <li v-if="friends.length === 0" class="empty">
+          <img :src="lobbyEmptyCatToys" alt="" aria-hidden="true" />
+          <span>아직 친구가 없어요.<br />친구 요청을 보내 함께 놀아보세요!</span>
+        </li>
       </ul>
 
       <!-- 받은 요청 -->
@@ -212,40 +239,101 @@ async function removeFriend(f: Friend) {
 </template>
 
 <style scoped>
-.tabs { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
-.tab-btn { height: 38px; padding: 0 14px; border: 2px solid var(--c-ink); border-radius: 11px; background: #fff; font-size: 11px; font-weight: 700; }
-.tab-btn.on { background: var(--c-yellow); box-shadow: var(--shadow-sm); }
+.friends-page {
+  --lobby-border: #d9b77f;
+  --lobby-text: #34251f;
+  --lobby-muted: #8c7966;
+  --lobby-yellow: #ffd976;
+  --lobby-coral: #ef7775;
+  --lobby-blue: #4f86d9;
+  min-height: 100vh;
+  color: var(--lobby-text);
+  background-color: #fffaf0;
+  background-image: radial-gradient(rgba(204, 169, 115, .24) 1px, transparent 1.5px);
+  background-size: 16px 16px;
+}
+.friends-page :deep(.app-page) { padding-top: 14px; padding-bottom: 26px; }
+.friends-page :deep(.hero) { margin-bottom: 16px; }
+.friends-page :deep(.page-sticker) { display: none; }
+.friends-hero {
+  position: relative;
+  isolation: isolate;
+  min-height: 190px;
+  overflow: hidden;
+  padding: 25px 42px;
+  border: 3px solid var(--lobby-border);
+  border-radius: 20px;
+  background: #bfe9ff;
+  box-shadow: 4px 4px 0 #dfcdb0;
+}
+.friends-hero::before { content: ''; position: absolute; inset: 0; z-index: -1; opacity: .18; background-image: radial-gradient(#fff 1.2px, transparent 1.5px); background-size: 11px 11px; }
+.hero-copy { position: relative; z-index: 2; max-width: 55%; }
+.friends-hero h1 { margin: 8px 0 4px; color: var(--lobby-text); font-size: clamp(29px, 4vw, 40px); line-height: 1.1; letter-spacing: -.06em; }
+.friends-hero p { margin: 0; color: #594941; font-size: 13px; font-weight: 700; line-height: 1.65; }
+.hero-cat { position: absolute; z-index: 2; right: 4px; bottom: -42px; width: 310px; height: auto; }
+.hero-cloud { position: absolute; z-index: 1; width: 100px; opacity: .9; }
+.cloud-a { top: 17px; right: 215px; }
+.cloud-b { top: 72px; left: 46%; width: 74px; }
+.hero-grass { position: absolute; z-index: 3; right: 0; bottom: -5px; left: 0; height: 31px; background-repeat: repeat-x; background-position: bottom center; background-size: auto 31px; }
+.friends-card { position: relative; box-sizing: border-box; display: flex; flex-direction: column; min-height: 410px; border: 2px dashed #dfc9a6 !important; border-radius: 12px !important; background: rgba(255, 253, 247, .78) !important; box-shadow: none !important; }
+.tabs { display: flex; align-items: center; gap: 7px; margin-bottom: 14px; }
+.tab-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 40px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: #8a735e; font-size: 11px; font-weight: 800; }
+.tab-btn b { display: grid; place-items: center; min-width: 19px; height: 19px; padding: 0 4px; border-radius: 999px; background: #eadcc6; color: #745d47; font-size: 9px; line-height: 1; }
+.tab-btn.on { background: var(--lobby-yellow); box-shadow: 0 3px 0 #d39a52; color: #49331e; }
+.tab-btn.on b { background: #ef7775; color: #fff; }
 .right-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.request-btn, .manage-btn { height: 38px; padding: 0 14px; font-size: 11px; }
+.request-btn, .manage-btn { height: 38px; padding: 0 15px; font-size: 11px; font-weight: 800; }
+.manage-btn, .request-btn { border: 2px solid #925c47 !important; border-radius: 7px !important; box-shadow: 3px 3px 0 #a66b50 !important; color: #fff !important; }
+.manage-btn, .manage-btn.v-mint { background: #4078cf !important; }
+.request-btn { background: #ef6d70 !important; }
+.friends-card :deep(.px-btn) { border-color: #72583d; box-shadow: none; }
+.friends-card :deep(.px-btn:hover:not(:disabled)) { box-shadow: 2px 2px 0 #a66b50; }
+.friends-card :deep(.v-primary) { background: var(--lobby-coral); }
+.friends-card :deep(.v-mint) { background: #9fc973; }
 
-.list { list-style: none; margin: 0; padding: 0; min-height: 340px; }
-.list li { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 11px 12px; border: 2px solid #eaddea; border-radius: 12px; background: #fffdf8; }
+.list { display: flex; flex: 1; flex-direction: column; list-style: none; margin: 0; padding: 0; min-height: 0; }
+.list li { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 11px 12px; border: 2px solid #ead4b6; border-radius: 12px; background: #fffaf0; box-shadow: 2px 2px 0 #efe0ca; }
+.requests-list li:last-child { margin-bottom: 0; }
 .dot { width: 9px; height: 9px; border-radius: 50%; }
 .who { min-width: 0; }
-.who b { display: block; font-size: 12px; }
-.req-nick { font-size: 18px; }
+.who b { display: block; color: #443127; font-size: 12px; }
+.req-nick { color: #443127; font-size: 18px; }
 .req-avatar {
   flex: none;
   width: 40px;
   height: 40px;
-  border: 2px solid var(--c-ink);
+  border: 2px solid #8e714e;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: var(--c-mint-soft);
+  background: #fff0b9;
   font-size: 16px;
   font-weight: 700;
 }
-.who small { display: block; font-size: 9px; color: var(--c-muted); margin-top: 3px; }
+.who small { display: block; font-size: 9px; color: var(--lobby-muted); margin-top: 3px; }
 .list li > :nth-child(3) { margin-left: auto; }
 .list li.clickable { cursor: pointer; }
-.list li.clickable:hover { border-color: var(--c-ink); background: var(--c-mint-soft); }
+.list li.clickable:hover { border-color: #c69459; background: #fff0c6; transform: translate(-1px, -1px); }
 /* 키보드 접근용 버튼 — 보이는 모양은 원래 <b> 그대로다 */
 .name-btn { display: block; padding: 0; border: 0; background: transparent; font: inherit; color: inherit; cursor: pointer; }
 .friend-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.friend-actions :deep(.px-btn) { height: 32px; padding: 0 12px; font-size: 10px; }
-.presence-badge { display: flex; align-items: center; gap: 6px; font-size: 9px; color: var(--c-muted); }
+.friend-actions :deep(.px-btn) { height: 32px; padding: 0 12px; border: 2px solid #925c47; border-radius: 7px; background: #ef6d70; box-shadow: 2px 2px 0 #a66b50; color: #fff; font-size: 10px; }
+.presence-badge { display: flex; align-items: center; gap: 6px; color: var(--lobby-muted); font-size: 9px; }
 .requests-list .req-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.req-actions :deep(.px-btn) { height: 32px; padding: 0 12px; font-size: 10px; }
-.empty { justify-content: center; color: var(--c-muted); font-size: 11px; }
+.req-actions :deep(.px-btn) { height: 32px; padding: 0 12px; border: 2px solid #925c47; border-radius: 7px; box-shadow: 2px 2px 0 #a66b50; color: #fff; font-size: 10px; }
+.req-actions :deep(.v-mint) { background: #4078cf; }
+.req-actions :deep(.v-primary) { background: #ef6d70; }
+.empty { flex: 1; flex-direction: column; justify-content: center; min-height: 210px; color: var(--lobby-muted); font-size: 12px; line-height: 1.7; text-align: center; }
+.empty img { width: 96px; height: auto; }
+
+@media (max-width: 620px) {
+  .friends-page :deep(.app-page) { padding: 12px 14px 24px; }
+  .friends-hero { min-height: 205px; padding: 24px 22px; }
+  .hero-copy { max-width: 70%; }
+  .hero-cat { right: -14px; bottom: -23px; width: 240px; }
+  .cloud-a { right: 135px; }
+  .cloud-b { display: none; }
+  .tabs { flex-wrap: wrap; }
+  .right-actions { width: 100%; margin-left: 0; justify-content: flex-end; }
+}
 </style>
