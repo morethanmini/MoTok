@@ -47,6 +47,10 @@ export class BodyFitAudio {
     const a = this.el(cue)
     a.loop = opts.loop ?? false
     const start = () => {
+      // 로드를 기다리는 사이 페이즈가 넘어갔으면 틀지 않는다.
+      // 이 가드가 없으면 뒤늦게 도착한 metadata 이벤트가 이미 재생 중인 큐 위에 겹쳐 튼다
+      // (첫 라운드에 rest와 setting이 같이 들리던 원인 — 그때가 파일을 처음 받는 시점이라).
+      if (this.current !== cue) return
       const tail = opts.tailMs
       if (tail && Number.isFinite(a.duration)) {
         a.currentTime = Math.max(0, a.duration - tail / 1000)
@@ -58,14 +62,14 @@ export class BodyFitAudio {
     else a.addEventListener('loadedmetadata', start, { once: true })
   }
 
+  /** 전부 멈춘다 — current만 멈추면 위 예약 재생처럼 새어나간 소리를 못 잡는다 */
   stop() {
-    if (!this.current) return
-    const a = this.els.get(this.current)
-    if (a) {
+    this.current = null
+    this.els.forEach((a) => {
+      if (a.paused) return
       a.pause()
       a.currentTime = 0
-    }
-    this.current = null
+    })
   }
 
   dispose() {
