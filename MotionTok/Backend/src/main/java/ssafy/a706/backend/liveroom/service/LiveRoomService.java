@@ -45,6 +45,7 @@ public class LiveRoomService {
 
     private final LiveRoomRepository repository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final LobbyBroadcaster lobbyBroadcaster;
 
     public CreateLiveRoomResponse create(AuthPrincipal principal, CreateLiveRoomRequest req) {
         validatePasswordRule(req.visibility(), req.password());
@@ -73,7 +74,12 @@ public class LiveRoomService {
         repository.saveInviteCode(inviteCode, roomId);
 
         LiveRoom room = new LiveRoom(roomId, req.title(), req.visibility(), req.maxPlayers(), "WAITING",
-                principal.userId(), principal.displayName(), now, inviteCode, req.password(), List.of());
+                principal.userId(), principal.displayName(), now, inviteCode, req.password(),
+                List.of(new LiveRoomMemberValue(principal.userId(), principal.displayName(),
+                        principal.isGuest(), now)));
+        // 로비에 앉아 있는 사람들에게 새 방을 알린다(-148). 게스트 1인방은 rooms:index에 없어
+        // 목록에 뜨지 않으므로 createGuestSoloRoom에는 이 훅이 없다.
+        lobbyBroadcaster.roomCreated(LiveRoomSummaryResponse.from(room));
         return CreateLiveRoomResponse.from(room);
     }
 
@@ -111,14 +117,18 @@ public class LiveRoomService {
      */
     public LiveRoomListResponse list(int page) {
         int safePage = Math.max(page, 1);
+        List<String> roomIds = List.copyOf(repository.listRoomIdsNewestFirst(LIST_SCAN_LIMIT));
+        // 방마다 따로 읽으면 왕복이 방 수의 2배로 늘어난다 — 한 번에 묶어 온다.
+        Map<String, LiveRoomRepository.RawRoom> loaded = repository.findRoomsInBulk(roomIds);
+
         List<LiveRoomSummaryResponse> all = new ArrayList<>();
-        for (String roomId : repository.listRoomIdsNewestFirst(LIST_SCAN_LIMIT)) {
-            repository.findRoomFields(roomId)
-                    .map(fields -> toLiveRoom(roomId, fields, repository.findMembers(roomId)))
-                    .ifPresentOrElse(
-                            room -> all.add(LiveRoomSummaryResponse.from(room)),
-                            () -> repository.removeFromIndex(roomId) // 죽은 방 lazy 청소
-                    );
+        for (String roomId : roomIds) {
+            LiveRoomRepository.RawRoom raw = loaded.get(roomId);
+            if (raw == null) {
+                repository.removeFromIndex(roomId); // 죽은 방 lazy 청소(ExpiredRoomSweeper가 주기적으로도 돈다)
+                continue;
+            }
+            all.add(LiveRoomSummaryResponse.from(toLiveRoom(roomId, raw.fields(), raw.members())));
         }
         int from = Math.min((safePage - 1) * PAGE_SIZE, all.size());
         int to = Math.min(from + PAGE_SIZE, all.size());
@@ -216,9 +226,15 @@ public class LiveRoomService {
                 new LiveRoomMemberLeftEvent(principal.userId(), principal.displayName(), remaining.size()));
 
         if (remaining.isEmpty()) {
+            boolean wasListed = repository.isIndexed(roomId);
             repository.deleteRoom(roomId);
+            // 게스트 1인방은 rooms:index에 없어 로비에 뜬 적이 없다 — 폐쇄 알림도 보낼 이유가 없다.
+            if (wasListed) {
+                lobbyBroadcaster.roomClosed(roomId);
+            }
             return;
         }
+        lobbyBroadcaster.roomUpdated(LiveRoomSummaryResponse.from(loadRoom(roomId)));
         if (room.hostUserId().equals(principal.userId())) {
             LiveRoomMemberValue newHost = remaining.stream()
                     .min(Comparator.comparingLong(LiveRoomMemberValue::joinedAt))
@@ -258,7 +274,10 @@ public class LiveRoomService {
 
         if (remaining.isEmpty()) {
             repository.deleteRoom(roomId);
+            lobbyBroadcaster.roomClosed(roomId);
+            return;
         }
+        lobbyBroadcaster.roomUpdated(LiveRoomSummaryResponse.from(loadRoom(roomId)));
     }
 
     /**
@@ -295,7 +314,25 @@ public class LiveRoomService {
                 String.format(MEMBERS_TOPIC, roomId),
                 new LiveRoomUpdatedEvent(req.title(), req.visibility().name(), req.maxPlayers()));
 
-        return LiveRoomDetailResponse.from(loadRoom(roomId));
+        LiveRoom updated = loadRoom(roomId);
+        lobbyBroadcaster.roomUpdated(LiveRoomSummaryResponse.from(updated));
+        return LiveRoomDetailResponse.from(updated);
+    }
+
+    /**
+     * 방 상태(WAITING↔PLAYING) 전환 — 게임·리듬 세션이 시작·정산할 때 부른다.
+     *
+     * <p>종전에는 각 세션 서비스가 {@code LiveRoomRepository.updateStatus}를 직접 불렀다.
+     * 로비 실시간 갱신(-148)이 생기면서 "상태가 바뀌면 로비에도 알린다"가 따라붙는데, 그 한 줄을
+     * 호출부 여섯 곳에 흩뿌리면 새 게임이 추가될 때마다 빠뜨릴 자리가 하나씩 늘어난다.
+     * 상태 전환을 서비스 메서드 하나로 모아 두면 알림 누락이 구조적으로 불가능해진다.</p>
+     */
+    public void changeStatus(String roomId, String status) {
+        repository.updateStatus(roomId, status);
+        repository.findRoomFields(roomId)
+                .map(fields -> toLiveRoom(roomId, fields, repository.findMembers(roomId)))
+                .map(LiveRoomSummaryResponse::from)
+                .ifPresent(lobbyBroadcaster::roomUpdated);
     }
 
     private LiveRoomDetailResponse joinRoom(AuthPrincipal principal, LiveRoom room) {
@@ -303,15 +340,22 @@ public class LiveRoomService {
         if (repository.isKicked(room.roomId(), key)) {
             throw new BusinessException(ErrorCode.ROOM_KICKED);
         }
-        if (!repository.hasMember(room.roomId(), key) && !"WAITING".equals(room.status())) {
+        // 재입장(이미 멤버)인지 한 번만 확인한다 — 같은 값을 두 번 물어보면 입장마다 Redis 왕복이 하나 더 늘고,
+        // 두 조회 사이에 상태가 갈리면 판정이 어긋날 여지도 생긴다.
+        boolean rejoining = repository.hasMember(room.roomId(), key);
+        if (!rejoining && !"WAITING".equals(room.status())) {
             throw new BusinessException(ErrorCode.ROOM_GAME_IN_PROGRESS);
         }
-        if (!repository.hasMember(room.roomId(), key) && room.participantCount() >= room.maxPlayers()) {
+        if (!rejoining && room.participantCount() >= room.maxPlayers()) {
             throw new BusinessException(ErrorCode.ROOM_FULL);
         }
         repository.addMember(room.roomId(), key, principal.userId(), principal.displayName(),
                 principal.isGuest(), System.currentTimeMillis());
-        return LiveRoomDetailResponse.from(loadRoom(room.roomId()));
+        LiveRoom joined = loadRoom(room.roomId());
+        // 입장은 지금까지 로비에 아무 신호도 주지 않던 구간이다 — 정원이 찬 방을 계속 눌러 보는
+        // 원인이었다. join·초대코드·빠른시작이 모두 이 메서드를 지나므로 여기 한 곳이면 된다.
+        lobbyBroadcaster.roomUpdated(LiveRoomSummaryResponse.from(joined));
+        return LiveRoomDetailResponse.from(joined);
     }
 
     private LiveRoom loadRoom(String roomId) {

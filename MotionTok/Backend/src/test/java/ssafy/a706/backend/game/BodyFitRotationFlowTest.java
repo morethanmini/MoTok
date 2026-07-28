@@ -16,6 +16,7 @@ import ssafy.a706.backend.game.model.GameSession;
 import ssafy.a706.backend.game.repository.GameRepository;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
+import ssafy.a706.backend.liveroom.service.LiveRoomService;
 import ssafy.a706.backend.signal.RoomMembershipReader;
 
 import java.time.Instant;
@@ -60,8 +61,11 @@ class BodyFitRotationFlowTest {
     // 게임⑩(그림으로 말해요) AI 채점 클라이언트 — 게임④ 흐름에서는 호출되지 않는다
     private final DrawJudgeClient judgeClient = mock(DrawJudgeClient.class);
 
+    /** 방 상태 전환이 서비스 경유로 바뀌었다(-148 로비 실시간 갱신 훅이 그 안에 있다). */
+    private final LiveRoomService liveRoomService = mock(LiveRoomService.class);
+
     private final GameSessionService service = new GameSessionService(
-            membershipReader, liveRoomRepository, sessions, gameRepository,
+            membershipReader, liveRoomRepository, liveRoomService, sessions, gameRepository,
             messagingTemplate, taskScheduler, eventPublisher, judgeClient);
 
     private void givenRoom(int playerCount) {

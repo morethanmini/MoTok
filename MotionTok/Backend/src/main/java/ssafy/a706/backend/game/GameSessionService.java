@@ -26,6 +26,7 @@ import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
+import ssafy.a706.backend.liveroom.service.LiveRoomService;
 import ssafy.a706.backend.signal.RoomMembershipReader;
 
 import java.nio.charset.StandardCharsets;
@@ -120,6 +121,8 @@ public class GameSessionService {
 
     private final RoomMembershipReader membershipReader;
     private final LiveRoomRepository liveRoomRepository;
+    /** 방 상태 전환은 서비스 경유 — 로비 실시간 갱신(-148) 알림이 그 안에 붙어 있다. */
+    private final LiveRoomService liveRoomService;
     private final GameSessionRepository sessionRepository;
     private final GameRepository gameRepository;
     private final SimpMessagingTemplate messagingTemplate;
@@ -199,7 +202,7 @@ public class GameSessionService {
         GameSession session = new GameSession(sessionId, gameId, challenge, setterUserId,
                 startAt, endAt, GameSession.STATUS_PLAYING, setterOrder, 0, difficulty);
         sessionRepository.saveSession(roomId, session);
-        liveRoomRepository.updateStatus(roomId, "PLAYING");
+        liveRoomService.changeStatus(roomId, "PLAYING");
 
         // constellationKey는 게임① FE 하위호환 필드 — 게임①일 때만 challenge와 같은 값
         String legacyConstellationKey = gameId == FINGER_STAR_GAME_ID ? challenge : null;
@@ -268,7 +271,7 @@ public class GameSessionService {
         // 출제자·난이도·로테이션은 게임⑩에 없어 비운다(-86/-48에서 추가된 필드).
         sessionRepository.saveSession(roomId, new GameSession(sessionId, DRAW_GAME_ID, topicWord, null,
                 startAt, endAt, GameSession.STATUS_PLAYING, List.of(), 0, null));
-        liveRoomRepository.updateStatus(roomId, "PLAYING");
+        liveRoomService.changeStatus(roomId, "PLAYING");
 
         broadcast(roomId, GameEventResponse.gameStartDraw(sessionId, DRAW_GAME_ID, now, startAt, endAt,
                 topicWord, turnOrder, turnSec, DRAW_HANDOVER_SEC));
@@ -369,7 +372,7 @@ public class GameSessionService {
             return;
         }
         sessionRepository.markEnded(roomId);
-        liveRoomRepository.updateStatus(roomId, "WAITING");
+        liveRoomService.changeStatus(roomId, "WAITING");
 
         broadcast(roomId, GameEventResponse.drawResult(sessionId, judge.userId(), guesses, answerRank, score));
         List<GameResultEntry> results = coopResults(roomId, score, true);
@@ -459,7 +462,7 @@ public class GameSessionService {
         }
 
         sessionRepository.markEnded(roomId);
-        liveRoomRepository.updateStatus(roomId, "WAITING");
+        liveRoomService.changeStatus(roomId, "WAITING");
 
         // 그림으로 말해요 — 채점 유예까지 draw-result가 안 온 타임아웃 경로. 0점 협동 정산.
         if (session.gameId() == DRAW_GAME_ID) {

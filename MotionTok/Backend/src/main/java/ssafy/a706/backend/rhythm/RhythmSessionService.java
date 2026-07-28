@@ -11,6 +11,7 @@ import ssafy.a706.backend.game.GameSettledEvent;
 import ssafy.a706.backend.game.dto.GameResultEntry;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
+import ssafy.a706.backend.liveroom.service.LiveRoomService;
 import ssafy.a706.backend.rhythm.dto.RhythmEventResponse;
 import ssafy.a706.backend.rhythm.dto.RhythmRequests;
 import ssafy.a706.backend.rhythm.dto.RhythmResultEntry;
@@ -73,6 +74,8 @@ public class RhythmSessionService {
 
     private final RoomMembershipReader membershipReader;
     private final LiveRoomRepository liveRoomRepository;
+    /** 방 상태 전환은 서비스 경유 — 로비 실시간 갱신(-148) 알림이 그 안에 붙어 있다. */
+    private final LiveRoomService liveRoomService;
     private final RhythmSessionRepository sessionRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final TaskScheduler rhythmTaskScheduler;
@@ -107,7 +110,7 @@ public class RhythmSessionService {
 
         sessionRepository.saveSession(roomId, new RhythmSession(
                 sessionId, seed, difficulty, mode, startAt, endAt, RhythmSession.STATUS_PLAYING));
-        liveRoomRepository.updateStatus(roomId, "PLAYING");
+        liveRoomService.changeStatus(roomId, "PLAYING");
 
         broadcast(roomId, RhythmEventResponse.start(sessionId, seed, difficulty, mode, now, startAt, endAt));
         scheduleEnd(roomId, sessionId, endAt + END_GRACE_MILLIS);
@@ -167,7 +170,7 @@ public class RhythmSessionService {
             return; // 이미 새 세션으로 대체된 stale 예약
         }
         sessionRepository.markEnded(roomId);
-        liveRoomRepository.updateStatus(roomId, "WAITING");
+        liveRoomService.changeStatus(roomId, "WAITING");
 
         Map<String, RhythmPlayerScore> scores = sessionRepository.findScores(roomId);
         List<LiveRoomMemberValue> members = liveRoomRepository.findMembers(roomId);
