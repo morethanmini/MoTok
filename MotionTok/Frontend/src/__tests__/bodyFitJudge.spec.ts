@@ -5,14 +5,18 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  FAIL_MAX_SCORE,
+  GRADE_POINTS,
   countMask,
   countOutside,
   findMarginForArea,
   gradeOf,
   iouOf,
   poseDifficulty,
+  scoreFor,
+  type RoundJudgment,
 } from '@/features/games/body-fit/judge'
-import { defaultConfig } from '@/features/games/body-fit/config'
+import { defaultConfig, type Grade } from '@/features/games/body-fit/config'
 import type { Pt, SolvedSkeleton } from '@/features/games/body-fit/skeleton'
 
 /** 알파 패턴으로 RGBA 버퍼 생성 — 1=칠해짐(alpha 255), 0=빈 픽셀 */
@@ -132,5 +136,46 @@ describe('출제 난이도 휴리스틱 (관전 화면 별점)', () => {
       expect(poseDifficulty(s)).toBeGreaterThanOrEqual(0)
       expect(poseDifficulty(s)).toBeLessThanOrEqual(1)
     }
+  })
+})
+
+describe('점수 산정 (실패해도 일치율만큼 부분 점수)', () => {
+  const judgment = (grade: Grade, iou: number, passed = grade !== 'FAIL'): RoundJudgment => ({
+    outsideRatio: passed ? 0 : 0.5,
+    passed,
+    iou,
+    grade,
+    overflow: [],
+  })
+
+  it('통과 등급은 기존 고정 점수 그대로', () => {
+    expect(scoreFor(judgment('PERFECT', 95))).toBe(100)
+    expect(scoreFor(judgment('GREAT', 85))).toBe(85)
+    expect(scoreFor(judgment('PASS', 75))).toBe(70)
+  })
+
+  it('실패해도 일치율에 비례해 점수를 준다', () => {
+    expect(scoreFor(judgment('FAIL', 0))).toBe(0)
+    expect(scoreFor(judgment('FAIL', 60))).toBe(30)
+    expect(scoreFor(judgment('FAIL', 100))).toBe(FAIL_MAX_SCORE)
+  })
+
+  it('일치율이 높을수록 실패 점수도 높다(단조 증가)', () => {
+    const scores = [10, 30, 50, 70, 90].map((iou) => scoreFor(judgment('FAIL', iou)))
+    expect(scores).toEqual([...scores].sort((a, b) => a - b))
+    expect(new Set(scores).size).toBe(scores.length)
+  })
+
+  it('삐져나오진 않았지만 모양이 안 맞아 FAIL인 경우에도 부분 점수', () => {
+    // passed=true인데 IoU가 낮아 등급만 FAIL — 0점 경로가 둘이라 grade로 갈라야 한다
+    expect(scoreFor(judgment('FAIL', 50, true))).toBe(25)
+  })
+
+  it('실패 점수는 어떤 등급 점수와도 겹치지 않는다 — 겹치면 등급 배지가 오표시된다', () => {
+    const gradePoints = new Set(Object.values(GRADE_POINTS).filter((p) => p > 0))
+    for (let iou = 0; iou <= 100; iou++) {
+      expect(gradePoints.has(scoreFor(judgment('FAIL', iou)))).toBe(false)
+    }
+    expect(FAIL_MAX_SCORE).toBeLessThan(GRADE_POINTS.PASS)
   })
 })
