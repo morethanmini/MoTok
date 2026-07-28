@@ -862,6 +862,7 @@ const startHint = computed(() =>
             :my-user-id="myParticipantId"
             :challenge="poseChallenge"
             :scores="scoreboardRows"
+            embedded
             @close="closeGame"
             @pose-submit="onPoseSubmit"
             @progress="onGameProgress"

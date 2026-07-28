@@ -40,6 +40,13 @@ const props = defineProps<{
   challenge?: string | null
   /** 게임④(-9): 출제자 관전 화면에 띄울 실시간 순위 — 부모의 scoreboardRows */
   scores?: { userId: string; nickname: string; holdProgress: number; finished: boolean; score: number | null }[]
+  /**
+   * 게임룸 셀프 타일 안에 얹히는가(= 타일을 채우도록 absolute 배치).
+   * 이전에는 isMultiplayer로 대신 판단했는데, 1인 방 연습 모드는 session이 null이라
+   * 클래스가 안 붙어 100vh 블록이 되고 overflow:hidden 타일에 가려 화면에 안 보였다.
+   * "방 안인가"와 "멀티인가"는 별개 조건이다.
+   */
+  embedded?: boolean
 }>()
 const emit = defineEmits<{
   close: []
@@ -529,7 +536,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="game" :class="{ embedded: isMultiplayer }">
+  <div class="game" :class="{ embedded }">
     <header class="topbar">
       <span class="pill round-pill">{{ round }}{{ totalRoundsLabel }} 라운드</span>
       <span class="pill phase-pill">{{ camError ?? phaseLabel }}</span>
