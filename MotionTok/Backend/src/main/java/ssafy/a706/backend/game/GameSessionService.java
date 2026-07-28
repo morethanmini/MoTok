@@ -368,7 +368,7 @@ public class GameSessionService {
         broadcast(roomId, GameEventResponse.drawResult(sessionId, judge.userId(), guesses, answerRank, score));
         List<GameResultEntry> results = coopResults(roomId, score, true);
         broadcast(roomId, GameEventResponse.gameEnd(sessionId, results));
-        eventPublisher.publishEvent(new GameSettledEvent(session.gameId(), results));
+        eventPublisher.publishEvent(new GameSettledEvent(sessionId, session.gameId(), results));
         log.info("draw session judged: room={} session={} answerRank={} score={}",
                 roomId, sessionId, answerRank, score);
     }
@@ -476,7 +476,7 @@ public class GameSessionService {
         if (session.gameId() == DRAW_GAME_ID) {
             List<GameResultEntry> coop = coopResults(roomId, 0, false);
             broadcast(roomId, GameEventResponse.gameEnd(sessionId, coop));
-            eventPublisher.publishEvent(new GameSettledEvent(session.gameId(), coop));
+            eventPublisher.publishEvent(new GameSettledEvent(sessionId, session.gameId(), coop));
             log.info("draw session timed out without result: room={} session={}", roomId, sessionId);
             return;
         }
@@ -491,7 +491,7 @@ public class GameSessionService {
         broadcast(roomId, GameEventResponse.gameEnd(sessionId, results));
         // write-behind 정산(-117) — 회원 결과 leaderboards 적재 + rank ZSET 갱신은 비동기 리스너에 위임.
         // endRound가 SETNX 가드로 1회만 실행되므로 정산도 1회 발행된다.
-        eventPublisher.publishEvent(new GameSettledEvent(session.gameId(), results));
+        eventPublisher.publishEvent(new GameSettledEvent(sessionId, session.gameId(), results));
         log.info("game session ended: room={} session={} players={} submitted={}",
                 roomId, sessionId, members.size(), scores.size());
     }

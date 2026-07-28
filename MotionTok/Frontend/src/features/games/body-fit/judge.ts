@@ -57,6 +57,37 @@ export function iouOf(a: Uint8ClampedArray, b: Uint8ClampedArray): number {
   return union === 0 ? 0 : (inter / union) * 100
 }
 
+/** 등급별 기본 점수 — 통과한 라운드에 준다. */
+export const GRADE_POINTS: Record<Grade, number> = { PERFECT: 100, GREAT: 85, PASS: 70, FAIL: 0 }
+/**
+ * 실패해도 받을 수 있는 점수 상한.
+ *
+ * <p><b>PASS(70)보다 반드시 낮아야 한다.</b> 두 가지 이유가 있다:
+ * ① 실패가 통과보다 이득이면 안 된다. ② 관전 화면·스코어보드가 서버에서 돌아온 점수를
+ * GRADE_POINTS와 <i>정확히 비교</i>해 등급 배지를 역산한다(점수가 곧 등급 인코딩) —
+ * 실패 점수가 70·85·100과 겹치면 FAIL이 PASS 배지로 표시된다.</p>
+ */
+export const FAIL_MAX_SCORE = 50
+/**
+ * 라운드에 참여했으면 무조건 받는 최소 점수 — <b>0점은 나오지 않는다</b>(실기 피드백).
+ * 일치율 0%(인식 실패·완전히 빗나감)여도 이 점수는 준다.
+ */
+export const MIN_ROUND_SCORE = 10
+
+/**
+ * 라운드 판정 → 점수. 실패해도 일치율에 비례해 부분 점수를 주고, 바닥은 MIN_ROUND_SCORE다.
+ *
+ * <p>0점 경로가 둘이라 `passed`가 아니라 `grade`로 가른다 — 구멍 밖으로 삐져나온 경우와,
+ * 삐져나오진 않았지만 모양이 너무 안 맞아 등급이 FAIL인 경우 모두 여기로 온다.</p>
+ */
+export function scoreFor(j: RoundJudgment): number {
+  if (j.grade !== 'FAIL') {
+    return GRADE_POINTS[j.grade]
+  }
+  const ratio = Math.min(100, Math.max(0, j.iou)) / 100
+  return MIN_ROUND_SCORE + Math.round(ratio * (FAIL_MAX_SCORE - MIN_ROUND_SCORE))
+}
+
 export function gradeOf(iou: number, cfg: BodyFitConfig): Grade {
   const g = cfg.judge.grade
   if (iou >= g.perfect) return 'PERFECT'

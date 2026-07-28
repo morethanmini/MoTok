@@ -137,9 +137,27 @@ export interface GameRecord {
   bestScore: number
   rankNo: number
 }
+/**
+ * 화면 꾸미기 설정 (GET·PUT /users/me/decoration).
+ * x·y는 영상 기준 정규화 좌표(0~1, 스티커 중심), scale은 영상 짧은 변 대비 비율이다.
+ * 픽셀이 아니라 비율인 이유 — 편집 화면과 게임 타일의 크기가 달라서 픽셀로 저장하면 위치가 어긋난다.
+ */
+export type DecorAnchor = 'FIXED' | 'FACE' | 'HAND'
+export interface DecorPlacement {
+  itemId: number
+  /** FIXED만 구현 — FACE·HAND(가면·효과 추적)는 추적기가 붙을 때 사용 */
+  anchor: DecorAnchor
+  x: number
+  y: number
+  scale: number
+}
+export interface DecorConfig {
+  version: number
+  items: DecorPlacement[]
+}
 export interface DecorationConfig {
-  config: Record<string, unknown>
-  updatedAt?: string
+  config: DecorConfig
+  updatedAt?: string | null
 }
 
 // ── 상점/아이템 ───────────────────────────
@@ -641,6 +659,29 @@ export interface ReportedUser {
   nickname: string
   reportCount: number
   recentReasons: string[]
+}
+
+/**
+ * 사용자 신고 (-112) — 관리자 목록 행. 닉네임은 신고 시점 스냅샷이라
+ * 그 뒤 닉네임이 바뀌거나 탈퇴해도 그대로 남는다. 사유·상태 코드는 채팅 신고와 공용이다.
+ */
+export interface UserReportSummary {
+  id: number
+  reporterUserId: number
+  reporterNickname: string
+  reportedUserId: number
+  reportedNickname: string
+  reason: ChatReportReason
+  reasonDetail: string | null
+  status: ChatReportStatus
+  createdAt: string
+}
+export interface UserReportListResponse {
+  reports: UserReportSummary[]
+  page: number
+  size: number
+  totalElements: number
+  totalPages: number
 }
 export type SanctionType = 'WARNING' | 'SUSPENSION' | 'PERMANENT_BAN'
 export interface SanctionRequest {
