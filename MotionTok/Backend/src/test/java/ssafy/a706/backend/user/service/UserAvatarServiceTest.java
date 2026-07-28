@@ -54,7 +54,8 @@ class UserAvatarServiceTest {
             mock(OauthAccountRepository.class),
             mock(OauthClientResolver.class),
             mock(RejoinPolicy.class),
-            storageService);
+            storageService,
+            mock(ssafy.a706.backend.conntime.service.ConnectTimeService.class));
 
     private User user() {
         User u = User.builder().email("me@motok.com").passwordHash("x").nickname("나").build();
