@@ -46,14 +46,18 @@ const videoAspect = ref(8 / 5)
 function syncVideoAspect() {
   const video = videoEl.value
   if (!video?.videoWidth || !video.videoHeight) return
+  // 게임 캔버스 비율은 반영하지 않는다 — 발행자 타일 폭에서 사이드바를 뺀 크기라 카메라(16:9)와
+  // 전혀 다르고, 라운드마다 트랙이 교체되며 타일 폭이 튄다(게임④ 출제 중 축소 제보).
+  if (showingGame.value) return
   videoAspect.value = video.videoWidth / video.videoHeight
 }
 
 // 트랙 인스턴스만 의존 대상으로 삼는다(뷰모델 객체는 이벤트마다 새로 생기므로 그대로 쓰면 재부착·깜빡임).
 // videoTrack/el 중 하나가 실제로 바뀔 때만 재부착.
 // 게임 화면이 송출 중이면(토글로 카메라를 고르지 않은 한) 게임 트랙을, 아니면 카메라를 표시.
+const showingGame = computed(() => hasGame.value && !showCam.value)
 const videoTrack = computed(() => {
-  if (hasGame.value && !showCam.value) return props.view?.gameTrack ?? null
+  if (showingGame.value) return props.view?.gameTrack ?? null
   return hasVideo.value ? (props.view?.videoTrack ?? null) : null
 })
 const showingVideo = computed(() => !!videoTrack.value)
@@ -98,7 +102,7 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
         playsinline
         muted
         class="tile-video"
-        :class="{ mirror }"
+        :class="{ mirror, game: showingGame }"
         @loadedmetadata="syncVideoAspect"
       />
       <audio v-if="playAudio" ref="audioEl" autoplay />
@@ -173,6 +177,9 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
 .tile.compact { width: 100%; aspect-ratio: var(--camera-aspect, 8 / 5); }
 .tile-video { width: 100%; height: 100%; object-fit: cover; background: #eee6cf; }
 .tile.compact .tile-video { object-fit: cover; }
+/* 게임 화면은 카메라 비율 박스 안에 레터박스로 넣는다 — cover로 채우면 벽·구멍 가장자리가 잘린다.
+   .tile.compact .tile-video와 같은 특이도라 반드시 뒤에 있어야 이긴다 */
+.tile .tile-video.game { object-fit: contain; background: #1a1411; }
 .tile-video.mirror { transform: scaleX(-1); }
 
 .cam-off {
