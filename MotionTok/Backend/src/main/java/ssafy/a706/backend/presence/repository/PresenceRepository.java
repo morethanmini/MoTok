@@ -28,7 +28,7 @@ public class PresenceRepository {
     /** TTL — 하트비트 간격의 3배. 한두 번 놓쳐도 오프라인으로 튀지 않을 만큼의 여유. */
     public static final Duration TTL = Duration.ofSeconds(60);
 
-    private static final String KEY_PREFIX = "presence:";
+    static final String KEY_PREFIX = "presence:";
     private static final String FIELD_ROOM_ID = "roomId";
     private static final String FIELD_HEARTBEAT_AT = "heartbeatAt";
 
@@ -62,12 +62,43 @@ public class PresenceRepository {
     }
 
     /**
-     * 마지막 하트비트 시각(epoch ms). 키가 없으면(오프라인·세션 첫 비트) null.
-     * 접속시간(-141)이 직전 비트와의 간격(delta)을 계산하는 원천 — touch가 덮어쓰기 전에 읽어야 한다.
+     * 프레즌스 키 이름. 세션 원장({@link PresenceSessionRepository})이 "세션이 없으면 프레즌스도
+     * 지운다"를 한 스크립트로 원자 실행하려면 두 키를 함께 넘겨야 해서 노출한다 — 키 형식의
+     * 주인은 여전히 이 클래스다.
      */
-    public Long lastHeartbeatAt(Long userId) {
-        Object value = redis.opsForHash().get(KEY_PREFIX + userId, FIELD_HEARTBEAT_AT);
-        return value == null ? null : Long.parseLong(value.toString());
+    static String keyOf(Long userId) {
+        return KEY_PREFIX + userId;
+    }
+
+    /**
+     * touch 직전 상태 — 마지막 하트비트 시각(epoch ms)과 그때 있던 방.
+     * 키가 없으면(오프라인·세션 첫 비트) 두 값 모두 null이다.
+     *
+     * <p>두 소비자가 <b>같은 한 번의 읽기</b>를 나눠 쓴다: 접속시간(-141)은 직전 비트와의
+     * 간격(delta)이 필요하고, 친구 프레즌스 push(-149)는 방이 바뀌었는지를 알아야 한다.
+     * 따로 읽으면 가장 자주 도는 경로에 왕복이 하나 더 는다.
+     * 어느 쪽이든 touch가 덮어쓰기 전에 읽어야 의미가 있다.</p>
+     */
+    public PriorBeat readPrior(Long userId) {
+        Map<Object, Object> hash = redis.opsForHash().entries(KEY_PREFIX + userId);
+        if (hash.isEmpty()) {
+            return PriorBeat.NONE;
+        }
+        Object beatAt = hash.get(FIELD_HEARTBEAT_AT);
+        Object roomId = hash.get(FIELD_ROOM_ID);
+        return new PriorBeat(
+                beatAt == null ? null : Long.parseLong(beatAt.toString()),
+                roomId == null ? null : roomId.toString());
+    }
+
+    /** 직전 하트비트 스냅샷. heartbeatAt이 null이면 그 사용자는 직전에 오프라인이었다. */
+    public record PriorBeat(Long heartbeatAt, String roomId) {
+
+        public static final PriorBeat NONE = new PriorBeat(null, null);
+
+        public boolean wasOnline() {
+            return heartbeatAt != null;
+        }
     }
 
     public PresenceSnapshot find(Long userId) {
