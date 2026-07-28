@@ -429,16 +429,25 @@ const poseChallenge = ref<string | null>(null)
 // 표시되지 않는 쪽은 adaptiveStream·dynacast가 자동으로 쉬게 하므로 부하는 보는 만큼만 든다.
 const gameComp = ref<{ canvas?: HTMLCanvasElement } | null>(null)
 
+/** 게임④(-9): 이번 라운드 출제자가 나인가 — 출제자 화면은 빈 무대라 송출하지 않는다 */
+const iAmSetter = computed(
+  () =>
+    !!activeSession.value?.setterUserId &&
+    activeSession.value.setterUserId === myParticipantId.value,
+)
+
 // 캔버스가 준비되면 송출 시작. 게임 캔버스에는 카메라 원본이 그려지지 않으므로(밤하늘+손 포인트)
 // 카메라를 숨긴 상태여도 계속 송출하고, 캡처가 끊겨 새 프레임이 없을 때만 가린다(정지 화면 방지).
 // 라운드가 끝나면(GAME_END 수신) 결과 화면을 닫지 않아도 송출을 내린다 — gameTrack이 사라지면서
 // 모든 참가자 타일이 카메라로 복귀하고 게임/카메라 토글도 함께 사라진다. 다음 GAME_START에서
 // gameResults가 초기화되면 같은 watch가 재발행한다.
+// 게임④(-9) 출제자는 제외한다 — 관전 화면이라 남에게 보내봐야 빈 무대다. 로테이션으로
+// 라운드마다 바뀌므로 iAmSetter를 의존성에 넣어 출제 차례가 끝나면 다시 발행된다.
 watch(
-  [() => gameComp.value?.canvas ?? null, captureOn, gameResults],
-  async ([canvas, capOn, results]) => {
+  [() => gameComp.value?.canvas ?? null, captureOn, gameResults, iAmSetter],
+  async ([canvas, capOn, results, setter]) => {
     if (!activeGame.value || !canvas) return
-    if (results) {
+    if (results || setter) {
       await lk.unpublishGameScreen()
       return
     }
@@ -852,8 +861,10 @@ const startHint = computed(() =>
             :results="gameResults"
             :my-user-id="myParticipantId"
             :challenge="poseChallenge"
+            :scores="scoreboardRows"
             @close="closeGame"
             @pose-submit="onPoseSubmit"
+            @progress="onGameProgress"
             @finished="onBodyFitFinished"
           />
           <div class="self-label">
@@ -896,7 +907,14 @@ const startHint = computed(() =>
             >
               {{ bodyFitGrade(row.score ?? 0).label }}
             </span>
-            <span v-else class="gs-val">{{ row.finished ? `${row.score}점 ✓` : `⭐ ${row.starsLit}` }}</span>
+            <!-- 게임④는 별이 없다 — 진행 중이면 실시간 일치율(holdProgress)을 보여준다 -->
+            <span v-else class="gs-val">{{
+              row.finished
+                ? `${row.score}점 ✓`
+                : activeGame?.id === 'shape'
+                  ? `일치율 ${Math.round(row.holdProgress * 100)}%`
+                  : `⭐ ${row.starsLit}`
+            }}</span>
           </div>
           <div v-if="scoreboardRows.length === 0" class="gs-empty">진행 상황 수신 대기 중…</div>
         </div>
