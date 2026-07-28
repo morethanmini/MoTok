@@ -264,10 +264,10 @@ async function removeAvatar() {
   position: relative;
   width: 60px;
   height: 60px;
-  border: var(--border);
-  border-radius: var(--radius-md);
-  background: var(--c-mint-soft);
-  box-shadow: var(--shadow-sm);
+  border: 2px solid #8e714e;
+  border-radius: 50%;
+  background: #fff0b9;
+  box-shadow: none;
   padding: 0;
   cursor: pointer;
 }
@@ -280,7 +280,7 @@ async function removeAvatar() {
   width: 100%;
   height: 100%;
   /* 테두리(--border, 3px) 안쪽이므로 그만큼 작은 반지름이라야 모서리에 흰 틈이 생기지 않는다 */
-  border-radius: calc(var(--radius-md) - 3px);
+  border-radius: 50%;
   font-size: 30px;
 }
 .avatar:disabled { cursor: default; }

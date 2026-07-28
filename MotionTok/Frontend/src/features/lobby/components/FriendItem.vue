@@ -51,11 +51,12 @@ defineEmits<{ open: [] }>()
   box-sizing: border-box;
   display: grid;
   place-items: center;
-  padding: 2.5px;
-  background: #5e4634;
-  clip-path: polygon(16px 0, 34px 0, 34px 3px, 40px 3px, 40px 6px, 44px 6px, 44px 10px, 47px 10px, 47px 16px, 50px 16px, 50px 34px, 47px 34px, 47px 40px, 44px 40px, 44px 44px, 40px 44px, 40px 47px, 34px 47px, 34px 50px, 16px 50px, 16px 47px, 10px 47px, 10px 44px, 6px 44px, 6px 40px, 3px 40px, 3px 34px, 0 34px, 0 16px, 3px 16px, 3px 10px, 6px 10px, 6px 6px, 10px 6px, 10px 3px, 16px 3px);
-  box-shadow: 2px 2px 0 #e3d8c7;
-  transform: scale(.92);
+  padding: 2px;
+  border: 2px solid #8e714e;
+  border-radius: 50%;
+  background: #fff0b9;
+  box-shadow: none;
+  transform: none;
   transition: transform .15s ease, filter .15s ease;
 }
 .face {
@@ -64,8 +65,8 @@ defineEmits<{ open: [] }>()
   image-rendering: pixelated;
   display: grid;
   place-items: center;
+  border-radius: 50%;
   background: #e8e3d9;
-  clip-path: polygon(14px 0, 31px 0, 31px 3px, 36px 3px, 36px 6px, 40px 6px, 40px 10px, 43px 10px, 43px 14px, 45px 14px, 45px 31px, 43px 31px, 43px 36px, 40px 36px, 40px 40px, 36px 40px, 36px 43px, 31px 43px, 31px 45px, 14px 45px, 14px 43px, 9px 43px, 9px 40px, 5px 40px, 5px 36px, 2px 36px, 2px 31px, 0 31px, 0 14px, 2px 14px, 2px 10px, 5px 10px, 5px 6px, 9px 6px, 9px 3px, 14px 3px);
   font-size: 22px;
 }
 .friend-info { min-width: 0; margin: -3px -6px; padding: 3px 6px; border-radius: 6px; transition: background .15s ease; }
