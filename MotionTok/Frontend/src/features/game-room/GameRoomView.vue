@@ -77,7 +77,7 @@ const roomVisibility = ref<Visibility>('PUBLIC')
 const participantCount = ref(1)
 /** 이미 방에 있는 참가자 — 친구 초대(-100) 목록에서 빼려고 들고 있는다. */
 const memberIds = ref<string[]>([])
-/** userId → 표시명. 게임④ 출제자 이름 표시용(LiveKit name은 미발행 시 identity로 폴백된다). */
+/** userId → 표시명(상세 조회 기준). 게임④ 출제자 이름·그림으로 말해요 화가 표시가 함께 쓴다. */
 const memberNames = ref<Record<string, string>>({})
 
 /**
@@ -106,8 +106,7 @@ function applyDetail(d: LiveRoomDetail) {
   memberNames.value = Object.fromEntries(d.members.map((m) => [m.userId, m.displayName]))
 }
 
-/** userId → 닉네임 — 상세 조회 멤버를 기본으로 LiveKit 참가자 이름으로 보강(그림으로 말해요 화가 표시). */
-const memberNames = ref<Record<string, string>>({})
+/** userId → 닉네임 — 상세 조회 멤버를 기본으로 LiveKit 참가자 이름으로 보강(뒤늦게 들어온 참가자 대응). */
 const participantNames = computed<Record<string, string>>(() => {
   const names = { ...memberNames.value }
   for (const p of lk.participants.value) {
@@ -475,15 +474,10 @@ const iAmSetter = computed(
     !!activeSession.value?.setterUserId &&
     activeSession.value.setterUserId === myParticipantId.value,
 )
-/** 게임④(-9): 이번 라운드 출제자 표시명 — 방 상세의 displayName 우선, 늦게 들어온 참가자는 LiveKit name */
+/** 게임④(-9): 이번 라운드 출제자 표시명 — 이름 조회는 participantNames 하나로 통일한다 */
 const setterName = computed(() => {
   const id = activeSession.value?.setterUserId
-  if (!id) return null
-  return (
-    memberNames.value[id] ??
-    lk.participants.value.find((p) => p.identity === id)?.name ??
-    '출제자'
-  )
+  return id ? (participantNames.value[id] ?? '출제자') : null
 })
 /**
  * 게임④(-9): 출제 중인 출제자의 카메라를 다른 참가자 타일에서 가린다 — 캠으로 포즈가
