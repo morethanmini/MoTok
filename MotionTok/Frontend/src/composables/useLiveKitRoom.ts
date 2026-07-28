@@ -57,7 +57,14 @@ export function useLiveKitRoom() {
     // 게임 화면(화면공유 소스) 트랙이 추가되면서 kind만으로는 카메라를 못 가리므로 source로 찾는다.
     const videoPub = p.getTrackPublication(Track.Source.Camera)
     const audioPub = p.getTrackPublication(Track.Source.Microphone)
-    const gamePub = p.getTrackPublication(Track.Source.ScreenShare)
+    // 화면공유 발행이 여러 개일 수 있다(비정상 종료가 남긴 잔여 발행 등). 첫 발행이 죽은
+    // 것이면 게임 중인데도 타일이 카메라로 남으므로, 살아 있는(가려지지 않은) 것을 고른다.
+    let gamePub: ReturnType<typeof p.getTrackPublication> | undefined
+    for (const pub of p.trackPublications.values()) {
+      if (pub.source !== Track.Source.ScreenShare) continue
+      gamePub = pub
+      if (!pub.isMuted && pub.track) break
+    }
     return {
       identity: p.identity,
       name: p.name || p.identity,
@@ -193,23 +200,35 @@ export function useLiveKitRoom() {
   // 수신 측은 타일마다 게임 화면 ↔ 카메라를 골라 보고(ParticipantTile 토글), 표시되지 않는 쪽은
   // adaptiveStream(수신)·dynacast(송신)가 자동으로 쉬게 하므로 부하는 실제로 보는 만큼만 든다.
   let gameScreenTrack: LocalVideoTrack | null = null
+  let gameScreenPublishing: Promise<boolean> | null = null
 
   /** 게임 캔버스 송출 시작(이미 송출 중이면 no-op). 미연결·캡처 실패면 false. */
   async function publishGameScreen(canvas: HTMLCanvasElement): Promise<boolean> {
     if (gameScreenTrack) return true
-    if (!room) return false
-    const track = canvas.captureStream().getVideoTracks()[0]
-    if (!track) return false
+    // 발행 협상이 끝나기 전에 다시 불리면(호출측 watch 재발화) 진행 중인 발행을 같이 기다린다.
+    // 없으면 화면공유 트랙이 두 개 발행되고, 종료 시 하나만 내려가 상대에게 멈춘 화면이 남는다.
+    if (gameScreenPublishing) return gameScreenPublishing
+    const r = room
+    if (!r) return false
+    gameScreenPublishing = (async () => {
+      const track = canvas.captureStream().getVideoTracks()[0]
+      if (!track) return false
+      try {
+        const pub = await r.localParticipant.publishTrack(track, {
+          source: Track.Source.ScreenShare,
+          name: 'game-screen',
+        })
+        gameScreenTrack = pub.videoTrack ?? null
+        return !!gameScreenTrack
+      } catch {
+        track.stop()
+        return false
+      }
+    })()
     try {
-      const pub = await room.localParticipant.publishTrack(track, {
-        source: Track.Source.ScreenShare,
-        name: 'game-screen',
-      })
-      gameScreenTrack = pub.videoTrack ?? null
-      return !!gameScreenTrack
-    } catch {
-      track.stop()
-      return false
+      return await gameScreenPublishing
+    } finally {
+      gameScreenPublishing = null
     }
   }
 
@@ -222,15 +241,28 @@ export function useLiveKitRoom() {
 
   /** 게임 화면 송출 종료 — 발행 해제 + 캡처 트랙 정리. 게임 종료·방 퇴장 시 호출. */
   async function unpublishGameScreen() {
-    if (!gameScreenTrack) return
     const track = gameScreenTrack
     gameScreenTrack = null
-    try {
-      await room?.localParticipant.unpublishTrack(track, true)
-    } catch {
-      // 이미 연결이 끊긴 경우 — 발행 해제는 의미 없고 캡처만 정리하면 된다
+    if (track) {
+      try {
+        await room?.localParticipant.unpublishTrack(track, true)
+      } catch {
+        // 이미 연결이 끊긴 경우 — 발행 해제는 의미 없고 캡처만 정리하면 된다
+      }
+      track.mediaStreamTrack.stop()
     }
-    track.mediaStreamTrack.stop()
+    // 추적 변수와 어긋나게 남은 화면공유 발행이 있으면 소스 기준으로 마저 내린다.
+    // 이게 남으면 상대 타일에 멈춘 게임 화면이 카메라 대신 계속 보인다.
+    for (const pub of room?.localParticipant.trackPublications.values() ?? []) {
+      if (pub.source !== Track.Source.ScreenShare || !pub.track) continue
+      const stale = pub.track
+      try {
+        await room?.localParticipant.unpublishTrack(stale, true)
+      } catch {
+        // 연결 끊김 — 캡처만 정리
+      }
+      stale.mediaStreamTrack.stop()
+    }
   }
 
   /**

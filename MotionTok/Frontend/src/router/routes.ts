@@ -18,6 +18,7 @@ import { inventoryRoutes } from '@/features/inventory/routes'
 import { friendsRoutes } from '@/features/friends/routes'
 import { rankingRoutes } from '@/features/ranking/routes'
 import { gamesCatalogRoutes } from '@/features/games-catalog/routes'
+import { catchRhythmRoutes } from '@/features/games/catch-rhythm/routes'
 import { adminRoutes } from '@/features/admin/routes'
 import { unsupportedRoutes } from '@/features/unsupported/routes'
 
@@ -35,6 +36,7 @@ export const routes: RouteRecordRaw[] = [
   ...friendsRoutes,
   ...rankingRoutes,
   ...gamesCatalogRoutes,
+  ...catchRhythmRoutes,
   ...adminRoutes,
   ...unsupportedRoutes,
 ]
