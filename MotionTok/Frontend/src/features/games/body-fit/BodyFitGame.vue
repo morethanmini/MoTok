@@ -38,11 +38,15 @@ const props = defineProps<{
   myUserId?: string | null
   /** POSE_SET으로 도착한 출제 포즈(랜드마크 JSON) — 벽 생성 입력 */
   challenge?: string | null
+  /** 게임④(-9): 출제자 관전 화면에 띄울 실시간 순위 — 부모의 scoreboardRows */
+  scores?: { userId: string; nickname: string; holdProgress: number; finished: boolean; score: number | null }[]
 }>()
 const emit = defineEmits<{
   close: []
   /** 멀티: 내가 출제자일 때 캡처한 포즈(랜드마크 JSON) → 부모가 STOMP 발신 */
   'pose-submit': [pose: string]
+  /** 멀티: 실시간 일치율(4Hz) → 부모가 PROGRESS로 중계. 출제자 관전 화면의 입력이 된다 */
+  progress: [starsLit: number, holdProgress: number]
   /** 멀티: 판정 확정 → 부모가 finish 발신. 솔로: 토스트용 */
   finished: [payload: { score: number; grade: Grade; iou: number }]
 }>()
@@ -80,6 +84,10 @@ const GRADE_COLOR: Record<Grade, string> = {
   FAIL: 'var(--bf-coral)',
 }
 const GRADE_POINTS: Record<Grade, number> = { PERFECT: 100, GREAT: 85, PASS: 70, FAIL: 0 }
+/** 관전 화면용 — 서버가 돌려준 점수를 등급으로 역산한다(GRADE_POINTS의 역함수) */
+function gradeOf(score: number | null): Grade {
+  return (Object.keys(GRADE_POINTS) as Grade[]).find((g) => GRADE_POINTS[g] === score) ?? 'FAIL'
+}
 
 /** 삐져나온 신체 부위 안내(실기 피드백) — 어디가 안 맞는지 말로도 짚어준다 */
 const SEGMENT_WARNING: Record<SegmentKey, string> = {
@@ -111,6 +119,15 @@ function setDifficulty(key: DifficultyKey) {
   cfg.judge.K = cfg.difficulty[key].K
   cfg.wall.approachMs = cfg.difficulty[key].approachMs
 }
+
+/** 게임④(-9): 출제자는 포즈를 넘긴 뒤 뛰지 않는다 — 3D 무대 대신 관전 화면을 본다.
+ * 씬에는 자기 아바타밖에 없어서 벽이 빈 무대로 날아오는 그림이 되기 때문(실기 피드백). */
+const spectating = computed(
+  () =>
+    isMultiplayer.value &&
+    isSetter.value &&
+    (phase.value === 'incoming' || phase.value === 'result'),
+)
 
 const phaseLabel = computed(() => {
   if (phase.value === 'wait') return '곧 시작합니다 — 카메라 앞에 준비!'
@@ -252,6 +269,9 @@ function liveJudge(now: number) {
     liveIou.value = live.iou
     liveOverflow.value = live.overflow
     rig.setOverflow(live.overflow)
+    // 별 개념이 없는 게임이라 starsLit=0, 일치율을 holdProgress(0~1)에 싣는다 —
+    // 출제자 관전 화면과 방 스코어보드가 이 값으로 갱신된다
+    if (isMultiplayer.value) emit('progress', 0, Math.min(1, live.iou / 100))
   }
 }
 
@@ -527,11 +547,18 @@ onBeforeUnmount(() => {
     <div class="main">
       <div class="center">
         <div ref="viewportRef" class="viewport">
-          <canvas ref="glCanvasRef" class="gl-canvas"></canvas>
+          <!-- 관전 중에는 3D를 숨기기만 한다(v-if로 떼면 three.js 컨텍스트가 날아간다) -->
+          <canvas v-show="!spectating" ref="glCanvasRef" class="gl-canvas"></canvas>
 
-          <canvas v-show="phase === 'incoming'" ref="thumbRef" class="thumb" width="96" height="96"></canvas>
+          <canvas
+            v-show="phase === 'incoming' && !spectating"
+            ref="thumbRef"
+            class="thumb"
+            width="96"
+            height="96"
+          ></canvas>
 
-          <div class="pip">
+          <div v-show="!spectating" class="pip">
             <video ref="videoRef" class="pip-video mirrored" muted playsinline></video>
             <canvas ref="pipOverlayRef" class="pip-overlay mirrored" width="640" height="480"></canvas>
             <span class="pip-label">● 내 캠 · {{ tracked ? '인식 중' : '인식 안 됨' }}</span>
@@ -544,8 +571,23 @@ onBeforeUnmount(() => {
             <span>일치율 {{ judgment.iou.toFixed(0) }}%</span>
           </div>
 
-          <div v-if="phase === 'incoming'" class="approach-bar" :class="{ urgent: timerSec <= 2 }">
+          <div v-if="phase === 'incoming' && !spectating" class="approach-bar" :class="{ urgent: timerSec <= 2 }">
             <div class="fill" :style="{ width: approachPct + '%' }"></div>
+          </div>
+
+          <!-- 게임④(-9) 출제자 관전 화면 — 내가 낸 문제로 남들이 어디까지 맞췄는지만 본다 -->
+          <div v-if="spectating" class="spectate-panel">
+            <p class="sp-title">👀 내 포즈로 도전 중</p>
+            <ul v-if="scores?.length" class="sp-rows">
+              <li v-for="row in scores" :key="row.userId">
+                <span class="sp-name">{{ row.nickname }}</span>
+                <b v-if="row.finished" :style="{ color: GRADE_COLOR[gradeOf(row.score)] }">
+                  {{ gradeOf(row.score) }}
+                </b>
+                <span v-else class="sp-live">{{ Math.round(row.holdProgress * 100) }}%</span>
+              </li>
+            </ul>
+            <p v-else class="sp-empty">참가자 진행 상황을 기다리는 중…</p>
           </div>
         </div>
       </div>
@@ -955,6 +997,55 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--bf-muted);
   padding: 20px 0;
+}
+/* 출제자 관전 화면 — 3D를 덮는 게 아니라 3D가 숨겨진 자리에 들어간다 */
+.spectate-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+}
+.sp-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--bf-gold);
+}
+.sp-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: min(320px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sp-rows li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--bf-border);
+  border-radius: 10px;
+  font-size: 13px;
+}
+.sp-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-live {
+  font-variant-numeric: tabular-nums;
+  color: var(--bf-muted);
+}
+.sp-empty {
+  font-size: 12px;
+  color: var(--bf-muted);
 }
 .warn-box {
   padding: 10px 12px;
