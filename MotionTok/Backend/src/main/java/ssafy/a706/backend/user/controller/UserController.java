@@ -14,17 +14,21 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
+import ssafy.a706.backend.user.service.UserRecordService;
 import ssafy.a706.backend.user.service.UserService;
 import ssafy.a706.backend.user.controller.dto.ChangePasswordRequest;
+import ssafy.a706.backend.user.controller.dto.GameRecordResponse;
 import ssafy.a706.backend.user.controller.dto.PublicUserProfileResponse;
 import ssafy.a706.backend.user.controller.dto.UpdateAvatarRequest;
 import ssafy.a706.backend.user.controller.dto.UpdateProfileRequest;
 import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
 import ssafy.a706.backend.user.controller.dto.WithdrawRequest;
 
+import java.util.List;
+
 /**
- * API 명세서 회원 도메인 — 프로필 조회·수정, 비밀번호 변경, 탈퇴(-23·-111).
- * 포인트·인벤토리·화면 꾸미기·전적은 후속 작업.
+ * API 명세서 회원 도메인 — 프로필 조회·수정, 비밀번호 변경, 탈퇴(-23·-111), 전적 조회(-97·-141).
+ * 포인트·인벤토리·화면 꾸미기는 후속 작업.
  */
 @RestController
 @RequestMapping("/api/users")
@@ -32,6 +36,7 @@ import ssafy.a706.backend.user.controller.dto.WithdrawRequest;
 public class UserController {
 
     private final UserService userService;
+    private final UserRecordService userRecordService;
 
     /** GET /users/me — 내 프로필 조회 */
     @GetMapping("/me")
@@ -86,5 +91,20 @@ public class UserController {
     @GetMapping("/{userId}")
     public PublicUserProfileResponse publicProfile(@PathVariable Long userId) {
         return userService.getPublicProfile(userId);
+    }
+
+    /** GET /users/me/records — 내 전적(게임별 플레이 횟수·최고 점수·순위, -97). */
+    @GetMapping("/me/records")
+    public List<GameRecordResponse> myRecords(@AuthenticationPrincipal MemberPrincipal principal) {
+        return userRecordService.records(principal.id());
+    }
+
+    /**
+     * GET /users/{userId}/records — 다른 사용자의 게임별 전적(-141 친구 상세).
+     * 공개 범위는 공개 프로필과 동일(회원 전체 — 결정 Q3). 탈퇴·정지 계정은 404.
+     */
+    @GetMapping("/{userId}/records")
+    public List<GameRecordResponse> records(@PathVariable Long userId) {
+        return userRecordService.records(userId);
     }
 }
