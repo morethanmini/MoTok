@@ -253,6 +253,7 @@ const picker = ref(false)
 // 탭 닫기·주소창 이탈 시 keepalive 퇴장 통보 + bfcache 복원 시 로비로(뒤로가기 복귀 차단)
 useRoomUnloadLeave(() => route.query.room as string | undefined)
 
+
 onMounted(async () => {
   bgm.setVolume(0.2)
 
@@ -304,6 +305,8 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   roomChat.disconnect()
+  // BGM은 모듈 싱글턴이라 suspend된 채로 방을 뜨면 로비에서도 영영 안 나온다
+  bgm.resumeAfterGame()
 })
 
 // ── 채팅 ────────────────────────────────────
@@ -522,6 +525,21 @@ const gameResults = ref<GameResultEntry[] | null>(null)
 const poseChallenge = ref<string | null>(null)
 /** 그림으로 말해요(게임 10) — DRAW/DRAW_RESULT 릴레이를 게임 컴포넌트로 전달하는 피드 */
 const drawFeed = ref<GameEvent[]>([])
+
+/**
+ * 게임④는 자체 사운드(S15P11A706-138)를 가지므로 로비 BGM을 내린다.
+ * useBgm의 suspendForGame/resumeAfterGame은 만들어져만 있고 호출부가 없었다 — 여기서 연결한다.
+ * 게임④에만 거는 이유: 다른 게임은 자체 사운드가 없거나 담당이 달라, 임의로 BGM을 끄면 그쪽
+ * 체감이 바뀐다. 전체에 걸려면 조건만 `!!activeGame.value`로 넓히면 된다.
+ *
+ * 반드시 activeGame 선언 아래에 둔다 — watch는 초기값을 잡으려고 getter를 setup 중 즉시
+ * 실행하므로, 위에 두면 const TDZ에 걸려 setup 전체가 죽는다(빌드는 통과한다: TS는 화살표
+ * 함수 안의 선언 전 참조를 잡지 않는다).
+ */
+watch(
+  () => activeGame.value?.id === 'shape',
+  (ownsAudio) => (ownsAudio ? bgm.suspendForGame() : bgm.resumeAfterGame()),
+)
 
 // ── 게임 화면 송출 — 게임 중에는 카메라와 함께 게임 캔버스를 화면공유 트랙으로 발행한다.
 // 다른 참가자는 타일마다 게임 화면 ↔ 카메라를 토글로 골라 본다(ParticipantTile).
