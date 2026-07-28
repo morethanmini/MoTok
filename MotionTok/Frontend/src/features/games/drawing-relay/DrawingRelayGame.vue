@@ -33,18 +33,16 @@ import {
   TOTAL_SECONDS,
   PEN_TIP_INDEX,
   applyPinchHysteresis,
-  findAnswerRank,
   handRole,
   isFist,
   knuckleCenter,
   pinchMidpoint,
   pinchRatio,
-  scoreForRank,
   trimStrokeTail,
   type NormalizedPoint,
   type StrokePoint,
 } from './logic'
-import { judgeDrawing, type JudgeResult } from './scoring'
+import { requestJudge } from './scoring'
 
 const props = defineProps<{
   /** 게임룸 셀프 타일의 <video> — 스트림이 attach되어 재생 중이어야 한다 */
@@ -58,6 +56,8 @@ const props = defineProps<{
   drawEvents?: GameEvent[] | null
   /** userId → 닉네임 — 현재 화가 표시("xx님이 그리고 있어요!")용 */
   names?: Record<string, string> | null
+  /** 서버 채점 요청에 쓰는 방 ID */
+  roomId?: string | null
 }>()
 const emit = defineEmits<{
   close: []
@@ -65,8 +65,6 @@ const emit = defineEmits<{
   draw: [seq: number, ops: DrawOp[]]
   /** 멀티: 조기 차례 넘기기 — 부모가 STOMP /game/turn-skip으로 발신, 에코로 전원 스케줄 당김 */
   turnSkip: [turnIndex: number, remainingMs: number]
-  /** 멀티: AI 채점 결과 — 부모가 STOMP /game/draw-result로 발신 */
-  drawResult: [payload: { guesses: string[]; answerRank: number; score: number }]
 }>()
 
 /** 도화지 논리 해상도 — 카메라 해상도와 무관하게 고정 */
@@ -212,7 +210,8 @@ const erasing = ref(false)
 /** 새 비디오 프레임이 한 번이라도 들어왔는지 — 아니면 "마우스로 그리기" 안내 */
 const gotFrame = ref(false)
 
-const judgeResult = ref<JudgeResult | null>(null)
+/** 서버가 배포한 채점 결과(DRAW_RESULT). 도착 전에는 null — 채점 대기 화면 */
+const judgeResult = ref<{ guesses: string[] } | null>(null)
 const judgeError = ref<string | null>(null)
 const answerRank = ref(0)
 const finalScore = ref(0)
@@ -366,7 +365,7 @@ function mpTick() {
   }
 }
 
-/** 모든 턴 종료 → 채점 단계. 마지막 화가만 GMS를 호출하고 결과는 전원이 에코로 받는다. */
+/** 모든 턴 종료 → 채점 단계. 마지막 화가가 서버에 채점을 요청하고 결과는 전원이 에코로 받는다. */
 function beginMpJudging() {
   if (mpJudgingStarted) return
   mpJudgingStarted = true
@@ -377,13 +376,18 @@ function beginMpJudging() {
   if (amLastPainter.value) void judgeMp()
 }
 
+/**
+ * 도화지를 서버에 올려 채점을 맡긴다 — AI 호출도 점수 계산도 서버가 한다(키가 프론트에 없다).
+ * 결과 화면 전환은 DRAW_RESULT 에코 수신 시 — 전원이 같은 경로로 같은 결과를 본다.
+ */
 async function judgeMp() {
+  if (!props.roomId) {
+    judgeError.value = '방 정보를 찾지 못해 채점을 요청할 수 없어요'
+    return
+  }
   judgeError.value = null
   try {
-    const r = await judgeDrawing(finalImage.value)
-    const rank = findAnswerRank(topic.value, r.guesses)
-    // 화면 전환은 DRAW_RESULT 에코 수신 시 — 전원이 같은 경로로 결과를 본다
-    emit('drawResult', { guesses: r.guesses, answerRank: rank, score: scoreForRank(rank) })
+    await requestJudge(props.roomId, finalImage.value)
   } catch (e) {
     judgeError.value = e instanceof Error ? e.message : 'AI 채점에 실패했어요'
   }
