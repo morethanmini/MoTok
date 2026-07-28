@@ -231,7 +231,7 @@ function initThree(canvas: HTMLCanvasElement) {
   rig = new AvatarRig(cfg.avatar)
   stage.scene.add(rig.group)
   stage.setFloorY(rig.floorY)
-  wall = createWall(cfg)
+  wall = createWall()
   stage.scene.add(wall.mesh)
 }
 
@@ -688,26 +688,44 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .game {
-  /* 다크 HUD 팔레트 — 이 게임 화면 안에서만 쓴다(모톡 크림·픽셀 테마와 무관, 실기 피드백으로 재설계) */
-  --bf-bg: #0a0b1a;
-  --bf-panel: #12142b;
-  --bf-panel-2: #191c3a;
-  --bf-border: rgba(255, 255, 255, 0.09);
-  --bf-text: #eef0ff;
-  --bf-muted: #8d90b8;
-  --bf-mint: #45e0a8;
-  --bf-gold: #ffcf4d;
-  --bf-coral: #ff5d73;
-  --bf-violet: #b98bff;
+  /* 게임④ HUD — "석재 명판" 방향(2026-07-28). 3D 무대가 차가운 인디고 화강암이라
+     HUD는 따뜻한 석재로 온도 대비를 준다(컨셉 레퍼런스와 같은 구조).
+     색뿐 아니라 보더·모서리·그림자까지 전부 여기서만 정의한다 — 이전에는
+     1px/18px/블러 값이 컴포넌트마다 흩어져 한 곳에서 바꿀 수 없었다. */
+  --bf-bg: #221d1a; /* 그늘진 돌 */
+  --bf-panel: #3a332e; /* 석판 */
+  --bf-panel-2: #4a423c; /* 밝은 석판 */
+  --bf-border: #6b5f54; /* 석재 이음매 */
+  --bf-text: #f2e6d2; /* 사암 */
+  --bf-muted: #a8977f;
+  --bf-mint: #7fb98a; /* 이끼 */
+  --bf-gold: #e8b84b; /* 골드 인레이 */
+  --bf-coral: #d9694f; /* 테라코타 */
+  --bf-violet: #c9a6ff; /* PERFECT 전용 — 단색 무대에서 유일하게 튀는 색이라 최고 등급이 눈에 박힌다 */
+
+  /* 형태 토큰 — 돌은 둥글지 않다 */
+  --bf-radius: 4px;
+  --bf-radius-sm: 3px;
+  --bf-line: 1px solid var(--bf-border);
+  --bf-shadow: 0 10px 26px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 236, 200, 0.14);
+  --bf-shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 236, 200, 0.12);
+  /* 석재 입자 — 단색 평면이 플라스틱처럼 보이는 걸 막는다 */
+  --bf-grain:
+    radial-gradient(circle at 18% 22%, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px),
+    radial-gradient(circle at 63% 71%, rgba(0, 0, 0, 0.05) 0 1px, transparent 1px);
+  --bf-grain-size: 13px 13px, 17px 17px;
 
   display: flex;
   flex-direction: column;
   gap: 14px;
   height: 100vh;
   padding: 16px;
-  background: var(--bf-bg);
+  background-color: var(--bf-bg);
+  background-image: var(--bf-grain);
+  background-size: var(--bf-grain-size);
   color: var(--bf-text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Pretendard', sans-serif;
+  /* 방 화면은 루트에서 전역 픽셀 폰트를 쓰는데 게임 화면만 산세리프로 튀고 있었다 */
+  font-family: var(--font-pixel);
 }
 /* 게임룸 셀프 타일 위 오버레이(멀티) — 자체 페이지가 아니라 타일을 채운다 */
 .game.embedded {
@@ -728,10 +746,12 @@ onBeforeUnmount(() => {
 .results-card {
   min-width: 300px;
   padding: 20px;
-  background: var(--bf-panel);
-  border: 1px solid var(--bf-border);
-  border-radius: 18px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  background-color: var(--bf-panel);
+  background-image: var(--bf-grain);
+  background-size: var(--bf-grain-size);
+  border: var(--bf-line);
+  border-radius: var(--bf-radius);
+  box-shadow: var(--bf-shadow);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -752,13 +772,13 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
-  border: 1px solid var(--bf-border);
-  border-radius: 10px;
+  border: var(--bf-line);
+  border-radius: var(--bf-radius-sm);
   background: var(--bf-panel-2);
   font-size: 14px;
 }
 .results-list li.me {
-  background: rgba(69, 224, 168, 0.14);
+  background: rgba(127, 185, 138, 0.16);
   border-color: var(--bf-mint);
 }
 .results-list .rank {
@@ -779,15 +799,19 @@ onBeforeUnmount(() => {
 }
 .pill {
   padding: 7px 14px;
-  background: var(--bf-panel);
-  border: 1px solid var(--bf-border);
-  border-radius: 999px;
+  background-color: var(--bf-panel);
+  background-image: var(--bf-grain);
+  background-size: var(--bf-grain-size);
+  border: var(--bf-line);
+  border-radius: var(--bf-radius-sm);
+  box-shadow: var(--bf-shadow-sm);
   font-size: 14px;
   font-weight: 700;
+  letter-spacing: 0.06em;
 }
 .round-pill {
-  background: var(--bf-panel-2);
-  color: var(--bf-mint);
+  background-color: var(--bf-panel-2);
+  color: var(--bf-gold);
 }
 .phase-pill {
   flex: 1;
@@ -796,19 +820,19 @@ onBeforeUnmount(() => {
 }
 .timer-pill {
   font-variant-numeric: tabular-nums;
-  background: var(--bf-panel-2);
-  color: var(--bf-coral);
-  border-color: rgba(255, 93, 115, 0.4);
+  background-color: var(--bf-panel-2);
+  color: var(--bf-gold);
+  border-color: #8a6d33;
 }
 .timer-pill.urgent {
-  background: var(--bf-coral);
-  color: #fff;
+  background-color: var(--bf-coral);
+  color: #221d1a;
   border-color: var(--bf-coral);
 }
 .setter-pill {
-  background: rgba(255, 207, 77, 0.14);
+  background-color: #443a26;
   color: var(--bf-gold);
-  border-color: rgba(255, 207, 77, 0.4);
+  border-color: #8a6d33;
 }
 .main {
   display: flex;
@@ -826,11 +850,12 @@ onBeforeUnmount(() => {
   position: relative;
   flex: 1;
   min-height: 0;
-  border: 1px solid var(--bf-border);
-  border-radius: 18px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  border: var(--bf-line);
+  border-radius: var(--bf-radius);
+  box-shadow: var(--bf-shadow);
   overflow: hidden;
-  background: #0d0c24;
+  /* three.js scene.background(0x1a1411)와 같은 값 — 캔버스 로드 전 깜빡임 방지 */
+  background: #1a1411;
 }
 /* 3D 캔버스에만 — .viewport canvas로 잡으면 썸네일·PiP 오버레이 캔버스까지 늘어난다 */
 .gl-canvas {
@@ -844,19 +869,21 @@ onBeforeUnmount(() => {
   left: 12px;
   width: 96px;
   height: 96px;
-  background: rgba(13, 12, 36, 0.7);
-  border: 2px solid rgba(255, 255, 255, 0.35);
-  border-radius: 10px;
+  background: rgba(26, 20, 17, 0.75);
+  /* 목표 포즈는 무대 위에 얹힌 골드 명판 — 2px 유지(어두운 무대에서 얇으면 사라진다) */
+  border: 2px solid var(--bf-gold);
+  border-radius: var(--bf-radius-sm);
+  box-shadow: var(--bf-shadow-sm);
 }
 .pip {
   position: absolute;
   top: 12px;
   right: 12px;
   width: 180px;
-  border: 1px solid var(--bf-border);
-  border-radius: 12px;
+  border: var(--bf-line);
+  border-radius: var(--bf-radius-sm);
   overflow: hidden;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--bf-shadow-sm);
   background: #000;
 }
 .pip-video {
@@ -922,7 +949,7 @@ onBeforeUnmount(() => {
   right: 0;
   bottom: 0;
   height: 8px;
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.45);
 }
 .approach-bar .fill {
   height: 100%;
@@ -942,17 +969,21 @@ onBeforeUnmount(() => {
 }
 .card {
   padding: 14px;
-  background: var(--bf-panel);
-  border: 1px solid var(--bf-border);
-  border-radius: 16px;
+  background-color: var(--bf-panel);
+  background-image: var(--bf-grain);
+  background-size: var(--bf-grain-size);
+  border: var(--bf-line);
+  border-radius: var(--bf-radius);
+  box-shadow: var(--bf-shadow-sm);
 }
 .card h3 {
   margin-bottom: 8px;
   font-size: 13px;
   font-weight: 700;
-  color: var(--bf-muted);
+  /* 골드 인레이 — 돌에 새겨 넣은 제목 */
+  color: var(--bf-gold);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.12em;
 }
 .gauge {
   display: block;
@@ -1029,9 +1060,9 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--bf-border);
-  border-radius: 10px;
+  background: rgba(255, 236, 200, 0.06);
+  border: var(--bf-line);
+  border-radius: var(--bf-radius-sm);
   font-size: 13px;
 }
 .sp-name {
@@ -1049,9 +1080,9 @@ onBeforeUnmount(() => {
 }
 .warn-box {
   padding: 10px 12px;
-  background: rgba(255, 93, 115, 0.12);
-  border: 1px solid rgba(255, 93, 115, 0.4);
-  border-radius: 12px;
+  background: rgba(217, 105, 79, 0.14);
+  border: 1px solid var(--bf-coral);
+  border-radius: var(--bf-radius-sm);
   color: var(--bf-coral);
   font-size: 13px;
   font-weight: 700;
@@ -1085,13 +1116,15 @@ onBeforeUnmount(() => {
 }
 .btn-start {
   padding: 13px;
-  background: var(--bf-mint);
-  color: #04231a;
-  border: none;
-  border-radius: 12px;
+  background: var(--bf-gold);
+  color: #221d1a;
+  border: 1px solid #8a6d33;
+  border-radius: var(--bf-radius-sm);
+  box-shadow: var(--bf-shadow-sm);
   font-family: inherit;
   font-size: 16px;
   font-weight: 800;
+  letter-spacing: 0.06em;
   cursor: pointer;
   transition: opacity 0.15s, transform 0.15s;
 }
@@ -1113,8 +1146,8 @@ onBeforeUnmount(() => {
   flex: 1;
   padding: 8px 4px;
   background: var(--bf-panel-2);
-  border: 1px solid var(--bf-border);
-  border-radius: 10px;
+  border: var(--bf-line);
+  border-radius: var(--bf-radius-sm);
   color: var(--bf-text);
   font-family: inherit;
   font-size: 13px;
@@ -1123,8 +1156,8 @@ onBeforeUnmount(() => {
   transition: background 0.15s;
 }
 .diff-btn.active {
-  background: var(--bf-mint);
-  color: #04231a;
-  border-color: var(--bf-mint);
+  background: var(--bf-gold);
+  color: #221d1a;
+  border-color: #8a6d33;
 }
 </style>

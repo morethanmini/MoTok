@@ -1,22 +1,23 @@
 /**
- * 게임④ 공용 3D 무대 (기획 §8 — 어두운 무대, 벽과 아바타만 밝다).
+ * 게임④ 공용 무대 (기획 §8 — 어두운 무대, 벽과 아바타만 밝다).
  *
- * 컨셉 목업(box/)의 룩을 실시간으로 근사하는 두 층:
- *  1) 씬 — IBL(RoomEnvironment) + 스포트라이트 + 포디움 + 림 라이트 + 안개
- *  2) 후처리 — SSAO(접촉 음영) → 블룸(발광 림·빨강 세그먼트) → 비네트 → 톤맵.
- *     "직접 그린 CSS vs 부트스트랩" 격차의 대부분이 이 마감 공정이다.
- * 전부 three 내장 애드온 — 신규 의존성 없음. 소비자는 stage.render()/setSize()만 쓴다.
+ * 납작한 실루엣 룩(2026-07-28 방향 전환). 지오메트리는 3D 그대로지만 재질은 전부
+ * unlit(MeshBasicMaterial)이라 조명·그림자·IBL이 없다 — 색이 지정한 값 그대로 나온다.
+ * 남은 후처리는 비네트 + 출력 패스뿐이고, 깊이감은 안개와 원근이 담당한다.
+ *
+ * 이전(입체 룩)에는 IBL(RoomEnvironment) + 스포트/림/디렉셔널 조명 + VSM 그림자 +
+ * SSAO를 썼다. 되돌릴 일이 있으면 git 이력을 참고할 것.
+ * 소비자는 stage.render()/setSize()만 쓴다.
  */
 import * as THREE from 'three'
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
-import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
 import { VignetteShader } from 'three/addons/shaders/VignetteShader.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import type { BodyFitConfig } from './config'
+import { STAGE_SCALE } from './skeleton'
 
 export interface Stage {
   renderer: THREE.WebGLRenderer
@@ -28,6 +29,22 @@ export interface Stage {
   /** 아바타 발바닥 높이가 바뀌면(팔다리 배율 슬라이더) 포디움을 따라 옮긴다 */
   setFloorY(y: number): void
   dispose(): void
+}
+
+/**
+ * GLB 재질을 납작한 단색(unlit)으로 교체 — 조명 색은 알베도를 못 이긴다.
+ * 석판 프레임이 따뜻한 조명 아래서도 파랗게 남았던 원인이 이것이라, 색 자체를 덮어써야 한다.
+ * 무대(포디움)와 벽(석판 프레임)이 공유하므로 여기서 export 한다.
+ */
+export function flattenMaterials(root: THREE.Object3D, color: number) {
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh
+    if (!mesh.isMesh) return
+    const old = mesh.material as THREE.Material
+    mesh.material = new THREE.MeshBasicMaterial({ color })
+    old.dispose()
+    mesh.castShadow = mesh.receiveShadow = false
+  })
 }
 
 /** GLB 하위 메시 자원 해제 — geometry + material(+map) */
@@ -46,19 +63,15 @@ export function createStage(canvas: HTMLCanvasElement, cfg: BodyFitConfig): Stag
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
   const pixelRatio = Math.min(window.devicePixelRatio, 2)
   renderer.setPixelRatio(pixelRatio)
-  renderer.shadowMap.enabled = true
-  // VSM + radius = 소프트 섀도 — 딱딱한 그림자 경계가 "생짜 3D" 느낌의 주범
-  renderer.shadowMap.type = THREE.VSMShadowMap
-  renderer.toneMapping = THREE.ACESFilmicToneMapping
+  // 납작한 룩(2026-07-28): 전 재질이 unlit이라 그림자·톤매핑이 할 일이 없다.
+  // 끄면 색이 지정한 값 그대로 나오고(ACES가 밝은 색을 눌러 탁하게 만들던 것도 사라짐) 부하도 준다.
+  renderer.shadowMap.enabled = false
 
+  // 무대 전체를 따뜻한 석재 한 계열로 모은다(2026-07-28) — 이전엔 배경·안개가 차가운
+  // 인디고(0x0d0c24)라 갈색 포디움·석판과 색이 따로 놀았다. HUD(석재 명판)와도 이어진다.
   const scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x0d0c24) // --bg-sunken
-  scene.fog = new THREE.Fog(0x0d0c24, 9, 18)
-
-  const pmrem = new THREE.PMREMGenerator(renderer)
-  scene.environment = pmrem.fromScene(new RoomEnvironment()).texture
-  scene.environmentIntensity = 0.35
-  pmrem.dispose()
+  scene.background = new THREE.Color(0x1a1411)
+  scene.fog = new THREE.Fog(0x1a1411, 9, 18)
 
   // 8.2로 물러서면 아바타가 화면을 꽉 채우지 않고 벽 전체(구멍 + 주변 석판)가
   // 같이 들어온다 — 원래 4.8은 아바타가 뷰포트를 거의 다 가려 벽이 안 보였다(실기 피드백).
@@ -66,36 +79,16 @@ export function createStage(canvas: HTMLCanvasElement, cfg: BodyFitConfig): Stag
   camera.position.set(0, 0.3, 8.2)
   camera.lookAt(0, -0.5, 0)
 
-  scene.add(new THREE.HemisphereLight(0xbdc7ff, 0x14122e, 0.6))
-
-  const sun = new THREE.DirectionalLight(0xffffff, 1.3)
-  sun.position.set(2.5, 4, 3)
-  sun.castShadow = true
-  sun.shadow.mapSize.set(1024, 1024)
-  sun.shadow.camera.left = -3
-  sun.shadow.camera.right = 3
-  sun.shadow.camera.top = 3
-  sun.shadow.camera.bottom = -3
-  sun.shadow.camera.near = 0.5
-  sun.shadow.camera.far = 12
-  sun.shadow.radius = 6
-  sun.shadow.bias = -0.0004
-  scene.add(sun)
-
-  // 림 라이트 — 뒤쪽 역광이 캡슐 윤곽을 배경에서 띄운다
-  const rim = new THREE.DirectionalLight(0x7f9dff, 1.6)
-  rim.position.set(-2, 2.5, -3.5)
-  scene.add(rim)
-
-  // 상단 스포트라이트 — 무대 중앙에 빛 웅덩이 (목업의 극장 조명)
-  const spot = new THREE.SpotLight(0xffffff, 26, 0, 0.55, 0.7)
-  spot.position.set(0, 5, 2)
-  spot.target.position.set(0, -0.8, 0)
-  scene.add(spot, spot.target)
+  // 하늘색을 따뜻하게 — 조명이 포디움·석판 프레임 GLB에도 그대로 걸리므로
+  // 여기만 바꿔도 무대 소품 전체 톤이 같이 따라온다
+  // 조명 없음 — 전 재질이 unlit(MeshBasicMaterial)이라 빛을 받지 않는다.
+  // 입체 룩으로 되돌릴 때 필요한 것: HemisphereLight + DirectionalLight(sun, castShadow)
+  // + 뒤쪽 rim + 상단 SpotLight. git 이력에 남아 있다.
 
   // 2단 원형 석재 포디움(podium.glb) — 그룹 원점이 포디움 윗면이 되도록 자식을
   // 내려 앉혀서, setFloorY(y)가 "윗면 = 발바닥" 계약을 그대로 지킨다
   const podium = new THREE.Group()
+  podium.scale.setScalar(STAGE_SCALE) // 아바타와 같은 배율 — 발바닥이 윗면에 계속 맞는다
   scene.add(podium)
   new GLTFLoader().load('/assets/games/body-fit/podium.glb', (gltf) => {
     const model = gltf.scene
@@ -107,9 +100,7 @@ export function createStage(canvas: HTMLCanvasElement, cfg: BodyFitConfig): Stag
     const sY = height / size.y
     model.scale.set(sXZ, sY, sXZ)
     model.position.set(-center.x * sXZ, -box.max.y * sY, -center.z * sXZ)
-    model.traverse((o) => {
-      if ((o as THREE.Mesh).isMesh) o.receiveShadow = true
-    })
+    flattenMaterials(model, 0x5a4d3d)
     podium.add(model)
   })
 
@@ -123,15 +114,8 @@ export function createStage(canvas: HTMLCanvasElement, cfg: BodyFitConfig): Stag
   composer.setPixelRatio(pixelRatio)
   composer.addPass(new RenderPass(scene, camera))
 
-  // 접촉 음영 — 관절 틈·포디움 접지에 어두운 밀착감 (씬 스케일에 맞춰 좁게)
-  const ssao = new SSAOPass(scene, camera, 1, 1)
-  ssao.kernelRadius = 0.35
-  ssao.minDistance = 0.0005
-  ssao.maxDistance = 0.1
-  composer.addPass(ssao)
-
-  // 블룸은 쓰지 않는다 — 순백 아바타가 통째로 임계를 넘어 후광이 생긴다(2026-07-27 실기).
-  // 구멍 림 글로우는 벽 텍스처에 canvas shadowBlur로 그려 넣는다 (WallLabView).
+  // SSAO 제거(2026-07-28) — 접촉 음영은 입체 셰이딩을 전제하는 효과라, 납작한 룩에서는
+  // 단색 면에 회색 얼룩만 남긴다. 빼면서 후처리 비용도 같이 사라진다.
 
   // 비네트 — 가장자리를 살짝 눌러 무대 조명 구도를 강조
   const vignette = new ShaderPass(VignetteShader)
