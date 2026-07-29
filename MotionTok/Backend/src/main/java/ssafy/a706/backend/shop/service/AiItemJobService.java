@@ -1,6 +1,8 @@
 package ssafy.a706.backend.shop.service;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ssafy.a706.backend.global.exception.BusinessException;
@@ -15,12 +17,16 @@ import ssafy.a706.backend.shop.model.AiItemJob;
 import ssafy.a706.backend.shop.model.AiJobStatus;
 import ssafy.a706.backend.shop.model.Item;
 import ssafy.a706.backend.shop.model.ItemType;
+import ssafy.a706.backend.shop.model.PointHistory;
+import ssafy.a706.backend.shop.model.PointHistoryType;
 import ssafy.a706.backend.shop.model.UserItem;
 import ssafy.a706.backend.shop.repository.AiItemJobRepository;
 import ssafy.a706.backend.shop.repository.ItemRepository;
+import ssafy.a706.backend.shop.repository.PointHistoryRepository;
 import ssafy.a706.backend.shop.repository.UserItemRepository;
 import ssafy.a706.backend.storage.StorageService;
 import ssafy.a706.backend.storage.UploadPurpose;
+import ssafy.a706.backend.user.repository.UserRepository;
 
 import java.util.Base64;
 import java.util.Optional;
@@ -28,7 +34,12 @@ import java.util.Optional;
 /**
  * AI 아이템 생성 큐 (-102). GPU 워커는 외부에서 호출할 수 없어 폴링 구조로 간다 —
  * 프론트는 작업을 큐에 쌓고 상태를 조회만 하고, 실제 생성·완료 처리는 워커가
- * /api/internal/ai-jobs/* 를 폴링해 수행한다. 포인트 차감은 이번 범위 밖.
+ * /api/internal/ai-jobs/* 를 폴링해 수행한다.
+ *
+ * <p>포인트 정책: 결제 1건(1,500P)당 최대 2회 생성(최초 + 재생성 1회). 차감은 최초 생성
+ * 요청 시 1회뿐이고, 재생성은 parentJobId로 같은 결제 건임을 밝혀 추가 차감 없이 진행한다.
+ * 재생성 한도는 서버가 {@link AiItemJobRepository#existsByParentJobId}와 parent_job_id
+ * UNIQUE 제약으로 이중 검증한다 — 프론트 상태만 믿으면 새로고침 등으로 우회될 수 있다.</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -44,14 +55,36 @@ public class AiItemJobService {
     private final AiItemJobRepository aiItemJobRepository;
     private final ItemRepository itemRepository;
     private final UserItemRepository userItemRepository;
+    private final UserRepository userRepository;
+    private final PointHistoryRepository pointHistoryRepository;
     private final StorageService storageService;
 
-    /** POST /shop/ai-items — 인증된 유저의 PENDING 작업 생성. */
+    /** AI 아이템 생성 1회 결제 비용(포인트). application.yaml app.shop.ai-item-cost. */
+    @Value("${app.shop.ai-item-cost}")
+    private int aiItemCost;
+
+    /**
+     * POST /shop/ai-items — 인증된 유저의 PENDING 작업 생성.
+     * parentJobId가 없으면 새 결제(포인트 차감), 있으면 그 결제 건의 재생성(차감 없음)이다.
+     */
     @Transactional
     public AiItemJobCreateResponse createJob(Long userId, AiItemJobCreateRequest request) {
         byte[] sketchBytes = decodeBase64(request.sketchBase64());
         if (sketchBytes.length > MAX_SKETCH_BYTES) {
             throw new BusinessException(ErrorCode.AI_ITEM_SKETCH_TOO_LARGE);
+        }
+
+        AiItemJob job = request.parentJobId() == null
+                ? createPaidJob(userId, request)
+                : createRetryJob(userId, request);
+
+        return new AiItemJobCreateResponse(job.getId(), job.getStatus());
+    }
+
+    /** 새 결제 건 — 잔액 확인·차감(부족 시 400) 후 job을 만들고 차감분을 pointsCharged로 남긴다. */
+    private AiItemJob createPaidJob(Long userId, AiItemJobCreateRequest request) {
+        if (userRepository.deductPointsIfSufficient(userId, aiItemCost) == 0) {
+            throw new BusinessException(ErrorCode.AI_ITEM_INSUFFICIENT_POINT);
         }
 
         AiItemJob job = aiItemJobRepository.save(AiItemJob.builder()
@@ -60,9 +93,52 @@ public class AiItemJobService {
                 .category(request.category())
                 .sketchBase64(request.sketchBase64())
                 .status(AiJobStatus.PENDING)
+                .pointsCharged(aiItemCost)
                 .build());
 
-        return new AiItemJobCreateResponse(job.getId(), job.getStatus());
+        int balanceAfter = userRepository.findById(userId).orElseThrow().getPointBalance();
+        pointHistoryRepository.save(PointHistory.builder()
+                .userId(userId)
+                .amount(-aiItemCost)
+                .type(PointHistoryType.AI_GENERATE)
+                .refId(job.getId())
+                .balanceAfter(balanceAfter)
+                .build());
+
+        return job;
+    }
+
+    /**
+     * 재생성 — parentJobId가 가리키는 job이 본인 것인지(403), 이미 최상위 결제 job인지(부모의
+     * 부모가 있으면 재생성의 재생성이므로 400), 이미 재생성이 만들어졌는지(선체크 400) 확인한다.
+     * UNIQUE(parent_job_id) 위반은 동시 요청에 대한 최종 방어선이다(ShopService.purchase와 같은 패턴).
+     */
+    private AiItemJob createRetryJob(Long userId, AiItemJobCreateRequest request) {
+        AiItemJob parent = aiItemJobRepository.findById(request.parentJobId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.AI_JOB_NOT_FOUND));
+        if (!parent.getUserId().equals(userId)) {
+            throw new BusinessException(ErrorCode.AI_JOB_FORBIDDEN);
+        }
+        if (parent.getParentJobId() != null) {
+            throw new BusinessException(ErrorCode.AI_ITEM_RETRY_LIMIT_EXCEEDED);
+        }
+        if (aiItemJobRepository.existsByParentJobId(parent.getId())) {
+            throw new BusinessException(ErrorCode.AI_ITEM_RETRY_LIMIT_EXCEEDED);
+        }
+
+        try {
+            return aiItemJobRepository.save(AiItemJob.builder()
+                    .userId(userId)
+                    .name(request.name())
+                    .category(request.category())
+                    .sketchBase64(request.sketchBase64())
+                    .status(AiJobStatus.PENDING)
+                    .pointsCharged(0)
+                    .parentJobId(parent.getId())
+                    .build());
+        } catch (DataIntegrityViolationException e) {
+            throw new BusinessException(ErrorCode.AI_ITEM_RETRY_LIMIT_EXCEEDED);
+        }
     }
 
     /** GET /shop/ai-items/{jobId} — 본인 작업만 조회 가능. imageUrl은 저장 여부와 무관하게 job이 직접 들고 있다. */
@@ -166,15 +242,38 @@ public class AiItemJobService {
         return new AiItemSaveResponse(item.getId(), job.getImageUrl());
     }
 
-    /** POST /internal/ai-jobs/{jobId}/fail — job을 FAILED로 바꾸고 errorMessage 기록. */
+    /**
+     * POST /internal/ai-jobs/{jobId}/fail — job을 FAILED로 바꾸고 errorMessage 기록.
+     * pointsCharged가 있으면(이 job이 결제를 차감한 job이면) 그만큼 환불한다.
+     *
+     * <p>중복 환불 방지: {@link AiItemJobRepository#fail}은 PROCESSING → FAILED 조건부 UPDATE라
+     * 정확히 한 번만 성공한다(이미 FAILED/DONE인 job에 재호출하면 영향행 0 → AI_JOB_INVALID_STATE).
+     * 그래서 별도의 "환불 완료" 플래그 없이, 이 UPDATE가 실제로 성공했을 때만 환불하면 충분하다.</p>
+     */
     @Transactional
     public void fail(Long jobId, String message) {
-        aiItemJobRepository.findById(jobId)
+        AiItemJob job = aiItemJobRepository.findById(jobId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.AI_JOB_NOT_FOUND));
 
         if (aiItemJobRepository.fail(jobId, message) == 0) {
             throw new BusinessException(ErrorCode.AI_JOB_INVALID_STATE);
         }
+
+        if (job.getPointsCharged() != null && job.getPointsCharged() > 0) {
+            refundPoints(job.getUserId(), job.getId(), job.getPointsCharged());
+        }
+    }
+
+    private void refundPoints(Long userId, Long jobId, int amount) {
+        userRepository.addPoints(userId, amount);
+        int balanceAfter = userRepository.findById(userId).orElseThrow().getPointBalance();
+        pointHistoryRepository.save(PointHistory.builder()
+                .userId(userId)
+                .amount(amount)
+                .type(PointHistoryType.AI_GENERATE_REFUND)
+                .refId(jobId)
+                .balanceAfter(balanceAfter)
+                .build());
     }
 
     private byte[] decodeBase64(String base64) {

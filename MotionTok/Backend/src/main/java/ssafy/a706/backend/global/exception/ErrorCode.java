@@ -97,6 +97,8 @@ public enum ErrorCode {
     AI_JOB_NOT_FOUND(HttpStatus.NOT_FOUND, "AI_JOB_NOT_FOUND", "존재하지 않는 AI 아이템 생성 작업입니다."),
     AI_JOB_FORBIDDEN(HttpStatus.FORBIDDEN, "AI_JOB_FORBIDDEN", "본인의 작업만 조회할 수 있습니다."),
     AI_JOB_INVALID_STATE(HttpStatus.CONFLICT, "AI_JOB_INVALID_STATE", "처리 중인 작업이 아닙니다."),
+    AI_ITEM_INSUFFICIENT_POINT(HttpStatus.BAD_REQUEST, "AI_ITEM_INSUFFICIENT_POINT", "포인트가 부족합니다."),
+    AI_ITEM_RETRY_LIMIT_EXCEEDED(HttpStatus.BAD_REQUEST, "AI_ITEM_RETRY_LIMIT_EXCEEDED", "재생성 가능 횟수를 초과했습니다."),
     INTERNAL_UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "INTERNAL_UNAUTHORIZED", "내부 API 인증에 실패했습니다."),
 
     // chat

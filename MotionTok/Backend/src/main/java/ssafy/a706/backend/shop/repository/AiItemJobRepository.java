@@ -7,12 +7,23 @@ import org.springframework.data.repository.query.Param;
 import ssafy.a706.backend.shop.model.AiItemJob;
 import ssafy.a706.backend.shop.model.AiJobStatus;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 public interface AiItemJobRepository extends JpaRepository<AiItemJob, Long> {
 
     /** GET /internal/ai-jobs/next — 가장 오래된 PENDING 후보 1건. */
     Optional<AiItemJob> findFirstByStatusOrderByCreatedAtAsc(AiJobStatus status);
+
+    /** POST /shop/ai-items 재생성 요청 — 이 부모 job으로 이미 재생성이 만들어졌는지 선체크(400). */
+    boolean existsByParentJobId(Long parentJobId);
+
+    /**
+     * AiItemJobTimeoutSweeper 전용 — cutoff 이전에 PROCESSING으로 전환된(claim() 시각) job.
+     * 워커가 응답 없이 죽어 방치된 후보를 찾는다.
+     */
+    List<AiItemJob> findAllByStatusAndUpdatedAtBefore(AiJobStatus status, LocalDateTime cutoff);
 
     /**
      * PENDING → PROCESSING 조건부 UPDATE (check-then-act 대신 원자 처리) —
