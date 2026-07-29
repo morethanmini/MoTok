@@ -277,6 +277,16 @@ onMounted(async () => {
     }
     applyDetail(d)
   } catch (e) {
+    // 방이 이미 닫힌 경우엔 이 화면에서 할 수 있는 게 없다 — 방장도, 참가자도, 게임도 없다.
+    // 그냥 두면 캠만 켜진 빈 방에 갇힌다(방장 판별이 안 돼 게임 시작도 '제안'으로 새고,
+    // 자동 시작은 detailLoaded를 못 넘겨 영원히 대기한다). 혼자 있는 방에서 새로고침하면
+    // pagehide 퇴장 통보가 마지막 인원 퇴장이 되어 서버가 방을 즉시 지우므로(-72) 드물지 않다.
+    if (e instanceof ApiError && e.code === 'ROOM_NOT_FOUND') {
+      leavingIntentionally = true
+      flash('방이 이미 닫혔어요 — 다시 시작해 주세요')
+      void router.replace({ name: RouteName.Lobby })
+      return
+    }
     // 예전에는 조용히 넘겼지만(백엔드 미연동 시절), 이제 이 응답이 방장 판별의 유일한 근거다.
     // 실패하면 아무도 방장로 보이지 않으므로 반드시 드러내야 한다.
     console.error('[game-room] 방 상세 조회 실패 — 방장 판별 불가', e)
@@ -304,6 +314,10 @@ onMounted(async () => {
   // 채팅은 이력이 없어서(비영속) 구독이 늦은 만큼 그대로 유실 — 입장 직후 바로 연결.
   void roomChat.connect(roomCode.value)
 
+  // 자동 시작은 여기서부터 가능하다 — 위 구독이 걸린 뒤여야 startGame이 방으로 나가고
+  // 서버가 되돌려주는 GAME_START도 받는다. (감시자도 같은 조건을 보지만, 순서를 명시해 둔다)
+  tryAutostart()
+
   // 모션 모델은 로비 스플래시가 이미 받아 뒀을 것이다(싱글턴이라 여기선 즉시 끝난다).
   // 그래도 한 번 더 확인하는 이유 — 주소창으로 방에 바로 들어오거나 게스트로 로비를 건너뛴
   // 경로가 있어서, 그대로 두면 게임 시작 버튼을 누른 뒤에야 17MB를 받기 시작한다.
@@ -313,6 +327,7 @@ onMounted(async () => {
   })
 })
 onBeforeUnmount(() => {
+  clearTimeout(autostartTimer)
   roomChat.disconnect()
   // BGM은 모듈 싱글턴이라 suspend된 채로 방을 뜨면 로비에서도 영영 안 나온다
   bgm.resumeAfterGame()
@@ -754,6 +769,76 @@ useRhythmAutoJoin(roomChat, roomCode, () => {
 
 function openPicker() {
   picker.value = true
+}
+
+/**
+ * 게임 목록에서 고른 게임 자동 시작 — 헤더 ▸ 게임 ▸ 게임 선택 ▸ 대기실 ▸ 입장하면
+ * 방 안에서 다시 고르지 않고 그 게임이 바로 열린다(쿼리 autostart = 서버 gameId).
+ *
+ * <p>다 기다린 뒤에 부르는 이유 —
+ * <b>joined</b>(방 토픽 구독) 전이면 startGame이 발신 대상 없이 버려지고, 설령 나갔어도
+ * GAME_START를 구독 전에 방송해 유실된다(토픽은 재생하지 않는다) — 서버에는 세션이 생기는데
+ * 화면엔 아무것도 안 뜬다. detailLoaded 전에는 방장 여부를 몰라 launch()가 '게임 제안'으로 새고,
+ * 전역 소켓 미연결이면 서버 세션 없이 로컬 폴백으로 열려 멈춘 것처럼 보이고
+ * (핑거 스타는 session=null이면 'ready' 화면에서 대기한다), 캡처가 붙기 전이면
+ * launch()가 '카메라를 켜고 시작해 주세요'로 되돌린다.</p>
+ *
+ * <p>joined는 입장 시퀀스의 <b>맨 마지막</b>에 참이 된다(onMounted의 roomChat.connect).
+ * 그래서 감시자에만 맡기지 않고 그 직후에도 한 번 직접 부른다 — 순서 의도를 시퀀스에 남긴다.</p>
+ *
+ * <p>끝내 조건이 안 맞으면 <b>왜 못 켰는지 말해 준다</b> — 조용히 포기하면 사용자에겐
+ * 그냥 "게임이 시작 안 되는" 화면이라, 무엇을 고쳐야 하는지 알 길이 없다.</p>
+ */
+const AUTOSTART_TIMEOUT_MS = 8000
+const autostartGameId = computed(() => Number(route.query.autostart) || null)
+let autostarted = false
+let autostartTimer: number | undefined
+
+/** 자동 시작을 막고 있는 게 무엇인지 — 안내 문구로 그대로 쓴다. 다 갖춰졌으면 null. */
+function autostartBlocker(): string | null {
+  if (!roomChat.connected.value) return '실시간 서버에 연결되지 않아'
+  if (!roomChat.joined.value) return '방에 아직 입장하지 못해'
+  if (!detailLoaded.value) return '방 정보를 불러오지 못해'
+  if (!captureOn.value) return '카메라를 켤 수 없어'
+  if (!GAME_CATALOG.some((g) => g.gameId === autostartGameId.value)) return '게임을 찾지 못해'
+  return null
+}
+
+/**
+ * 조건이 다 갖춰졌으면 한 번만 시작한다 — 감시자와 입장 시퀀스 양쪽에서 부르므로 멱등해야 한다.
+ * 타이머를 여기서 끄지 않는 이유 — 발신에 성공해도 GAME_START가 안 돌아오면(유실) 다시
+ * 조용해진다. 타이머는 게임이 <b>실제로 열렸는지</b>로 판정한다(아래 setTimeout).
+ */
+function tryAutostart() {
+  if (autostarted || !autostartGameId.value || autostartBlocker()) return
+  const entry = GAME_CATALOG.find((g) => g.gameId === autostartGameId.value)
+  if (!entry) return
+  autostarted = true
+  void launch(entry)
+}
+
+// 마지막으로 갖춰지는 조건이 무엇이든(카메라 권한이 늦거나 재연결이 끼어도) 그때 시작되게 한다.
+watch(
+  () => [
+    autostartGameId.value,
+    detailLoaded.value,
+    roomChat.connected.value,
+    roomChat.joined.value,
+    captureOn.value,
+  ] as const,
+  tryAutostart,
+  { immediate: true },
+)
+// 자동 시작을 요청받았는데 제때 게임이 안 열렸으면 이유를 알리고 선택창을 열어 준다(막힌 채로 두지 않는다).
+// 판정 기준은 "발신했는가"가 아니라 "게임이 열렸는가"다 — 그 둘이 갈리는 경우가 실제로 있었다.
+if (autostartGameId.value) {
+  autostartTimer = window.setTimeout(() => {
+    if (activeGame.value) return
+    // 발신까지는 갔는데 화면이 안 열렸다면 GAME_START를 못 받은 것이다(막고 있는 조건은 이미 없다).
+    const reason = autostarted ? '게임 시작 응답을 받지 못해' : autostartBlocker() ?? '알 수 없는 이유로'
+    flash(`${reason} 자동 시작하지 못했어요 — 직접 골라 주세요`)
+    picker.value = true
+  }, AUTOSTART_TIMEOUT_MS)
 }
 /** 지금 방에 있는 인원 — LiveKit 참가자(본인 포함)가 실시간, 상세 조회 값은 폴백 */
 function roomPlayerCount(): number {
