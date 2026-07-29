@@ -79,6 +79,26 @@ public class GameSessionService {
     /** 게임④ 난이도 → 벽 접근 시간(ms) — FE config.difficulty와 동기화. */
     private static final Map<String, Long> BODY_FIT_APPROACH_MILLIS =
             Map.of("easy", 6_000L, "normal", 5_000L, "hard", 4_000L);
+
+    // ── 게임④ 연속 서바이벌(-9) — FE chainSchedule.ts와 동기화 필수 ──
+    // 벽이 끊기지 않고 날아오고 전원이 동시에 뛴다. 출제자·로테이션이 없어 setterOrder가 빈 세션이 되고,
+    // 그 결과 endRound의 rotates 분기가 자동으로 꺼져 단판 점수 순위(rank)를 그대로 탄다.
+    /** 첫 벽의 접근 시간 = 난이도 기본값 × 이 비율 (chainSchedule.CHAIN_START_RATIO) */
+    private static final double CHAIN_START_RATIO = 0.8;
+    /** 벽마다 접근 시간에 누적으로 곱하는 비율 (chainSchedule.CHAIN_SPEEDUP) */
+    private static final double CHAIN_SPEEDUP = 0.95;
+    /** 접근 시간 하한 (chainSchedule.CHAIN_MIN_MS) */
+    private static final double CHAIN_MIN_MILLIS = 2_200;
+    /**
+     * 스폰 간격을 접근 시간의 몇 배로 볼지 — 거리 기준(z 1.8 / 전체 5)을 접근 곡선 easeIn(t^2.5)의
+     * 역함수로 환산한 값. FE chainSchedule.chainGapRatio(5)와 같은 수여야 한다.
+     */
+    private static final double CHAIN_GAP_RATIO = Math.pow(1.8 / 5.0, 1 / 2.5);
+    /** 연속 서바이벌 벽 수 선택지 — 무한(0)은 종료 시각이 없어 방에서는 허용하지 않는다(솔로 전용). */
+    private static final Set<Integer> CHAIN_WALL_CHOICES = Set.of(10, 20, 30);
+    private static final int CHAIN_WALLS_DEFAULT = 10;
+    /** 마지막 벽 도착 후 판정·제출이 서버에 닿을 여유 — 라운드 간 휴식이 없는 모드라 별도로 둔다. */
+    private static final long CHAIN_TAIL_MILLIS = 1_500;
     /** 포즈 payload 상한 — 랜드마크 33점 JSON은 ~2KB, 여유 4배 (§9-2). */
     private static final int MAX_POSE_PAYLOAD_BYTES = 8_192;
 
@@ -170,6 +190,8 @@ public class GameSessionService {
         // 게임④(-86, -48): 라운드 = 출제 5s + 벽 접근(난이도별). 출제자는 참가 순(joinedAt)으로
         // 로테이션 — 전원이 한 번씩 출제자를 맡을 때까지 endRound가 자동으로 다음 라운드를 연다.
         String difficulty = null;
+        String mode = null;
+        int wallCount = 0;
         String setterUserId = null;
         List<String> setterOrder = List.of();
         long endAt;
@@ -177,27 +199,41 @@ public class GameSessionService {
             difficulty = request.difficulty() != null
                     && BODY_FIT_APPROACH_MILLIS.containsKey(request.difficulty())
                     ? request.difficulty() : "easy";
-            // 출제 순서는 무작위(게임⑩ turnOrder와 같은 방식). 이전에는 참가 순(joinedAt)이라
-            // 방을 만든 사람이 매 판 1번 출제자로 고정됐다.
-            List<String> shuffled = new ArrayList<>(liveRoomRepository.findMembers(roomId).stream()
-                    .map(LiveRoomMemberValue::userId)
-                    .toList());
-            Collections.shuffle(shuffled);
-            setterOrder = List.copyOf(shuffled);
-            // 게임④(-9): 출제자는 관전하는 룰 — 1인 방이면 플레이어가 0명이라 라운드가
-            // 성립하지 않는다. FE가 혼자일 땐 로컬 연습 모드로 돌리므로 여기 도달은 레이스뿐.
-            if (setterOrder.size() < 2) {
+            mode = GameSession.MODE_CHAIN.equals(request.mode())
+                    ? GameSession.MODE_CHAIN : GameSession.MODE_POSE;
+            long approachMillis = BODY_FIT_APPROACH_MILLIS.get(difficulty);
+            // 인원 검증은 모드와 무관하게 2명 이상 — 연속 서바이벌은 출제자가 없어 기술적으로는
+            // 혼자서도 성립하지만, 1인 방 세션을 허용하면 순위가 항상 1등이라 랭킹 적재
+            // (GameSettledEvent → leaderboards·rank ZSET)를 혼자서 쌓을 수 있다.
+            // FE는 혼자일 때 로컬 연습 모드로 돌리므로 여기 도달은 레이스뿐이다.
+            if (liveRoomRepository.findMembers(roomId).size() < 2) {
                 throw new BusinessException(ErrorCode.GAME_NEED_MORE_PLAYERS);
             }
-            setterUserId = setterOrder.isEmpty() ? sender.userId() : setterOrder.get(0);
-            endAt = startAt + BODY_FIT_SETTING_MILLIS + BODY_FIT_APPROACH_MILLIS.get(difficulty);
+            if (GameSession.MODE_CHAIN.equals(mode)) {
+                // 출제자·로테이션 없음 → setterOrder를 비워 둔다(endRound의 rotates가 꺼진다).
+                // challenge에는 포즈 시드를 싣는다 — 전원이 같은 시드로 같은 벽을 만든다(§9-2와 같은 원리).
+                wallCount = request.wallCount() != null && CHAIN_WALL_CHOICES.contains(request.wallCount())
+                        ? request.wallCount() : CHAIN_WALLS_DEFAULT;
+                challenge = Long.toString(ThreadLocalRandom.current().nextLong(1, Long.MAX_VALUE));
+                endAt = startAt + chainDurationMillis(approachMillis, wallCount) + CHAIN_TAIL_MILLIS;
+            } else {
+                // 출제 순서는 무작위(게임⑩ turnOrder와 같은 방식). 이전에는 참가 순(joinedAt)이라
+                // 방을 만든 사람이 매 판 1번 출제자로 고정됐다.
+                List<String> shuffled = new ArrayList<>(liveRoomRepository.findMembers(roomId).stream()
+                        .map(LiveRoomMemberValue::userId)
+                        .toList());
+                Collections.shuffle(shuffled);
+                setterOrder = List.copyOf(shuffled);
+                setterUserId = setterOrder.get(0);
+                endAt = startAt + BODY_FIT_SETTING_MILLIS + approachMillis;
+            }
             sessionRepository.clearTotals(roomId);
         } else {
             endAt = startAt + game.getRoundDurationSec() * 1000L;
         }
 
         GameSession session = new GameSession(sessionId, gameId, challenge, setterUserId,
-                startAt, endAt, GameSession.STATUS_PLAYING, setterOrder, 0, difficulty);
+                startAt, endAt, GameSession.STATUS_PLAYING, setterOrder, 0, difficulty, mode, wallCount);
         sessionRepository.saveSession(roomId, session);
         liveRoomRepository.updateStatus(roomId, "PLAYING");
 
@@ -207,10 +243,29 @@ public class GameSessionService {
         Integer totalRounds = setterOrder.isEmpty() ? null : setterOrder.size();
         broadcast(roomId, GameEventResponse.gameStart(
                 sessionId, gameId, challenge, legacyConstellationKey, setterUserId, difficulty,
-                now, startAt, endAt, roundNo, totalRounds));
+                now, startAt, endAt, roundNo, totalRounds, mode, wallCount > 0 ? wallCount : null));
         scheduleEnd(roomId, sessionId, 0, endAt + END_GRACE_MILLIS);
-        log.info("game session started: room={} session={} game={} challenge={} setter={}",
-                roomId, sessionId, gameId, challenge, setterUserId);
+        log.info("game session started: room={} session={} game={} mode={} challenge={} setter={} walls={}",
+                roomId, sessionId, gameId, mode, challenge, setterUserId, wallCount);
+    }
+
+    /**
+     * 연속 서바이벌: 첫 벽 출발부터 마지막 벽 도착까지의 시간 — chain 세션 endAt의 근거.
+     * <b>FE chainSchedule.chainDurationMs와 같은 식이어야 한다</b> — 어긋나면 마지막 벽이
+     * 도착하기 전에 서버가 정산하거나(점수 유실), 다 끝난 뒤 빈 화면으로 기다리게 된다.
+     */
+    private long chainDurationMillis(long baseApproachMillis, int walls) {
+        double elapsed = 0;
+        for (int i = 0; i < walls - 1; i++) {
+            elapsed += chainApproachMillis(baseApproachMillis, i) * CHAIN_GAP_RATIO;
+        }
+        return Math.round(elapsed + chainApproachMillis(baseApproachMillis, walls - 1));
+    }
+
+    /** 벽 i의 접근 시간 — 갈수록 빨라지고 하한에서 멈춘다(FE chainSchedule.chainApproachMs). */
+    private double chainApproachMillis(long baseApproachMillis, int index) {
+        return Math.max(CHAIN_MIN_MILLIS,
+                baseApproachMillis * CHAIN_START_RATIO * Math.pow(CHAIN_SPEEDUP, index));
     }
 
     /**
@@ -267,7 +322,7 @@ public class GameSessionService {
         // 게임①의 별자리 키와 같은 자리라 별도 필드가 필요 없다.
         // 출제자·난이도·로테이션은 게임⑩에 없어 비운다(-86/-48에서 추가된 필드).
         sessionRepository.saveSession(roomId, new GameSession(sessionId, DRAW_GAME_ID, topicWord, null,
-                startAt, endAt, GameSession.STATUS_PLAYING, List.of(), 0, null));
+                startAt, endAt, GameSession.STATUS_PLAYING, List.of(), 0, null, null, 0));
         liveRoomRepository.updateStatus(roomId, "PLAYING");
 
         broadcast(roomId, GameEventResponse.gameStartDraw(sessionId, DRAW_GAME_ID, now, startAt, endAt,
@@ -408,7 +463,11 @@ public class GameSessionService {
         if (session.gameId() == BODY_FIT_GAME_ID && sender.userId().equals(session.setterUserId())) {
             return;
         }
-        int score = clamp(request.score() == null ? 0 : request.score(), 0, MAX_SCORE);
+        // 연속 서바이벌은 벽 N장을 한 번에 정산해 제출하므로 상한이 라운드 1장 기준(100)이 아니다 —
+        // 100으로 깎으면 10벽을 다 통과한 사람과 1벽만 통과한 사람이 같은 점수가 된다.
+        // 점수는 클라이언트가 계산해 보내는 값이라(다른 게임도 동일) 상한만 모드에 맞춰 열어준다.
+        int scoreCap = session.isChain() ? session.wallCount() * MAX_SCORE : MAX_SCORE;
+        int score = clamp(request.score() == null ? 0 : request.score(), 0, scoreCap);
         int starsHit = clamp(request.starsHit() == null ? 0 : request.starsHit(), 0, MAX_STARS);
         GamePlayerScore playerScore = new GamePlayerScore(
                 sender.userId(), sender.displayName(), score,
@@ -502,11 +561,12 @@ public class GameSessionService {
         long startAt = now + BODY_FIT_ROUND_BREAK_MILLIS;
         long endAt = startAt + BODY_FIT_SETTING_MILLIS + BODY_FIT_APPROACH_MILLIS.get(prev.difficulty());
         GameSession next = new GameSession(prev.sessionId(), prev.gameId(), null, setterUserId,
-                startAt, endAt, GameSession.STATUS_PLAYING, prev.setterOrder(), roundIndex, prev.difficulty());
+                startAt, endAt, GameSession.STATUS_PLAYING, prev.setterOrder(), roundIndex,
+                prev.difficulty(), prev.mode(), prev.wallCount());
         sessionRepository.saveSession(roomId, next);
         broadcast(roomId, GameEventResponse.gameStart(
                 prev.sessionId(), prev.gameId(), null, null, setterUserId, prev.difficulty(),
-                now, startAt, endAt, roundIndex + 1, prev.setterOrder().size()));
+                now, startAt, endAt, roundIndex + 1, prev.setterOrder().size(), prev.mode(), null));
         scheduleEnd(roomId, prev.sessionId(), roundIndex, endAt + END_GRACE_MILLIS);
         log.info("game round advanced: room={} session={} round={} setter={}",
                 roomId, prev.sessionId(), roundIndex, setterUserId);
