@@ -11,7 +11,7 @@ import type { Friend } from '../data'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 
 defineProps<{ friend: Friend; unread?: number }>()
-defineEmits<{ open: []; whisper: [] }>()
+defineEmits<{ open: [] }>()
 </script>
 
 <template>
@@ -30,22 +30,14 @@ defineEmits<{ open: []; whisper: [] }>()
       <b>{{ friend.name }}</b>
       <small>{{ friend.game }}</small>
     </div>
-    <button
-      type="button"
-      class="whisper-btn"
-      :aria-label="`${friend.name}님에게 귓속말`"
-      title="귓속말"
-      @click.stop="$emit('whisper')"
-    >
-      💬
-      <span v-if="unread" class="unread">{{ unread > 9 ? '9+' : unread }}</span>
-    </button>
+    <span v-if="unread" class="unread">{{ unread > 9 ? '9+' : unread }}</span>
     <i class="status" :class="{ offline: !friend.online }" />
   </div>
 </template>
 
 <style scoped>
 .friend {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 13px;
@@ -96,18 +88,25 @@ defineEmits<{ open: []; whisper: [] }>()
   position: relative;
   margin-left: auto;
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
   width: 34px;
+  min-width: 34px;
   height: 34px;
   padding: 0;
   border: 2px solid #8e714e;
   border-radius: 9px;
   background: #fff8e6;
+  color: #5a3b2d;
   box-shadow: 2px 2px 0 #d9c7a8;
-  font-size: 15px;
+  font-size: 9px;
+  font-weight: 700;
   line-height: 1;
   cursor: pointer;
 }
-.whisper-btn:hover { background: #fff0b9; }
+.whisper-btn:hover { border-color: #76513c; background: #f7df9e; box-shadow: 3px 3px 0 #cdb28e; }
 .whisper-btn:active { transform: translate(2px, 2px); box-shadow: none; }
 .whisper-btn .unread {
   position: absolute;
@@ -123,9 +122,10 @@ defineEmits<{ open: []; whisper: [] }>()
   font-weight: 700;
   line-height: 15px;
 }
+.whisper-mark { position: relative; width: 14px; height: 11px; border: 2px solid currentColor; border-radius: 3px; }.whisper-mark::before { content: '···'; position: absolute; left: 2px; top: -8px; font-size: 12px; font-weight: 700; letter-spacing: -1px; }.whisper-mark::after { content: ''; position: absolute; right: 1px; bottom: -5px; width: 4px; height: 4px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: skewY(-35deg); }
 
 .status {
-  margin-left: 10px;
+  margin-left: auto;
   margin-right: 16px;
   width: 12px;
   height: 12px;
@@ -140,6 +140,7 @@ defineEmits<{ open: []; whisper: [] }>()
   background: #b7aaa2;
   box-shadow: none;
 }
+.friend > .unread { position: absolute; right: 32px; top: 11px; min-width: 17px; padding: 0 4px; border: 2px solid #fff8e6; border-radius: 9px; background: #e2564a; color: #fff; font-size: 10px; font-weight: 700; line-height: 15px; }
 .friend:hover { background: transparent; }
 .friend:hover .face-frame { filter: brightness(1.12); transform: scale(.98); }
 .friend:focus-visible { outline: 2px solid var(--c-ink); outline-offset: 2px; }

@@ -6,7 +6,6 @@
  * 유령 말풍선이 남는다. 성공한 말은 에코로 돌아와 그때 그려진다(대기실 채팅과 같은 규약).
  */
 import { computed, nextTick, ref, watch } from 'vue'
-import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import type { WhisperMessage } from '@/api/types'
 
@@ -46,8 +45,11 @@ watch(
 </script>
 
 <template>
-  <PixelModal @close="emit('close')">
-    <h3>{{ nickname }}님과의 귓속말</h3>
+  <section class="whisper-dock" aria-label="귓속말 채팅창">
+    <header class="whisper-head">
+      <b>{{ nickname }}</b><span>님과의 채팅</span>
+      <button type="button" aria-label="채팅창 닫기" @click="emit('close')">×</button>
+    </header>
 
     <div ref="scroller" class="thread">
       <p v-if="messages.length === 0" class="empty">
@@ -71,20 +73,20 @@ watch(
       />
       <PixelButton variant="primary" :disabled="!connected || tooLong" @click="submit">보내기</PixelButton>
     </div>
-  </PixelModal>
+  </section>
 </template>
 
 <style scoped>
-h3 { margin: 0 0 12px; }
+.whisper-dock { position: fixed; z-index: 40; right: 24px; bottom: 20px; width: min(360px, calc(100vw - 32px)); padding: 0; border: 3px solid #8e6049; border-radius: 12px 12px 5px 5px; background: #fffaf0; box-shadow: 5px 5px 0 #b88965; overflow: hidden; }.whisper-head { display: flex; align-items: center; gap: 4px; padding: 11px 13px; border-bottom: 2px solid #e5c99f; background: #f7df9e; color: #52372a; font-size: 11px; }.whisper-head b { font-size: 12px; }.whisper-head button { width: 24px; height: 24px; margin-left: auto; border: 0; border-radius: 4px; background: #fff5db; color: #6e4937; font-size: 18px; line-height: 1; }
 .thread {
-  height: 260px;
+  height: 230px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 10px;
-  background: var(--c-surface-sunken, #f6f7f9);
-  border: 2px solid var(--c-line, #d7dbe3);
+  background: #fffdf7;
+  border: 0;
 }
 .empty { margin: auto; color: var(--c-muted); font-size: 11px; text-align: center; }
 .line { display: flex; align-items: flex-end; gap: 6px; }
@@ -95,18 +97,19 @@ h3 { margin: 0 0 12px; }
   font-size: 12px;
   line-height: 1.6;
   word-break: break-word;
-  background: #fff;
-  border: 2px solid var(--c-line, #d7dbe3);
+  background: #fff2c7;
+  border: 2px solid #d4ad84;
 }
-.line.mine .bubble { background: var(--c-primary-soft, #dce7ff); }
-.time { font-size: 10px; color: var(--c-muted); }
-.notice { margin: 8px 0 0; font-size: 11px; color: var(--c-danger, #dc2626); }
-.composer { display: flex; gap: 8px; margin-top: 12px; }
+.line.mine .bubble { background: #dcecbf; border-color: #9db783; }.time { font-size: 10px; color: #9b806c; }.notice { margin: 8px 12px 0; font-size: 10px; color: #c66557; }.composer { display: flex; gap: 7px; margin: 10px 12px 12px; }
 .composer input {
   flex: 1;
   padding: 9px 10px;
   font-family: inherit;
   font-size: 12px;
-  border: 2px solid var(--c-line, #d7dbe3);
+  border: 2px solid #c99c76;
+  border-radius: 6px;
+  background: #fffef8;
 }
+.composer :deep(.px-btn) { min-width: 64px; border: 2px solid #9a6b4f; border-radius: 6px; box-shadow: 2px 2px 0 #bd916e; font-size: 9px; }
+@media (max-width: 600px) { .whisper-dock { right: 16px; bottom: 16px; } }
 </style>
