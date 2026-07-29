@@ -205,6 +205,11 @@ export interface AiItemJobStatusResponse {
   imageUrl: string | null
   errorMessage: string | null
 }
+/** POST /shop/ai-items/{jobId}/save 응답 — 이 호출로만 인벤토리에 지급된다("생성 → 확인 → 저장"). */
+export interface AiItemSaveResponse {
+  itemId: number
+  imageUrl: string
+}
 
 // ── 라이브룸 (구 rooms → live-rooms, 명세 §4) ──────
 export type Visibility = 'PUBLIC' | 'PRIVATE'
