@@ -7,6 +7,7 @@ import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
+import ssafy.a706.backend.auth.session.SessionRevocationStore;
 import ssafy.a706.backend.auth.store.AccountBlock;
 import ssafy.a706.backend.auth.store.AccountBlockStore;
 import tools.jackson.databind.ObjectMapper;
@@ -25,12 +26,15 @@ class JwtAccountBlockFilterTest {
 
     private static final String SECRET = "0123456789012345678901234567890123456789";
     private static final long BLOCKED_USER_ID = 42L;
+    /** 폐기 목록 mock은 기본값이 null(미폐기)이라 그대로 통과한다 — 이 테스트의 관심사는 계정 제재다. */
+    private static final String SID = "sid-42-current";
 
     private final JwtTokenProvider provider =
             new JwtTokenProvider(SECRET, 3_600_000L, 1_209_600_000L, 43_200_000L);
     private final AccountBlockStore accountBlockStore = mock(AccountBlockStore.class);
     private final JwtAuthenticationFilter filter =
-            new JwtAuthenticationFilter(provider, accountBlockStore, new ObjectMapper());
+            new JwtAuthenticationFilter(
+                    provider, mock(SessionRevocationStore.class), accountBlockStore, new ObjectMapper());
 
     @AfterEach
     void clearContext() {
@@ -44,7 +48,7 @@ class JwtAccountBlockFilterTest {
 
         MockFilterChain chain = new MockFilterChain();
         MockHttpServletResponse response = doFilter(
-                provider.createAccessToken(BLOCKED_USER_ID, "정지된회원", "USER"), chain);
+                provider.createAccessToken(BLOCKED_USER_ID, "정지된회원", "USER", SID), chain);
 
         assertThat(response.getStatus()).isEqualTo(403);
         assertThat(response.getContentAsString()).contains("AUTH_ACCOUNT_SUSPENDED");
@@ -60,7 +64,7 @@ class JwtAccountBlockFilterTest {
 
         MockFilterChain chain = new MockFilterChain();
         MockHttpServletResponse response = doFilter(
-                provider.createAccessToken(BLOCKED_USER_ID, "영구정지회원", "USER"), chain);
+                provider.createAccessToken(BLOCKED_USER_ID, "영구정지회원", "USER", SID), chain);
 
         assertThat(response.getStatus()).isEqualTo(403);
         assertThat(response.getContentAsString()).contains("AUTH_ACCOUNT_BANNED");
@@ -74,7 +78,7 @@ class JwtAccountBlockFilterTest {
 
         MockFilterChain chain = new MockFilterChain();
         MockHttpServletResponse response = doFilter(
-                provider.createAccessToken(7L, "일반회원", "USER"), chain);
+                provider.createAccessToken(7L, "일반회원", "USER", SID), chain);
 
         assertThat(response.getStatus()).isEqualTo(200);
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();

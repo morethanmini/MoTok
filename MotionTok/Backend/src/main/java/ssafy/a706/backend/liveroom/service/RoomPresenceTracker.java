@@ -84,6 +84,19 @@ public class RoomPresenceTracker {
         reaper.shutdownNow();
     }
 
+    /**
+     * 이 회원이 지금 재실 중인 방 목록 — 단일 세션 밀어내기가 SFU 강제 퇴장 대상을 찾을 때 쓴다.
+     * 게스트는 계정이 없어 밀려날 일이 없으므로 회원만 본다.
+     */
+    public List<String> roomsOfMember(Long userId) {
+        String id = String.valueOf(userId);
+        return sessions.values().stream()
+                .filter(o -> !o.principal().isGuest() && id.equals(o.principal().userId()))
+                .map(Occupancy::roomId)
+                .distinct()
+                .toList();
+    }
+
     @EventListener
     public void onSubscribe(SessionSubscribeEvent event) {
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());

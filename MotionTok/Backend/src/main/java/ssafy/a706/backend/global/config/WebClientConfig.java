@@ -43,6 +43,12 @@ public class WebClientConfig {
         return build(JUDGE_TIMEOUT_SEC, JUDGE_BUFFER_BYTES);
     }
 
+    /** SFU 관리 API(RemoveParticipant 등) — 비동기 best-effort 호출이라 짧은 타임아웃이면 족하다. */
+    @Bean
+    public WebClient sfuAdminWebClient() {
+        return build(RESPONSE_TIMEOUT_SEC, DEFAULT_BUFFER_BYTES);
+    }
+
     private WebClient build(int timeoutSec, int bufferBytes) {
         HttpClient httpClient = HttpClient.create()
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, CONNECT_TIMEOUT_MS)

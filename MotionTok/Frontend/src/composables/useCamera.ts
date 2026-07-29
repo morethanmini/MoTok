@@ -40,18 +40,55 @@ export function useCamera() {
     audioDevices.value = list.filter((d) => d.kind === 'audioinput')
   }
 
+  function rememberVideoDevice(id: string | null) {
+    videoDeviceId.value = id
+    if (id) localStorage.setItem(VIDEO_DEVICE_KEY, id)
+    else localStorage.removeItem(VIDEO_DEVICE_KEY)
+  }
+
+  function rememberAudioDevice(id: string | null) {
+    audioDeviceId.value = id
+    if (id) localStorage.setItem(AUDIO_DEVICE_KEY, id)
+    else localStorage.removeItem(AUDIO_DEVICE_KEY)
+  }
+
   /** 실제로 잡힌 장치를 선택 상태로 반영한다 — 요청한 장치가 거절될 수 있어 트랙이 기준이다. */
   function syncDeviceIds(s: MediaStream) {
     const videoId = s.getVideoTracks()[0]?.getSettings().deviceId
-    if (videoId) {
-      videoDeviceId.value = videoId
-      localStorage.setItem(VIDEO_DEVICE_KEY, videoId)
-    }
+    if (videoId) rememberVideoDevice(videoId)
     const audioId = s.getAudioTracks()[0]?.getSettings().deviceId
-    if (audioId) {
-      audioDeviceId.value = audioId
-      localStorage.setItem(AUDIO_DEVICE_KEY, audioId)
-    }
+    if (audioId) rememberAudioDevice(audioId)
+  }
+
+  /** getUserMedia 예외 이름 — OverconstrainedError는 DOMException이 아니라 instanceof로는 못 가른다. */
+  const errorName = (e: unknown) => (e as { name?: string } | null)?.name ?? ''
+
+  /** 성공한 스트림을 상태에 반영한다(start의 첫 시도·되돌림 시도가 공유). */
+  async function open(req: MediaStreamConstraints) {
+    const s = await navigator.mediaDevices.getUserMedia(req)
+    stream.value = s
+    isOn.value = true
+    error.value = null
+    camOn.value = s.getVideoTracks().length > 0
+    micOn.value = s.getAudioTracks().length > 0
+    syncDeviceIds(s)
+    await refreshDevices()
+    permission.markGranted()
+    return s
+  }
+
+  /**
+   * 권한 거부와 그 밖의 실패(장치 없음·다른 앱이 점유·제약 불일치)를 구분한다 —
+   * 전부 '거부'로 기록하면 카메라를 잠깐 뺏겼을 뿐인데 설정 화면이 "차단됨"이라고 말한다.
+   */
+  function fail(e: unknown) {
+    const denied = errorName(e) === 'NotAllowedError' || errorName(e) === 'SecurityError'
+    error.value = denied
+      ? '카메라·마이크 권한을 허용해 주세요'
+      : '카메라·마이크 장치를 열 수 없어요(다른 앱이 쓰고 있는지 확인해 주세요)'
+    isOn.value = false
+    if (denied) permission.markDenied()
+    return null
   }
 
   async function start(constraints: MediaStreamConstraints = { video: { width: 640, height: 400 }, audio: false }) {
@@ -59,32 +96,35 @@ export function useCamera() {
     const audio = typeof constraints.audio === 'object' ? constraints.audio : {}
     lastVideoConstraints = video
     lastAudioConstraints = audio
-    // 앞서 고른 장치가 있으면 이어서 쓴다(장치 설정 → 게임룸). exact가 아닌 ideal이라
-    // 그 사이 장치를 뽑았어도 기본 장치로 떨어질 뿐 실패하지 않는다.
+    // 앞서 고른 장치가 있으면 exact로 못박아 이어 쓴다(장치 설정 → 게임룸). 그냥 문자열로 넣으면
+    // ideal(희망)이라 브라우저가 기본 장치를 골라도 규칙 위반이 아니다 — 프리뷰는 exact로 잡는데
+    // 게임룸만 ideal이면 "프리뷰에서 고른 카메라가 입장하는 순간 기본 카메라로 돌아간다".
     const req: MediaStreamConstraints = { ...constraints }
-    if (constraints.video && videoDeviceId.value) req.video = { ...video, deviceId: videoDeviceId.value }
-    if (constraints.audio && audioDeviceId.value) req.audio = { ...audio, deviceId: audioDeviceId.value }
+    let pinnedVideo = false
+    let pinnedAudio = false
+    if (constraints.video && videoDeviceId.value) {
+      req.video = { ...video, deviceId: { exact: videoDeviceId.value } }
+      pinnedVideo = true
+    }
+    if (constraints.audio && audioDeviceId.value) {
+      req.audio = { ...audio, deviceId: { exact: audioDeviceId.value } }
+      pinnedAudio = true
+    }
     try {
-      const s = await navigator.mediaDevices.getUserMedia(req)
-      stream.value = s
-      isOn.value = true
-      error.value = null
-      camOn.value = s.getVideoTracks().length > 0
-      micOn.value = s.getAudioTracks().length > 0
-      syncDeviceIds(s)
-      await refreshDevices()
-      permission.markGranted()
-      return s
+      return await open(req)
     } catch (e) {
-      // 권한 거부와 그 밖의 실패(장치 없음·다른 앱이 점유·제약 불일치)를 구분한다 —
-      // 전부 '거부'로 기록하면 카메라를 잠깐 뺏겼을 뿐인데 설정 화면이 "차단됨"이라고 말한다.
-      const denied = e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'SecurityError')
-      error.value = denied
-        ? '카메라·마이크 권한을 허용해 주세요'
-        : '카메라·마이크 장치를 열 수 없어요(다른 앱이 쓰고 있는지 확인해 주세요)'
-      isOn.value = false
-      if (denied) permission.markDenied()
-      return null
+      // 못박은 장치가 지금은 없다(뽑았거나 브라우저를 다시 켜 id가 바뀌었다) — 저장값을 버리고
+      // 기본 장치로 한 번 더 잡는다. exact로 바꾼 대신 이 되돌림이 있어야 예전처럼 "장치를 뽑으면
+      // 기본 장치로 떨어질 뿐"이 유지된다(성공하면 syncDeviceIds가 실제 장치로 다시 채운다).
+      const gone = errorName(e) === 'OverconstrainedError' || errorName(e) === 'NotFoundError'
+      if (!gone || (!pinnedVideo && !pinnedAudio)) return fail(e)
+      if (pinnedVideo) rememberVideoDevice(null)
+      if (pinnedAudio) rememberAudioDevice(null)
+      try {
+        return await open(constraints)
+      } catch (retry) {
+        return fail(retry)
+      }
     }
   }
 
@@ -121,6 +161,9 @@ export function useCamera() {
     if (!track) return
     // 카메라를 꺼 둔 상태로 바꿨다면 새 트랙도 꺼진 채로 이어져야 한다.
     track.enabled = camOn.value
+    // exact로 잡았으니 요청한 장치가 곧 실제 장치다 — getSettings().deviceId를 안 채워 주는
+    // 브라우저에서도 선택이 남도록 요청값을 먼저 기록한다(뒤이은 syncDeviceIds가 확인 사살).
+    rememberVideoDevice(deviceId)
     swapTrack(current, track)
   }
 
@@ -140,6 +183,7 @@ export function useCamera() {
     const track = next.getAudioTracks()[0]
     if (!track) return
     track.enabled = micOn.value
+    rememberAudioDevice(deviceId)
     swapTrack(current, track)
   }
 
