@@ -11,7 +11,8 @@ import { computed, ref } from 'vue'
 import type { TokenResponse, UserProfile } from '@/api/types'
 import * as authApi from '@/api/auth'
 import { usersApi } from '@/api/modules/users'
-import { clearTokens, getAccessToken, readAnyAccessClaims, setTokens } from '@/api/token'
+import { clearTokens, getAccessToken, readAnyAccessClaims, setAccessToken } from '@/api/token'
+import { restoreSessionFromCookie } from '@/api/http'
 import { rescheduleTokenAutoRefresh } from '@/api/refreshScheduler'
 
 export type Role = 'guest' | 'member'
@@ -19,7 +20,7 @@ export type Role = 'guest' | 'member'
 /**
  * 게스트 세션(임시 닉네임·1인방)은 sessionStorage에 둔다 (-109).
  * 새로고침·화면 이동에는 살아남고, 창(탭)을 닫으면 브라우저가 알아서 지운다 = "세션 종료 시 소멸".
- * 게스트 액세스 토큰도 같은 저장소를 쓰므로(authApi.guest) 둘의 수명이 어긋나지 않는다.
+ * 게스트 액세스 토큰도 같은 저장소를 쓰므로(token.ts) 둘의 수명이 어긋나지 않는다.
  */
 const GUEST_KEY = 'motok.guest'
 
@@ -46,7 +47,6 @@ export const useSessionStore = defineStore('session', () => {
   const role = ref<Role | null>(null)
   const profile = ref<UserProfile | null>(null)
   const accessToken = ref<string | null>(null)
-  const refreshToken = ref<string | null>(null)
   /** 게스트 시작 응답(GuestResponse)의 서버 부여 닉네임·1인방 ID — 게임 진입 시 사용 */
   const guestNickname = ref<string | null>(null)
   const guestRoomId = ref<string | null>(null)
@@ -66,19 +66,19 @@ export const useSessionStore = defineStore('session', () => {
 
   /**
    * 로그인 성공 응답을 세션에 반영한다.
-   * rememberMe면 localStorage(재방문 시 자동 로그인), 아니면 sessionStorage(탭 종료 시 소멸).
+   * Refresh 토큰은 응답 본문에 없다 — 서버가 HttpOnly 쿠키로 심어 두며, 재방문 시 자동 로그인
+   * 여부(rememberMe)도 그 쿠키의 수명으로 서버가 정한다. 여기서 저장할 것은 액세스 토큰뿐이다.
    */
-  function applyToken(res: TokenResponse, rememberMe = false) {
+  function applyToken(res: TokenResponse) {
     role.value = 'member'
     profile.value = res.user ?? null
     accessToken.value = res.accessToken
-    refreshToken.value = res.refreshToken
     guestNickname.value = null
     guestRoomId.value = null
     sessionStorage.removeItem(GUEST_KEY)
 
-    // 토큰 저장/복원은 token.ts가 단일 관리(http.ts의 자동 인증 헤더도 여기서 갱신됨).
-    setTokens(res.accessToken, res.refreshToken, rememberMe)
+    // 토큰은 token.ts가 단일 관리(http.ts의 자동 인증 헤더도 여기서 갱신됨).
+    setAccessToken(res.accessToken)
     restored.value = true
     rescheduleTokenAutoRefresh()
   }
@@ -98,24 +98,25 @@ export const useSessionStore = defineStore('session', () => {
   let restoring: Promise<void> | null = null
 
   /**
-   * 저장된 토큰으로 세션을 복원한다.
-   *  - 토큰 없음            → 비로그인
+   * 세션을 복원한다.
    *  - 게스트 토큰          → sessionStorage에 남은 임시 닉네임·1인방 복원
-   *  - 회원 토큰(만료 포함) → GET /users/me. 만료됐다면 http.ts가 알아서 refresh하고,
-   *                           refresh까지 실패하면 토큰이 지워지며 세션 만료 이벤트가 발생한다.
+   *  - 회원 토큰(만료 포함) → GET /users/me. 만료됐다면 http.ts가 알아서 갱신한다.
+   *  - 토큰 없음            → 새로고침이라 메모리가 비었을 뿐일 수 있다. Refresh 쿠키로 한 번
+   *                           되살려 보고, 그래도 안 되면 비로그인.
    */
   async function restore(): Promise<void> {
     const claims = readAnyAccessClaims()
-    if (!claims) {
-      clearLocal()
-      return
-    }
-    if (claims.type === 'guest') {
+    if (claims?.type === 'guest') {
       const guest = loadGuestSession()
       role.value = 'guest'
       profile.value = null
       guestNickname.value = guest?.nickname ?? null
       guestRoomId.value = guest?.roomId ?? null
+      return
+    }
+    // 회원 액세스 토큰은 메모리에만 살아 있다 — 새로고침 직후엔 쿠키가 유일한 단서다.
+    if (!claims && !(await restoreSessionFromCookie())) {
+      clearLocal()
       return
     }
     try {
@@ -141,7 +142,8 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /**
-   * 로그아웃 — 서버측 Refresh 토큰까지 무효화해야 14일간 남지 않는다.
+   * 로그아웃 — 서버를 반드시 거쳐야 한다. Refresh 쿠키는 HttpOnly라 클라이언트가 지울 수 없고,
+   * 서버측 Redis 세션도 함께 끊어야 14일간 남지 않는다.
    * 토큰은 스토어 ref가 아니라 token.ts에서 읽는다 — 새로고침 복원이나 자동 갱신으로 토큰이 바뀌어도
    * 항상 지금 유효한 값으로 무효화 요청을 보내기 위해서다.
    */
@@ -162,7 +164,6 @@ export const useSessionStore = defineStore('session', () => {
     role.value = null
     profile.value = null
     accessToken.value = null
-    refreshToken.value = null
     guestNickname.value = null
     guestRoomId.value = null
     sessionStorage.removeItem(GUEST_KEY)
@@ -179,7 +180,6 @@ export const useSessionStore = defineStore('session', () => {
     role,
     profile,
     accessToken,
-    refreshToken,
     guestNickname,
     guestRoomId,
     isAuthenticated,

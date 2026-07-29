@@ -58,12 +58,9 @@ export function login(email: string, password: string, rememberMe = false) {
   })
 }
 
-/** POST /auth/token/refresh — Access 토큰 재발급(refreshToken도 회전됨) */
-export function refreshToken(token: string) {
-  return request<TokenResponse>('/auth/token/refresh', {
-    method: 'POST',
-    body: { refreshToken: token },
-  })
+/** POST /auth/token/refresh — Access 토큰 재발급. Refresh 토큰은 HttpOnly 쿠키로 오가며 함께 회전된다. */
+export function refreshToken() {
+  return request<TokenResponse>('/auth/token/refresh', { method: 'POST' })
 }
 
 /** POST /auth/logout — 서버측 Refresh 토큰 무효화 */
