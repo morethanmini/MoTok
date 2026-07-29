@@ -22,6 +22,7 @@ import { GAME_CATALOG, type GameEntry } from './data'
 import { CHAT_REPORT_REASONS, CHAT_REPORT_DETAIL_MAX, canSubmitChatReport, chatReportErrorMessage } from './chatReport'
 import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
+import GameSetupModal from './components/GameSetupModal.vue'
 import ReportIcon from './components/ReportIcon.vue'
 import HostWaitingOverlay from './components/HostWaitingOverlay.vue'
 import InviteFriendsModal from './components/InviteFriendsModal.vue'
@@ -249,6 +250,8 @@ watch(
 const speakerOn = ref(true)
 const screenOn = ref(false)
 const picker = ref(false)
+/** 게임을 고른 뒤 모드·난이도를 정하는 설정 창의 대상 게임(-9). null이면 닫힘 */
+const setupGame = ref<GameEntry | null>(null)
 
 // 탭 닫기·주소창 이탈 시 keepalive 퇴장 통보 + bfcache 복원 시 로비로(뒤로가기 복귀 차단)
 useRoomUnloadLeave(() => route.query.room as string | undefined)
@@ -539,7 +542,9 @@ const drawFeed = ref<GameEvent[]>([])
  * 함수 안의 선언 전 참조를 잡지 않는다).
  */
 watch(
-  () => activeGame.value?.id === 'shape',
+  // 설정 창(-9)도 인게임 베드를 직접 깔기 때문에 같이 내린다 — 소유 판정을 여기 한 곳에 모아두면
+  // 창을 닫고 게임으로 넘어가는 사이에 테마가 잠깐 살아나는 일이 없다.
+  () => activeGame.value?.id === 'shape' || setupGame.value?.id === 'shape',
   (ownsAudio) => (ownsAudio ? bgm.suspendForGame() : bgm.resumeAfterGame()),
 )
 
@@ -750,6 +755,31 @@ function openPicker() {
 function roomPlayerCount(): number {
   return lk.participants.value.length || participantCount.value
 }
+/**
+ * 게임 선택 → (옵션이 있으면) 설정 창 → 시작.
+ *
+ * <p>게임④만 모드·난이도·벽 수가 있어서 설정 창을 한 번 더 띄운다. 옵션이 없는 게임까지
+ * 거치게 하면 "시작 버튼만 있는 빈 창"이 생긴다. 방장이 아니거나 서버에 연결되지 않았으면
+ * 설정할 게 없으므로(게임 제안·로컬 폴백 경로) 지금처럼 곧바로 launch로 보낸다.</p>
+ */
+function pick(g: GameEntry) {
+  if (g.id === 'shape' && g.playable && roomChat.connected.value && selfIsHost.value) {
+    picker.value = false
+    setupGame.value = g
+    return
+  }
+  void launch(g)
+}
+function startWithSetup(difficulty: string, mode: string, wallCount?: number) {
+  const g = setupGame.value
+  setupGame.value = null
+  if (g) void launch(g, difficulty, mode, wallCount)
+}
+function backToPicker() {
+  setupGame.value = null
+  picker.value = true
+}
+
 async function launch(g: GameEntry, difficulty?: string, mode?: string, wallCount?: number) {
   picker.value = false
   // 캐치캐치리듬은 전용 STOMP 채널을 쓴다 — 공용 게임 세션(GAME_START) 경로를 타지 않고
@@ -1424,11 +1454,15 @@ const startHint = computed(() =>
     </footer>
 
     <!-- 게임 선택 모달 -->
-    <GamePicker
-      v-if="picker"
+    <GamePicker v-if="picker" @close="picker = false" @launch="pick" />
+
+    <!-- 게임④(-9) 설정 창 — 모드·벽 수·난이도. 옵션이 있는 게임만 이 단계를 거친다 -->
+    <GameSetupModal
+      v-if="setupGame"
+      :game="setupGame"
       :member-count="roomPlayerCount()"
-      @close="picker = false"
-      @launch="launch"
+      @back="backToPicker"
+      @start="startWithSetup"
     />
 
     <!-- 친구 초대 (-100) -->

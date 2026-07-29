@@ -10,7 +10,8 @@
  */
 import { useBgm } from '@/composables/useBgm'
 
-const SRC = {
+/** 큐별 음원 경로. 게임 시작 전 설정 창도 ingame을 쓰므로 밖에서 참조할 수 있게 열어둔다 */
+export const SRC = {
   /** 인게임 베드 겸 최종 결과(기획상 ①=⑤) — 유일하게 루프 */
   ingame: '/assets/sfx/body-fit/ingame-loop.mp3',
   setting: '/assets/sfx/body-fit/setting.mp3',
