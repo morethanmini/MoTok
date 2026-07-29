@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
+import ssafy.a706.backend.auth.store.AccountBlock;
+import ssafy.a706.backend.auth.store.AccountBlockStore;
 import ssafy.a706.backend.auth.controller.dto.*;
 import ssafy.a706.backend.auth.email.EmailVerificationService;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
@@ -45,6 +47,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider tokenProvider;
     private final RefreshTokenStore refreshTokenStore;
+    private final AccountBlockStore accountBlockStore;
     private final EmailVerificationService emailVerificationService;
     private final OauthClientResolver oauthClientResolver;
     private final OauthLinkService oauthLinkService;
@@ -140,6 +143,9 @@ public class AuthService {
             throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
         }
         loginAttemptLimiter.reset(email);
+        // 제재 확인은 실패 카운터를 <b>리셋한 뒤</b>다. 비밀번호가 맞았으니 대입 공격이 아니고,
+        // 여기서 세면 제재된 사용자가 정상 시도만으로 자기 이메일을 레이트리밋에 걸리게 만든다.
+        ensureNotBlocked(user.getId());
         // rememberMe는 Refresh 쿠키의 수명이 된다 — true면 14일 영구 쿠키, 아니면 세션 쿠키.
         return issueTokens(user, Boolean.TRUE.equals(req.rememberMe()));
     }
@@ -163,6 +169,7 @@ public class AuthService {
         if (!user.isActive()) {
             throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
         }
+        ensureNotBlocked(user.getId());
         // 소셜은 rememberMe를 물어볼 화면이 없다 — provider를 거쳐 돌아온 사용자를 매번 다시 로그인시키지 않도록 영구 쿠키로 둔다.
         return issueTokens(user, true);
     }
@@ -223,6 +230,10 @@ public class AuthService {
         if (!user.isActive()) {
             throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
         }
+        // 제재는 users.status를 안 쓰는 경우(기간 정지)가 있어 위 isActive() 검사에 걸리지 않는다.
+        // 갱신 경로도 막아야 하는 이유 — 제재 시 Refresh를 지우지만 그 사이 회전된 토큰이 남아 있으면
+        // 갱신만으로 세션이 이어진다.
+        ensureNotBlocked(user.getId());
 
         TokenResponse body = TokenResponse.of(
                 tokenProvider.createAccessToken(user.getId(), user.getNickname(), user.getRole().name()),
@@ -232,6 +243,24 @@ public class AuthService {
             return IssuedTokens.accessOnly(body);
         }
         return new IssuedTokens(body, rotated, refreshTtl, refreshTokenStore.isPersistent(userId));
+    }
+
+    /**
+     * 계정 차단 확인. 제재 시 Refresh를 지우지만 그것만으로는 부족하다 —
+     * 제재된 사용자가 비밀번호로 다시 로그인하면 새 토큰이 발급되기 때문이다.
+     *
+     * <p>기간 정지는 users를 건드리지 않으므로 위쪽 {@code isActive()} 검사에 걸리지 않는다.
+     * 영구 정지는 {@code status=BANNED}라 이미 걸리지만, 여기서도 함께 보는 이유는 안내 문구가
+     * 달라야 하기 때문이다 — ACCOUNT_NOT_ACTIVE는 탈퇴·영구제재를 뭉뚱그린 코드다.</p>
+     */
+    private void ensureNotBlocked(Long userId) {
+        AccountBlock block = accountBlockStore.blockOf(userId);
+        if (block == AccountBlock.BANNED) {
+            throw new BusinessException(ErrorCode.ACCOUNT_BANNED);
+        }
+        if (block == AccountBlock.SUSPENDED) {
+            throw new BusinessException(ErrorCode.ACCOUNT_SUSPENDED);
+        }
     }
 
     /**

@@ -18,6 +18,8 @@ import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.auth.principal.GuestPrincipal;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
+import ssafy.a706.backend.auth.store.AccountBlock;
+import ssafy.a706.backend.auth.store.AccountBlockStore;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 
@@ -53,6 +55,7 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
     private static final String MEMBER_ONLY_PREFIX = "/topic/lobby";
 
     private final JwtTokenProvider tokenProvider;
+    private final AccountBlockStore accountBlockStore;
 
     /**
      * 채널에 메시지가 들어가기 직전 호출된다. CONNECT 프레임일 때만 JWT를 검증한다.
@@ -126,7 +129,18 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
         if (tokenProvider.isRefresh(claims)) {
             throw new BusinessException(ErrorCode.INVALID_TOKEN);
         }
-        return toAuthentication(claims);
+        Authentication authentication = toAuthentication(claims);
+        // 계정 차단 확인 — HTTP는 JwtAuthenticationFilter가 막지만 WebSocket 핸드셰이크는 서블릿
+        // 필터를 타지 않아 여기서 따로 끊지 않으면 제재된 사용자가 실시간 채널로 그대로 들어온다.
+        if (authentication.getPrincipal() instanceof MemberPrincipal member) {
+            AccountBlock block = accountBlockStore.blockOf(member.id());
+            if (block.isBlocked()) {
+                throw new BusinessException(block == AccountBlock.BANNED
+                        ? ErrorCode.ACCOUNT_BANNED
+                        : ErrorCode.ACCOUNT_SUSPENDED);
+            }
+        }
+        return authentication;
     }
 
     /**

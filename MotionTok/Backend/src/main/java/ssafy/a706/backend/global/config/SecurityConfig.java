@@ -19,6 +19,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import ssafy.a706.backend.auth.jwt.JwtAuthenticationFilter;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
+import ssafy.a706.backend.auth.store.AccountBlockStore;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.global.response.ErrorResponse;
 import ssafy.a706.backend.global.security.InternalApiKeyFilter;
@@ -33,6 +34,7 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final AccountBlockStore accountBlockStore;
     private final ObjectMapper objectMapper;
 
     @Value("${app.cors.allowed-origins}")
@@ -122,7 +124,7 @@ public class SecurityConfig {
                                 writeError(res, ErrorCode.UNAUTHORIZED, req.getRequestURI()))
                         .accessDeniedHandler((req, res, ex) ->
                                 writeError(res, ErrorCode.FORBIDDEN, req.getRequestURI())))
-                .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider),
+                .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider, accountBlockStore, objectMapper),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(new InternalApiKeyFilter(internalApiKey, objectMapper),
                         UsernamePasswordAuthenticationFilter.class);
