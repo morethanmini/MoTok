@@ -202,7 +202,7 @@ watch(
 
     <div v-if="!playing" class="ready">
       <p class="title">캐치캐치리듬</p>
-      <p class="desc">{{ MODES.find((m) => m.id === mode)?.hint }}</p>
+      <p class="desc">모드 · 난이도 설정</p>
 
       <div class="levels">
         <button
@@ -210,7 +210,7 @@ watch(
           :key="m.id"
           type="button"
           class="px level"
-          :class="{ on: mode === m.id }"
+          :class="['mode-level', `mode-${m.id}`, { on: mode === m.id }]"
           :disabled="isMultiplayer && !isHost"
           :title="m.hint"
           @click="mode = m.id"
@@ -225,7 +225,7 @@ watch(
           :key="d"
           type="button"
           class="px level"
-          :class="{ on: difficulty === d }"
+          :class="['difficulty-level', `difficulty-${d.toLowerCase()}`, { on: difficulty === d }]"
           :disabled="isMultiplayer && !isHost"
           @click="difficulty = d"
         >
@@ -263,42 +263,103 @@ watch(
   position: absolute;
   inset: 0;
   z-index: 2;
-  background: #fff3ea;
+  background: #fff3ea url('/assets/games/catch-rhythm/background-peach-weave.png') center / cover no-repeat;
+  font-family: var(--font-pixel);
 }
 .ready {
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.6rem;
-  padding: 0.75rem;
+  gap: 0.7rem;
+  padding: 1rem;
+  background:
+    radial-gradient(circle at 16% 18%, rgba(255, 255, 255, 0.88) 0 3px, transparent 4px),
+    radial-gradient(circle at 83% 78%, rgba(255, 255, 255, 0.78) 0 4px, transparent 5px),
+    linear-gradient(145deg, #fff6ee, #ffe6d8);
   text-align: center;
 }
 .title {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: #5c4a3f;
+  margin: 0;
+  color: #5a392d;
+  font-size: clamp(1.35rem, 3vw, 2rem);
+  line-height: 1;
+  text-shadow: 2px 2px 0 #fff;
 }
 .desc {
-  font-size: 0.85rem;
-  color: #7a6a60;
+  width: min(100%, 30rem);
+  margin: 0 0 0.35rem;
+  color: #8a6556;
+  font-size: 0.82rem;
 }
 .levels {
-  display: flex;
-  gap: 0.35rem;
+  position: relative;
+  display: grid;
+  width: min(100%, 31rem);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  padding: 1.25rem 0.8rem 0.8rem;
+  border: 2px solid #e7c5b3;
+  border-radius: 0.9rem;
+  background: rgba(255, 253, 249, 0.88);
+  box-shadow: 4px 4px 0 rgba(182, 113, 82, 0.2);
+}
+.levels::before {
+  position: absolute;
+  top: 0.38rem;
+  left: 0.75rem;
+  color: #9a6a55;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+}
+.ready > .levels:first-of-type::before { content: '플레이 모드'; }
+.ready > .levels:nth-of-type(2)::before { content: '난이도'; }
+.ready > .levels:nth-of-type(2) {
+  padding-top: 1.1rem;
 }
 .level {
-  padding: 0.3rem 0.7rem;
-  border: 1px solid #d9cec6;
-  background: #fff;
-  color: #7a6a60;
+  display: grid;
+  min-height: 3.15rem;
+  place-items: center;
+  padding: 0.45rem 0.35rem;
+  border: 2px solid #dfc4b6;
+  border-radius: 0.6rem;
+  background: #fffdf9;
+  box-shadow: 2px 2px 0 #e6cfc1;
+  color: #886659;
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
+  line-height: 1.25;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+}
+.level:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 #d6ab97;
+}
+.mode-level::before {
+  display: block;
+  margin-bottom: 0.2rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+.mode-catch::before { content: '🐾'; }
+.mode-ring::before { content: '↻'; color: #8f75c8; }
+.mode-ringTap::before { content: '●'; color: #ef7792; }
+.difficulty-easy { border-color: #b6d9c1; color: #4c8a65; }
+.difficulty-normal { border-color: #e7cf82; color: #a06d20; }
+.difficulty-hard { border-color: #e6a9a3; color: #b4524a; }
+.difficulty-level.on {
+  background: #fff0c5;
+  border-color: #d69d41;
+  box-shadow: 3px 3px 0 #c48734;
 }
 .level.on {
-  background: #e07a4f;
-  border-color: #e07a4f;
+  transform: translate(-1px, -1px);
+  border-color: #dd765d;
+  background: #f59a7b;
+  box-shadow: 3px 3px 0 #bd614d;
   color: #fff;
 }
 .level:disabled {
@@ -308,14 +369,19 @@ watch(
 .actions {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  margin-top: 0.2rem;
+  justify-content: center;
+  width: min(100%, 31rem);
+  gap: 0.55rem;
+  margin-top: 0.45rem;
 }
 .btn {
-  padding: 0.35rem 0.9rem;
-  border: 1px solid #d9cec6;
-  background: #fff;
-  color: #5c4a3f;
+  min-width: 6.8rem;
+  padding: 0.68rem 1rem;
+  border: 2px solid #d4b49f;
+  border-radius: 0.55rem;
+  background: #fffdf9;
+  box-shadow: 3px 3px 0 #dec3b3;
+  color: #725044;
   cursor: pointer;
   font-size: 0.85rem;
 }
@@ -324,9 +390,111 @@ watch(
   cursor: default;
 }
 .btn.primary {
-  background: #e07a4f;
-  border-color: #e07a4f;
+  border-color: #c95d4b;
+  background: #ed8065;
+  box-shadow: 3px 3px 0 #a94b3c;
   color: #fff;
+}
+.btn.primary:hover:not(:disabled) { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 #a94b3c; }
+
+/* Compact, calm setup controls: choices are the focus, not their decoration. */
+.ready {
+  gap: 0.8rem;
+  background:
+    linear-gradient(rgba(255, 247, 241, 0.78), rgba(255, 233, 221, 0.78)),
+    url('/assets/games/catch-rhythm/background-peach-weave.png') center / cover no-repeat;
+}
+.title {
+  color: #4b3429;
+  font-size: clamp(1.2rem, 2.5vw, 1.65rem);
+  text-shadow: none;
+}
+.desc {
+  margin-bottom: 0.1rem;
+  color: #947568;
+  font-size: 0.72rem;
+}
+.levels {
+  width: min(100%, 29rem);
+  gap: 0;
+  padding: 1.22rem 0.5rem 0.5rem;
+  border: 1px solid #ead5c8;
+  border-radius: 0.55rem;
+  background: #fffdfa;
+  box-shadow: none;
+}
+.levels::before {
+  content: none;
+  display: none;
+}
+.ready > .levels,
+.ready > .levels:nth-of-type(2) { padding-top: 0.5rem; }
+.title { font-size: clamp(2rem, 4.5vw, 3rem); }
+.desc { font-size: 0.9rem; }
+.level {
+  min-height: 3.05rem;
+  padding: 0.45rem 0.3rem;
+  border: 0;
+  border-right: 1px solid #ecdcd2;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #8b6e62;
+  font-size: 0.92rem;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.level:last-child { border-right: 0; }
+.level:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+  background: #fff2ea;
+}
+.mode-level::before { display: none; }
+.difficulty-easy, .difficulty-normal, .difficulty-hard { border-color: #ecdcd2; color: #8b6e62; }
+.difficulty-level.on, .level.on {
+  transform: none;
+  border-color: transparent;
+  border-radius: 0.35rem;
+  background: #e9856a;
+  box-shadow: none;
+  color: #fff;
+}
+.actions {
+  width: min(100%, 29rem);
+  flex-direction: row;
+  margin-top: 0.15rem;
+  gap: 0.45rem;
+}
+.btn {
+  min-width: 7.4rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid #ddc8bc;
+  border-radius: 0.45rem;
+  background: #fffdfa;
+  box-shadow: none;
+  color: #806155;
+  font-size: 0.95rem;
+}
+.actions .btn.primary {
+  order: 2;
+  flex: 1;
+  width: auto;
+}
+.actions .btn:not(.primary) {
+  order: 1;
+  flex: 1;
+  min-width: 0;
+}
+.wait-host { order: 1; }
+.btn.primary {
+  border-color: #d9725b;
+  background: #df795f;
+  box-shadow: none;
+}
+.btn.primary:hover:not(:disabled) {
+  transform: none;
+  background: #cf684f;
+  box-shadow: none;
 }
 .error {
   font-size: 0.8rem;
@@ -372,22 +540,38 @@ watch(
 .ranking {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
-  width: min(20rem, 90%);
+  gap: 0.3rem;
+  width: min(100%, 20rem);
+  margin: 0.35rem 0;
 }
 .rank-row {
   display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  font-size: 0.85rem;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0.48rem 0.55rem;
+  border: 1px solid #ead6ca;
+  border-radius: 0.4rem;
+  background: #fff9f3;
+  font-size: 0.78rem;
   color: #5c4a3f;
 }
 .rank-row.me {
-  font-weight: 700;
+  border-color: #e29a7e;
+  background: #fff0e7;
+  font-weight: 400;
   color: #e07a4f;
 }
 .rank-row .no {
-  width: 1.2rem;
+  display: grid;
+  width: 1.35rem;
+  height: 1.35rem;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  background: #f1dfd1;
+  color: #805b4a;
+  font-size: 0.68rem;
 }
 .rank-row .pts {
   margin-left: auto;
