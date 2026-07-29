@@ -623,6 +623,14 @@ const BODY_FIT_GRADE: Record<number, { label: string; color: string }> = {
 function bodyFitGrade(score: number) {
   return BODY_FIT_GRADE[score] ?? { label: 'FAIL', color: '#ff5d73' }
 }
+/**
+ * 게임④ 연속 서바이벌(-9) — 등급 역산이 성립하지 않는 모드.
+ * 위 배지는 "점수가 곧 등급"이라는 전제(100/85/70)로 만들어졌는데, 연속 모드의 점수는 벽 N장
+ * 누적 총점이라 780점 같은 값이 와서 전부 FAIL로 보인다. 진행률도 일치율이 아니라 점수 비율이다.
+ */
+const bodyFitChain = computed(() => activeSession.value?.mode === 'chain')
+/** 연속 서바이벌 만점 — 벽 수 × PERFECT(100). 중계된 진행률을 점수로 되돌리는 기준 */
+const bodyFitChainMax = computed(() => (activeSession.value?.wallCount ?? 10) * 100)
 const scoreboardRows = computed(() => {
   const rows = Object.entries(liveScores.value).map(([userId, r]) => ({ userId, ...r }))
   rows.sort(
@@ -1251,19 +1259,22 @@ const startHint = computed(() =>
             :class="{ me: row.userId === myParticipantId }"
           >
             <span class="gs-name">{{ row.nickname }}</span>
+            <!-- 등급 배지는 출제 대결 전용 — 연속 서바이벌 점수는 누적 총점이라 역산이 안 된다 -->
             <span
-              v-if="activeGame?.id === 'shape' && row.finished"
+              v-if="activeGame?.id === 'shape' && !bodyFitChain && row.finished"
               class="gs-badge"
               :style="{ color: bodyFitGrade(row.score ?? 0).color, borderColor: bodyFitGrade(row.score ?? 0).color }"
             >
               {{ bodyFitGrade(row.score ?? 0).label }}
             </span>
-            <!-- 게임④는 별이 없다 — 진행 중이면 실시간 일치율(holdProgress)을 보여준다 -->
+            <!-- 게임④는 별이 없다 — 출제 대결은 실시간 일치율, 연속 서바이벌은 누적 점수를 보여준다 -->
             <span v-else class="gs-val">{{
               row.finished
                 ? `${row.score}점 ✓`
                 : activeGame?.id === 'shape'
-                  ? `일치율 ${Math.round(row.holdProgress * 100)}%`
+                  ? bodyFitChain
+                    ? `${Math.round(row.holdProgress * bodyFitChainMax)}점`
+                    : `일치율 ${Math.round(row.holdProgress * 100)}%`
                   : `⭐ ${row.starsLit}`
             }}</span>
           </div>
