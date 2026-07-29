@@ -10,6 +10,7 @@ import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
 import ssafy.a706.backend.auth.oauth.OauthLinkService;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.ratelimit.LoginAttemptLimiter;
+import ssafy.a706.backend.auth.session.SessionRevocationStore;
 import ssafy.a706.backend.auth.session.SingleSessionPolicy;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.global.config.StompSessionRegistry;
@@ -71,6 +72,7 @@ class AuthLoginSessionTest {
             mock(PresenceService.class),
             mock(StompSessionRegistry.class),
             singleSessionPolicy,
+            mock(SessionRevocationStore.class),
             loginAttemptLimiter,
             mock(RejoinPolicy.class),
             mock(ProfanityFilter.class));
@@ -106,7 +108,7 @@ class AuthLoginSessionTest {
                 .isInstanceOf(BusinessException.class);
 
         verify(singleSessionPolicy, never()).displacePrevious(anyLong());
-        verify(refreshTokenStore, never()).save(anyLong(), anyString(), any(Duration.class), anyBoolean());
+        verify(refreshTokenStore, never()).save(anyLong(), anyString(), any(Duration.class), anyBoolean(), anyString());
     }
 
     @Test
@@ -144,9 +146,9 @@ class AuthLoginSessionTest {
         given(passwordEncoder.matches(PASSWORD, "hashed")).willReturn(true);
 
         assertThat(service.login(new LoginRequest(EMAIL, PASSWORD, false)).persistent()).isFalse();
-        verify(refreshTokenStore).save(eq(USER_ID), anyString(), any(Duration.class), eq(false));
+        verify(refreshTokenStore).save(eq(USER_ID), anyString(), any(Duration.class), eq(false), anyString());
 
         assertThat(service.login(new LoginRequest(EMAIL, PASSWORD, true)).persistent()).isTrue();
-        verify(refreshTokenStore).save(eq(USER_ID), anyString(), any(Duration.class), eq(true));
+        verify(refreshTokenStore).save(eq(USER_ID), anyString(), any(Duration.class), eq(true), anyString());
     }
 }

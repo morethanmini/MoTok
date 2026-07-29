@@ -139,10 +139,12 @@ export function useLiveKitRoom() {
     try {
       const { url, token } = await sfuApi.videoToken(roomId)
       // audioCaptureDefaults로 넣어야 방 안에서 마이크를 껐다 켤 때 새로 잡는 트랙도 같은 장치를 쓴다.
+      // exact로 못박는 이유 — 그냥 문자열이면 ideal(희망)이라 브라우저가 기본 마이크를 줘도 규칙
+      // 위반이 아니어서, 장치 설정에서 고른 마이크가 조용히 기본 마이크로 바뀐다.
       const r = new Room({
         adaptiveStream: true,
         dynacast: true,
-        audioCaptureDefaults: microphoneDeviceId ? { deviceId: microphoneDeviceId } : undefined,
+        audioCaptureDefaults: microphoneDeviceId ? { deviceId: { exact: microphoneDeviceId } } : undefined,
       })
       room = r
       bindEvents(r)
@@ -155,7 +157,14 @@ export function useLiveKitRoom() {
         try {
           await r.localParticipant.setMicrophoneEnabled(true)
         } catch {
-          /* 마이크 없이도 계속 진행 */
+          // 못박은 마이크가 지금은 없다(뽑았거나 브라우저를 다시 켜 id가 바뀌었다) — 지정을 풀고
+          // 기본 마이크로 한 번 더. 소리 없이 방에 남는 것보다 낫다(방 안 토글도 같이 풀린다).
+          r.options.audioCaptureDefaults = { ...r.options.audioCaptureDefaults, deviceId: undefined }
+          try {
+            await r.localParticipant.setMicrophoneEnabled(true)
+          } catch {
+            /* 마이크 없이도 계속 진행 */
+          }
         }
       }
       refresh()

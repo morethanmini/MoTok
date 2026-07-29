@@ -19,6 +19,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import ssafy.a706.backend.auth.jwt.JwtAuthenticationFilter;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
+import ssafy.a706.backend.auth.session.SessionRevocationStore;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.global.response.ErrorResponse;
 import ssafy.a706.backend.global.security.InternalApiKeyFilter;
@@ -33,6 +34,7 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final SessionRevocationStore sessionRevocationStore;
     private final ObjectMapper objectMapper;
 
     @Value("${app.cors.allowed-origins}")
@@ -120,11 +122,17 @@ public class SecurityConfig {
                             .anyRequest().authenticated();
                 })
                 .exceptionHandling(eh -> eh
+                        // 단일 세션 밀어내기로 폐기된 토큰의 401은 전용 코드로 갈라 준다 —
+                        // 클라이언트가 "다른 곳에서 로그인" 안내를 일반 만료와 다르게 띄우는 근거(v0.2.25).
                         .authenticationEntryPoint((req, res, ex) ->
-                                writeError(res, ErrorCode.UNAUTHORIZED, req.getRequestURI()))
+                                writeError(res,
+                                        JwtAuthenticationFilter.wasDisplaced(req)
+                                                ? ErrorCode.SESSION_DISPLACED
+                                                : ErrorCode.UNAUTHORIZED,
+                                        req.getRequestURI()))
                         .accessDeniedHandler((req, res, ex) ->
                                 writeError(res, ErrorCode.FORBIDDEN, req.getRequestURI())))
-                .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider),
+                .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider, sessionRevocationStore),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(new InternalApiKeyFilter(internalApiKey, objectMapper),
                         UsernamePasswordAuthenticationFilter.class);

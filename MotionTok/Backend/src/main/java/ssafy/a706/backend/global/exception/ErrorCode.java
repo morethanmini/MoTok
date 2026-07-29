@@ -20,6 +20,9 @@ public enum ErrorCode {
     // auth
     INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "AUTH_INVALID_CREDENTIALS", "이메일 또는 비밀번호가 올바르지 않습니다."),
     INVALID_TOKEN(HttpStatus.UNAUTHORIZED, "AUTH_INVALID_TOKEN", "유효하지 않은 토큰입니다."),
+    // 단일 세션(v0.2.25) — 같은 계정의 새 로그인이 이 세션을 밀어냈다. 클라이언트는 이 코드로
+    // "다른 곳에서 로그인" 안내를 띄운다(일반 만료와 문구가 달라야 계정 도용을 알아챌 수 있다).
+    SESSION_DISPLACED(HttpStatus.UNAUTHORIZED, "AUTH_SESSION_DISPLACED", "다른 곳에서 로그인되어 로그아웃되었습니다."),
     ACCOUNT_NOT_ACTIVE(HttpStatus.FORBIDDEN, "AUTH_ACCOUNT_NOT_ACTIVE", "이용이 제한된 계정입니다."),
 
     // 소셜 로그인 (명세서 POST /auth/social/{provider})
