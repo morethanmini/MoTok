@@ -172,3 +172,10 @@ app:
   # X-Internal-Key 헤더를 이 값과 비교하는 것이 실제 방어선이다. 미설정 시 전부 401로 막힌다.
   internal:
     api-key: ${INTERNAL_API_KEY:}
+
+  # AI 아이템 생성 1회 결제 비용(포인트). 이 금액으로 최초 생성 + 재생성 1회까지 가능하다.
+  shop:
+    ai-item-cost: ${AI_ITEM_COST:1500}
+    # 워커가 응답 없이 죽어 PROCESSING에 갇힌 job을 AiItemJobTimeoutSweeper가 이 시간(분) 이상
+    # 지나면 FAILED로 강제 정리하고 환불한다.
+    ai-job-timeout-minutes: ${AI_JOB_TIMEOUT_MINUTES:5}
