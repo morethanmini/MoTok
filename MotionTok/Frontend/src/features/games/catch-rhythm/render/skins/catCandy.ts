@@ -10,7 +10,7 @@
  */
 
 import type { CatchSkin, HandView, HitFxView, NoteView } from './types'
-import type { NoteHand } from '../../core/types'
+import type { Hand, NoteHand } from '../../core/types'
 
 /**
  * 왼손 = 파랑, 오른손 = 빨강, 아무 손 = 보라. 전부 파스텔.
@@ -20,6 +20,20 @@ const PALETTE: Record<NoteHand, { body: string; edge: string; glow: string }> = 
   left: { body: '#9ec5fe', edge: '#1d4ed8', glow: '#e0edff' },
   right: { body: '#ffa8a8', edge: '#c92a2a', glow: '#ffe8e8' },
   any: { body: '#c3aefc', edge: '#6d28d9', glow: '#efe7ff' },
+}
+const PAW_ASSET: Record<Hand, string> = {
+  left: '/assets/games/catch-rhythm/paw-left-sky.png',
+  right: '/assets/games/catch-rhythm/paw-right-pink.png',
+}
+const pawImages: Partial<Record<Hand, HTMLImageElement>> = {}
+
+function pawImage(side: Hand): HTMLImageElement {
+  const cached = pawImages[side]
+  if (cached) return cached
+  const image = new Image()
+  image.src = PAW_ASSET[side]
+  pawImages[side] = image
+  return image
 }
 /** 노트 안에 찍는 손 표시 — 색맹·저대비 환경에서도 확실하다 */
 const HAND_MARK: Record<NoteHand, string> = { left: 'L', right: 'R', any: '' }
@@ -268,23 +282,25 @@ function trailRibbon(ctx: CanvasRenderingContext2D, note: NoteView) {
  */
 function paw(ctx: CanvasRenderingContext2D, hand: HandView) {
   const { x, y, radius, isFist, side } = hand
-  const c = PALETTE[side]
-  const squeeze = isFist ? 0.62 : 1
-  const spread = isFist ? 0.72 : 1
+  const image = pawImage(side)
+  if (!image.complete || !image.naturalWidth) return
+  const size = radius * (isFist ? 3.3 : 3.8)
 
   ctx.save()
-  ctx.globalAlpha = 0.92
-  ctx.fillStyle = c.body
-  ctx.strokeStyle = c.edge
-  ctx.lineWidth = Math.max(1.5, radius * 0.14)
+  ctx.globalAlpha = isFist ? 0.84 : 1
+  ctx.drawImage(image, x - size / 2, y - size / 2, size, size)
+  ctx.restore()
+  return
+
+  /*
 
   // 발바닥 젤리
   ctx.beginPath()
   ctx.ellipse(
-    x,
-    y + radius * 0.18,
-    radius * 0.72 * squeeze,
-    radius * 0.6 * squeeze,
+    0,
+    r * 0.1,
+    r * 1.02,
+    r * 1.04,
     0,
     0,
     Math.PI * 2,
@@ -293,26 +309,24 @@ function paw(ctx: CanvasRenderingContext2D, hand: HandView) {
   ctx.stroke()
 
   // 발가락 4개
-  for (const [tx, ty] of [
-    [-0.62, -0.5],
-    [-0.22, -0.78],
-    [0.22, -0.78],
-    [0.62, -0.5],
+  ctx.strokeStyle = c.edge
+  ctx.lineWidth = Math.max(1.6, r * 0.105)
+  for (const [tx, ty, angle] of [
+    [-0.58, -0.43, -0.52],
+    [-0.2, -0.7, -0.18],
+    [0.2, -0.7, 0.18],
+    [0.58, -0.43, 0.52],
   ] as const) {
-    ctx.beginPath()
-    ctx.ellipse(
-      x + tx * radius * spread,
-      y + ty * radius * spread,
-      radius * 0.24 * squeeze,
-      radius * 0.28 * squeeze,
-      tx * 0.5,
-      0,
-      Math.PI * 2,
-    )
-    ctx.fill()
-    ctx.stroke()
+    pad(tx * r, ty * r, r * 0.23, r * 0.32, angle)
   }
+  pad(0, r * 0.28, r * 0.62, r * 0.49)
+
+  ctx.fillStyle = 'rgba(255,255,255,0.54)'
+  ctx.beginPath()
+  ctx.ellipse(-r * 0.22, r * 0.08, r * 0.19, r * 0.1, -0.48, 0, Math.PI * 2)
+  ctx.fill()
   ctx.restore()
+  */
 }
 
 function star(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
