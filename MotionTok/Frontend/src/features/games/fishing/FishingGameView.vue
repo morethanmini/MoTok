@@ -39,7 +39,12 @@ const loadProgress = ref(0)
 
 const castCfg = reactive({ ...DEFAULT_CAST })
 const hookCfg = reactive({ ...DEFAULT_HOOK })
-const pumpCfg = reactive({ ...DEFAULT_PUMP })
+/**
+ * 진폭 문턱을 90 → 30으로 낮춘다. DEFAULT_PUMP의 90은 **손목 y** 진폭(실측 191~358px)에
+ * 맞춘 값이고, 여기서 먹이는 건 양손 사이 거리다. 원을 그리면 거리 변화가 그보다 작다.
+ * 랩은 y 기반 비교를 계속하므로 DEFAULT_PUMP 자체는 그대로 둔다.
+ */
+const pumpCfg = reactive({ ...DEFAULT_PUMP, minAmpPx: 30 })
 const cast = createCast(castCfg)
 const hook = createHook(hookCfg)
 const pump = createPump(pumpCfg)
@@ -91,6 +96,39 @@ let lastT = 0
 
 function onPose(result: PoseLandmarkerResult) {
   const lm = result.landmarks?.[0]
+  const now = performance.now()
+  const phase = loop.state().phase
+
+  /*
+   * 릴 감기는 **양손 사이 거리**의 왕복으로 잰다 (2026-07-29 실측으로 y에서 교체).
+   *
+   * 손으로 그린 원은 화면에 가로로 납작하게 찍힌다 — 랩이 실측한 궤도 종횡비가 0.55다.
+   * 그래서 y만 보는 판정은 실제 크랭크 동작의 y 진폭이 문턱(90px)을 못 넘어 **한 번도
+   * 안 세어졌다**(같은 동작에 y 0.00/s vs 양손 거리 0.96/s). y로 재려면 팔 전체를 415px
+   * 흔들어야 했고 그게 지속 속도 0.8/s 상한과 "팔 아프다"의 원인이었다.
+   *
+   * 2D 거리는 x 성분을 포함하므로 납작한 원도 잡는다. 그리고 화면 안내("빙글빙글 돌려요")와
+   * 실제 동작이 처음으로 일치한다 — 지금까지는 안내는 원인데 판정은 위아래였다.
+   *
+   * 두 신호의 rate는 같은 진동 주파수를 읽으므로 속도 자체는 차이가 없다. 이득은
+   * "잡을 수 있는 동작의 범위"다.
+   *
+   * 단일 손목 판정보다 **앞에** 둔다 — 주 손목을 놓친 프레임에도 rate를 0으로 내려야 한다.
+   */
+  if (phase === 'fighting') {
+    const wl = lm?.[WRIST.left]
+    const wr = lm?.[WRIST.right]
+    if (wl && wr && (wl.visibility ?? 0) >= VIS_MIN && (wr.visibility ?? 0) >= VIS_MIN) {
+      // 거울 반전은 차이값에서 상쇄되므로 raw x를 그대로 쓴다
+      const dist = Math.hypot((wr.x - wl.x) * W, (wr.y - wl.y) * H)
+      reelRate.value = pump.feed(dist, now).rate
+    } else {
+      // 한 손이라도 놓치면 감기를 멈춘다. feed를 건너뛰면 마지막 rate가 남아서
+      // 손을 내려도 게이지가 계속 찬다.
+      reelRate.value = 0
+    }
+  }
+
   const w = lm?.[WRIST[handSide.value]]
   const sh = lm?.[SHOULDER[handSide.value]]
   if (!w || (w.visibility ?? 0) < VIS_MIN) {
@@ -100,8 +138,6 @@ function onPose(result: PoseLandmarkerResult) {
   const x = (1 - w.x) * W
   const y = w.y * H
   wrist = { x, y }
-  const now = performance.now()
-  const phase = loop.state().phase
 
   // 페이즈별로 하나만 — 서로 오발하지 않는다
   if (phase === 'idle' && sh) {
@@ -112,8 +148,6 @@ function onPose(result: PoseLandmarkerResult) {
     if (c.fired !== null) loop.cast(c.firedAimX, c.fired)
   } else if (phase === 'bite') {
     if (hook.feed(y, now).fired) loop.hook()
-  } else if (phase === 'fighting') {
-    reelRate.value = pump.feed(y, now).rate
   }
 }
 
@@ -401,7 +435,10 @@ onBeforeUnmount(() => {
       </li>
       <li><b>기다리기</b> — 물고기가 <b>?</b> → <b>!</b> 로 다가온다</li>
       <li><b>챔질</b> — <b>!!</b> 가 뜨면 손을 위로 번쩍</li>
-      <li><b>감기</b> — 릴 돌리듯 손을 위아래로. 멈추면 도망간다</li>
+      <li>
+        <b>감기</b> — 양손으로 낚싯대 잡고 <b>오른손으로 원을 그리듯</b> 릴을 돌린다. 멈추면
+        도망간다
+      </li>
     </ol>
 
     <div class="catches" v-if="st.caught.length">
