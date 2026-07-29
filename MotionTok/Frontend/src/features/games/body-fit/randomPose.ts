@@ -105,7 +105,7 @@ interface Vec {
 }
 
 const rad = (deg: number) => (deg * Math.PI) / 180
-const jitter = (deg: number, spread: number) => deg + (Math.random() * 2 - 1) * spread
+const jitter = (rng: Rng, deg: number, spread: number) => deg + (rng() * 2 - 1) * spread
 const step = (from: Vec, deg: number, len: number): Vec => ({
   x: from.x + Math.cos(rad(deg)) * len,
   y: from.y + Math.sin(rad(deg)) * len,
@@ -124,29 +124,36 @@ export interface RandomPose {
   landmarks: LandmarkPoint[]
 }
 
+/** 0 이상 1 미만 난수 생성기 — 방에서는 서버 시드로 만든 것을 넣어 전원이 같은 포즈를 받는다 */
+export type Rng = () => number
+
 /**
  * 랜덤 출제 포즈 하나.
  *
  * <p>원형 하나를 골라 좌우를 뒤집을지 정하고, 각도에 지터를 준 뒤 랜드마크로 굽는다.</p>
  *
+ * <p>난수를 인자로 받는 이유 — 원형 선택·좌우 반전·지터·기울기가 모두 난수를 쓰므로, 방에서
+ * 같은 벽을 보려면 이 네 곳이 <b>전부</b> 같은 수열을 써야 한다. pick만 맞춰도 실루엣이 갈린다.</p>
+ *
  * @param pick 원형 인덱스 — 기본은 랜덤. 테스트가 전 원형을 빠짐없이 돌기 위한 이음새다.
+ * @param rng 난수원 — 기본은 Math.random(솔로). 연속 모드 멀티는 시드 PRNG를 넘긴다.
  */
-export function randomPose(pick = Math.floor(Math.random() * ARCHETYPES.length)): RandomPose {
-  const base = ARCHETYPES[pick % ARCHETYPES.length]!
-  const a = Math.random() < 0.5 ? base : flip(base)
+export function randomPose(pick?: number, rng: Rng = Math.random): RandomPose {
+  const base = ARCHETYPES[(pick ?? Math.floor(rng() * ARCHETYPES.length)) % ARCHETYPES.length]!
+  const a = rng() < 0.5 ? base : flip(base)
 
   const shoulderL: Vec = { x: -0.5, y: 0 }
   const shoulderR: Vec = { x: 0.5, y: 0 }
   const arm = (shoulder: Vec, [upper, fore]: Arm) => {
-    const elbow = step(shoulder, jitter(upper, JITTER_DEG), REF_UPPER_INIT)
-    return { elbow, wrist: step(elbow, jitter(fore, JITTER_DEG), REF_FORE_INIT) }
+    const elbow = step(shoulder, jitter(rng, upper, JITTER_DEG), REF_UPPER_INIT)
+    return { elbow, wrist: step(elbow, jitter(rng, fore, JITTER_DEG), REF_FORE_INIT) }
   }
   const armL = arm(shoulderL, a.l)
   const armR = arm(shoulderR, a.r)
 
   // 머리는 위(90°), 힙은 아래(270°) 기준에서 살짝 기울인다
-  const head = step({ x: 0, y: 0 }, jitter(90, TILT_DEG), HEAD_DIST)
-  const hip = step({ x: 0, y: 0 }, jitter(270, TILT_DEG), HIP_DIST)
+  const head = step({ x: 0, y: 0 }, jitter(rng, 90, TILT_DEG), HEAD_DIST)
+  const hip = step({ x: 0, y: 0 }, jitter(rng, 270, TILT_DEG), HIP_DIST)
 
   const lm: LandmarkPoint[] = Array.from({ length: LANDMARK_COUNT }, () => ({
     x: 0,

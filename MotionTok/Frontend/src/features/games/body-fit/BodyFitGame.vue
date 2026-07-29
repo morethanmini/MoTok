@@ -24,7 +24,8 @@ import {
   type SolvedSkeleton,
 } from './skeleton'
 import { drawSilhouette } from './silhouette'
-import { randomPose } from './randomPose'
+import { randomPose, type Rng } from './randomPose'
+import { chainApproachMs, chainGapMs } from './chainSchedule'
 import {
   GRADE_POINTS,
   gradeOf as gradeFromIou,
@@ -390,18 +391,8 @@ function startRandomRound() {
  * 풀은 연속 모드를 처음 켤 때 필요한 만큼만 만든다(안 쓰는 사람은 비용을 내지 않는다).</p>
  */
 const POOL_MAX = 4
-/**
- * 앞 벽이 출발선에서 이만큼(월드 단위) 멀어지면 다음 벽이 출발한다.
- * 진행률(t)이 아니라 거리로 재는 이유 — 접근 곡선이 easeIn(t^2.5)이라 t=0.5에서도 벽은
- * 아직 출발선 근처(0.9)에 있다. 진행률로 띄우면 두 장이 안개 속에 겹쳐 보인다.
- */
-const CHAIN_SPAWN_GAP_Z = 1.8
-/** 첫 벽의 접근 시간 = 난이도 기본값 × 이 비율 */
-const CHAIN_START_RATIO = 0.8
-/** 벽마다 접근 시간을 이 비율로 곱한다(누적) — 갈수록 빨라진다 */
-const CHAIN_SPEEDUP = 0.95
-/** 아무리 빨라져도 이 아래로는 안 내린다 — 포즈를 바꿔 잡을 물리적 최소 시간 */
-const CHAIN_MIN_MS = 2200
+/** 접근 곡선이 지나는 거리 — 스폰 간격을 시간으로 환산할 때의 분모(chainSchedule) */
+const WALL_SPAN_Z = WALL_STOP_Z - WALL_START_Z
 /** 판정 팝업을 띄워두는 시간 — 다음 벽이 닿기 전에 지워야 새 판정으로 읽힌다 */
 const POP_MS = 700
 /** 판정된 벽이 카메라를 지나쳐 나가는 속도(프레임당 월드 단위) */
@@ -425,6 +416,13 @@ let poolCreated = 0
 let flying: FlyingWall[] = []
 /** 연속 모드에서 지금까지 띄운 벽 수 — 가속 곡선의 지수 */
 let chainSpawns = 0
+/**
+ * 다음 벽이 출발할 시각(rAF 시계). 스폰 시점에 미리 정해두고 그때가 오면 띄운다 —
+ * 앞 벽의 z를 폴링하지 않으므로 프레임이 밀려도 스케줄이 밀리지 않는다.
+ */
+let chainNextStart = 0
+/** 연속 모드 포즈 난수원 — 솔로는 undefined(Math.random). 방에서는 서버 시드 PRNG가 들어온다 */
+let chainRng: Rng | undefined
 let popAt = 0
 
 function takeHandle(): WallHandle | null {
@@ -437,11 +435,17 @@ function takeHandle(): WallHandle | null {
   return handle
 }
 
-/** 새 벽 한 장을 무대 뒤편(WALL_START_Z)에 띄운다 */
-function spawnChainWall(now: number) {
+/**
+ * 새 벽 한 장을 무대 뒤편(WALL_START_Z)에 띄운다.
+ *
+ * <p>start는 실제로 띄운 시각(now)이 아니라 <b>스케줄이 정한 출발 시각</b>이다 — 풀이 비어
+ * 한 틱 늦게 띄워도 위치가 스케줄에서 계산되므로 도착 시각이 밀리지 않는다(늦은 만큼 이미
+ * 날아온 지점에서 나타난다). 방에서는 이 시각이 서버 startAt 기준이라 전원이 같은 벽을 본다.</p>
+ */
+function spawnChainWall(startAt: number) {
   const handle = takeHandle()
-  if (!handle) return // 풀 고갈 — 앞 벽이 반납되는 다음 틱에 띄운다
-  const { name, landmarks } = randomPose()
+  if (!handle) return // 풀 고갈 — 다음 틱에 같은 startAt으로 다시 시도한다
+  const { name, landmarks } = randomPose(undefined, chainRng)
   const pose = solveFromLandmarks(landmarks)
   if (!pose) {
     pool.push(handle)
@@ -451,16 +455,17 @@ function spawnChainWall(now: number) {
   handle.build(pose, margin, cfg)
   handle.mesh.position.z = WALL_START_Z
   handle.mesh.visible = true
-  const base = cfg.difficulty[difficulty.value].approachMs * CHAIN_START_RATIO
+  const base = cfg.difficulty[difficulty.value].approachMs
   flying.push({
     handle,
     pose,
     margin,
     name,
-    start: now,
-    approachMs: Math.max(CHAIN_MIN_MS, base * CHAIN_SPEEDUP ** chainSpawns),
+    start: startAt,
+    approachMs: chainApproachMs(chainSpawns, base),
     judged: false,
   })
+  chainNextStart = startAt + chainGapMs(chainSpawns, base, WALL_SPAN_Z)
   chainSpawns += 1
 }
 
@@ -490,10 +495,8 @@ function judgeFlyingWall(w: FlyingWall, now: number) {
 
 /** 연속 모드 한 틱 — 스폰·이동·판정·반납을 전부 여기서 한다 */
 function chainTick(now: number) {
-  const last = flying[flying.length - 1]
   const quotaLeft = !chainTarget.value || chainSpawns < chainTarget.value
-  if (quotaLeft && (!last || last.handle.mesh.position.z - WALL_START_Z >= CHAIN_SPAWN_GAP_Z))
-    spawnChainWall(now)
+  if (quotaLeft && now >= chainNextStart) spawnChainWall(chainNextStart)
 
   for (const w of flying) {
     if (w.judged) {
@@ -547,6 +550,7 @@ function toggleChain() {
   }
   chain.value = true
   chainSpawns = 0
+  chainNextStart = performance.now() // 첫 벽은 즉시 출발 — 이후는 스케줄이 정한다
   chainArrived.value = 0
   combo.value = 0
   judgment.value = null
