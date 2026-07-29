@@ -141,13 +141,8 @@ const connected = computed(() => lk.state.value === ConnectionState.Connected)
 const lkLocal = computed(() => lk.participants.value.find((p) => p.isLocal) ?? null)
 const remotes = computed(() => lk.participants.value.filter((p) => !p.isLocal))
 
-/**
- * 혼자 플레이는 방의 최대 정원이 아니라 실제 접속 인원으로 판단한다.
- * 기존에 8인으로 만들어진 방으로 들어와도 나 혼자라면 빈 대기 슬롯을 만들지 않는다.
- */
-const isSoloPlay = computed(
-  () => route.query.solo === '1' || (detailLoaded.value && participantCount.value <= 1 && remotes.value.length === 0),
-)
+/** 게임 목록의 "혼자 플레이" 흐름에서만 빈 참가자 슬롯을 숨긴다. */
+const isSoloPlay = computed(() => route.query.solo === '1')
 
 interface Slot { view: ParticipantView | null; host: boolean }
 // self를 뺀 나머지 정원만큼 슬롯을 미리 만든다. 참가자가 있으면 채우고, 없으면 빈 자리.
