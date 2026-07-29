@@ -10,6 +10,7 @@ import AppHeader from '@/components/common/AppHeader.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
+import RhythmThumbnail from './components/RhythmThumbnail.vue'
 import heroFishingCat from '@/assets/games-catalog/hero-fishing-cat-transparent.png'
 import lobbyRoomListBoard from '@/assets/lobby/lobby-room-list-board.png'
 import lobbyGardenGrassTile from '@/assets/lobby/lobby-garden-grass-tile.png'
@@ -26,6 +27,12 @@ const GAME_ART: Record<number, string> = {
   6: '/assets/intro/sketchbook.png',
 }
 const GAME_TONE = ['sky', 'mint', 'peach', 'lilac', 'butter']
+/**
+ * 캐치캐치리듬 — 이 게임 카드만 레이어형 썸네일(RhythmThumbnail)을 쓴다.
+ * ⚠️ 실제 백엔드 시더(RhythmGameSeeder) 기준 id=2. 프론트 MOCK_GAMES에는 id=3 "리듬 터치"라는
+ * 목데이터 전용 항목이 있지만 백엔드엔 존재하지 않는 이름이라 대응하지 않는다(id=3 확인 결과 반영).
+ */
+const RHYTHM_GAME_ID = 2
 const MOCK_GAMES: Game[] = [
   { id: 1, name: '핑거 스타', description: '손끝으로 별자리를 완성해요', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '손동작', thumbnailUrl: '', playable: true },
   { id: 2, name: '모션 낚시', description: '온몸으로 즐기는 낚시 게임', mode: 'SOLO', minPlayers: 1, maxPlayers: 4, supportsBot: false, category: '전신', thumbnailUrl: '', playable: true },
@@ -43,6 +50,7 @@ const starting = ref(false)
 
 function artFor(game: Game) { return game.thumbnailUrl || GAME_ART[game.id] }
 function toneFor(game: Game) { return GAME_TONE[game.id % GAME_TONE.length] }
+function isRhythm(game: Game) { return game.id === RHYTHM_GAME_ID }
 async function openDetail(game: Game) {
   selected.value = game
   detailOpen.value = true
@@ -96,7 +104,8 @@ function goDevice(game: Game, roomId: string) {
         <div class="game-grid">
           <article v-for="game in visibleGames" :key="game.id" class="game-card" :class="{ unavailable: !game.playable }" tabindex="0" @click="openDetail(game)" @keydown.enter="openDetail(game)">
             <div class="game-visual" :class="`tone-${toneFor(game)}`">
-              <img v-if="artFor(game)" :src="artFor(game)" alt="" />
+              <RhythmThumbnail v-if="isRhythm(game)" />
+              <img v-else-if="artFor(game)" :src="artFor(game)" alt="" />
               <button type="button" class="detail-button" :aria-label="`${game.name} 상세 보기`" @click.stop="openDetail(game)"><span>자세히</span><b>›</b></button>
             </div>
             <div class="game-copy"><div class="game-title-row"><h3>{{ game.name }}</h3><span>{{ game.minPlayers }}~{{ game.maxPlayers }}인</span></div><p>{{ game.description }}</p><div class="game-meta"><span>{{ game.mode }}</span><span v-if="game.supportsBot">BOT 가능</span><span v-if="!game.playable">준비 중</span></div></div>
