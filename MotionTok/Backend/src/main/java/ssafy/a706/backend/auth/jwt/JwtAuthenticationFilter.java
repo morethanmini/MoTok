@@ -13,6 +13,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 import ssafy.a706.backend.auth.principal.GuestPrincipal;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
+import ssafy.a706.backend.auth.session.SessionRevocationStore;
 import ssafy.a706.backend.user.enums.UserRole;
 
 import java.io.IOException;
@@ -23,15 +24,31 @@ import java.util.List;
  * 게스트 토큰(type=guest)은 DB 조회 없이 GuestPrincipal로 인증한다.
  * Refresh 토큰(type=refresh)은 API 인증 수단이 아니므로 여기서 거부한다.
  * (SecurityConfig에서 직접 생성해 등록하므로 @Component로 두지 않는다 — 서블릿 이중 등록 방지)
+ *
+ * <p>서명이 유효해도 세션(sid)이 폐기 목록에 있으면 인증하지 않는다 — 밀어내기·로그아웃이
+ * 이미 나간 액세스 토큰을 그 자리에서 죽이는 지점이다. 사유는 요청 attribute로만 남긴다.
+ * 여기서 응답을 직접 쓰지 않는 이유 — permitAll 경로(로그인 등)는 폐기된 토큰을 들고 와도
+ * 비인증으로 통과해야 하고, 보호 경로는 어차피 entry point가 401을 쓰므로 그쪽에서
+ * attribute를 보고 전용 코드(AUTH_SESSION_DISPLACED)로 갈라 준다(SecurityConfig).</p>
  */
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+    /** 폐기된 sid의 토큰이었음을 entry point에 전하는 요청 attribute. 값은 {@link SessionRevocationStore.Reason}. */
+    private static final String REVOKED_ATTRIBUTE = JwtAuthenticationFilter.class.getName() + ".revoked";
 
     private static final String BEARER = "Bearer ";
 
     private final JwtTokenProvider tokenProvider;
+    private final SessionRevocationStore sessionRevocationStore;
 
-    public JwtAuthenticationFilter(JwtTokenProvider tokenProvider) {
+    public JwtAuthenticationFilter(JwtTokenProvider tokenProvider, SessionRevocationStore sessionRevocationStore) {
         this.tokenProvider = tokenProvider;
+        this.sessionRevocationStore = sessionRevocationStore;
+    }
+
+    /** 이 요청의 401이 "다른 곳 로그인으로 밀려남" 때문인가 — entry point가 오류 코드를 고를 때 쓴다. */
+    public static boolean wasDisplaced(HttpServletRequest request) {
+        return request.getAttribute(REVOKED_ATTRIBUTE) == SessionRevocationStore.Reason.DISPLACED;
     }
 
     @Override
@@ -42,13 +59,36 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             try {
                 Claims claims = tokenProvider.parse(header.substring(BEARER.length()));
                 if (!tokenProvider.isRefresh(claims)) {
-                    SecurityContextHolder.getContext().setAuthentication(toAuthentication(claims));
+                    SessionRevocationStore.Reason revoked = revocationOf(claims);
+                    if (revoked != null) {
+                        request.setAttribute(REVOKED_ATTRIBUTE, revoked);
+                    } else {
+                        SecurityContextHolder.getContext().setAuthentication(toAuthentication(claims));
+                    }
                 }
             } catch (JwtException | IllegalArgumentException e) {
                 SecurityContextHolder.clearContext();
             }
         }
         chain.doFilter(request, response);
+    }
+
+    /**
+     * 세션 폐기 여부. sid가 없는 토큰(게스트·도입 이전 발급분)은 대조할 열쇠가 없어 통과한다.
+     * Redis 장애 시에도 통과시킨다(fail-open) — 서명 검증만으로 서비스를 유지하고, 폐기 반영이
+     * 최대 액세스 수명만큼 늦는 것을 감수한다. 여기서 막으면 Redis 장애가 곧 전면 장애가 된다.
+     */
+    private SessionRevocationStore.Reason revocationOf(Claims claims) {
+        String sid = tokenProvider.getSessionId(claims);
+        if (sid == null) {
+            return null;
+        }
+        try {
+            return sessionRevocationStore.reasonOf(sid);
+        } catch (RuntimeException e) {
+            logger.warn("세션 폐기 목록 조회 실패 — 서명 검증만으로 통과시킨다(fail-open)", e);
+            return null;
+        }
     }
 
     private UsernamePasswordAuthenticationToken toAuthentication(Claims claims) {

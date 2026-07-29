@@ -103,8 +103,12 @@ async function doRefresh(silent: boolean): Promise<boolean> {
 
   if (!res.ok) {
     // 서버가 명시적으로 거절했다 — 쿠키가 없거나 만료됐거나 재사용으로 무효화된 경우다. 되살릴 방법이 없다.
+    const body = (await res.json().catch(() => null)) as Partial<ApiErrorBody> | null
     clearTokens()
-    if (!silent) emitSessionExpired()
+    // 다른 곳 로그인으로 밀려난 세션(단일 세션) — silent(새로고침 복원)라도 안내한다.
+    // 이 코드는 세션이 실재했다는 증거라, 로그인한 적 없는 방문자의 조용한 실패와는 다르다.
+    if (body?.code === 'AUTH_SESSION_DISPLACED') emitSessionExpired('displaced')
+    else if (!silent) emitSessionExpired()
     return false
   }
 

@@ -19,6 +19,7 @@ import ssafy.a706.backend.auth.oauth.OauthUserInfo;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.principal.GuestPrincipal;
 import ssafy.a706.backend.auth.ratelimit.LoginAttemptLimiter;
+import ssafy.a706.backend.auth.session.SessionRevocationStore;
 import ssafy.a706.backend.auth.session.SingleSessionPolicy;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
@@ -53,6 +54,7 @@ public class AuthService {
     private final PresenceService presenceService;
     private final StompSessionRegistry stompSessionRegistry;
     private final SingleSessionPolicy singleSessionPolicy;
+    private final SessionRevocationStore sessionRevocationStore;
     private final LoginAttemptLimiter loginAttemptLimiter;
     private final RejoinPolicy rejoinPolicy;
     private final ProfanityFilter profanityFilter;
@@ -210,10 +212,16 @@ public class AuthService {
         }
 
         Long userId = Long.valueOf(claims.getSubject());
+        String sessionId = tokenProvider.getSessionId(claims);
+        // 밀려난 세션의 갱신은 어떤 판정보다 먼저 전용 코드로 거절한다 — 스케줄러의 갱신 실패가
+        // 곧 "다른 곳에서 로그인" 안내가 되도록. 일반 만료(INVALID_TOKEN)와 문구가 갈리는 지점이다.
+        if (sessionId != null && sessionRevocationStore.reasonOf(sessionId) == SessionRevocationStore.Reason.DISPLACED) {
+            throw new BusinessException(ErrorCode.SESSION_DISPLACED);
+        }
         Duration refreshTtl = Duration.ofMillis(tokenProvider.getRefreshExpirationMs());
         // 회전은 검사와 한 덩어리로 돌아야 해서, 쓰이지 않을 수도 있는 새 토큰을 미리 만들어 넘긴다.
-        String rotated = tokenProvider.createRefreshToken(userId);
-        RefreshTokenStore.Verdict verdict = refreshTokenStore.rotate(userId, refreshToken, rotated, refreshTtl);
+        String rotated = tokenProvider.createRefreshToken(userId, sessionId);
+        RefreshTokenStore.Verdict verdict = refreshTokenStore.rotate(userId, refreshToken, rotated, refreshTtl, sessionId);
 
         if (verdict == RefreshTokenStore.Verdict.REUSED) {
             // 이미 회전된 토큰이 grace를 한참 넘겨 돌아왔다 — 세션은 store가 지웠고, 여기서는 흔적만 남긴다.
@@ -231,7 +239,7 @@ public class AuthService {
         }
 
         TokenResponse body = TokenResponse.of(
-                tokenProvider.createAccessToken(user.getId(), user.getNickname(), user.getRole().name()),
+                tokenProvider.createAccessToken(user.getId(), user.getNickname(), user.getRole().name(), sessionId),
                 tokenProvider.accessExpiresInSeconds(), UserProfileResponse.from(user));
 
         if (verdict == RefreshTokenStore.Verdict.GRACE) {
@@ -256,6 +264,9 @@ public class AuthService {
      */
     @Transactional
     public void logout(Long userId) {
+        // Access 토큰도 함께 죽인다 — 지우기 전에 불러야 sid를 읽을 수 있다(SessionRevocationStore).
+        // 로그아웃한 본인은 토큰을 이미 버렸으므로, 이 폐기에 걸리는 요청은 남아 있던 다른 탭이거나 유출분이다.
+        sessionRevocationStore.revokeCurrent(userId, SessionRevocationStore.Reason.LOGGED_OUT);
         refreshTokenStore.delete(userId);
         stompSessionRegistry.closeAllOf(userId);
         presenceService.clear(userId);
@@ -271,15 +282,16 @@ public class AuthService {
     }
 
     private IssuedTokens issueTokens(User user, boolean persistent) {
-        // 새 로그인이 기존 세션을 밀어낸다(단일 세션) — Refresh 토큰은 아래 save()가 덮어써 이미 무효화되지만,
-        // 옛 기기의 액세스 토큰·웹소켓은 그대로 살아 있어 따로 알리고 끊어야 한다.
+        // 새 로그인이 기존 세션을 밀어낸다(단일 세션) — 옛 sid 폐기·알림·연결 종료가 모두 이 안에서 일어난다.
+        // 반드시 save()보다 먼저 — 옛 sid는 Refresh 해시에 있어서, 덮어쓰고 나면 폐기할 대상을 잃는다.
         singleSessionPolicy.displacePrevious(user.getId());
 
+        String sessionId = UUID.randomUUID().toString();
         String accessToken = tokenProvider.createAccessToken(
-                user.getId(), user.getNickname(), user.getRole().name());
-        String refreshToken = tokenProvider.createRefreshToken(user.getId());
+                user.getId(), user.getNickname(), user.getRole().name(), sessionId);
+        String refreshToken = tokenProvider.createRefreshToken(user.getId(), sessionId);
         Duration refreshTtl = Duration.ofMillis(tokenProvider.getRefreshExpirationMs());
-        refreshTokenStore.save(user.getId(), refreshToken, refreshTtl, persistent);
+        refreshTokenStore.save(user.getId(), refreshToken, refreshTtl, persistent, sessionId);
         return new IssuedTokens(
                 TokenResponse.of(accessToken, tokenProvider.accessExpiresInSeconds(), UserProfileResponse.from(user)),
                 refreshToken, refreshTtl, persistent);

@@ -229,7 +229,7 @@ class FriendPresencePushIntegrationTest {
     private StompSession connect(User user) throws Exception {
         StompHeaders connectHeaders = new StompHeaders();
         connectHeaders.add("Authorization", "Bearer "
-                + tokenProvider.createAccessToken(user.getId(), user.getNickname(), "USER"));
+                + tokenProvider.createAccessToken(user.getId(), user.getNickname(), "USER", "sid-it-" + user.getId()));
         StompSession session = newClient()
                 .connectAsync(wsUrl(), new WebSocketHttpHeaders(), connectHeaders,
                         new StompSessionHandlerAdapter() {})

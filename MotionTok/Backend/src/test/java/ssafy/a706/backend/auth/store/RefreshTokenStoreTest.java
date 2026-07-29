@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.data.redis.RedisSystemException;
 import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -45,10 +46,12 @@ class RefreshTokenStoreTest {
         given(redis.<Object, Object>opsForHash()).willReturn(hashOps);
     }
 
+    private static final String SESSION_ID = "sid-42-current";
+
     @Test
     @DisplayName("저장되는 값은 토큰 원문이 아니라 SHA-256 해시다")
     void storesHashInsteadOfRawToken() {
-        store.save(USER_ID, TOKEN, TTL, true);
+        store.save(USER_ID, TOKEN, TTL, true, SESSION_ID);
 
         ArgumentCaptor<Object> stored = ArgumentCaptor.forClass(Object.class);
         verify(hashOps).put(eq(KEY), eq("hash"), stored.capture());
@@ -58,23 +61,24 @@ class RefreshTokenStoreTest {
     @Test
     @DisplayName("새 세션을 열 때 옛 회전 기록까지 지운다 — 옛 직전 토큰이 grace로 되살아나면 안 된다")
     void dropsPreviousRotationOnFreshLogin() {
-        store.save(USER_ID, TOKEN, TTL, false);
+        store.save(USER_ID, TOKEN, TTL, false, SESSION_ID);
 
         verify(redis).delete(KEY);
         verify(hashOps).put(KEY, "persistent", "0");
+        verify(hashOps).put(KEY, "sid", SESSION_ID);
         verify(redis).expire(KEY, TTL);
     }
 
     @Test
-    @DisplayName("회전 요청은 원문이 아니라 해시만 스크립트로 넘긴다")
+    @DisplayName("회전 요청은 원문이 아니라 해시만 스크립트로 넘긴다 — sid는 가드 대조용으로 함께 간다")
     void passesOnlyHashesToScript() {
         stubScript(1L);
 
-        store.rotate(USER_ID, TOKEN, NEXT, TTL);
+        store.rotate(USER_ID, TOKEN, NEXT, TTL, SESSION_ID);
 
         ArgumentCaptor<Object> arg = ArgumentCaptor.forClass(Object.class);
         verify(redis).execute(any(RedisScript.class), eq(List.of(KEY)),
-                arg.capture(), arg.capture(), arg.capture(), arg.capture(), arg.capture());
+                arg.capture(), arg.capture(), arg.capture(), arg.capture(), arg.capture(), arg.capture());
 
         List<Object> passed = arg.getAllValues();
         assertThat(passed.get(0).toString()).isNotEqualTo(TOKEN).matches(HEX_64);
@@ -84,6 +88,20 @@ class RefreshTokenStoreTest {
         assertThat(Long.parseLong(passed.get(3).toString()) - now)
                 .isEqualTo(RefreshTokenStore.GRACE.toMillis());
         assertThat(passed.get(4)).isEqualTo(String.valueOf(TTL.toMillis()));
+        assertThat(passed.get(5)).isEqualTo(SESSION_ID);
+    }
+
+    @Test
+    @DisplayName("sid 없는 구 토큰은 빈 문자열로 넘긴다 — Lua에서 nil 비교가 터지면 안 된다")
+    void passesEmptyStringForLegacyTokenWithoutSid() {
+        stubScript(0L);
+
+        store.rotate(USER_ID, TOKEN, NEXT, TTL, null);
+
+        ArgumentCaptor<Object> arg = ArgumentCaptor.forClass(Object.class);
+        verify(redis).execute(any(RedisScript.class), eq(List.of(KEY)),
+                arg.capture(), arg.capture(), arg.capture(), arg.capture(), arg.capture(), arg.capture());
+        assertThat(arg.getAllValues().get(5)).isEqualTo("");
     }
 
     @Test
@@ -114,13 +132,32 @@ class RefreshTokenStoreTest {
         assertThat(store.isPersistent(USER_ID)).isFalse();
     }
 
+    @Test
+    @DisplayName("현재 세션의 sid를 읽는다 — 밀어내기·로그아웃이 폐기할 대상을 여기서 찾는다")
+    void readsSessionId() {
+        given(hashOps.get(KEY, "sid")).willReturn(SESSION_ID);
+        assertThat(store.sessionId(USER_ID)).isEqualTo(SESSION_ID);
+
+        given(hashOps.get(KEY, "sid")).willReturn(null);
+        assertThat(store.sessionId(USER_ID)).isNull();
+    }
+
+    @Test
+    @DisplayName("구 포맷(평문 String) 키의 WRONGTYPE은 sid 없음으로 취급한다 — 로그인이 막히면 안 된다")
+    void treatsLegacyStringKeyAsMissingSid() {
+        given(hashOps.get(KEY, "sid")).willThrow(new RedisSystemException("Error in execution",
+                new RuntimeException("WRONGTYPE Operation against a key holding the wrong kind of value")));
+
+        assertThat(store.sessionId(USER_ID)).isNull();
+    }
+
     private void stubScript(Long code) {
-        given(redis.execute(any(RedisScript.class), anyList(), any(), any(), any(), any(), any()))
+        given(redis.execute(any(RedisScript.class), anyList(), any(), any(), any(), any(), any(), any()))
                 .willReturn(code);
     }
 
     private RefreshTokenStore.Verdict rotateReturning(Long code) {
         stubScript(code);
-        return store.rotate(USER_ID, TOKEN, NEXT, TTL);
+        return store.rotate(USER_ID, TOKEN, NEXT, TTL, SESSION_ID);
     }
 }
