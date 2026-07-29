@@ -59,6 +59,19 @@ export interface PumpDebug {
   halves: number
   /** 마지막으로 확정된 방향 ('up' | 'down' | null) */
   phase: 'up' | 'down' | null
+  /**
+   * 첫 / 마지막 반주기 확정 시각(ms). 0이면 아직 반주기가 없다.
+   *
+   * **지속 속도**를 재기 위한 값이다. feed가 돌려주는 rate는 마지막 반주기 간격의 역수라
+   * 순간값이고, 밸런스(어종표 requiredRate)는 지속 속도로 정해져야 한다. 순간값을 지속
+   * 속도로 착각해 어종표를 잘못 잡은 적이 있다(fight.ts 어종표 주석: "한 번 스쳐본
+   * 순간값이었고 지속 가능한 속도가 아니었다"). 두 숫자를 구분해서 볼 수 있게 노출한다.
+   *
+   * 리셋 기준 경과가 아니라 첫~마지막 반주기 구간을 쓴다 — 손을 들기 전과 내린 뒤 시간이
+   * 섞이면 "지속"이 아니다.
+   */
+  firstTick: number
+  lastTick: number
 }
 
 export interface Pump {
@@ -73,6 +86,8 @@ export function createPump(config: PumpConfig = DEFAULT_PUMP): Pump {
   /** 마지막 두 반주기 시각 — rate는 이 간격의 역수로 낸다 */
   let lastTick = 0
   let prevTick = 0
+  /** 첫 반주기 시각 — 지속 속도의 구간 시작점 */
+  let firstTick = 0
   let halves = 0
   let phase: 'up' | 'down' | null = null
   let amp = 0
@@ -100,6 +115,7 @@ export function createPump(config: PumpConfig = DEFAULT_PUMP): Pump {
     halves++
     prevTick = lastTick
     lastTick = now
+    if (firstTick === 0) firstTick = now
   }
 
   return {
@@ -107,13 +123,14 @@ export function createPump(config: PumpConfig = DEFAULT_PUMP): Pump {
       hist = []
       lastTick = 0
       prevTick = 0
+      firstTick = 0
       halves = 0
       phase = null
       amp = 0
     },
 
     debug() {
-      return { ampPx: amp, halves, phase }
+      return { ampPx: amp, halves, phase, firstTick, lastTick }
     },
 
     feed(y, now) {

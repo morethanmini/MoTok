@@ -134,7 +134,34 @@ describe('펌핑 — 감기로 보지 않는 것', () => {
     }
     expect(pump.debug().halves).toBeGreaterThan(3)
     pump.reset()
-    expect(pump.debug()).toEqual({ ampPx: 0, halves: 0, phase: null })
+    // firstTick·lastTick도 지워야 한다 — 남으면 지속 속도 구간이 리셋 전까지 늘어난다
+    expect(pump.debug()).toEqual({
+      ampPx: 0,
+      halves: 0,
+      phase: null,
+      firstTick: 0,
+      lastTick: 0,
+    })
+  })
+
+  /**
+   * 지속 속도의 근거 — 랩이 어종표 requiredRate를 정할 때 쓰는 숫자다.
+   *
+   * feed의 rate는 마지막 반주기 간격의 역수라 순간값이고, 지속 속도와 3배까지 벌어진다
+   * (2026-07-29 실측: y왕복 순간 1.28/s vs 어종표를 잡은 지속 0.37~0.63/s). 순간값을 지속
+   * 속도로 착각해 어종표를 한 번 잘못 잡았으므로(fight.ts 어종표 주석) 구간 평균이 실제
+   * 주기와 맞는다는 걸 고정해둔다.
+   */
+  it('firstTick~lastTick 구간 평균이 실제 왕복 주기와 맞는다', () => {
+    const pump = createPump()
+    const HZ = 1.0
+    for (let t = 0; t <= 10_000; t += DT) {
+      pump.feed(CY + Math.sin(TAU * HZ * (t / 1000)) * 67, t)
+    }
+    const d = pump.debug()
+    // 구간 안의 반주기 간격은 halves-1개다 — 양 끝이 시각이라 간격이 하나 적다
+    const sustained = (d.halves - 1) / 2 / ((d.lastTick - d.firstTick) / 1000)
+    expect(sustained).toBeCloseTo(HZ, 1)
   })
 })
 
