@@ -1,5 +1,5 @@
 /**
- * 액세스 토큰 자동 갱신 타이머.
+ * 액세스 토큰 만료 타이머.
  *
  * 왜 필요한가 — 모톡은 로비에서 방에 들어가 게임을 하는 동안 REST 요청이 거의 없다.
  * 요청이 있을 때만 갱신하면 30분~1시간짜리 세션 하나를 마치고 나올 때 토큰이 이미 죽어 있고,
@@ -7,10 +7,13 @@
  * 그래서 요청과 무관하게 만료 5분 전에 스스로 갱신하고, 절전·백그라운드로 타이머가 밀렸을 수 있으니
  * 탭이 다시 보일 때도 한 번 확인한다.
  *
- * 게스트는 Refresh 토큰이 없어 갱신 대상이 아니다(대신 게스트 토큰 자체가 길다 — 서버 jwt.guest-expiration-ms).
+ * 게스트는 Refresh 쿠키가 없어 갱신 대상이 아니다. 대신 <b>만료되는 순간을 알린다</b> —
+ * 갱신 수단이 없으니 그때가 세션의 끝이고, 아무 안내 없이 요청만 실패하기 시작하면
+ * "왜 갑자기 안 되지"가 된다. 만료를 회원 전환을 권하는 자리로 쓴다(App.vue).
  */
 import { refreshAccessTokenIfNeeded } from './http'
-import { accessTokenRemainingMs, getRefreshToken } from './token'
+import { emitSessionExpired } from './authEvents'
+import { accessTokenRemainingMs, hasRefreshSession, readAnyAccessClaims } from './token'
 
 /** 만료 몇 분 전에 갱신할지 — http.ts의 선제 갱신 기준과 같게 맞춘다. */
 const LEAD_MS = 5 * 60 * 1000
@@ -22,9 +25,26 @@ let started = false
 
 function schedule() {
   clearTimeout(timer)
-  if (!getRefreshToken()) return // 비로그인·게스트 — 갱신할 것이 없다
+
+  // 게스트 — 갱신할 것이 없으니 "만료되는 순간"에 맞춰 한 번만 깨운다.
+  if (readAnyAccessClaims()?.type === 'guest') {
+    timer = setTimeout(() => guestExpired(), accessTokenRemainingMs())
+    return
+  }
+
+  if (!hasRefreshSession()) return // 비로그인 — 갱신할 것이 없다
   const delay = Math.max(MIN_DELAY_MS, accessTokenRemainingMs() - LEAD_MS)
   timer = setTimeout(() => void tick(), delay)
+}
+
+/** 게스트 토큰 만료. 타이머가 일찍 깼으면(브라우저 절전 등) 다시 잡는다. */
+function guestExpired() {
+  if (readAnyAccessClaims()?.type !== 'guest') return
+  if (accessTokenRemainingMs() > 0) {
+    schedule()
+    return
+  }
+  emitSessionExpired('guest')
 }
 
 async function tick() {

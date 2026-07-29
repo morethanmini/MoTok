@@ -160,8 +160,12 @@
       <div class="card-h h-auth">⑤ 인증 토큰<span class="tag">✅ 부분 구현 · 누락분 추가</span></div>
       <div class="card-body">
         <div class="kv"><div class="row"><code>auth:refresh:{userId}</code>
-          <div class="badges"><span class="badge b-done">✅</span><span class="badge b-type">String</span><span class="badge b-ttl">TTL 14d</span></div></div>
-          <div class="desc">Refresh Token 저장 · 로그아웃 시 DEL = 서버측 무효화 (<code>JWT_REFRESH_EXPIRATION_MS</code> 기본값과 동일하게 맞춰짐)</div></div>
+          <div class="badges"><span class="badge b-done">✅</span><span class="badge b-type">Hash</span><span class="badge b-ttl">TTL 14d</span></div></div>
+          <div class="desc">Refresh Token 세션 · 로그아웃 시 DEL = 서버측 무효화 (<code>JWT_REFRESH_EXPIRATION_MS</code> 기본값과 동일하게 맞춰짐).<br>
+          <b>토큰 원문을 저장하지 않는다</b> — 저장값은 SHA-256 해시다. Redis 덤프·<code>MONITOR</code>·백업으로 값이 새도 그것만으로는 재발급을 받을 수 없다.<br>
+          필드 — <code>hash</code>: 현재 토큰 해시 / <code>prevHash</code>·<code>prevUntil</code>: 직전 토큰 해시와 유예 만료(epoch ms) / <code>persistent</code>: 로그인 시 rememberMe(회전할 때 쿠키 수명을 유지하는 데 쓴다).<br>
+          갱신은 "검사 + 회전"을 <b>Lua 한 덩어리</b>로 돌린다(원자성). 나눠 실행하면 동시에 들어온 두 갱신이 각자 회전해 클라이언트가 든 토큰이 죽는다.
+          회전 직후 <b>30초(grace)</b> 안에 <code>prevHash</code>가 오면 회전 없이 통과시키고, 그 창을 넘긴 옛 토큰은 <b>재사용</b>으로 보고 키를 DEL한다.</div></div>
         <div class="kv"><div class="row"><code>auth:pwreset:{token}</code>
           <div class="badges"><span class="badge b-todo">📋</span><span class="badge b-type">String</span><span class="badge b-ttl">TTL 30m</span></div></div>
           <div class="desc">비밀번호 재설정 1회성 토큰 — 코드에 미구현(이메일 <b>인증</b>만 있고 비번 <b>재설정</b>은 아직 없음)</div></div>
@@ -174,6 +178,15 @@
         <div class="kv"><div class="row"><code>auth:email:cooldown:{email}</code>
           <div class="badges"><span class="badge b-new">v0.3 신규</span><span class="badge b-type">String</span><span class="badge b-ttl">TTL 60s</span></div></div>
           <div class="desc">인증코드 재발송 최소 간격 마커</div></div>
+        <div class="kv"><div class="row"><code>auth:login:fail:{email}</code>
+          <div class="badges"><span class="badge b-new">v0.2.24 신규</span><span class="badge b-type">카운터</span><span class="badge b-ttl">TTL 30m</span></div></div>
+          <div class="desc">로그인 실패 누적. 임계(기본 5회)를 넘으면 아래 block 키를 심는다. 로그인 성공 시 block과 함께 DEL</div></div>
+        <div class="kv"><div class="row"><code>auth:login:block:{email}</code>
+          <div class="badges"><span class="badge b-new">v0.2.24 신규</span><span class="badge b-type">String</span><span class="badge b-ttl">TTL 1m→5m→15m</span></div></div>
+          <div class="desc">로그인 차단 마커 — 존재하면 비밀번호 대조 없이 429. 실패가 쌓일수록 TTL이 길어진다(백오프). 상한 15분, 영구 잠금 없음</div></div>
+        <div class="kv"><div class="row"><code>auth:guest:start:m:{ip}</code> · <code>auth:guest:start:h:{ip}</code>
+          <div class="badges"><span class="badge b-new">v0.2.24 신규</span><span class="badge b-type">카운터</span><span class="badge b-ttl">TTL 1m · 1h</span></div></div>
+          <div class="desc">게스트 시작 호출 제한(고정 창). 호출마다 24h 1인방이 생기는 비인증 엔드포인트라 IP로 막는다. 기본 분당 10 · 시간당 100</div></div>
         <div class="kv"><div class="row"><code>auth:email:sent:{email}:{date}</code>
           <div class="badges"><span class="badge b-new">v0.3 신규</span><span class="badge b-type">카운터</span><span class="badge b-ttl">TTL 24h</span></div></div>
           <div class="desc">1일 발송 횟수 상한(5회) 제한용 INCR 카운터</div></div>

@@ -80,14 +80,16 @@ openvidu:
   token-ttl: ${OPENVIDU_TOKEN_TTL:10m}
 
 # JWT: dev default is overridable via env (JWT_SECRET). Do NOT ship the default secret.
-# access 1시간 — 한 세션(로비→방→게임)이 30분을 쉽게 넘기는 서비스 특성상 30분은 짧다.
-# 프론트가 만료 5분 전 선제 갱신을 돌리므로 이 값은 '갱신이 실패했을 때 버텨 주는 여유'에 가깝다.
-# Refresh는 Redis에 있어 서버가 언제든 무효화할 수 있으므로 access를 늘려도 회수 가능성은 그대로다.
+# access 30분 — 한 세션(로비→방→게임)이 30분을 쉽게 넘기지만, 프론트가 만료 5분 전에 선제 갱신을 돌리고
+# 그 타이머는 REST 요청과 무관하게 도므로(refreshScheduler) 게임 중에 토큰이 죽지 않는다.
+# 1시간에서 줄인 이유는 이 값이 곧 '회수할 수 없는 창'이기 때문이다 — 로그아웃·비밀번호 변경·다른 기기
+# 로그인(단일 세션)은 Redis의 Refresh를 무효화해 즉시 먹히지만, 이미 발급된 access 토큰은 서버가 되돌릴
+# 수단이 없어 만료까지 살아 있다. 그 창이 1시간이면 밀려난 기기가 한 시간을 더 쓴다.
 jwt:
   secret: ${JWT_SECRET}
-  access-expiration-ms: ${JWT_ACCESS_EXPIRATION_MS:3600000}      # 1시간
+  access-expiration-ms: ${JWT_ACCESS_EXPIRATION_MS:1800000}      # 30분
   refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:1209600000} # 14일 (Redis auth:refresh:{userId} TTL과 동일)
-  guest-expiration-ms: ${JWT_GUEST_EXPIRATION_MS:43200000}       # 12시간 — 게스트는 Refresh가 없어 갱신 불가(탭 종료 시 소멸)
+  guest-expiration-ms: ${JWT_GUEST_EXPIRATION_MS:1800000}        # 30분 — 게스트는 Refresh가 없어 갱신 불가(만료되면 재시작·로그인 유도)
 
 # TURN/STUN 자격 발급(-31). secret은 EC2 coturn의 static-auth-secret과 동일 값이어야 한다.
 # secret 미설정 시 STUN-only 응답(coturn 없는 로컬 개발용 degrade).

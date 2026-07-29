@@ -21,7 +21,7 @@ export interface PageMeta {
 export interface TokenResponse {
   tokenType: string
   accessToken: string
-  refreshToken: string
+  /** refreshToken은 본문에 없다 — 서버가 HttpOnly 쿠키(Path=/api/auth)로 심는다. */
   expiresIn?: number
   user?: UserProfile
   /** 소셜 최초 로그인 — true면 닉네임 설정 화면으로 보내야 한다 (-22) */

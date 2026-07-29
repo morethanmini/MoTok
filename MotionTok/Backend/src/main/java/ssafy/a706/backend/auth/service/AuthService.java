@@ -3,6 +3,7 @@ package ssafy.a706.backend.auth.service;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,7 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class AuthService {
@@ -116,8 +118,9 @@ public class AuthService {
     }
 
     @Transactional
-    public TokenResponse login(LoginRequest req) {
-        User user = userRepository.findByEmail(req.email().trim().toLowerCase())
+    public IssuedTokens login(LoginRequest req) {
+        String email = req.email().trim().toLowerCase();
+        User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_CREDENTIALS));
 
         if (user.getPasswordHash() == null
@@ -127,7 +130,8 @@ public class AuthService {
         if (!user.isActive()) {
             throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
         }
-        return issueTokens(user);
+        // rememberMe는 Refresh 쿠키의 수명이 된다 — true면 14일 영구 쿠키, 아니면 세션 쿠키.
+        return issueTokens(user, Boolean.TRUE.equals(req.rememberMe()));
     }
 
     /**
@@ -136,7 +140,7 @@ public class AuthService {
      * 아니면 계정을 생성·연동한 뒤 토큰을 발급한다. 계정 생성·조회는 OauthLinkService가 각각 별도 트랜잭션으로 처리한다.
      */
     @Transactional(propagation = Propagation.NOT_SUPPORTED) // 클래스 기본 readOnly 트랜잭션을 벗어나, 아래 OauthLinkService가 각자 새 트랜잭션(생성은 read-write)을 열게 한다.
-    public TokenResponse socialLogin(String providerPath, SocialLoginRequest req) {
+    public IssuedTokens socialLogin(String providerPath, SocialLoginRequest req) {
         OauthProvider provider = OauthProvider.from(providerPath);
         OauthUserInfo info = oauthClientResolver.resolve(provider)
                 .fetch(req.authorizationCode(), req.redirectUri());
@@ -149,7 +153,8 @@ public class AuthService {
         if (!user.isActive()) {
             throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
         }
-        return issueTokens(user);
+        // 소셜은 rememberMe를 물어볼 화면이 없다 — provider를 거쳐 돌아온 사용자를 매번 다시 로그인시키지 않도록 영구 쿠키로 둔다.
+        return issueTokens(user, true);
     }
 
     /**
@@ -166,12 +171,21 @@ public class AuthService {
         }
     }
 
-    /** Refresh 토큰으로 Access 재발급. 저장된 토큰과 일치할 때만 허용하고, 발급 시 회전시킨다. */
+    /**
+     * Refresh 쿠키로 Access 재발급. 저장된 토큰과 일치할 때만 허용하고, 발급 시 회전시킨다.
+     *
+     * <p>회전 직후 겹쳐 들어온 요청(grace)은 <b>회전 없이</b> 액세스 토큰만 새로 준다 —
+     * 브라우저가 이미 받아 둔 새 쿠키를 옛 값으로 덮어쓰지 않기 위해서다.
+     * grace마저 지난 옛 토큰은 유출로 보고 세션을 지운다(RefreshTokenStore.rotate).</p>
+     */
     @Transactional
-    public TokenResponse refresh(RefreshRequest req) {
+    public IssuedTokens refresh(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_TOKEN);
+        }
         Claims claims;
         try {
-            claims = tokenProvider.parse(req.refreshToken());
+            claims = tokenProvider.parse(refreshToken);
         } catch (JwtException | IllegalArgumentException e) {
             throw new BusinessException(ErrorCode.INVALID_TOKEN);
         }
@@ -180,7 +194,17 @@ public class AuthService {
         }
 
         Long userId = Long.valueOf(claims.getSubject());
-        if (!refreshTokenStore.matches(userId, req.refreshToken())) {
+        Duration refreshTtl = Duration.ofMillis(tokenProvider.getRefreshExpirationMs());
+        // 회전은 검사와 한 덩어리로 돌아야 해서, 쓰이지 않을 수도 있는 새 토큰을 미리 만들어 넘긴다.
+        String rotated = tokenProvider.createRefreshToken(userId);
+        RefreshTokenStore.Verdict verdict = refreshTokenStore.rotate(userId, refreshToken, rotated, refreshTtl);
+
+        if (verdict == RefreshTokenStore.Verdict.REUSED) {
+            // 이미 회전된 토큰이 grace를 한참 넘겨 돌아왔다 — 세션은 store가 지웠고, 여기서는 흔적만 남긴다.
+            log.warn("Refresh 토큰 재사용 감지 — userId={} 의 refresh 세션을 무효화했다", userId);
+            throw new BusinessException(ErrorCode.INVALID_TOKEN);
+        }
+        if (verdict == RefreshTokenStore.Verdict.NONE) {
             throw new BusinessException(ErrorCode.INVALID_TOKEN);
         }
 
@@ -189,7 +213,15 @@ public class AuthService {
         if (!user.isActive()) {
             throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
         }
-        return issueTokens(user);
+
+        TokenResponse body = TokenResponse.of(
+                tokenProvider.createAccessToken(user.getId(), user.getNickname(), user.getRole().name()),
+                tokenProvider.accessExpiresInSeconds(), UserProfileResponse.from(user));
+
+        if (verdict == RefreshTokenStore.Verdict.GRACE) {
+            return IssuedTokens.accessOnly(body);
+        }
+        return new IssuedTokens(body, rotated, refreshTtl, refreshTokenStore.isPersistent(userId));
     }
 
     /**
@@ -216,13 +248,14 @@ public class AuthService {
         return new GuestResponse(accessToken, nickname, roomId);
     }
 
-    private TokenResponse issueTokens(User user) {
+    private IssuedTokens issueTokens(User user, boolean persistent) {
         String accessToken = tokenProvider.createAccessToken(
                 user.getId(), user.getNickname(), user.getRole().name());
         String refreshToken = tokenProvider.createRefreshToken(user.getId());
-        refreshTokenStore.save(user.getId(), refreshToken,
-                Duration.ofMillis(tokenProvider.getRefreshExpirationMs()));
-        return TokenResponse.of(accessToken, refreshToken,
-                tokenProvider.accessExpiresInSeconds(), UserProfileResponse.from(user));
+        Duration refreshTtl = Duration.ofMillis(tokenProvider.getRefreshExpirationMs());
+        refreshTokenStore.save(user.getId(), refreshToken, refreshTtl, persistent);
+        return new IssuedTokens(
+                TokenResponse.of(accessToken, tokenProvider.accessExpiresInSeconds(), UserProfileResponse.from(user)),
+                refreshToken, refreshTtl, persistent);
     }
 }
