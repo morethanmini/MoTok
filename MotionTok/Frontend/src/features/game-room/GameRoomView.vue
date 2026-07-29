@@ -10,7 +10,7 @@ import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } f
 import type { ActiveGameSession } from '@/features/games/session'
 import { preferredAudioDeviceId, useCamera } from '@/composables/useCamera'
 import { useDecoration } from '@/composables/useDecoration'
-import { warmUpMotionModels } from '@/composables/motionModels'
+import { motionModelsReady, warmUpMotionModels } from '@/composables/motionModels'
 import { useStickerCompositor } from '@/composables/useStickerCompositor'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
@@ -555,6 +555,42 @@ const poseChallenge = ref<string | null>(null)
 /** 그림으로 말해요(게임 10) — DRAW/DRAW_RESULT 릴레이를 게임 컴포넌트로 전달하는 피드 */
 const drawFeed = ref<GameEvent[]>([])
 
+// ── 게임 시작 준비 게이트 (-161) ─────────────
+// GAME_START가 와도 모션 모델이 아직 없으면(새로고침으로 힙 싱글턴이 비었을 때) 게임을
+// 바로 마운트하지 않는다 — 그대로 마운트하면 화면은 도는데 손·자세만 안 잡히는, 사용자
+// 눈에는 "게임 실행 실패"인 상태가 된다(8인 테스트에서 3명 재현). 준비 오버레이를 띄우고
+// 모델이 채워진 뒤 마운트한다. Cache Storage 히트(modelCache)면 이 구간은 1초 미만이다.
+const gamePrep = ref<{ entry: GameEntry; key: string; progress: number; failed: boolean } | null>(null)
+
+/** 모델이 준비됐으면 즉시, 아니면 오버레이를 걸고 받아진 뒤 게임을 마운트한다. */
+function mountWhenReady(entry: GameEntry, key: string) {
+  if (motionModelsReady()) {
+    gamePrep.value = null
+    activeGame.value = entry
+    return
+  }
+  gamePrep.value = { entry, key, progress: 0, failed: false }
+  void warmUpMotionModels((f) => {
+    if (gamePrep.value?.key === key) gamePrep.value.progress = f
+  }).then((ok) => {
+    // 그 사이 다른 세션의 GAME_START가 덮었거나 방을 정리했으면 여기서 끝낸다
+    if (gamePrep.value?.key !== key) return
+    if (!ok) {
+      gamePrep.value.failed = true
+      return
+    }
+    gamePrep.value = null
+    activeGame.value = entry
+  })
+}
+function retryGamePrep() {
+  const prep = gamePrep.value
+  if (prep) mountWhenReady(prep.entry, prep.key)
+}
+function cancelGamePrep() {
+  gamePrep.value = null
+}
+
 /**
  * 게임④는 자체 사운드(S15P11A706-138)를 가지므로 로비 BGM을 내린다.
  * useBgm의 suspendForGame/resumeAfterGame은 만들어져만 있고 호출부가 없었다 — 여기서 연결한다.
@@ -718,7 +754,7 @@ function applyGameEvent(e: GameEvent) {
       turnDurationSec: e.turnDurationSec ?? null,
       handoverSec: e.handoverSec ?? null,
     }
-    activeGame.value = entry
+    mountWhenReady(entry, e.sessionId)
     picker.value = false
     if (!captureOn.value) flash('카메라를 켜면 게임에 참여할 수 있어요')
     return
@@ -767,7 +803,8 @@ function applyGameEvent(e: GameEvent) {
 // (비방장은 게임 화면을 열 이유가 없어 스스로 구독하지 못한다 — 그래서 여기서 듣는다)
 useRhythmAutoJoin(roomChat, roomCode, () => {
   const entry = GAME_CATALOG.find((g) => g.id === 'rhythm')
-  if (entry) activeGame.value = entry
+  // 리듬은 공용 세션이 없어 sessionId 대신 고정 키 — 준비 게이트(-161)는 동일하게 거친다
+  if (entry) mountWhenReady(entry, 'rhythm-auto-join')
   picker.value = false
   if (!captureOn.value) flash('카메라를 켜면 게임에 참여할 수 있어요')
 })
@@ -909,6 +946,7 @@ function onBodyFitFinished(r: { score: number; grade: string; iou: number }) {
 
 function closeGame() {
   void lk.unpublishGameScreen()
+  gamePrep.value = null
   activeGame.value = null
   activeSession.value = null
   gameResults.value = null
@@ -1288,6 +1326,25 @@ const startHint = computed(() =>
             @started="rhythmEnded = false"
             @ended="rhythmEnded = true"
           />
+          <!-- 게임 시작 준비 게이트(-161) — GAME_START는 왔지만 모션 모델이 아직 없을 때.
+               게임이 마운트될 자리(셀프 타일)를 그대로 덮어 "여기서 곧 시작된다"가 보이게 한다 -->
+          <div v-if="gamePrep" class="game-prep">
+            <template v-if="!gamePrep.failed">
+              <div class="game-prep-title"><i /> {{ gamePrep.entry.name }} 준비 중</div>
+              <div class="game-prep-track">
+                <div class="game-prep-fill" :style="{ width: `${Math.max(Math.round(gamePrep.progress * 100), 4)}%` }" />
+              </div>
+              <small>모션 인식 모델을 받고 있어요… {{ Math.round(gamePrep.progress * 100) }}%</small>
+            </template>
+            <template v-else>
+              <div class="game-prep-title fail">모션 인식 모델을 준비하지 못했어요</div>
+              <small>네트워크 상태를 확인한 뒤 다시 시도해 주세요</small>
+              <div class="game-prep-actions">
+                <button class="px" @click="retryGamePrep">다시 시도</button>
+                <button class="px ghost" @click="cancelGamePrep">닫기</button>
+              </div>
+            </template>
+          </div>
           <div class="self-label">
             <span class="c-g">{{ selfIsHost ? 'YOU · HOST' : 'YOU' }}</span>
             <span :style="{ color: selfMicOn ? '#5cbf4a' : '#e85d6e' }">
@@ -2232,6 +2289,64 @@ const startHint = computed(() =>
 .chat-full-head { color: var(--room-ink); border-bottom-color: #ead9bd; }
 .chat-full-close { border-color: #b78d5d; border-radius: 5px; background: #fff7e5; color: var(--room-ink); }
 .leave { border-color: #925c47; border-radius: 7px; background: #ef7775; box-shadow: 3px 3px 0 #a66b50; }
+
+/* ── 게임 시작 준비 게이트(-161) — 셀프 타일을 덮는 로딩/실패 패널 ── */
+.game-prep {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px;
+  background: rgba(43, 34, 28, .82);
+  color: #fffdf7;
+  text-align: center;
+}
+.game-prep-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.game-prep-title i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #7fe0c3;
+  animation: px-blink 1s steps(2) infinite;
+}
+.game-prep-title.fail { color: #ffb3ba; }
+.game-prep-track {
+  width: min(340px, 80%);
+  height: 15px;
+  padding: 3px;
+  border: 2px solid #fffdf7;
+  border-radius: 8px;
+  background: rgba(255, 253, 247, .18);
+  overflow: hidden;
+}
+.game-prep-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: repeating-linear-gradient(90deg, #7fe0c3 0 16px, #5cc9a8 16px 20px);
+  transition: width .2s ease-out;
+}
+.game-prep small { font-size: 9px; color: rgba(255, 253, 247, .85); }
+.game-prep-actions { display: flex; gap: 8px; }
+.game-prep-actions .px {
+  padding: 7px 14px;
+  border: 2px solid #925c47;
+  border-radius: 7px;
+  background: #e7c996;
+  color: var(--room-ink);
+  font-size: 11px;
+  cursor: pointer;
+}
+.game-prep-actions .px.ghost { background: #fff7e5; color: var(--room-muted); }
 
 @media (max-width: 1280px) {
   .room-ribbon { padding: 0 28px; }
