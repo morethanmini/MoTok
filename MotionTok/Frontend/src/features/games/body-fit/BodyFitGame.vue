@@ -411,8 +411,21 @@ const POOL_MAX = 4
 const WALL_SPAN_Z = WALL_STOP_Z - WALL_START_Z
 /** 판정 팝업을 띄워두는 시간 — 다음 벽이 닿기 전에 지워야 새 판정으로 읽힌다 */
 const POP_MS = 700
-/** 판정된 벽이 카메라를 지나쳐 나가는 속도(프레임당 월드 단위) */
-const FLY_AWAY_SPEED = 0.16
+/**
+ * 판정된 벽이 빠져나가는 데 걸리는 시간. 이 동안 앞으로 밀면서 투명해지고, 끝나면 반납된다.
+ *
+ * <p>프레임당 일정 거리(예전 방식)로 밀면 느린 기기에서 더 오래 남는다 — 통과한 벽이 오래
+ * 남으면 카메라에 가까워지며 화면을 덮어 <b>다음 벽 구멍을 미리 읽을 수 없다</b>(실기 피드백).
+ * 시간 기준이면 어떤 기기에서도 같은 시간 안에 비켜준다. "지나갔다"는 신호는 판정 팝업(POP_MS)이
+ * 이미 주므로 벽 자체는 빨리 사라져도 된다.</p>
+ */
+const FLY_AWAY_MS = 240
+/**
+ * 삭는 동안 앞으로 미는 거리 — 아주 짧다.
+ * 예전처럼 카메라까지 밀어버리면 그 자체가 화면을 덮는다. 시야를 비우는 일은 디졸브가 하고,
+ * 이 이동은 "지나갔다"는 방향감만 준다.
+ */
+const FLY_AWAY_Z = 0.6
 
 interface FlyingWall {
   handle: WallHandle
@@ -423,6 +436,8 @@ interface FlyingWall {
   /** 이 벽 고유의 접근 시간 — 가속 중이라 벽마다 다르다 */
   approachMs: number
   judged: boolean
+  /** 판정된 시각 — 빠져나가는 연출(FLY_AWAY_MS)의 기준점 */
+  judgedAt: number
 }
 /** 반납된 재사용 대기 핸들 */
 let pool: WallHandle[] = []
@@ -443,7 +458,12 @@ let popAt = 0
 
 function takeHandle(): WallHandle | null {
   const free = pool.pop()
-  if (free) return free
+  if (free) {
+    // 삭던 중에 반납된 핸들(연속 모드 중지·새 세션)이 섞여 있다 — 되돌리지 않으면 다음 벽이
+    // 구멍 뚫린 채로 뜬다. 재사용 경로가 여기 하나뿐이라 여기서만 정리한다.
+    free.setDissolve(0)
+    return free
+  }
   if (poolCreated >= POOL_MAX || !stage) return null
   const handle = createWall()
   stage.scene.add(handle.mesh)
@@ -480,6 +500,7 @@ function spawnChainWall(startAt: number) {
     start: startAt,
     approachMs: chainApproachMs(chainSpawns, base),
     judged: false,
+    judgedAt: 0,
   })
   chainNextStart = startAt + chainGapMs(chainSpawns, base, WALL_SPAN_Z)
   chainSpawns += 1
@@ -488,6 +509,7 @@ function spawnChainWall(startAt: number) {
 /** 벽 하나가 아바타 평면에 닿은 순간 — 그 벽의 포즈로만 판정한다(다음 벽과 섞이면 안 된다) */
 function judgeFlyingWall(w: FlyingWall, now: number) {
   w.judged = true
+  w.judgedAt = now
   // 진행 카운트는 인식 여부와 무관하게 올린다 — 안 그러면 카메라가 끊긴 벽 하나 때문에
   // 진행률이 9/10에서 영원히 멈춘다(벽은 이미 지나갔는데)
   chainArrived.value += 1
@@ -558,7 +580,11 @@ function chainTick(now: number) {
 
   for (const w of flying) {
     if (w.judged) {
-      w.handle.mesh.position.z += FLY_AWAY_SPEED
+      // 가루가 되며 삭는다 — 위치·디졸브 둘 다 경과 시간의 함수라 프레임 수와 무관하다
+      // (프레임당 일정 거리로 밀면 느린 기기에서 더 오래 남아 다음 벽을 가린다)
+      const out = Math.min(1, (now - w.judgedAt) / FLY_AWAY_MS)
+      w.handle.mesh.position.z = WALL_STOP_Z + FLY_AWAY_Z * out
+      w.handle.setDissolve(out)
       continue
     }
     const t = Math.min(1, (now - w.start) / w.approachMs)
@@ -567,7 +593,7 @@ function chainTick(now: number) {
   }
 
   flying = flying.filter((w) => {
-    if (w.handle.mesh.position.z <= 4) return true
+    if (!w.judged || now - w.judgedAt < FLY_AWAY_MS) return true
     w.handle.mesh.visible = false
     pool.push(w.handle)
     return false
