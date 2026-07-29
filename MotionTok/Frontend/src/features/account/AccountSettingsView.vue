@@ -16,6 +16,7 @@ import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import { useToast } from '@/composables/useToast'
+import { containsProfanity } from '@/utils/profanity'
 
 const router = useRouter()
 const session = useSessionStore()
@@ -67,6 +68,13 @@ async function checkNickname() {
     nicknameChecked.value = true
     nicknameAvailable.value = false
     nicknameMsg.value = '닉네임은 2~16자여야 해요.'
+    return
+  }
+  // 서버(중복확인·수정 @NoProfanity)와 같은 검사를 미리 태운다 — 왕복 없이 즉시 안내
+  if (containsProfanity(value)) {
+    nicknameChecked.value = true
+    nicknameAvailable.value = false
+    nicknameMsg.value = '✕ 닉네임에 사용할 수 없는 단어가 있어요'
     return
   }
   checkingNickname.value = true
