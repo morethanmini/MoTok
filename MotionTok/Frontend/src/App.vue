@@ -22,6 +22,8 @@ import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import { useWhisper } from '@/composables/useWhisper'
+import { stompConnected } from '@/composables/useGlobalStomp'
+import WhisperModal from '@/components/common/WhisperModal.vue'
 import { useToast } from '@/composables/useToast'
 
 const router = useRouter()
@@ -88,6 +90,11 @@ function guestPromptTo(mode: 'login' | 'signup') {
   closeGuestPrompt()
   router.push({ name: RouteName.Auth, query: { mode } })
 }
+function sendWhisper(text: string) {
+  if (!whisper.openWith.value || !whisper.send(whisper.openWith.value, text)) {
+    flashWhisper('실시간 연결이 끊겨 있어요. 잠시 후 다시 시도해 주세요')
+  }
+}
 </script>
 
 <template>
@@ -96,6 +103,15 @@ function guestPromptTo(mode: 'login' | 'signup') {
   </RouterView>
 
   <PixelToast :message="whisperToast" />
+
+  <WhisperModal
+    v-if="whisper.openWith.value"
+    :nickname="whisper.openNickname.value"
+    :messages="whisper.messagesWith(whisper.openWith.value)"
+    :connected="stompConnected"
+    @close="whisper.close"
+    @send="sendWhisper"
+  />
 
   <LoginRequiredModal
     v-if="loginRequired"

@@ -48,6 +48,7 @@ function pay() {
 
       <!-- ── 1단계: 금액 선택 ── -->
       <template v-if="step === 'select'">
+        <p class="charge-kicker">MOTION POINT SHOP</p>
         <h3>포인트 충전</h3>
 
         <div class="balance">
@@ -91,6 +92,7 @@ function pay() {
 
       <!-- ── 2단계: 결제창 초안 ── -->
       <template v-else>
+        <p class="charge-kicker">MOTION POINT SHOP</p>
         <h3>결제</h3>
 
         <div class="pay-summary">
@@ -127,6 +129,7 @@ function pay() {
 
 <style scoped>
 .charge { position: relative; }
+.charge-kicker { margin: 0 0 8px; color: #a8704f; font-size: 8px; letter-spacing: 1px; }
 .close {
   position: absolute;
   top: -6px;
@@ -139,7 +142,7 @@ function pay() {
   box-shadow: 2px 2px 0 var(--c-ink);
   font-size: 12px;
 }
-h3 { margin: 4px 0 16px; }
+h3 { margin: 4px 0 16px; color: #4b3429; font-family: var(--font-pixel); font-size: 17px; font-weight: 400; }
 
 .balance {
   display: flex;
@@ -151,6 +154,11 @@ h3 { margin: 4px 0 16px; }
   background: #fff7d9;
   margin-bottom: 16px;
 }
+.charge :deep(.px-modal) { border-color: #8d6048; background: #fff8e9; }
+.close { border-color: #9a6b4f; border-radius: 6px; background: #fff0b6; box-shadow: 2px 2px 0 #bd916e; color: #5d3d2e; }
+.balance { border-color: #c79b77; border-radius: 9px; background: #fff0b6; box-shadow: inset 0 0 0 2px #fff9e8; }.bal-cap { color: #947662; }.bal-val { color: #82533a; }
+.amounts { gap: 8px; }.amount { border-color: #c79b77; border-radius: 8px; background: #fffdf6; box-shadow: 2px 2px 0 #dfc09a; color: #5b3e30; }.amount.on { border-color: #8d6048; background: #ffe9ab; box-shadow: 3px 3px 0 #bd916e; transform: translate(-1px, -1px); }.amount .w { color: #987b67; }.amount .bonus, .bonus-txt { color: #bb6c42; }
+.summary { border-color: #a7bc83; border-radius: 8px; background: #e6f0cb; }.summary b { color: #56743e; }.pay-summary { border-color: #c79b77; border-radius: 9px; background: #fffdf6; }.pay-summary .row + .row { border-top-color: #ead5b8; }.pay-summary .total { background: #fff0b6; }.pay-summary .total b { color: #82533a; }.method { border-color: #c79b77; border-radius: 7px; background: #fffdf6; color: #5b3e30; }.method.on { border-color: #8d6048; background: #ffe9ab; box-shadow: 2px 2px 0 #bd916e; }.notice { color: #947662; }.actions :deep(.px-btn) { border: 2px solid #9a6b4f; border-radius: 6px; box-shadow: 2px 2px 0 #bd916e; }
 .bal-cap { font-size: 9px; color: var(--c-muted); }
 .bal-val { font-size: 16px; font-weight: 700; color: #d79600; margin-top: 2px; }
 

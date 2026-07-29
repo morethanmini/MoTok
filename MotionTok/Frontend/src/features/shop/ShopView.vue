@@ -10,6 +10,7 @@ import AppPage from '@/components/common/AppPage.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import CoinIcon from '@/components/common/CoinIcon.vue'
+import catAccessories from '@/assets/shop/cat-accessories.png'
 import { useToast } from '@/composables/useToast'
 import PurchaseConfirmModal from './components/PurchaseConfirmModal.vue'
 import ChargePointsModal from '@/components/common/ChargePointsModal.vue'
@@ -55,6 +56,7 @@ const MOCK_ITEMS: Item[] = [
   { id: 6, name: '반짝임 효과', category: 'EFFECT', itemType: 'SHOP', pricePoint: 450, imageUrl: '', owned: false },
   { id: 7, name: '음표 스티커', category: 'STICKER', itemType: 'SHOP', pricePoint: 200, imageUrl: '/assets/item/sticker/note_1.png', owned: false },
   { id: 8, name: '별 스티커', category: 'STICKER', itemType: 'SHOP', pricePoint: 250, imageUrl: '/assets/item/sticker/star_1.png', owned: false },
+  { id: 9, name: '고양이 풍선 스티커', category: 'STICKER', itemType: 'SHOP', pricePoint: 1500, imageUrl: '/assets/item/sticker/cat_balloon.gif', owned: false },
 ]
 
 const CATEGORIES: { key: ItemCategory | 'ALL'; label: string; emoji: string }[] = [
@@ -130,34 +132,40 @@ async function confirmPurchase() {
 </script>
 
 <template>
-  <AppPage title="상점" subtitle="포인트로 화면 꾸미기 아이템을 구매하세요">
-    <template #actions>
-      <div class="balance bottom-balance">
-        <small>MY POINT</small>
-        <b><CoinIcon :size="17" /> {{ currentPoints.toLocaleString() }}</b>
-      </div>
-    </template>
-
+  <AppPage class="shop-page" title="상점" :back="false" title-style="none" max-width="1460px" :zoom="1">
     <template #hero>
       <section class="shop-hero">
-        <div>
-          <span class="px-kicker">NEW ITEM DROP!</span>
-          <h2>나만의 플레이 화면을 꾸며봐요</h2>
+        <div class="shop-copy">
+          <span class="shop-kicker">MOTION BOUTIQUE</span>
+          <h1>나만의 플레이를 <em>꾸며봐요</em></h1>
           <p>가면, 반짝이는 효과, 배경까지 모션 파티에 개성을 더해요.</p>
         </div>
-        <div class="hero-actions">
-          <PixelButton variant="guest" @click="router.push({ name: RouteName.Inventory })">
-            🎒 내 아바타
-          </PixelButton>
-          <PixelButton variant="mint" @click="router.push({ name: RouteName.AiItemCreate })">
-            ✎ AI 아이템 만들기
-          </PixelButton>
+        <div class="shop-hero-side">
+          <div class="hero-actions">
+            <PixelButton variant="guest" @click="router.push({ name: RouteName.Inventory })">내 아바타</PixelButton>
+          </div>
         </div>
-        <img src="/assets/intro/sketchbook.png" alt="꾸미기 아이템" />
+        <img class="shop-art" src="/assets/shop-boutique-cat.png" alt="리본을 맨 고양이" />
+        <div class="hero-floats" aria-hidden="true">
+          <i class="accessory float-paw" :style="{ backgroundImage: `url(${catAccessories})` }" />
+          <i class="accessory float-fish" :style="{ backgroundImage: `url(${catAccessories})` }" />
+          <i class="accessory float-bell" :style="{ backgroundImage: `url(${catAccessories})` }" />
+          <i class="accessory float-beanie" :style="{ backgroundImage: `url(${catAccessories})` }" />
+        </div>
       </section>
     </template>
 
-    <div class="chips">
+    <section class="shop-controls">
+      <div class="section-label">
+        <span>ITEM SHELF</span>
+        <div class="section-title-row">
+          <h2>꾸미기 아이템</h2>
+          <div class="balance section-balance">
+            <b><CoinIcon :size="15" /> {{ currentPoints.toLocaleString() }}</b>
+          </div>
+        </div>
+      </div>
+      <div class="chips">
       <button
         v-for="c in CATEGORIES"
         :key="c.key"
@@ -165,9 +173,10 @@ async function confirmPurchase() {
         :class="{ on: active === c.key }"
         @click="active = c.key"
       >
-        {{ c.emoji }} {{ c.label }}
+        {{ c.label }}
       </button>
-    </div>
+      </div>
+    </section>
 
     <!-- 목록을 못 불러온 상태 — 아래 카드는 예시(목) 데이터라 구매할 수 없음을 밝힌다. -->
     <p v-if="loadError" class="load-error">
@@ -176,6 +185,21 @@ async function confirmPurchase() {
     </p>
 
     <div class="grid">
+      <article class="item ai-avatar-item">
+        <div class="thumb ai-avatar-thumb" aria-hidden="true">
+          <span class="avatar-spark spark-one">✦</span>
+          <span class="avatar-spark spark-two">✧</span>
+          <span class="avatar-face">◕ᴥ◕</span>
+          <span class="avatar-wand">✦</span>
+        </div>
+        <div class="name">AI 아바타 만들기</div>
+        <div class="row">
+          <span class="price"><CoinIcon :size="13" /> 1,500</span>
+          <PixelButton variant="mint" @click="router.push({ name: RouteName.AiItemCreate })">
+            제작하기
+          </PixelButton>
+        </div>
+      </article>
       <article v-for="item in filtered" :key="item.id" class="item">
         <div class="thumb">
           <img :src="thumbOf(item)" alt="" />
@@ -217,30 +241,74 @@ async function confirmPurchase() {
 </template>
 
 <style scoped>
-.shop-hero { position: relative; height: 150px; margin-bottom: 18px; padding: 22px 28px; display: flex; align-items: center; overflow: hidden; border: var(--border); border-radius: 21px 21px 15px 21px; background: linear-gradient(115deg, #ffe1d4, #fff2be); box-shadow: var(--shadow-lg); }
-.shop-hero h2 { margin: 12px 0 6px; font-size: 18px; }
-.shop-hero p { margin: 0; color: var(--c-muted); font-size: 10px; }
-.shop-hero > img { width: 180px; margin-left: 14px; transform: translateY(19px) rotate(5deg); }
-.hero-actions { margin-left: auto; display: flex; gap: 9px; }
-.balance { min-width: 130px; margin-left: 18px; padding: 13px 15px; border: var(--border); border-radius: 14px; background: #fff; box-shadow: var(--shadow-md); }
-.bottom-balance { margin-left: 0; }
-.balance small { display: block; margin-bottom: 7px; color: var(--c-muted); font-size: 8px; }
-.balance b { display: flex; align-items: center; gap: 7px; color: #d79600; font-size: 15px; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
-.chip { border: 2px solid var(--c-ink); background: #fff; border-radius: 999px; padding: 8px 13px; font-size: 11px; box-shadow: 2px 2px 0 #d8c9d8; }
-.chip.on { background: var(--c-yellow); box-shadow: var(--shadow-sm); font-weight: 700; }
-
-.load-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 14px; padding: 11px 14px; border: 2px solid var(--c-ink); border-radius: 12px; background: #ffe9e4; font-size: 11px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
-.item { border: var(--border); border-radius: 17px 17px 13px 17px; background: #fff; box-shadow: var(--shadow-md); padding: 11px 14px; transition: var(--t-fast); }
-.item:hover { transform: translate(-2px,-2px); box-shadow: var(--shadow-lg); }
-/* grid + auto 행이면 이미지의 height:100%가 순환 참조라 auto로 풀려 세로가 넘쳐 잘린다.
-   flex는 컨테이너 높이가 확정이라 100%가 96px-padding으로 제대로 풀리고 contain이 동작한다. */
-.thumb { position: relative; height: 96px; display: flex; align-items: center; justify-content: center; overflow: hidden; border: 2px solid var(--c-ink); border-radius: 12px; background: linear-gradient(135deg, var(--tone-4), #fff4d5); margin-bottom: 9px; }
-/* 50% — 나머지가 여백이 된다(별도 padding 불필요). */
-.thumb img { width: 50%; height: 50%; object-fit: contain; }
-.thumb i { position: absolute; left: 7px; top: 7px; padding: 4px 6px; border: 2px solid var(--c-ink); border-radius: 7px; background: var(--c-mint-soft); font-size: 7px; font-style: normal; font-weight: 700; }
-.name { font-size: 12px; font-weight: 700; }
-.row { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
-.price { font-size: 11px; color: #d79600; font-weight: 700; }
+:global(html:has(.shop-page)), :global(body:has(.shop-page)) { scrollbar-width: none; }
+:global(html:has(.shop-page)::-webkit-scrollbar), :global(body:has(.shop-page)::-webkit-scrollbar) { display: none; }
+:global(html:has(.shop-page)), :global(body:has(.shop-page)) { height: 100%; overflow: hidden; }
+.shop-page :deep(.app-shell) { height: 100vh; overflow-y: auto; scrollbar-width: none; }
+.shop-page :deep(.app-shell::-webkit-scrollbar) { display: none; }
+.shop-page { background: #fff8e9; }.shop-page :deep(.app-page) { padding: 28px 0 48px; }.shop-page :deep(.hero), .shop-page :deep(.body) { padding-right: clamp(18px, 4vw, 58px); padding-left: clamp(18px, 4vw, 58px); }.shop-page :deep(.page-sticker) { display: none; }
+.shop-hero { position: relative; display: flex; min-height: 262px; overflow: hidden; border-radius: 18px; background: url('/assets/shop-hero-bg.png') center / cover; color: #4c3d44; }.shop-hero::before { display: none; }.shop-copy { position: relative; z-index: 2; padding: 38px 46px; }.shop-kicker, .section-label span { display: block; color: #a87069; font-size: 10px; letter-spacing: 1px; }.shop-copy h1 { margin: 11px 0 9px; font-size: clamp(30px, 3vw, 43px); letter-spacing: -.8px; }.shop-copy h1 em { color: #d77c7a; font-style: normal; }.shop-copy p { margin: 0; color: #705e61; font-size: 14px; }.shop-hero-side { position: relative; z-index: 3; display: flex; margin: auto 32px 25px auto; flex-direction: column; align-items: end; gap: 10px; }.balance { min-width: 142px; padding: 12px 14px; border: 2px solid #c79b83; border-radius: 9px; background: rgba(255,253,246,.78); box-shadow: 2px 2px 0 rgba(148,105,84,.2); }.balance small { display: block; margin-bottom: 5px; color: #aa8272; font-size: 8px; }.balance b { display: flex; align-items: center; gap: 7px; color: #c47b35; font-size: 15px; }.hero-actions { display: flex; gap: 8px; }.hero-actions :deep(.px-btn) { border: 2px solid #b98771; border-radius: 7px; box-shadow: 2px 2px 0 rgba(130,82,62,.2); font-size: 10px; }.shop-art { position: absolute; right: 20%; bottom: -38px; z-index: 2; width: 400px; filter: drop-shadow(5px 6px 0 rgba(116,79,76,.14)); }
+.shop-controls { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 18px; }.section-label h2 { margin: 5px 0 0; font-size: 19px; }.chips { display: flex; flex-wrap: wrap; justify-content: end; gap: 6px; }.chip { padding: 8px 11px; border: 2px solid #cfbbc5; border-radius: 7px; background: #fffdf9; color: #856d75; font-size: 10px; transition: var(--t-fast); }.chip:hover { background: #f8eef1; }.chip.on { border-color: #bd8d9c; background: #e8cbd5; color: #5e414c; box-shadow: inset 0 -3px #bd8d9c; }
+.load-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 14px; padding: 11px 14px; border: 2px solid #d7abb0; border-radius: 10px; background: #fff0eb; font-size: 11px; }.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(205px, 1fr)); gap: 14px; }.item { padding: 10px; border: 2px solid #e0cfd7; border-radius: 12px; background: #fffdf9; box-shadow: 3px 3px 0 #eadde1; transition: var(--t-fast); }.item:hover { transform: translate(-2px,-2px); border-color: #cba7b5; box-shadow: 5px 5px 0 #dcc5ce; }.thumb { position: relative; display: flex; height: 142px; align-items: center; justify-content: center; overflow: hidden; border-radius: 8px; background: linear-gradient(135deg, #ede4f4, #ffe7ca); }.thumb::before { position: absolute; inset: 0; opacity: .48; background-image: radial-gradient(rgba(255,255,255,.9) 1px, transparent 1px); background-size: 11px 11px; content: ''; }.thumb img { position: relative; z-index: 1; width: 65%; height: 65%; object-fit: contain; transition: transform .15s ease; }.item:hover .thumb img { transform: translateY(-3px) rotate(-2deg); }.thumb i { position: absolute; z-index: 2; top: 8px; left: 8px; padding: 4px 6px; border-radius: 4px; background: #b5ddca; color: #527565; font-size: 7px; font-style: normal; }.name { margin: 12px 3px 0; color: #554149; font-size: 13px; }.row { display: flex; align-items: center; justify-content: space-between; margin: 9px 3px 2px; }.price { display: flex; align-items: center; color: #c47b35; font-size: 11px; }.row :deep(.px-btn) { min-height: 29px; padding: 5px 8px; border-radius: 6px; font-size: 9px; }
+.row :deep(.px-btn) {
+  min-width: 54px;
+  border: 2px solid #925c47;
+  border-radius: 6px;
+  background: #f4cf77;
+  box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), inset -2px -2px 0 rgba(120,58,47,.18), 3px 3px 0 #a66b50;
+  color: #4a3328;
+}
+.row :deep(.px-btn:hover:not(:disabled)) {
+  transform: translate(-2px, -2px);
+  box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), inset -2px -2px 0 rgba(120,58,47,.18), 3px 3px 0 #a66b50;
+}
+.row :deep(.px-btn:active:not(:disabled)) {
+  transform: translate(1px, 1px);
+  box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), inset -2px -2px 0 rgba(120,58,47,.18), 1px 1px 0 #a66b50;
+}
+.row :deep(.px-btn:disabled) { border-color: #a59080; background: #e4ddd5; color: #887b72; box-shadow: 2px 2px 0 #c8b9ac; }
+.item .name { font-size: 16px; }
+.item .price { font-size: 14px; }
+.item .row { align-items: flex-end; }
+.row :deep(.px-btn) { min-height: 36px; padding: 6px 11px; font-size: 12px; }
+@media (max-width: 760px) {
+  .item .name { font-size: 14px; }
+  .item .price { font-size: 12px; }
+  .row :deep(.px-btn) { min-height: 33px; font-size: 11px; }
+}
+.chip { padding: 10px 15px; font-size: 14px; }
+.chip { border-color: #d6a46c; background: #fff0b9; color: #6d513b; box-shadow: 2px 2px 0 rgba(166,107,80,.22); }
+.chip:hover { background: #ffe59a; }
+.chip.on { border-color: #a96d45; background: #f4cf77; color: #4a3328; box-shadow: inset 0 -3px rgba(169,109,69,.3); }
+@media (max-width: 760px) { .chip { padding: 8px 12px; font-size: 12px; } }
+.hero-floats { position: absolute; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
+.accessory { position: absolute; display: block; width: 96px; height: 96px; background-repeat: no-repeat; background-size: 200% 200%; filter: drop-shadow(3px 4px 0 rgba(116,79,76,.16)); animation: boutique-float 4.5s ease-in-out infinite; }
+.float-paw { top: 8px; left: 48%; background-position: 0 0; }
+.float-fish { top: 39px; right: 10%; background-position: 100% 0; animation-delay: -1.2s !important; }
+.float-bell { bottom: 8px; left: 40%; background-position: 0 100%; animation-delay: -2.4s !important; }
+.float-beanie { top: 86px; right: 29%; background-position: 100% 100%; animation-delay: -3.1s !important; }
+@keyframes boutique-float { 0%, 100% { transform: translateY(0) rotate(-4deg); } 50% { transform: translateY(-10px) rotate(4deg); } }
+@media (max-width: 760px) { .float-bell, .float-beanie { display: none; } .accessory { width: 74px; height: 74px; } .float-paw { left: 56%; } .float-fish { right: 26%; } }
+@media (max-width: 760px) { .shop-page :deep(.app-page) { padding-top: 20px; }.shop-hero { min-height: 310px; }.shop-copy { padding: 28px 25px; }.shop-copy h1 { max-width: 86%; font-size: 31px; }.shop-copy p { max-width: 76%; font-size: 12px; }.shop-art { right: -54px; bottom: -20px; width: 280px; opacity: .85; }.shop-hero-side { right: 15px; bottom: 14px; margin: 0; position: absolute; }.hero-actions { display: none; }.shop-controls { align-items: start; flex-direction: column; }.chips { justify-content: start; }.grid { grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); } }
+.ai-avatar-item { border-color: #b69ad5; background: #fffaff; box-shadow: 3px 3px 0 #dacbe8; }
+.ai-avatar-thumb { background: linear-gradient(135deg, #e6dcff, #cfeef1); }
+.ai-avatar-thumb::before { opacity: .32; }
+.avatar-face { position: relative; z-index: 1; display: grid; width: 78px; height: 70px; place-items: center; border: 3px solid #6a5079; border-radius: 48% 48% 42% 42%; background: #ffd9b3; color: #5b405e; font-size: 24px; letter-spacing: -4px; box-shadow: inset 0 -7px rgba(181,122,102,.2); }
+.avatar-wand { position: absolute; z-index: 2; right: 23%; bottom: 20%; color: #9a72d8; font-size: 29px; transform: rotate(22deg); }
+.avatar-spark { position: absolute; z-index: 2; color: #f2aa4c; font-size: 21px; animation: avatar-sparkle 1.8s steps(2) infinite; }
+.spark-one { top: 17%; left: 22%; }
+.spark-two { right: 18%; top: 27%; color: #9a72d8; animation-delay: -.8s; }
+.ai-avatar-item .row :deep(.px-btn) { background: #b99ae0; color: #fff; }
+@keyframes avatar-sparkle { 0%,100% { transform: scale(.85) rotate(0); } 50% { transform: scale(1.14) rotate(14deg); } }
+.section-title-row { display: flex; align-items: center; gap: 10px; }
+.section-balance { min-width: 0; display: flex; align-items: center; gap: 7px; padding: 6px 9px; border-color: #d6a46c; background: #fff9df; box-shadow: 2px 2px 0 rgba(166,107,80,.18); }
+.section-balance small { display: inline; margin: 0; font-size: 9px; }
+.section-balance b { font-size: 13px; }
+@media (max-width: 760px) { .section-title-row { gap: 8px; } .section-balance { padding: 5px 7px; } }
+.shop-copy { position: relative; z-index: 2; padding: 38px 46px; }
+.shop-kicker { display: inline; color: #a8704f; font-size: 10px; letter-spacing: 1px; }
+.shop-copy h1 { font-family: var(--font-pixel); font-weight: 400; }
+.hero-actions :deep(.px-btn) { min-width: 112px; height: 45px; border: 3px solid #925c47; border-radius: 7px; background: #f4cf77; box-shadow: inset 2px 2px 0 rgba(255,255,255,.45), inset -2px -3px 0 rgba(120,58,47,.2), 4px 4px 0 #a66b50; color: #4a3328; font-size: 14px; letter-spacing: .4px; text-shadow: 1px 1px rgba(255,255,255,.45); }
+.hero-actions :deep(.px-btn:hover:not(:disabled)) { transform: translate(-2px, -2px); box-shadow: inset 2px 2px 0 rgba(255,255,255,.45), inset -2px -3px 0 rgba(120,58,47,.2), 4px 4px 0 #a66b50; }
+@media (max-width: 760px) { .shop-copy { padding: 28px 25px; } }
 </style>

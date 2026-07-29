@@ -141,6 +141,14 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
     </nav>
 
     <div class="account">
+      <button
+        v-if="isAdmin"
+        class="admin-tab"
+        :class="{ 'is-active': current === RouteName.Admin }"
+        @click="onNav(RouteName.Admin)"
+      >
+        관리자
+      </button>
       <BgmToggle />
       <button class="coin" title="포인트 충전" @click="showCharge = true">
         <img class="coin-icon" :src="headerCoin" alt="" aria-hidden="true" /> {{ balance.toLocaleString() }} <b>＋</b>
@@ -159,7 +167,6 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
           </div>
           <!-- 마이페이지·설정은 회원 전용 — 게스트에게는 헤더에서 숨긴다 -->
           <template v-if="!session.isGuest">
-            <button v-if="isAdmin" class="menu-item" @click="onMenuNav(RouteName.Admin)">게임 관리</button>
             <button class="menu-item" @click="onMenuNav(RouteName.MyPage)">마이페이지</button>
             <button class="menu-item" @click="onMenuNav(RouteName.AccountSettings)">설정</button>
           </template>
@@ -229,6 +236,9 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 }
 
 .account { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.admin-tab { order: -1; flex: 0 0 auto; height: 39px; padding: 0 13px; border: 2px solid #b78d5d; border-radius: 8px; background: #fff7e5; box-shadow: 2px 2px 0 #e2d0b5; color: #4b372b; font-size: 12px; font-weight: 700; }
+.admin-tab:hover { background: #fff0b6; }
+.admin-tab.is-active { border-color: #925c47; background: #e7c996; box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), 3px 3px 0 #a66b50; color: #34251f; }
 .coin { height: 39px; padding: 0 12px; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; display: flex; align-items: center; gap: 7px; font-weight: 700; }
 .coin b { color: #36a17f; }
 .avatar-wrap { position: relative; }
@@ -252,10 +262,11 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   display: grid;
   place-items: center;
   margin: -3.5px;
-  padding: 2.5px;
-  background: #5e4634;
-  clip-path: polygon(16px 0, 34px 0, 34px 3px, 40px 3px, 40px 6px, 44px 6px, 44px 10px, 47px 10px, 47px 16px, 50px 16px, 50px 34px, 47px 34px, 47px 40px, 44px 40px, 44px 44px, 40px 44px, 40px 47px, 34px 47px, 34px 50px, 16px 50px, 16px 47px, 10px 47px, 10px 44px, 6px 44px, 6px 40px, 3px 40px, 3px 34px, 0 34px, 0 16px, 3px 16px, 3px 10px, 6px 10px, 6px 6px, 10px 6px, 10px 3px, 16px 3px);
-  box-shadow: 2px 2px 0 #e3d8c7;
+  padding: 3px;
+  border: 2px solid #8e714e;
+  border-radius: 50%;
+  background: #fff0b9;
+  box-shadow: none;
   transform: scale(.86);
 }
 .avatar-circle {
@@ -263,8 +274,8 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   height: 100%;
   display: grid;
   place-items: center;
+  border-radius: 50%;
   background: #f8dca5;
-  clip-path: polygon(14px 0, 31px 0, 31px 3px, 36px 3px, 36px 6px, 40px 6px, 40px 10px, 43px 10px, 43px 14px, 45px 14px, 45px 31px, 43px 31px, 43px 36px, 40px 36px, 40px 40px, 36px 40px, 36px 43px, 31px 43px, 31px 45px, 14px 45px, 14px 43px, 9px 43px, 9px 40px, 5px 40px, 5px 36px, 2px 36px, 2px 31px, 0 31px, 0 14px, 2px 14px, 2px 10px, 5px 10px, 5px 6px, 9px 6px, 9px 3px, 14px 3px);
   image-rendering: pixelated;
   font-size: 20px;
 }
@@ -309,6 +320,10 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 }
 .menu-item:hover { background: var(--c-mint-soft); }
 
+/* Account dropdown: lobby wooden notice board */
+.account-menu { width: 184px; padding: 8px 12px; border: 3px solid #8d6048; border-radius: 12px; background: #fff8e9; box-shadow: 5px 5px 0 #c79b77; overflow: visible; }
+.menu-head { margin: 0; padding: 9px 4px 12px; border: 0; border-bottom: 2px dashed #d7b58e; border-radius: 0; background: transparent; }.menu-head > span { color: #573a2b; font-size: 12px; }.menu-item { margin: 0; padding: 12px 10px; border: 0; border-radius: 0; background: transparent; color: #5a3e30; text-align: center; font-size: 14px; }.menu-item + .menu-item { border-top: 2px dashed #ead5b8; }.menu-item:hover { background: #fff0b6; }.menu-item:last-child { margin-top: 4px; padding-bottom: 8px; border-top: 2px dashed #ead5b8; background: transparent; color: #c45c52; }.menu-item:last-child:hover { background: transparent; color: #a8433b; }
+
 @media (max-width: 720px) {
   .top { gap: 14px; }
   .brand { min-width: 0; }
@@ -325,6 +340,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   .nav { gap: 2px; }
   .nav button { padding: 8px 7px; font-size: 13px; }
   .account { gap: 6px; }
+  .admin-tab { height: 35px; padding: 0 9px; font-size: 11px; }
   .coin { height: 35px; padding: 0 9px; font-size: 12px; }
   .coin-icon { width: 16px; height: 16px; }
   .nickname { font-size: 15px; }
@@ -342,6 +358,6 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   .top { padding: 8px 12px; }
   .brand :deep(.name) { font-size: 16px; }
   .brand :deep(.mark) { width: 38px; height: 38px; font-size: 19px; }
-  .account .coin, .nickname { display: none; }
+  .account .coin, .admin-tab, .nickname { display: none; }
 }
 </style>

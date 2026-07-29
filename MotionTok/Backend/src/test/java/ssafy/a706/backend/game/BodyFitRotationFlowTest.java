@@ -111,7 +111,7 @@ class BodyFitRotationFlowTest {
     @Test
     void 세명이_세라운드를_끝까지_돌면_전원이_한_번씩_출제하고_마지막에_GAME_END가_온다() {
         givenRoom(3);
-        service.start(ROOM_ID, new GameStartRequest(4L, null, "easy"), new MemberPrincipal(1L, "P1"));
+        service.start(ROOM_ID, new GameStartRequest(4L, null, "easy", null, null), new MemberPrincipal(1L, "P1"));
 
         allPlayersFinish(3); // 라운드1 종료 → 라운드2
         allPlayersFinish(3); // 라운드2 종료 → 라운드3
@@ -141,7 +141,7 @@ class BodyFitRotationFlowTest {
     @Test
     void 네명이면_네라운드가_전부_열린다() {
         givenRoom(4);
-        service.start(ROOM_ID, new GameStartRequest(4L, null, "easy"), new MemberPrincipal(1L, "P1"));
+        service.start(ROOM_ID, new GameStartRequest(4L, null, "easy", null, null), new MemberPrincipal(1L, "P1"));
 
         for (int r = 0; r < 4; r++) {
             allPlayersFinish(4);
@@ -166,7 +166,7 @@ class BodyFitRotationFlowTest {
         for (int i = 0; i < 20; i++) {
             sessions.session = null; // 진행 중 세션 가드 우회 — 매 번 새로 시작
             events.clear();
-            service.start(ROOM_ID, new GameStartRequest(4L, null, "easy"), new MemberPrincipal(1L, "P1"));
+            service.start(ROOM_ID, new GameStartRequest(4L, null, "easy", null, null), new MemberPrincipal(1L, "P1"));
             firstSetters.add(starts().get(0).setterUserId());
         }
         // 4명 중 20회 모두 같은 사람이 뽑힐 확률은 (1/4)^19 — 사실상 0
@@ -199,14 +199,14 @@ class BodyFitRotationFlowTest {
         public void updateChallenge(String roomId, String challenge) {
             session = new GameSession(session.sessionId(), session.gameId(), challenge,
                     session.setterUserId(), session.startAt(), session.endAt(), session.status(),
-                    session.setterOrder(), session.roundIndex(), session.difficulty());
+                    session.setterOrder(), session.roundIndex(), session.difficulty(), null, 0);
         }
 
         @Override
         public void markEnded(String roomId) {
             session = new GameSession(session.sessionId(), session.gameId(), session.challenge(),
                     session.setterUserId(), session.startAt(), session.endAt(), GameSession.STATUS_ENDED,
-                    session.setterOrder(), session.roundIndex(), session.difficulty());
+                    session.setterOrder(), session.roundIndex(), session.difficulty(), null, 0);
         }
 
         @Override

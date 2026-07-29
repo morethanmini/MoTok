@@ -57,14 +57,18 @@ const videoAspect = ref(8 / 5)
 function syncVideoAspect() {
   const video = videoEl.value
   if (!video?.videoWidth || !video.videoHeight) return
+  // 게임 캔버스 비율은 반영하지 않는다 — 발행자 타일 폭에서 사이드바를 뺀 크기라 카메라(16:9)와
+  // 전혀 다르고, 라운드마다 트랙이 교체되며 타일 폭이 튄다(게임④ 출제 중 축소 제보).
+  if (showingGame.value) return
   videoAspect.value = video.videoWidth / video.videoHeight
 }
 
 // 트랙 인스턴스만 의존 대상으로 삼는다(뷰모델 객체는 이벤트마다 새로 생기므로 그대로 쓰면 재부착·깜빡임).
 // videoTrack/el 중 하나가 실제로 바뀔 때만 재부착.
 // 게임 화면이 송출 중이면(토글로 카메라를 고르지 않은 한) 게임 트랙을, 아니면 카메라를 표시.
+const showingGame = computed(() => hasGame.value && !showCam.value)
 const videoTrack = computed(() => {
-  if (hasGame.value && !showCam.value) return props.view?.gameTrack ?? null
+  if (showingGame.value) return props.view?.gameTrack ?? null
   return hasVideo.value ? (props.view?.videoTrack ?? null) : null
 })
 const showingVideo = computed(() => !!videoTrack.value)
@@ -118,7 +122,7 @@ function onVolumeInput(e: Event) {
         playsinline
         muted
         class="tile-video"
-        :class="{ mirror }"
+        :class="{ mirror, game: showingGame }"
         @loadedmetadata="syncVideoAspect"
       />
       <audio v-if="playAudio" ref="audioEl" autoplay />
@@ -218,8 +222,12 @@ function onVolumeInput(e: Event) {
 }
 
 .tile.compact { width: 100%; aspect-ratio: var(--camera-aspect, 8 / 5); }
-.tile-video { width: 100%; height: 100%; object-fit: cover; background: #eee6cf; }
-.tile.compact .tile-video { object-fit: cover; }
+/* 내 타일과 같은 규칙 — 타일 비율과 영상 비율이 다를 때 잘라내지 않고 남는 자리를 회색 여백으로.
+   여기 <video>는 카메라일 수도, 게임 화면 트랙일 수도 있어 비율 차이가 더 크다. */
+.tile-video { width: 100%; height: 100%; object-fit: contain; background: var(--c-letterbox); }
+/* 게임 화면 트랙만 여백 색을 무대 배경(three.js scene.background 0x1a1411)과 맞춘다 — 밝은 회색
+   띠가 무대 옆에 남으면 화면이 잘린 것처럼 읽힌다. 비율은 위 공통 규칙(contain)을 그대로 따른다. */
+.tile .tile-video.game { background: #1a1411; }
 .tile-video.mirror { transform: scaleX(-1); }
 
 .cam-off {

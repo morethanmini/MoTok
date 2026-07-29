@@ -31,7 +31,8 @@ public class ShopItemSeeder implements ApplicationRunner {
     private static final List<SeedItem> SEED_ITEMS = List.of(
             new SeedItem("하트 스티커", ItemCategory.STICKER, 150, STICKER_PATH + "heart_1.png"),
             new SeedItem("음표 스티커", ItemCategory.STICKER, 200, STICKER_PATH + "note_1.png"),
-            new SeedItem("별 스티커", ItemCategory.STICKER, 250, STICKER_PATH + "star_1.png"));
+            new SeedItem("별 스티커", ItemCategory.STICKER, 250, STICKER_PATH + "star_1.png"),
+            new SeedItem("고양이 풍선 스티커", ItemCategory.STICKER, 1500, STICKER_PATH + "cat_balloon.gif"));
 
     private final ItemRepository itemRepository;
 

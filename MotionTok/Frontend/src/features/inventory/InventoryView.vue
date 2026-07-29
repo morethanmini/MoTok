@@ -18,7 +18,6 @@ import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 
 const { message: toast, flash } = useToast()
 
-const emojiOf: Record<ItemCategory, string> = { MASK: '🎭', EFFECT: '✨', STICKER: '🌟', BACKGROUND: '🌌' }
 const CATEGORY_ORDER: ItemCategory[] = ['MASK', 'EFFECT', 'STICKER', 'BACKGROUND']
 const CATEGORY_LABEL: Record<ItemCategory, string> = { MASK: '가면', EFFECT: '효과', STICKER: '스티커', BACKGROUND: '배경' }
 
@@ -113,12 +112,14 @@ async function saveDecoration() {
 </script>
 
 <template>
-  <AppPage title="인벤토리 · 화면 꾸미기" subtitle="보유 아이템을 장착하고 카메라에 붙일 자리를 정해요">
-    <template #actions>
-      <PixelButton variant="primary" :disabled="saving || !!loadError" @click="saveDecoration">
-        {{ saving ? '저장 중…' : dirty ? '꾸미기 저장 *' : '꾸미기 저장' }}
-      </PixelButton>
-    </template>
+  <AppPage class="inventory-page" title="내 아바타" title-style="none" max-width="980px">
+    <section class="inventory-titlebar">
+      <div>
+        <p>MY MOTION KIT</p>
+        <h1>내 아바타</h1>
+        <span>아이템을 장착하고 나만의 화면을 꾸며봐요.</span>
+      </div>
+    </section>
 
     <p v-if="loadError" class="load-error">
       <span>{{ loadError }}</span>
@@ -126,8 +127,17 @@ async function saveDecoration() {
     </p>
 
     <div class="grid">
-      <PixelCard title="미리보기">
+      <PixelCard class="preview-card" title="화면 꾸미기">
+        <template #head>
+          <PixelButton class="save-decoration" variant="primary" :disabled="saving || !!loadError" @click="saveDecoration">
+            {{ saving ? '저장 중…' : dirty ? '꾸미기 저장 *' : '꾸미기 저장' }}
+          </PixelButton>
+        </template>
         <div class="preview">
+          <div class="preview-heading">
+            <span>CAMERA PREVIEW</span>
+            <b :class="{ ready: camera.isOn.value }">{{ camera.isOn.value ? '카메라 연결됨' : '카메라 OFF' }}</b>
+          </div>
           <!-- 상대에게 보이는 방향 그대로 보여 준다(좌우 반전 없음) — 반전된 화면에서 자리를 잡으면
                저장된 좌표와 상대가 보는 위치가 뒤집힌다. -->
           <div class="cam" :style="{ aspectRatio: String(aspect) }">
@@ -141,7 +151,7 @@ async function saveDecoration() {
             />
             <div v-if="!camera.isOn.value" class="cam-placeholder">
               <img src="/assets/intro/person.png" alt="" />
-              <PixelButton @click="startCamera">📷 카메라 켜기</PixelButton>
+              <PixelButton @click="startCamera">카메라 연결</PixelButton>
             </div>
             <StickerOverlay
               :sprites="sprites"
@@ -154,11 +164,6 @@ async function saveDecoration() {
               @select="selectedId = $event"
             />
           </div>
-
-          <p class="hint">
-            스티커를 끌어 자리를 정하세요. 스티커를 고르면 점선 상자의 ⤡로 크기를 조절하고
-            ✕로 뗄 수 있어요. 상대에게 보이는 방향 그대로입니다.
-          </p>
 
           <div class="equipped">
             <button
@@ -175,11 +180,10 @@ async function saveDecoration() {
         </div>
       </PixelCard>
 
-      <PixelCard title="보유 아이템">
+      <PixelCard class="items-card" title="인벤토리">
         <p v-if="loading" class="empty-inv">불러오는 중…</p>
         <div v-for="g in grouped" :key="g.cat" class="cat-group">
           <div class="cat-head">
-            <span class="cat-emoji">{{ emojiOf[g.cat] }}</span>
             <span class="cat-label">{{ g.label }}</span>
             <span class="cat-count">{{ g.items.length }}</span>
             <!-- 장착 한도 — 스티커 5개, 가면·효과·배경 각 1개 -->
@@ -192,7 +196,7 @@ async function saveDecoration() {
             <article v-for="item in g.items" :key="item.itemId" class="item" :class="{ on: item.equipped }">
               <div class="thumb">
                 <img v-if="item.imageUrl" :src="item.imageUrl" alt="" />
-                <span v-else>{{ emojiOf[item.category] }}</span>
+                <span v-else>?</span>
               </div>
               <div class="name">{{ item.name }}</div>
               <PixelButton
@@ -223,7 +227,9 @@ async function saveDecoration() {
 
 .preview { text-align: center; }
 .cam { position: relative; overflow: hidden; border: var(--border); border-radius: var(--radius-md); background: linear-gradient(135deg, #dff3ee, #fff0c4); }
-.cam video { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 박스 비율은 onVideoMeta가 영상에 맞춰 두지만, 비율이 확정되기 전(또는 카메라가 요청과 다른
+   해상도를 준 순간)에는 어긋난다 — 그때 얼굴이 잘리지 않게 contain으로 두고 남는 자리는 회색 여백. */
+.cam video { width: 100%; height: 100%; object-fit: contain; background: var(--c-letterbox); display: block; }
 .cam-placeholder { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 8px; }
 .cam-placeholder img { width: 55%; opacity: 0.5; }
 .hint { margin: 10px 0 0; font-size: 9px; color: var(--c-muted); line-height: 1.6; }
@@ -269,4 +275,24 @@ async function saveDecoration() {
 .thumb img { width: 100%; height: 100%; object-fit: contain; }
 .name { font-size: 11px; font-weight: 700; margin-bottom: 10px; }
 .empty-inv { text-align: center; color: var(--c-muted); font-size: 11px; padding: 20px; }
+
+/* Lobby-inspired workshop board */
+.inventory-page { background: #fff8e9; }
+.inventory-page :deep(.app-page) { padding-top: 34px; }
+.inventory-page :deep(.body) { max-width: 980px; }
+.inventory-titlebar { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 0 auto 18px; padding: 0 6px; }
+.inventory-titlebar p { margin: 0 0 8px; color: #a8704f; font-size: 9px; letter-spacing: 1px; }
+.inventory-titlebar h1 { margin: 0; color: #4b3429; font-family: var(--font-pixel); font-size: 22px; font-weight: 400; }
+.inventory-titlebar span { display: block; margin-top: 9px; color: #856957; font-size: 10px; }
+.grid { grid-template-columns: 520px minmax(0, 1fr); gap: 20px; align-items: start; }
+.preview-card, .items-card { border: 3px solid #9a6b4f; border-radius: 13px; background: #fffaf0; box-shadow: 5px 5px 0 #d5b28c; }
+.preview-card :deep(.card-head), .items-card :deep(.card-head) { padding-bottom: 11px; border-bottom: 2px solid #ead5b8; }.preview-card :deep(.card-head) { justify-content: space-between; }.save-decoration { min-width: 92px; border: 2px solid #9a6b4f; border-radius: 6px; box-shadow: 2px 2px 0 #bd916e; font-size: 9px; }
+.preview-card :deep(.card-head h2), .items-card :deep(.card-head h2) { color: #4b3429; font-size: 17px; }
+.preview-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; color: #775440; font-size: 9px; letter-spacing: .7px; }.preview-heading b { padding: 5px 8px; border-radius: 5px; background: #f7dfb0; color: #805b42; font-size: 9px; letter-spacing: 0; }.preview-heading b.ready { background: #dcecbf; color: #56743e; }
+.cam { border: 3px solid #8d6a54; border-radius: 10px; background: #53423c; box-shadow: none; }.cam::before { content: ''; position: absolute; z-index: 2; inset: 9px; border: 1px solid rgba(255,255,255,.34); border-radius: 4px; pointer-events: none; }.cam-placeholder { z-index: 3; color: #fff9ef; }.cam-placeholder::before { content: ''; display: block; width: 44px; height: 31px; margin: 0 auto 13px; border: 3px solid #f5deb7; border-radius: 5px; box-shadow: 15px 7px 0 -5px #53423c, 15px 7px 0 -2px #f5deb7; }.cam-placeholder img { display: none; }
+.cam-placeholder :deep(.px-btn) { border: 2px solid #9a6b4f; border-radius: 6px; background: #f7df9e !important; color: #51382c !important; box-shadow: 2px 2px 0 #bd916e; }.item :deep(.px-btn) { border: 2px solid #9a6b4f; border-radius: 6px; box-shadow: 2px 2px 0 #bd916e; }
+.hint, .cat-note, .empty-inv { color: #967a66; }.badge { border-color: #bc8c6a; border-radius: 6px; background: #fff6de; color: #74533f; }.badge.on { border-color: #8c6048; background: #f3cf7a; color: #4b3429; }
+.cat-head { border-bottom-color: #e2c7a5; }.cat-label, .name { color: #594031; }.cat-limit { color: #8e715e; }.cat-count { border-color: #bc8c6a; border-radius: 5px; background: #f3cf7a; }
+.item { border-color: #c79b77; border-radius: 9px; background: #fffdf6; box-shadow: 3px 3px 0 #dfc09a; }.item.on { border-color: #8d6048; background: #fff2c9; box-shadow: 3px 3px 0 #bd916e; }.thumb { height: 78px; border: 2px solid #ead5b8; border-radius: 7px; background: linear-gradient(135deg, #d6eef1, #fff0bf); color: #795340; font-family: var(--font-pixel); font-size: 18px; }
+@media (max-width: 820px) { .grid { grid-template-columns: 1fr; }.inventory-titlebar { align-items: flex-start; flex-direction: column; }.items { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>
