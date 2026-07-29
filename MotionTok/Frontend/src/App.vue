@@ -3,12 +3,19 @@
 // 화면 공통 오버레이도 여기서 띄웁니다.
 //  - 회원 전용 화면 진입 차단 안내(라우터 가드)
 //  - 세션 만료 안내(액세스·리프레시 토큰이 모두 죽어 더 이상 이어갈 수 없을 때)
+//  - 계정 정지 안내(관리자 제재로 세션이 끊겼을 때)
+//  - 관리자 경고 안내(접근은 유지되지만 읽혀야 제재가 성립한다)
 //  - 게스트 회원가입 유도(게임 종료 시)
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { useSessionStore } from '@/stores/session'
-import { onSessionExpired, type SessionEndReason } from '@/api/authEvents'
+import {
+  onAccountBlocked,
+  onSessionExpired,
+  type AccountBlockKind,
+  type SessionEndReason,
+} from '@/api/authEvents'
 import { guestSessionMinutes } from '@/api/token'
 import { useLoginRequired } from '@/composables/useLoginRequired'
 import { useAccessDenied } from '@/composables/useAccessDenied'
@@ -24,6 +31,7 @@ import PixelToast from '@/components/common/PixelToast.vue'
 import { useWhisper } from '@/composables/useWhisper'
 import { stompConnected } from '@/composables/useGlobalStomp'
 import WhisperModal from '@/components/common/WhisperModal.vue'
+import { useWarningNotice, currentWarning } from '@/composables/useWarningNotice'
 import { useToast } from '@/composables/useToast'
 
 const router = useRouter()
@@ -39,6 +47,9 @@ useGlobalStomp()
 usePresenceHeartbeat()
 // 단일 세션 — 다른 곳에서 로그인하면 이 세션이 밀려난다. 게임 중에도 떠야 해서 앱 셸이 맡는다.
 useSessionDisplaced()
+// 관리자 경고(-105) — 어느 화면에 있든 떠야 하고, 확인을 눌러야 서버가 전달됐음을 안다.
+// 위 단일 세션과 달리 세션을 끊지 않는다 — 경고는 접근을 막지 않는다.
+const { acknowledge: acknowledgeWarning } = useWarningNotice()
 
 /**
  * 귓속말 도착 알림(-150) — 어느 화면에 있든 떠야 하므로 앱 셸이 맡는다.
@@ -70,6 +81,13 @@ const sessionExpired = ref<SessionEndReason | null>(null)
 const guestMinutes = ref<number | null>(null)
 let unsubscribe: (() => void) | undefined
 
+// ── 계정 제재 ────────────────────────────────────────────────
+// REST 403(AUTH_ACCOUNT_SUSPENDED·AUTH_ACCOUNT_BANNED)이나 웹소켓 1008 종료 중 먼저 도착한 쪽이 알려 준다.
+// 세션 만료와 분리한 이유는 안내 문구다 — 제재된 계정은 "다시 로그인"이 애초에 막혀 있다.
+// 기간 정지와 영구 정지도 문구가 갈린다: "기간이 끝나면"은 영구 제재에 거짓말이 된다.
+const accountBlocked = ref<AccountBlockKind | null>(null)
+let unsubscribeBlocked: (() => void) | undefined
+
 onMounted(() => {
   unsubscribe = onSessionExpired((reason) => {
     if (sessionExpired.value) return // 동시 요청이 함께 실패해도 한 번만 안내
@@ -78,11 +96,27 @@ onMounted(() => {
     sessionExpired.value = reason
     session.clear()
   })
+  unsubscribeBlocked = onAccountBlocked((kind) => {
+    // 제재가 세션 만료 안내를 덮어써야 한다 — 사유를 아는 쪽이 정확하다.
+    // (세션 만료는 이제 이유를 담는 값이라 null로 지운다)
+    sessionExpired.value = null
+    if (accountBlocked.value) return
+    accountBlocked.value = kind
+    session.clear()
+  })
 })
-onUnmounted(() => unsubscribe?.())
+onUnmounted(() => {
+  unsubscribe?.()
+  unsubscribeBlocked?.()
+})
 
 function confirmSessionExpired() {
   sessionExpired.value = null
+  router.replace({ name: RouteName.Auth, query: { mode: 'login' } })
+}
+
+function confirmAccountBlocked() {
+  accountBlocked.value = null
   router.replace({ name: RouteName.Auth, query: { mode: 'login' } })
 }
 
@@ -136,6 +170,31 @@ function sendWhisper(text: string) {
     </div>
   </PixelModal>
 
+  <!-- 제재 안내 — 남은 기간·사유는 싣지 않는다. 자기 제재 상태를 조회할 경로가 없고(관리자 전용),
+       종료 프레임에도 종류만 실려 온다. 확인할 수 없는 값을 지어내지 않는다. -->
+  <PixelModal v-if="accountBlocked" @close="confirmAccountBlocked">
+    <div class="expired">
+      <div class="icon">{{ accountBlocked === 'BANNED' ? '🚫' : '⛔' }}</div>
+      <h3>{{ accountBlocked === 'BANNED' ? '계정이 영구 정지되었어요' : '계정이 정지되었어요' }}</h3>
+      <p v-if="accountBlocked === 'BANNED'">
+        운영 정책 위반으로 이용이 영구 제한되었어요.<br />문의가 있다면 고객센터로 연락해 주세요.
+      </p>
+      <p v-else>운영 정책 위반으로 이용이 제한되었어요.<br />정지 기간이 끝나면 다시 로그인할 수 있어요.</p>
+      <PixelButton variant="primary" block @click="confirmAccountBlocked">확인</PixelButton>
+    </div>
+  </PixelModal>
+
+  <!-- 경고 안내 — 세션을 끊지 않는다. 확인을 누르면 서버에 전달 완료로 기록되고 다음 경고로 넘어간다 -->
+  <PixelModal v-if="currentWarning" @close="acknowledgeWarning">
+    <div class="expired">
+      <div class="icon">⚠️</div>
+      <h3>운영진 경고가 도착했어요</h3>
+      <p class="warn-reason">{{ currentWarning.reason }}</p>
+      <p>반복되면 이용이 제한될 수 있어요.</p>
+      <PixelButton variant="primary" block @click="acknowledgeWarning">확인했어요</PixelButton>
+    </div>
+  </PixelModal>
+
   <PixelModal v-if="sessionExpired" @close="confirmSessionExpired">
     <div v-if="sessionExpired === 'guest'" class="expired">
       <div class="icon">🎮</div>
@@ -166,4 +225,6 @@ function sendWhisper(text: string) {
 .expired .icon, .denied .icon { font-size: 40px; }
 .expired h3, .denied h3 { margin: 10px 0 8px; font-size: 16px; }
 .expired p, .denied p { margin: 0 0 20px; font-size: 12px; color: var(--c-muted); line-height: 1.7; }
+/* 경고 문구는 관리자가 쓴 원문이라 눈에 띄게 — 줄바꿈·긴 단어도 넘치지 않게 */
+.warn-reason { margin: 0 0 12px !important; padding: 10px 12px; border: 2px dashed var(--c-ink); border-radius: 9px; background: #fff6e0; color: var(--c-ink) !important; font-weight: 700; white-space: pre-wrap; word-break: break-word; text-align: left; }
 </style>
