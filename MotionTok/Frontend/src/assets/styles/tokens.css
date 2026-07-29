@@ -19,6 +19,8 @@
   --c-peach: #ffd9c9;
   --c-lilac: #ded2ff;
   --c-green: #54bd6b;
+  /* 영상 레터박스 — 카메라 비율이 타일 비율과 달라 남는 회색 여백(잘라내는 대신 여기를 비운다) */
+  --c-letterbox: #c9c5bf;
 
   /* 게임 썸네일 톤 (t1~t8) */
   --tone-1: #d8f4ec;
