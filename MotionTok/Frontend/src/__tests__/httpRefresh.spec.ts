@@ -113,6 +113,26 @@ describe('액세스 토큰 자동 갱신', () => {
     unsubscribe()
   })
 
+  // 단일 세션(v0.2.25) — 다른 곳 로그인으로 밀려난 세션은 서버가 갱신을 전용 코드로 거절한다.
+  // 일반 만료('member')와 사유가 갈려야 "다른 곳에서 로그인했어요" 안내가 뜬다(App.vue).
+  it('밀려난 세션(AUTH_SESSION_DISPLACED)은 displaced 사유로 세션 종료를 알린다', async () => {
+    setAccessToken(fakeJwt(3600))
+    const expired = vi.fn<(reason: string) => void>()
+    const unsubscribe = onSessionExpired(expired)
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(401, { code: 'AUTH_SESSION_DISPLACED' }))
+      .mockResolvedValueOnce(jsonResponse(401, { code: 'AUTH_SESSION_DISPLACED' }))
+
+    await expect(http.get('/users/me')).rejects.toMatchObject({
+      status: 401,
+      code: 'AUTH_SESSION_DISPLACED',
+    })
+    expect(expired).toHaveBeenCalledTimes(1)
+    expect(expired).toHaveBeenCalledWith('displaced')
+    expect(getAccessToken()).toBeNull()
+    unsubscribe()
+  })
+
   // 액세스 토큰을 30분으로 줄이면서 갱신 횟수가 두 배가 됐다 — 순간적인 네트워크 끊김에
   // 로그아웃시키면 지하철에서 게임하다 튕기는 일이 그만큼 잦아진다. 쿠키는 멀쩡하므로 다음 시도에 맡긴다.
   it('네트워크가 끊겨 갱신하지 못한 것은 세션 종료로 보지 않는다', async () => {
@@ -206,6 +226,19 @@ describe('새로고침 복원', () => {
 
     await expect(restoreSessionFromCookie()).resolves.toBe(false)
     expect(expired).not.toHaveBeenCalled()
+    unsubscribe()
+  })
+
+  // 밀려난 뒤 새로고침한 경우 — 조용한 복원 경로라도 displaced는 안내한다.
+  // 이 코드는 세션이 실재했다는 증거라, 방문자의 조용한 실패와 같은 취급이면 계정 도용을 놓친다.
+  it('밀려난 세션은 조용한 복원에서도 displaced 안내를 띄운다', async () => {
+    const expired = vi.fn<(reason: string) => void>()
+    const unsubscribe = onSessionExpired(expired)
+    fetchMock.mockResolvedValueOnce(jsonResponse(401, { code: 'AUTH_SESSION_DISPLACED' }))
+
+    await expect(restoreSessionFromCookie()).resolves.toBe(false)
+    expect(expired).toHaveBeenCalledTimes(1)
+    expect(expired).toHaveBeenCalledWith('displaced')
     unsubscribe()
   })
 
