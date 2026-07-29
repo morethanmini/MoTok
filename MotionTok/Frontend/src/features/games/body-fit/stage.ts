@@ -18,7 +18,8 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
 import { VignetteShader } from 'three/addons/shaders/VignetteShader.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import type { BodyFitConfig } from './config'
-import { STAGE_DROP, STAGE_SCALE } from './skeleton'
+import { AvatarRig } from './avatarRig'
+import { STAGE_DROP, STAGE_SCALE, type SolvedSkeleton } from './skeleton'
 
 export interface Stage {
   renderer: THREE.WebGLRenderer
@@ -58,6 +59,70 @@ export function disposeObject(root: THREE.Object3D) {
     mat.map?.dispose()
     mat.dispose()
   })
+}
+
+export interface PoseThumb {
+  /** 목표 포즈를 한 장 그린다 — 라운드 내내 안 바뀌므로 rAF 없이 호출당 1프레임 */
+  show(solved: SolvedSkeleton): void
+  dispose(): void
+}
+
+/**
+ * 목표 포즈 썸네일 — 2D 흰 실루엣이었으나 무대 아바타와 같은 3D 룩으로 바꿨다(사용자 요청).
+ *
+ * <p>무대 렌더러를 재사용하지 않고 96px 캔버스에 제 컨텍스트를 하나 더 연다. 재사용하려면
+ * 매 프레임 뷰포트를 갈아 끼우고 포스트프로세싱 체인을 우회한 뒤 픽셀을 복사해야 하는데,
+ * 출제 포즈는 라운드당 한 번만 바뀌므로 그 배선이 남는 장사가 아니다.</p>
+ *
+ * <p>입력이 NormalizedPose가 아니라 SolvedSkeleton인 이유 — 벽·판정과 <b>같은</b> 골격을
+ * 그대로 받아야 썸네일이 실제 구멍과 어긋나지 않는다(솔버를 다시 돌리면 상태가 갈린다).</p>
+ */
+export function createPoseThumb(canvas: HTMLCanvasElement, cfg: BodyFitConfig['avatar']): PoseThumb {
+  const size = canvas.width // setSize가 덮어쓰기 전에 읽는다(CSS 크기는 .thumb가 잡는다)
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  renderer.setSize(size, size, false)
+
+  // 무대와 같은 광원 구성 — 명판 안 인형이 무대 아바타와 다른 재질로 보이면 같은 포즈로 안 읽힌다.
+  // 스포트 대신 디렉셔널인 것만 다르다(거리 감쇠가 없어 96px 박스에서 세기 조절이 단순하다).
+  const scene = new THREE.Scene()
+  scene.add(new THREE.HemisphereLight(0xffe8c8, 0x2a1f18, 0.45))
+  const key = new THREE.DirectionalLight(0xfff4e2, 2.4)
+  key.position.set(0.6, 2.5, 2)
+  scene.add(key)
+  const rim = new THREE.DirectionalLight(0x8fb4ff, 0.9)
+  rim.position.set(-2.2, 1.2, -3)
+  scene.add(rim)
+
+  const rig = new AvatarRig(cfg)
+  scene.add(rig.group)
+
+  // 원근 대신 정투영 — 포즈 바운딩 박스에 딱 맞추면 만세·큰 대자에서도 팔이 절대 안 잘린다.
+  // 96px에서 원근감 차이는 안 보이고, 프레이밍을 매직 넘버 없이 계산할 수 있다.
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100)
+  const box = new THREE.Box3()
+  const center = new THREE.Vector3()
+  const span = new THREE.Vector3()
+
+  return {
+    show(solved) {
+      rig.applySolved(solved)
+      box.setFromObject(rig.group).getCenter(center)
+      box.getSize(span)
+      const half = (Math.max(span.x, span.y) / 2) * 1.14 // 1.14 = 테두리에 붙지 않을 여백
+      camera.left = -half
+      camera.right = half
+      camera.top = half
+      camera.bottom = -half
+      camera.position.set(center.x, center.y, center.z + 10)
+      camera.updateProjectionMatrix()
+      renderer.render(scene, camera)
+    },
+    dispose() {
+      rig.dispose()
+      renderer.dispose()
+    },
+  }
 }
 
 export function createStage(canvas: HTMLCanvasElement, cfg: BodyFitConfig): Stage {

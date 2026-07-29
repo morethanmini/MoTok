@@ -34,7 +34,7 @@ import {
   scoreFor,
   type RoundJudgment,
 } from './judge'
-import { createStage, type Stage } from './stage'
+import { createPoseThumb, createStage, type PoseThumb, type Stage } from './stage'
 import { createWall, type WallHandle } from './wall'
 import { BodyFitAudio } from './audio'
 
@@ -270,6 +270,7 @@ const gaugeTicks = computed(() => [
 
 // ── three.js / 게임 상태 (비반응형) ──
 let stage: Stage | null = null
+let thumb: PoseThumb | null = null
 let rig: AvatarRig
 let wall: WallHandle
 let rafId = 0
@@ -334,6 +335,7 @@ const PIP_BONES: [number, number][] = [
 
 function initThree(canvas: HTMLCanvasElement) {
   stage = createStage(canvas, cfg)
+  thumb = createPoseThumb(thumbRef.value!, cfg.avatar)
   rig = new AvatarRig(cfg.avatar)
   stage.scene.add(rig.group)
   stage.setFloorY(rig.floorY)
@@ -587,13 +589,7 @@ function easeIn(t: number): number {
 
 /** 캡처된 출제 포즈를 좌상단 목표 썸네일에 그린다 (§6-7 — 벽이 다가오면 구멍이 안 보인다) */
 function drawThumbnail(setter: SolvedSkeleton) {
-  const canvas = thumbRef.value
-  const ctx = canvas?.getContext('2d')
-  if (!canvas || !ctx) return
-  ctx.clearRect(0, 0, canvas.width, canvas.height)
-  ctx.fillStyle = '#fff'
-  ctx.strokeStyle = '#fff'
-  drawSilhouette(ctx, setter, cfg, 0)
+  thumb?.show(setter)
 }
 
 /**
@@ -1029,6 +1025,8 @@ onBeforeUnmount(() => {
   stream?.getTracks().forEach((t) => t.stop())
   resizeObs?.disconnect()
   rig?.dispose()
+  thumb?.dispose()
+  thumb = null
   wall?.dispose()
   // 연속 모드용 풀 — 날아오던 것과 반납된 것 모두 (텍스처 2장 + 캔버스 2장씩 물고 있다)
   for (const w of flying) w.handle.dispose()
@@ -1502,8 +1500,6 @@ onBeforeUnmount(() => {
   /* 오버레이(drawPip)가 잘리지 않은 전체 프레임 기준 좌표를 쓰므로 crop이 생기면 안 된다 —
      박스 비율을 스트림 비율(--cam-aspect)에 맞춰 crop을 0으로 만든다(syncCamAspect 주석 참고) */
   width: 100%;
-  max-width: 200px;
-  margin: 0 auto;
   border: var(--bf-line);
   border-radius: var(--bf-radius);
   overflow: hidden;
