@@ -18,6 +18,7 @@ import { useRoomChat } from '@/composables/useRoomChat'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
+import { containsProfanity } from '@/utils/profanity'
 import { GAME_CATALOG, type GameEntry } from './data'
 import { CHAT_REPORT_REASONS, CHAT_REPORT_DETAIL_MAX, canSubmitChatReport, chatReportErrorMessage } from './chatReport'
 import ParticipantTile from './components/ParticipantTile.vue'
@@ -332,19 +333,25 @@ const BUBBLE_FADE_MS = 400
 // 채팅 독 위 떠있는 로그 — 스크롤 없이 최근 6개만 보여주고 그 이전 건 그냥 사라진다.
 const visibleBubbles = computed(() => bubbles.value.slice(-CHAT_LOG_MAX))
 
-// 채팅 전체보기 — 자동으로 사라지는 bubbles와 달리, 입장 이후 전체 이력을 그대로 보여준다.
+// 채팅 전체보기 — 자동으로 사라지는 bubbles와 달리, 입장 이후 전체 이력을 보여준다.
+// 패널(.chat-full-body)이 column-reverse라 배열은 최신이 앞에 오도록 뒤집는다(-159) —
+// 화면상 순서는 그대로 위=과거/아래=최신이지만, 열자마자 최신이 보이고 새 메시지에 하단이 고정되며
+// 위로 스크롤해 과거를 읽는 중에는 끌어내리지 않는다. JS 스크롤 제어 없이 브라우저 앵커링에 맡긴다.
+// key는 뒤집기 전 인덱스(i) — 메시지가 추가돼도 기존 항목의 key가 밀리지 않는다.
 const chatExpanded = ref(false)
 const allBubbles = computed<ChatBubble[]>(() =>
-  roomChat.messages.value.map((m, i) => ({
-    id: i,
-    chatId: m.chatId,
-    userId: m.userId,
-    nickname: m.nickname,
-    text: m.text,
-    me: m.userId === myParticipantId.value,
-    kind: m.type,
-    gameName: m.gameName,
-  })),
+  roomChat.messages.value
+    .map((m, i) => ({
+      id: i,
+      chatId: m.chatId,
+      userId: m.userId,
+      nickname: m.nickname,
+      text: m.text,
+      me: m.userId === myParticipantId.value,
+      kind: m.type,
+      gameName: m.gameName,
+    }))
+    .reverse(),
 )
 
 watch(roomChat.messages, (all, prev) => {
@@ -377,9 +384,22 @@ watch(
   },
 )
 
+// 도배 선차단(-159) — 서버(ChatRateLimiter)와 같은 기준(5초 5건)으로 전송 전에 막고 바로 안내한다.
+// 서버가 최종 방어선이고, 여기서는 소용없는 프레임을 줄이고 즉각 피드백을 주는 게 목적.
+const CHAT_BURST_MAX = 5
+const CHAT_BURST_WINDOW_MS = 5000
+let chatSentTimes: number[] = []
+
 function send() {
   const t = draft.value.trim()
   if (!t || t.length > CHAT_MAX_LEN) return
+  const now = Date.now()
+  chatSentTimes = chatSentTimes.filter((ts) => now - ts < CHAT_BURST_WINDOW_MS)
+  if (chatSentTimes.length >= CHAT_BURST_MAX) {
+    flash('채팅을 너무 자주 보냈어요 · 잠시 후 다시 보내 주세요')
+    return
+  }
+  chatSentTimes.push(now)
   roomChat.sendChat(t)
   draft.value = ''
 }
@@ -934,6 +954,11 @@ async function openSettings() {
 
 async function submitSettings(payload: NewRoom) {
   if (settingsSubmitting.value) return
+  // 방 생성(로비)과 동일한 선검사 — 서버(@NoProfanity)가 최종 거절한다
+  if (containsProfanity(payload.title)) {
+    flash('방 제목에 사용할 수 없는 단어가 있어요')
+    return
+  }
   settingsSubmitting.value = true
   try {
     // 전체 상태 재전송(명세 §4) — 제목만 바꿔도 4필드를 다 보낸다.
@@ -1928,7 +1953,8 @@ const startHint = computed(() =>
 .chat-full-head { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; font-size: 9px; font-weight: 700; color: var(--c-ink-soft); border-bottom: 2px solid rgba(56, 38, 61, .12); }
 .chat-full-close { width: 22px; height: 22px; border: 2px solid var(--c-ink-soft); border-radius: 7px; background: #fff; color: var(--c-ink-soft); font-size: 9px; display: flex; align-items: center; justify-content: center; }
 .chat-full-body {
-  flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px;
+  /* column-reverse + 뒤집힌 allBubbles — 열자마자 최신(스크롤 하단)이 보이고 새 메시지에 하단 고정(-159) */
+  flex: 1; min-height: 0; display: flex; flex-direction: column-reverse; gap: 8px; padding: 10px 12px;
   overflow-y: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
