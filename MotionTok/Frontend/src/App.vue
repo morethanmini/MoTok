@@ -33,6 +33,7 @@ import { stompConnected } from '@/composables/useGlobalStomp'
 import WhisperModal from '@/components/common/WhisperModal.vue'
 import { useWarningNotice, currentWarning } from '@/composables/useWarningNotice'
 import { useToast } from '@/composables/useToast'
+import { loadRemoteWordlist } from '@/utils/profanity'
 
 const router = useRouter()
 const session = useSessionStore()
@@ -50,6 +51,9 @@ useSessionDisplaced()
 // 관리자 경고(-105) — 어느 화면에 있든 떠야 하고, 확인을 눌러야 서버가 전달됐음을 안다.
 // 위 단일 세션과 달리 세션을 끊지 않는다 — 경고는 접근을 막지 않는다.
 const { acknowledge: acknowledgeWarning } = useWarningNotice()
+// 비속어 사전 서버 정본(-152) — 가입 폼(비로그인)에서도 쓰이므로 앱 시작 시 한 번 받아 둔다.
+// 몇 KB짜리 공개 GET이고 실패해도 번들 내장본으로 동작하므로 기다리지 않는다.
+void loadRemoteWordlist()
 
 /**
  * 귓속말 도착 알림(-150) — 어느 화면에 있든 떠야 하므로 앱 셸이 맡는다.

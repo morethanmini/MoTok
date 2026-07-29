@@ -11,6 +11,7 @@ import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { usersApi, authApi, ApiError, forceRefreshAccessToken } from '@/api'
 import { useSessionStore } from '@/stores/session'
+import { containsProfanity } from '@/utils/profanity'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 
@@ -42,6 +43,13 @@ async function check() {
     checked.value = true
     available.value = false
     message.value = '닉네임은 2~16자여야 해요.'
+    return
+  }
+  // 서버(중복확인·수정 @NoProfanity)와 같은 검사를 미리 태운다 — 왕복 없이 즉시 안내
+  if (containsProfanity(value)) {
+    checked.value = true
+    available.value = false
+    message.value = '✕ 닉네임에 사용할 수 없는 단어가 있어요'
     return
   }
   checking.value = true
