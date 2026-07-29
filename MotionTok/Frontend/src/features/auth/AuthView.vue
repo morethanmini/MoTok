@@ -273,13 +273,16 @@ async function submitLogin() {
   submitError.value = ''
   submitting.value = true
   try {
+    // rememberMe는 서버가 Refresh 쿠키 수명으로 반영한다(영구 쿠키 vs 세션 쿠키).
     const token = await authApi.login(email.value.trim(), password.value, rememberMe.value)
-    session.applyToken(token, rememberMe.value)
+    session.applyToken(token)
     router.push({ name: RouteName.Lobby })
   } catch (e) {
     submitError.value = messageFor(e, {
       AUTH_INVALID_CREDENTIALS: '이메일 또는 비밀번호를 확인해 주세요.',
       AUTH_ACCOUNT_NOT_ACTIVE: '이용이 제한된 계정입니다.',
+      // 실패가 쌓이면 서버가 잠시 막는다(무차별 대입 방어) — 비밀번호 문제로 오해하지 않게 따로 안내한다.
+      AUTH_LOGIN_ATTEMPTS_EXCEEDED: '로그인 시도가 너무 많아요. 잠시 후 다시 시도해 주세요.',
     })
   } finally {
     submitting.value = false

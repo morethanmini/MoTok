@@ -37,6 +37,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
+      // 로그인·갱신·로그아웃은 Refresh 쿠키를 주고받는다(같은 오리진이면 기본값과 동일).
+      credentials: 'include',
     })
   } catch {
     throw new NetworkError()

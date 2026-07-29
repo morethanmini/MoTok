@@ -14,11 +14,14 @@ import java.util.UUID;
 
 /**
  * JWT 발급·검증. subject는 USER PK(회원) 또는 guest-xxxx(게스트)다.
- * Access는 기본 1시간, Refresh는 14일이며 Redis auth:refresh:{userId}에 저장된다.
+ * Access는 기본 30분, Refresh는 14일이며 해시가 Redis auth:refresh:{userId}에 저장된다.
+ * Access를 짧게 두는 것은 이 토큰만 서버가 회수할 수단이 없기 때문이다 — 로그아웃·단일 세션 밀어내기는
+ * Redis의 Refresh를 지워 즉시 먹히지만, 이미 나간 Access는 만료를 기다리는 수밖에 없다.
  *
- * 게스트 토큰만 만료를 따로 둔다(기본 12시간). 게스트에겐 Refresh 토큰이 없어 갱신 수단이 없는데,
- * 1인 게임을 한 시간 넘게 이어가면 토큰이 죽어 플레이 도중 튕기기 때문이다. 권한이 없는 토큰이라
- * 길게 잡아도 위험이 작고, 탭을 닫으면 클라이언트가 sessionStorage와 함께 버린다.
+ * 게스트 토큰만 만료를 따로 둔다(기본 30분). 게스트에겐 Refresh 토큰이 없어 갱신 수단이 없으므로
+ * 이 값이 곧 "로그인 없이 이어서 쓸 수 있는 시간"이다. 짧게 잡은 것은 의도적이다 —
+ * 회원 가입·로그인으로 넘어오게 만드는 마찰이고, 익명 토큰이 오래 떠다니지 않게 하는 효과도 있다.
+ * 탭을 닫으면 클라이언트가 sessionStorage와 함께 버린다.
  */
 @Component
 public class JwtTokenProvider {
