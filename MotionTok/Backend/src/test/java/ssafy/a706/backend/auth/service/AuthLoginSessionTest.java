@@ -1,6 +1,7 @@
 package ssafy.a706.backend.auth.service;
 
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -11,6 +12,8 @@ import ssafy.a706.backend.auth.oauth.OauthLinkService;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.ratelimit.LoginAttemptLimiter;
 import ssafy.a706.backend.auth.session.SingleSessionPolicy;
+import ssafy.a706.backend.auth.store.AccountBlock;
+import ssafy.a706.backend.auth.store.AccountBlockStore;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.global.config.StompSessionRegistry;
 import ssafy.a706.backend.global.exception.BusinessException;
@@ -58,11 +61,19 @@ class AuthLoginSessionTest {
             "test-secret-key-for-motok-auth-service-spec-0123456789",
             3_600_000L, Duration.ofDays(14).toMillis(), 1_800_000L);
 
+    /**
+     * 제재 조회는 이 테스트의 관심사가 아니다 — "막히지 않음"으로 고정한다.
+     * 열거형 반환은 mock 기본값이 null이라 명시해야 한다(null이면 로그인 경로가 NPE로 죽는다).
+     */
+    private final AccountBlockStore accountBlockStore = mock(AccountBlockStore.class);
+
     private final AuthService service = new AuthService(
             userRepository,
             passwordEncoder,
             tokenProvider,
             refreshTokenStore,
+
+            accountBlockStore,
             mock(EmailVerificationService.class),
             mock(OauthClientResolver.class),
             mock(OauthLinkService.class),
@@ -72,6 +83,11 @@ class AuthLoginSessionTest {
             singleSessionPolicy,
             loginAttemptLimiter,
             mock(RejoinPolicy.class));
+
+    @BeforeEach
+    void notBlocked() {
+        given(accountBlockStore.blockOf(anyLong())).willReturn(AccountBlock.NONE);
+    }
 
     private void activeUser() {
         User user = User.builder()
