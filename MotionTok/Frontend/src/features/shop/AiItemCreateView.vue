@@ -14,6 +14,7 @@ import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import { useToast } from '@/composables/useToast'
+import aiDrawingCat from '@/assets/ai/ai-drawing-cat.png'
 
 const POLL_INTERVAL_MS = 1500
 const POLL_MAX_ATTEMPTS = 40 // 1.5s * 40 = 60초
@@ -459,11 +460,11 @@ function onBackdropClose() {
       </PixelCard>
     </div>
 
-    <PixelModal v-if="modalOpen" @close="onBackdropClose">
+    <PixelModal v-if="modalOpen" variant="lobby" @close="onBackdropClose">
       <div class="ai-modal">
         <template v-if="phase === 'generating'">
           <div class="gen-visual">
-            <span class="gen-spark">✨</span>
+            <img class="gen-cat" :src="aiDrawingCat" alt="그림을 그리고 있는 고양이" />
             <div class="gen-dots"><i /><i /><i /></div>
           </div>
           <b class="gen-title">{{ generatingLabel }}</b>
@@ -495,9 +496,14 @@ function onBackdropClose() {
         </template>
 
         <template v-else>
-          <b class="modal-title">앗, 생성에 실패했어요</b>
-          <p class="gen-desc">{{ failMessage }}</p>
-          <PixelButton block @click="closeModal">닫기</PixelButton>
+          <div class="fail-modal">
+            <div class="fail-visual" aria-hidden="true"><span>!</span></div>
+            <p class="fail-kicker">AI ITEM STUDIO</p>
+            <b class="modal-title">앗, 생성에 실패했어요</b>
+            <p class="gen-desc">{{ failMessage }}</p>
+            <p class="fail-note">잠시 후 다시 시도해 보세요.</p>
+            <PixelButton block @click="closeModal">그리기 화면으로 돌아가기</PixelButton>
+          </div>
         </template>
       </div>
     </PixelModal>
@@ -506,8 +512,9 @@ function onBackdropClose() {
       <section class="point-confirm" role="dialog" aria-modal="true" aria-labelledby="point-confirm-title">
         <span class="point-confirm-coin">●</span>
         <p class="point-confirm-kicker">AI ITEM STUDIO</p>
-        <h2 id="point-confirm-title">1,500 포인트를 사용할까요?</h2>
-        <p>1,500 포인트로 최대 2번까지 생성해 볼 수 있어요.<br />두 결과 중 마음에 드는 것만 골라 저장하면 돼요.</p>
+        <h2 id="point-confirm-title">AI 제작권을 사용할까요?</h2>
+        <div class="point-ticket"><span>AI ITEM PASS</span><b>1,500 P</b><small>최대 2회 생성 · 최종 1개 선택</small></div>
+        <p>두 결과 중 마음에 드는 아이템 하나만 골라<br />인벤토리에 저장할 수 있어요.</p>
         <div class="clear-confirm-actions">
           <PixelButton @click="showPointConfirm = false">취소</PixelButton>
           <PixelButton variant="primary" @click="generate">생성하기</PixelButton>
@@ -539,12 +546,10 @@ function onBackdropClose() {
 @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
 
 /* AI 생성 결과 모달 */
-.ai-modal { text-align: center; }
-.modal-title { display: block; margin-bottom: 14px; font-size: 14px; }
-.gen-visual { position: relative; height: 74px; margin-bottom: 14px; }
-.gen-spark { position: absolute; left: 50%; top: 0; font-size: 30px; transform: translateX(-50%); animation: px-twinkle 1.4s steps(2) infinite; }
-.gen-dots { position: absolute; left: 50%; bottom: 0; display: flex; gap: 7px; transform: translateX(-50%); }
-.gen-dots i { width: 10px; height: 10px; border: 2px solid var(--c-ink); border-radius: 50%; background: var(--c-mint); animation: ai-dot-bounce 1s infinite ease-in-out; }
+.ai-modal { padding: 3px; text-align: center; }
+.modal-title { display: block; margin-bottom: 8px; color: #4b3429; font-family: var(--font-pixel); font-size: 15px; font-weight: 400; }
+.gen-visual { position: relative; height: 112px; margin-bottom: 11px; }.gen-cat { display: block; width: 126px; height: 112px; margin: 0 auto; object-fit: contain; }
+.gen-dots { position: absolute; left: 50%; bottom: 0; display: flex; gap: 7px; transform: translateX(-50%); }.gen-dots i { width: 9px; height: 9px; border: 2px solid #8e6049; border-radius: 50%; background: #dcecbf; animation: ai-dot-bounce 1s infinite ease-in-out; }
 .gen-dots i:nth-child(2) { animation-delay: 0.15s; }
 .gen-dots i:nth-child(3) { animation-delay: 0.3s; }
 @keyframes ai-dot-bounce {
@@ -554,8 +559,14 @@ function onBackdropClose() {
 @media (prefers-reduced-motion: reduce) {
   .gen-spark, .gen-dots i { animation: none; }
 }
-.gen-title { display: block; margin-bottom: 8px; font-size: 14px; }
-.gen-desc { margin: 0; color: var(--c-muted); font-size: 10px; line-height: 1.7; }
+.gen-title { display: block; margin-bottom: 8px; color: #51382c; font-family: var(--font-pixel); font-size: 13px; font-weight: 400; }.gen-desc { margin: 0; color: #896e5d; font-size: 10px; line-height: 1.7; }
+.fail-modal { padding: 5px 5px 2px; }
+.fail-visual { width: 62px; height: 62px; margin: 0 auto 10px; display: grid; place-items: center; border: 3px solid #8d6048; border-radius: 50%; background: #f7df9e; box-shadow: 4px 4px 0 #c79b77; }
+.fail-visual span { width: 39px; height: 39px; display: grid; place-items: center; border: 2px solid #b86755; border-radius: 50%; background: #fff8e9; color: #b86755; font-family: var(--font-pixel); font-size: 21px; line-height: 1; }
+.fail-kicker { margin: 0 0 7px; color: #9a6045; font-family: var(--font-pixel); font-size: 8px; letter-spacing: .9px; }
+.fail-modal .modal-title { margin-bottom: 9px; }
+.fail-note { margin: 12px 0 14px; padding: 8px; border-top: 2px dashed #dfc29d; border-bottom: 2px dashed #dfc29d; color: #806454; font-size: 9px; }
+.fail-modal :deep(.px-btn) { border: 2px solid #9a6b4f; border-radius: 6px; box-shadow: 3px 3px 0 #bd916e; }
 .result-frame {
   width: 220px;
   height: 220px;
@@ -570,10 +581,10 @@ function onBackdropClose() {
   background-size: 18px 18px;
   overflow: hidden;
 }
-.result-frame img { width: 85%; height: 85%; object-fit: contain; }
+.result-frame img { width: 85%; height: 85%; object-fit: contain; }.result-frame { border: 3px solid #c79b77; border-radius: 9px; background-color: #fffdf4; background-image: linear-gradient(rgba(190,145,101,.12) 1px, transparent 1px), linear-gradient(90deg, rgba(190,145,101,.12) 1px, transparent 1px); }
 .result-options { display: flex; justify-content: center; margin-bottom: 18px; }.result-options.compare { gap: 10px; }.result-options.compare .result-frame { width: 150px; height: 150px; margin: 0; }
 .result-frame { position: relative; padding: 0; cursor: pointer; transition: transform .15s ease, box-shadow .15s ease; }.result-frame.selected { border-color: #9a6b4f; box-shadow: 4px 4px 0 #c99971; transform: translate(-2px, -2px); }.result-badge { position: absolute; top: 7px; left: 7px; padding: 4px 6px; border: 1px solid #8b5c42; border-radius: 4px; background: #fff0b5; color: #604131; font-size: 8px; }.result-guide { margin: -4px 0 12px; color: #896e5d; font-size: 10px; }
-.modal-actions { display: flex; gap: 10px; }.modal-actions small { font-size: 8px; opacity: .75; }
+.modal-actions { display: flex; gap: 10px; }.modal-actions small { font-size: 8px; opacity: .75; }.modal-actions :deep(.px-btn) { border: 2px solid #9a6b4f; border-radius: 6px; box-shadow: 2px 2px 0 #bd916e; }
 .modal-actions :deep(.px-btn) { flex: 1; }
 .pad {
   width: 100%;
@@ -656,7 +667,7 @@ function onBackdropClose() {
 .history-actions { display: flex; align-items: center; gap: 6px; }.history-actions > button { display: grid; width: 30px; height: 30px; place-items: center; padding: 0; border: 2px solid #b98a67; border-radius: 6px; background: #fffdf5; color: #704c38; font-size: 17px; line-height: 1; }.history-actions :deep(.px-btn) { width: auto; min-width: 78px; padding: 0 9px; border-color: #9a6b4f; background: #f7e1ad; box-shadow: 2px 2px 0 #bd916e; color: #51382c; font-size: 9px; }.history-actions > button:disabled { opacity: .38; cursor: not-allowed; }.history-actions > button:not(:disabled):hover { transform: translate(-1px, -1px); box-shadow: 2px 2px 0 #d6b08b; }
 .clear-confirm-backdrop { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(62, 41, 29, .38); }
 .clear-confirm { width: min(100%, 350px); padding: 28px 24px 22px; border: 3px solid #8b5c42; border-radius: 14px; background: #fff8e7; box-shadow: 6px 6px 0 #70452f; text-align: center; }
-.point-confirm { width: min(100%, 370px); padding: 30px 24px 24px; border: 3px solid #8b5c42; border-radius: 14px; background: linear-gradient(145deg, #fff9e8, #f8e3a9); box-shadow: 6px 6px 0 #70452f; text-align: center; }.point-confirm-coin { display: grid; width: 42px; height: 42px; margin: 0 auto 10px; place-items: center; border: 3px solid #9a6b3c; border-radius: 50%; background: #ffd65d; color: #fff1a1; font-size: 20px; box-shadow: inset 0 0 0 3px #f1b83d; }.point-confirm-kicker { margin: 0 0 9px; color: #a8704f; font-size: 8px; letter-spacing: 1px; }.point-confirm h2 { margin: 0; color: #503528; font-family: var(--font-pixel); font-size: 14px; font-weight: 400; }.point-confirm > p:not(.point-confirm-kicker) { margin: 13px 0 21px; color: #7a604c; font-size: 10px; line-height: 1.7; }
+.point-confirm { width: min(100%, 370px); padding: 30px 24px 24px; border: 3px solid #8b5c42; border-radius: 14px; background: #fff8e9; box-shadow: 6px 6px 0 #70452f; text-align: center; }.point-confirm-coin { display: grid; width: 42px; height: 42px; margin: 0 auto 10px; place-items: center; border: 3px solid #9a6b3c; border-radius: 50%; background: #ffd65d; color: #fff1a1; font-size: 20px; box-shadow: inset 0 0 0 3px #f1b83d; }.point-confirm-kicker { margin: 0 0 9px; color: #a8704f; font-size: 8px; letter-spacing: 1px; }.point-confirm h2 { margin: 0; color: #503528; font-family: var(--font-pixel); font-size: 14px; font-weight: 400; }.point-ticket { display: grid; gap: 4px; margin: 15px 0 12px; padding: 10px; border: 2px dashed #b98a67; border-radius: 7px; background: #fffdf4; }.point-ticket span { color: #a8704f; font-size: 8px; letter-spacing: 1px; }.point-ticket b { color: #82533a; font-family: var(--font-pixel); font-size: 17px; font-weight: 400; }.point-ticket small { color: #8d705c; font-size: 9px; }.point-confirm > p:not(.point-confirm-kicker) { margin: 13px 0 21px; color: #7a604c; font-size: 10px; line-height: 1.7; }
 .clear-confirm-icon { display: grid; width: 36px; height: 36px; margin: 0 auto 12px; place-items: center; border: 2px solid #a96a4e; border-radius: 50%; background: #f8cf80; color: #66402e; font-family: var(--font-pixel); font-size: 19px; }
 .clear-confirm h2 { margin: 0; color: #503528; font-family: var(--font-pixel); font-size: 15px; font-weight: 400; }
 .clear-confirm p { margin: 12px 0 20px; color: #896e5d; font-size: 11px; }
