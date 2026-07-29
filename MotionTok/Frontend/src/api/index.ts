@@ -20,7 +20,12 @@ export { invitationsApi } from './modules/invitations'
 export { whispersApi } from './modules/whispers'
 export { reportsApi, chatReportsApi } from './modules/reports'
 export { contentApi } from './modules/content'
-export { adminApi, adminChatReportsApi, adminUserReportsApi } from './modules/admin'
+export {
+  adminApi,
+  adminChatReportsApi,
+  adminSanctionApi,
+  adminUserReportsApi,
+} from './modules/admin'
 export { rtcApi } from './modules/rtc'
 export { sfuApi } from './modules/sfu'
 export { uploadsApi, putToPresignedUrl, UploadError, UPLOAD_LIMITS } from './modules/uploads'
