@@ -30,10 +30,54 @@ const WALL_EDGE = '#7d7059'
 const WALL_W_MUL = 2.2
 const WALL_H_MUL = 1.35
 
+/**
+ * 디졸브 알갱이 크기 조절 — 노이즈를 벽 UV에 몇 번 반복할지.
+ * 값이 크면 곱게(모래), 작으면 굵게(자갈) 부서진다. 화면 크기·기기에 따라 체감이 달라서
+ * 눈으로 맞추는 노브다. 64² 노이즈 × 3배 → 벽 폭에 192알, 가까이서 알갱이 하나가 4~5px쯤 된다.
+ */
+const DISSOLVE_TILES = 3
+const DISSOLVE_NOISE_SIZE = 64
+
+/**
+ * 디졸브용 노이즈 — 벽 전체가 하나를 공유한다.
+ *
+ * <p>핸들마다 만들 이유가 없다. 동시에 삭는 벽이 겹치는 일이 거의 없어 같은 패턴이라는 게
+ * 눈에 띄지 않고, 벽 4장이 각자 텍스처를 들면 그만큼 메모리만 쓴다(연속 모드가 이미 벽마다
+ * 캔버스 2장 + 텍스처 2장을 물고 있다).</p>
+ *
+ * <p>NearestFilter여야 한다 — 선형 보간을 걸면 알갱이 경계가 뭉개져 가루가 아니라
+ * 얼룩이 번지는 그림이 된다.</p>
+ */
+let dissolveNoise: THREE.DataTexture | null = null
+function noiseTexture(): THREE.DataTexture {
+  if (dissolveNoise) return dissolveNoise
+  const n = DISSOLVE_NOISE_SIZE
+  const data = new Uint8Array(n * n * 4)
+  for (let i = 0; i < n * n; i++) {
+    const v = Math.floor(Math.random() * 256)
+    data[i * 4] = data[i * 4 + 1] = data[i * 4 + 2] = v
+    data[i * 4 + 3] = 255
+  }
+  const tex = new THREE.DataTexture(data, n, n)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  tex.magFilter = tex.minFilter = THREE.NearestFilter
+  tex.needsUpdate = true
+  dissolveNoise = tex
+  return tex
+}
+
 export interface WallHandle {
   mesh: THREE.Mesh
   /** 출제 포즈 → 벽 텍스처 재생성. 구멍(마진 M)·발광 림·목표 유령 실루엣 */
   build(setter: SolvedSkeleton, margin: number, cfg: BodyFitConfig): void
+  /**
+   * 통과한 벽이 삭아 없어지는 정도 — 0이면 온전, 1이면 완전히 사라진다.
+   *
+   * <p>연속 모드에서 통과한 벽이 카메라로 다가오며 화면을 덮어 다음 벽 구멍을 미리 읽을 수 없게
+   * 만들었다(실기 피드백). 그냥 투명해지는 대신 노이즈 임계값으로 픽셀을 갉아내 가루가 되며
+   * 증발하는 모양으로 지운다. 핸들마다 머티리얼이 따로라 다른 벽에 영향이 없다.</p>
+   */
+  setDissolve(progress: number): void
   dispose(): void
 }
 
@@ -57,15 +101,49 @@ export function createWall(): WallHandle {
   // alphaMap은 색이 아니라 데이터라 선형 유지가 맞다
   const alpha = new THREE.CanvasTexture(alphaCanvas)
 
+  // transparent 유지 — 유령 실루엣(#555 알파)이 반투명으로 보여야 목표 가이드가 된다
+  const material = new THREE.MeshBasicMaterial({
+    map,
+    alphaMap: alpha,
+    transparent: true,
+    side: THREE.DoubleSide,
+  })
+
+  /**
+   * 디졸브 진행도. 셰이더 유니폼과 같은 객체를 공유하므로 값만 바꾸면 다음 프레임에 반영된다
+   * (재컴파일 없음 — 분기는 셰이더에 항상 들어 있다).
+   */
+  const dissolve = { value: 0 }
+  // 기본 재질(MeshBasicMaterial)에 알파 컷 세 줄만 얹는다. 커스텀 ShaderMaterial로 갈아타면
+  // 납작한 룩·알파맵·톤매핑 설정을 전부 손으로 재현해야 해서 얻는 것보다 잃는 게 많다.
+  // vMapUv·alphamap_fragment는 three 0.185의 실제 청크 이름이다(버전 올릴 때 확인 필요).
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uDissolve = dissolve
+    shader.uniforms.uNoise = { value: noiseTexture() }
+    shader.uniforms.uTiles = { value: DISSOLVE_TILES }
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        'void main() {',
+        `uniform float uDissolve;
+         uniform float uTiles;
+         uniform sampler2D uNoise;
+         void main() {`,
+      )
+      .replace(
+        '#include <alphamap_fragment>',
+        `#include <alphamap_fragment>
+         if ( uDissolve > 0.0 ) {
+           float grain = texture2D( uNoise, vMapUv * uTiles ).r;
+           // 임계값보다 옅은 알갱이는 이미 날아갔다
+           if ( grain <= uDissolve ) discard;
+           // 곧 날아갈 알갱이는 미리 옅어진다 — 경계가 칼로 자른 듯 하지 않고 삭아 보인다
+           diffuseColor.a *= smoothstep( uDissolve, uDissolve + 0.18, grain );
+         }`,
+      )
+  }
   const mesh = new THREE.Mesh(
     new THREE.PlaneGeometry(VIEW_SIZE * WALL_W_MUL, VIEW_SIZE * WALL_H_MUL),
-    // transparent 유지 — 유령 실루엣(#555 알파)이 반투명으로 보여야 목표 가이드가 된다
-    new THREE.MeshBasicMaterial({
-      map,
-      alphaMap: alpha,
-      transparent: true,
-      side: THREE.DoubleSide,
-    }),
+    material,
   )
   // 벽 평면 자체는 제자리 — 아바타·구멍만 STAGE_DROP만큼 내려간다(구멍은 텍스처에서 이동).
   // 뷰포트 중심 높이에는 축소분만 반영한다.
@@ -142,6 +220,10 @@ export function createWall(): WallHandle {
   return {
     mesh,
     build,
+    setDissolve(progress: number) {
+      // 1에서 남는 알갱이가 없어야 한다 — grain <= uDissolve 비교라 임계값이 1에 닿으면 전부 버려진다
+      dissolve.value = Math.min(1, Math.max(0, progress))
+    },
     dispose() {
       map.dispose()
       alpha.dispose()
