@@ -18,6 +18,7 @@ import {
 import { useSessionStore } from '@/stores/session'
 import { useAsyncData } from '@/composables/useAsyncData'
 import { useLobbyLive } from '@/composables/useLobbyLive'
+import { motionModelsReady } from '@/composables/motionModels'
 import { useWhisper } from '@/composables/useWhisper'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
@@ -55,9 +56,11 @@ const { message: toast, flash } = useToast()
 /** 친구 박스 클릭 → 공개 프로필(-96). 친구·랭킹 화면과 같은 컴포저블. */
 const viewer = useUserProfile()
 
-// 스플래시(로딩)는 세션 첫 진입에만 표시. 이후 로비 재방문 시엔 건너뜀.
-const SPLASH_SEEN_KEY = 'motok.splashSeen'
-const showSplash = ref(sessionStorage.getItem(SPLASH_SEEN_KEY) !== '1')
+// 스플래시(로딩)는 "모델이 실제로 준비됐는가"로 판정한다(-161). 예전엔 sessionStorage
+// 플래그로 세션당 1회만 띄웠는데, 새로고침이면 힙 싱글턴(모델)은 죽고 플래그는 살아남아
+// 재다운로드 경로가 영영 사라졌다 — 8인 테스트에서 3명이 게임을 못 돌린 원인.
+// 모델이 이미 있으면(SPA 재방문) 안 뜨고, 캐시 복원이면 1초 미만으로 스쳐 지나간다.
+const showSplash = ref(!motionModelsReady())
 const query = ref('')
 const showJoin = ref(false)
 const showCreate = ref(false)
@@ -187,7 +190,6 @@ onMounted(() => {
 
 function enterLobby() {
   showSplash.value = false
-  sessionStorage.setItem(SPLASH_SEEN_KEY, '1')
   void bgm.play()
 }
 
