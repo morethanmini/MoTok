@@ -310,6 +310,10 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 }
 .menu-item:hover { background: var(--c-mint-soft); }
 
+/* Account dropdown: lobby wooden notice board */
+.account-menu { width: 184px; padding: 8px 12px; border: 3px solid #8d6048; border-radius: 12px; background: #fff8e9; box-shadow: 5px 5px 0 #c79b77; overflow: visible; }
+.menu-head { margin: 0; padding: 9px 4px 12px; border: 0; border-bottom: 2px dashed #d7b58e; border-radius: 0; background: transparent; }.menu-head > span { color: #573a2b; font-size: 12px; }.menu-item { margin: 0; padding: 12px 10px; border: 0; border-radius: 0; background: transparent; color: #5a3e30; text-align: center; font-size: 14px; }.menu-item + .menu-item { border-top: 2px dashed #ead5b8; }.menu-item:hover { background: #fff0b6; }.menu-item:last-child { margin-top: 4px; padding-bottom: 8px; border-top: 2px dashed #ead5b8; background: transparent; color: #c45c52; }.menu-item:last-child:hover { background: transparent; color: #a8433b; }
+
 @media (max-width: 720px) {
   .top { gap: 14px; }
   .brand { min-width: 0; }
