@@ -4,7 +4,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { useSessionStore } from '@/stores/session'
-import { authApi } from '@/api'
+import { ApiError, authApi } from '@/api'
 import type { GuestResponse } from '@/api'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -15,6 +15,8 @@ const router = useRouter()
 const session = useSessionStore()
 
 const showGuestWarning = ref(false)
+/** 게스트 시작이 호출 제한에 걸렸을 때의 안내. 비어 있으면 표시하지 않는다. */
+const guestError = ref('')
 
 const goAuth = (mode: 'login' | 'signup') =>
   router.push({ name: RouteName.Auth, query: { mode } })
@@ -24,11 +26,18 @@ const playAsGuest = () => {
 }
 
 const confirmGuest = async () => {
+  guestError.value = ''
   let res: GuestResponse | null = null
   try {
     // 서버 게스트 세션(JWT)·1인방 생성 — 이후 인증 API 호출에 필요 (명세 POST /auth/guest)
     res = await authApi.guest()
-  } catch {
+  } catch (e) {
+    // 호출 제한에 걸린 것은 "서버가 잠깐 없는" 것과 다르다 — 그냥 진행시키면 토큰도 방도 없이
+    // 게임 화면으로 들어가 전부 실패한다. 여기서 멈추고 왜 막혔는지 알린다.
+    if (e instanceof ApiError && e.code === 'AUTH_GUEST_START_LIMIT_EXCEEDED') {
+      guestError.value = '게스트 시작 요청이 너무 많아요. 잠시 후 다시 시도해 주세요.'
+      return
+    }
     // 서버 미기동 시에도 화면 흐름은 막지 않는다(기존 동작 유지)
   }
   showGuestWarning.value = false
@@ -71,6 +80,7 @@ const confirmGuest = async () => {
       <p>
         게스트는 1인 플레이만 가능하며 멀티플레이·랭킹 등록은 로그인 후 이용할 수 있어요.
       </p>
+      <p v-if="guestError" class="guest-error">{{ guestError }}</p>
       <div class="modal-actions">
         <PixelButton block @click="showGuestWarning = false">취소</PixelButton>
         <PixelButton variant="guest" block @click="confirmGuest">계속하기</PixelButton>
@@ -149,6 +159,12 @@ const confirmGuest = async () => {
   gap: 12px;
   margin-top: 28px;
 }
+.guest-error {
+  color: var(--c-danger, #c0392b);
+  font-size: 12px;
+  margin-top: 10px;
+}
+
 .modal-actions {
   display: flex;
   gap: 9px;

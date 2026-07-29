@@ -37,6 +37,10 @@ public enum ErrorCode {
     SEND_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_SEND_LIMIT_EXCEEDED", "하루 인증번호 발송 한도를 초과했습니다."),
     VERIFY_ATTEMPT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_VERIFY_ATTEMPT_EXCEEDED", "인증 시도 횟수를 초과했습니다. 인증번호를 다시 요청해 주세요."),
 
+    // 남용 방지 레이트리밋
+    LOGIN_ATTEMPTS_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_LOGIN_ATTEMPTS_EXCEEDED", "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요."),
+    GUEST_START_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_GUEST_START_LIMIT_EXCEEDED", "게스트 시작 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요."),
+
     // 소셜 최초 로그인 닉네임 설정 (명세서 v0.2.15, -22)
     NICKNAME_SETUP_REQUIRED(HttpStatus.FORBIDDEN, "AUTH_NICKNAME_SETUP_REQUIRED", "닉네임 설정을 먼저 완료해 주세요."),
 

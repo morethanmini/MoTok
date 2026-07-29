@@ -18,6 +18,7 @@ import ssafy.a706.backend.auth.oauth.OauthProvider;
 import ssafy.a706.backend.auth.oauth.OauthUserInfo;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.principal.GuestPrincipal;
+import ssafy.a706.backend.auth.ratelimit.LoginAttemptLimiter;
 import ssafy.a706.backend.auth.session.SingleSessionPolicy;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
@@ -51,6 +52,7 @@ public class AuthService {
     private final PresenceService presenceService;
     private final StompSessionRegistry stompSessionRegistry;
     private final SingleSessionPolicy singleSessionPolicy;
+    private final LoginAttemptLimiter loginAttemptLimiter;
     private final RejoinPolicy rejoinPolicy;
 
     public AvailabilityResponse checkEmail(String email) {
@@ -122,16 +124,22 @@ public class AuthService {
     @Transactional
     public IssuedTokens login(LoginRequest req) {
         String email = req.email().trim().toLowerCase();
+        // 비밀번호를 검사하기 전에 막는다 — 차단 중이라면 대조 자체를 하지 않는다.
+        loginAttemptLimiter.ensureNotBlocked(email);
+
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_CREDENTIALS));
 
         if (user.getPasswordHash() == null
                 || !passwordEncoder.matches(req.password(), user.getPasswordHash())) {
+            // 가입되지 않은 이메일은 세지 않는다 — 존재하는 계정에 대한 대입만 늦추면 된다.
+            loginAttemptLimiter.recordFailure(email);
             throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
         }
         if (!user.isActive()) {
             throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
         }
+        loginAttemptLimiter.reset(email);
         // rememberMe는 Refresh 쿠키의 수명이 된다 — true면 14일 영구 쿠키, 아니면 세션 쿠키.
         return issueTokens(user, Boolean.TRUE.equals(req.rememberMe()));
     }
