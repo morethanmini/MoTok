@@ -49,8 +49,19 @@ const props = defineProps<{
   myUserId?: string | null
   /** POSE_SET으로 도착한 출제 포즈(랜드마크 JSON) — 벽 생성 입력 */
   challenge?: string | null
-  /** 게임④(-9): 출제자 관전 화면에 띄울 실시간 순위 — 부모의 scoreboardRows */
-  scores?: { userId: string; nickname: string; holdProgress: number; finished: boolean; score: number | null }[]
+  /**
+   * 게임④(-9): 실시간 중계 — 부모의 scoreboardRows. 출제자 관전 화면과 연속 서바이벌
+   * 순위 카드가 같은 배열을 쓴다. 연속 모드에서는 starsLit 자리에 콤보,
+   * holdProgress 자리에 점수 진행률이 실려 온다(emitChainProgress 참고).
+   */
+  scores?: {
+    userId: string
+    nickname: string
+    starsLit: number
+    holdProgress: number
+    finished: boolean
+    score: number | null
+  }[]
   /** 게임④(-9): 이번 라운드 출제자 표시명 — 누가 내는지/내 차례인지 화면에 박아준다 */
   setterName?: string | null
   /**
@@ -507,9 +518,24 @@ function judgeFlyingWall(w: FlyingWall, now: number) {
  */
 function emitChainProgress() {
   if (!isMultiplayer.value || !chainMode.value) return
-  const max = (chainTarget.value || 1) * GRADE_POINTS.PERFECT
-  emit('progress', combo.value, Math.min(1, totalScore.value / max))
+  emit('progress', combo.value, Math.min(1, totalScore.value / chainMaxScore.value))
 }
+
+/** 연속 서바이벌에서 이론상 받을 수 있는 만점 — 진행률 ↔ 점수 환산의 기준 */
+const chainMaxScore = computed(() => (chainTarget.value || 1) * GRADE_POINTS.PERFECT)
+
+/**
+ * 중계로 받은 진행률을 다시 점수로 환산한다 — 완주한 사람은 서버가 확정한 점수를 그대로 쓴다.
+ * (PROGRESS는 필드 추가 없이 기존 레일을 재사용하느라 점수를 0~1로 눌러 보낸다)
+ */
+function chainScoreOf(row: { holdProgress: number; finished: boolean; score: number | null }): number {
+  return row.finished && row.score !== null ? row.score : row.holdProgress * chainMaxScore.value
+}
+
+/** 연속 서바이벌 실시간 순위 — 벽이 판정될 때마다 순서가 뒤집힌다 */
+const chainRanking = computed(() =>
+  [...(props.scores ?? [])].sort((a, b) => chainScoreOf(b) - chainScoreOf(a)),
+)
 
 /** 연속 모드 한 틱 — 스폰·이동·판정·반납을 전부 여기서 한다 */
 function chainTick(now: number) {
@@ -1292,6 +1318,29 @@ onBeforeUnmount(() => {
           ⚠ {{ overflowWarning }}
         </div>
 
+        <!--
+          연속 서바이벌 실시간 순위 — 이 모드엔 출제자가 없어서 관전 화면(남의 진행 상황이 보이던
+          자리)이 아무에게도 뜨지 않는다. 점수로 승부를 가르는데 뛰는 동안 누가 앞서는지 안 보이면
+          끝나고 순위표를 볼 때까지 혼자 하는 것처럼 느껴진다.
+        -->
+        <div v-if="isMultiplayer && chainMode" class="card rank-card">
+          <h3>실시간 순위</h3>
+          <ul v-if="chainRanking.length" class="rank-list">
+            <li
+              v-for="(row, i) in chainRanking"
+              :key="row.userId"
+              :class="{ me: row.userId === myUserId, done: row.finished }"
+            >
+              <span class="rk-no">{{ i + 1 }}</span>
+              <span class="rk-name">{{ row.nickname }}</span>
+              <span v-if="row.starsLit > 1" class="rk-combo">🔥{{ row.starsLit }}</span>
+              <span class="rk-score">{{ Math.round(chainScoreOf(row)) }}</span>
+              <i class="rk-bar" :style="{ width: Math.min(100, row.holdProgress * 100) + '%' }"></i>
+            </li>
+          </ul>
+          <p v-else class="rank-empty">첫 벽이 지나가면 순위가 잡혀요</p>
+        </div>
+
         <div class="card score-card">
           <h3>내 점수</h3>
           <p class="score">{{ totalScore }}<small>점</small></p>
@@ -1973,6 +2022,69 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 700;
   text-align: center;
+}
+/* 실시간 순위 — 한 줄이 곧 막대다(진행률을 배경으로 깔고 글자를 그 위에 얹는다) */
+.rank-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rank-list li {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  overflow: hidden;
+  border: 1px solid #4a4038;
+  border-radius: var(--bf-radius-sm);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--bf-muted);
+}
+/* 내 줄은 골드 테두리로 — 순위가 뒤집혀도 내 위치를 눈으로 따라갈 수 있어야 한다 */
+.rank-list li.me {
+  border-color: var(--bf-gold);
+  color: #f0e6d2;
+}
+.rank-list li.done .rk-score {
+  color: var(--bf-gold);
+}
+.rk-no {
+  flex: none;
+  width: 14px;
+  font-weight: 800;
+  color: var(--bf-gold);
+}
+.rk-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rk-combo {
+  flex: none;
+  font-size: 10px;
+}
+.rk-score {
+  flex: none;
+  margin-left: auto;
+  font-weight: 700;
+}
+/* 글자 아래에 깔리는 진행 막대 — z-index 대신 순서로 눕힌다(글자가 위) */
+.rk-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--bf-gold);
+  transition: width 0.25s linear;
+}
+.rank-empty {
+  font-size: 11px;
+  color: var(--bf-muted);
 }
 .score {
   font-size: 30px;
