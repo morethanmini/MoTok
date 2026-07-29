@@ -174,12 +174,21 @@ export function useRoomChat() {
 
   // ── 게임 세션 발신 (S15P11A706-115) ──────────
   /** 게임 시작(방장 전용 — 서버가 방장 검증). 수리되면 GAME_START가 방 전체에 배포된다. */
-  function startGame(gameId: number, constellationKey?: string, difficulty?: string) {
+  function startGame(
+    gameId: number,
+    constellationKey?: string,
+    difficulty?: string,
+    mode?: string,
+    wallCount?: number,
+  ) {
     if (!currentRoomId) return
     publishGlobal(`/app/rooms/${currentRoomId}/game/start`, {
       gameId,
       constellationKey: constellationKey ?? null,
       difficulty: difficulty ?? null,
+      // 게임④(-9) 모드·벽 수 — 서버가 검증해 최종 결정한다(선택지 밖이면 기본값으로 떨어진다)
+      mode: mode ?? null,
+      wallCount: wallCount ?? null,
     })
   }
 
