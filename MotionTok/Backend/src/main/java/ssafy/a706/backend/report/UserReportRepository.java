@@ -3,9 +3,11 @@ package ssafy.a706.backend.report;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 import ssafy.a706.backend.report.enums.ReportStatus;
 
 import java.util.Collection;
+import java.util.List;
 
 public interface UserReportRepository extends JpaRepository<UserReport, Long> {
 
@@ -21,4 +23,20 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
      */
     boolean existsByReporterUserIdAndReportedUserIdAndStatusIn(
             Long reporterUserId, Long reportedUserId, Collection<ReportStatus> statuses);
+
+    /**
+     * 피신고자별 누적 신고 건수(많은 순). 신고 유저 목록(-105)의 절반이다 —
+     * 나머지 절반은 {@link ChatReportRepository#countGroupedByReportedUser}가 준다.
+     *
+     * <p><b>기각(REJECTED)도 센다.</b> 관리자가 "누가 자주 신고당하나"를 보는 화면이고,
+     * 기각을 빼면 판단 근거가 이미 내려진 판단으로 걸러진다 — 반복 신고 자체가 신호다.</p>
+     */
+    @Query("""
+            select new ssafy.a706.backend.report.ReportCount(r.reportedUserId, count(r))
+            from UserReport r group by r.reportedUserId order by count(r) desc
+            """)
+    List<ReportCount> countGroupedByReportedUser(Pageable pageable);
+
+    /** 최근 신고 사유(최신순). 사용자별로 잘라 쓸 것이라 호출부가 상한을 정한다. */
+    List<UserReport> findByReportedUserIdInOrderByIdDesc(Collection<Long> reportedUserIds, Pageable pageable);
 }
