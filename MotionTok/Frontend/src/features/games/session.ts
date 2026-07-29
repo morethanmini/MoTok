@@ -13,9 +13,18 @@ export interface ActiveGameSession {
   setterUserId?: string | null
   /** 게임④(-86): 난이도(easy/normal/hard) — 벽 접근 시간·구멍 여유 */
   difficulty?: string | null
-  /** 게임④ 출제자 로테이션(-48): 1-based 현재 라운드 / 전체 라운드 수 */
+  /** 게임④ 출제자 로테이션(-48): 1-based 현재 라운드 / 전체 라운드 수. 연속 서바이벌은 null */
   roundNo?: number | null
   totalRounds?: number | null
+  /** 게임④(-9): 모드 — 'pose'(출제 대결) | 'chain'(연속 서바이벌). 다른 게임은 null */
+  mode?: string | null
+  /**
+   * 게임④ 연속 서바이벌(-9): 날아올 벽 수. 이 값과 startAt·chainSeed만 있으면 각 클라가
+   * 같은 벽 순서를 스스로 재생한다 — 벽마다 서버 메시지를 주고받지 않는다.
+   */
+  wallCount?: number | null
+  /** 게임④ 연속 서바이벌(-9): 포즈 시드(서버가 정한 GAME_START의 challenge). 전원이 같은 벽을 만드는 입력 */
+  chainSeed?: string | null
   /** ── 그림으로 말해요(게임 10, 명세 v0.2.20) 전용 — 핑거 스타는 null ── */
   topicWord?: string | null
   /** 화가 순서(userId, 서버 셔플). 턴 k: 교대 [startAt+k(h+t)s, +hs) → 그리기 [그 뒤, 다음 턴) */

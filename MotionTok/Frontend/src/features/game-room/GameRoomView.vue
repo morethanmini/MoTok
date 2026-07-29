@@ -657,6 +657,11 @@ function applyGameEvent(e: GameEvent) {
       difficulty: e.difficulty ?? null,
       roundNo: e.roundNo ?? null,
       totalRounds: e.totalRounds ?? null,
+      mode: e.mode ?? null,
+      wallCount: e.wallCount ?? null,
+      // 연속 서바이벌은 사람이 출제하지 않으므로 GAME_START의 challenge가 포즈 시드다
+      // (출제 대결에서는 여기가 null이고 나중에 POSE_SET으로 랜드마크가 온다)
+      chainSeed: e.mode === 'chain' ? (e.challenge ?? null) : null,
       topicWord: e.topicWord ?? null,
       turnOrder: e.turnOrder ?? null,
       turnDurationSec: e.turnDurationSec ?? null,
@@ -721,7 +726,7 @@ function openPicker() {
 function roomPlayerCount(): number {
   return lk.participants.value.length || participantCount.value
 }
-async function launch(g: GameEntry, difficulty?: string) {
+async function launch(g: GameEntry, difficulty?: string, mode?: string, wallCount?: number) {
   picker.value = false
   // 캐치캐치리듬은 전용 STOMP 채널을 쓴다 — 공용 게임 세션(GAME_START) 경로를 타지 않고
   // 컴포넌트가 자기 생명주기를 소유한다. 난이도 선택·시작은 컴포넌트 안에서.
@@ -745,15 +750,17 @@ async function launch(g: GameEntry, difficulty?: string) {
       flash(`${g.name} 는 ${g.minPlayers}명부터 시작할 수 있어요`)
       return
     }
-    // 게임④(-9): 출제자는 관전하는 룰이라 1인 방에선 라운드가 성립 안 함 —
-    // 시작 시점 인원을 재조회해 혼자면 서버 세션 없이 로컬 연습 모드로 돌린다.
+    // 게임④(-9): 혼자면 서버 세션을 만들지 않고 로컬 연습 모드로 돌린다.
+    // 출제 대결은 출제자가 관전하는 룰이라 라운드 자체가 성립하지 않고, 연속 서바이벌은
+    // 혼자서도 성립하지만 1인 세션을 허용하면 순위가 항상 1등이라 랭킹을 혼자 쌓을 수 있다
+    // (서버도 같은 이유로 2인 미만을 거부한다 — 여기 검사는 그 거부를 먼저 안내하는 것).
     if (g.id === 'shape' && (await memberCountNow()) < 2) {
-      flash('혼자 있어서 연습 모드로 시작해요 — 출제와 플레이를 모두 해요')
+      flash('혼자 있어서 연습 모드로 시작해요 — 랜덤 벽이 계속 날아와요')
       activeSession.value = null
       activeGame.value = g
       return
     }
-    roomChat.startGame(g.gameId, undefined, difficulty)
+    roomChat.startGame(g.gameId, undefined, difficulty, mode, wallCount)
     return
   }
   // 서버 미연동 데모 — 로컬 솔로 플레이 폴백. 멀티 전용 게임(minPlayers>1)은 혼자
@@ -1380,7 +1387,12 @@ const startHint = computed(() =>
     </footer>
 
     <!-- 게임 선택 모달 -->
-    <GamePicker v-if="picker" @close="picker = false" @launch="launch" />
+    <GamePicker
+      v-if="picker"
+      :member-count="roomPlayerCount()"
+      @close="picker = false"
+      @launch="launch"
+    />
 
     <!-- 친구 초대 (-100) -->
     <InviteFriendsModal

@@ -32,6 +32,31 @@ export function chainGapRatio(spanZ: number): number {
   return (CHAIN_SPAWN_GAP_Z / spanZ) ** (1 / EASE_POW)
 }
 
+/**
+ * 서버가 내려준 시드 문자열 → 결정론 난수 생성기(mulberry32).
+ *
+ * <p>방에서 벽 수열을 맞추는 방법이 이것뿐이다 — 벽마다 서버가 포즈를 보내면 30장이면 30번을
+ * 왕복해야 하고 지연이 그대로 벽 위치로 나타난다. 시드 하나만 받고 각자 같은 수열을 재생한다.</p>
+ *
+ * <p>mulberry32를 고른 이유는 32비트 정수 연산 네 줄이면 끝나고(라이브러리 없음) 주기가
+ * 2^32라 벽 30장 × 난수 8개에 한참 남기 때문이다. 암호학적 용도가 아니다.</p>
+ */
+export function seededRng(seed: string): () => number {
+  // 문자열 → 32비트 해시(FNV 계열). 서버 시드는 십진수 문자열이지만 무엇이 와도 받는다
+  let h = 2166136261
+  for (let i = 0; i < seed.length; i++) {
+    h = Math.imul(h ^ seed.charCodeAt(i), 16777619)
+  }
+  let a = h >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) | 0
+    let t = a
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
 /** 벽 i의 접근 시간 — i가 커질수록 빨라지고 CHAIN_MIN_MS에서 멈춘다 */
 export function chainApproachMs(index: number, baseApproachMs: number): number {
   return Math.max(CHAIN_MIN_MS, baseApproachMs * CHAIN_START_RATIO * CHAIN_SPEEDUP ** index)
