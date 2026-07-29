@@ -127,8 +127,8 @@ public enum ErrorCode {
     FRIEND_NOT_FOUND(HttpStatus.NOT_FOUND, "FRIEND_NOT_FOUND", "친구가 아닙니다."),
 
     // 친구 귓속말 (-150) — 전역 STOMP 개인큐 기반 1:1 대화
+    // WHISPER_TARGET_OFFLINE은 오프라인 수신함(-160) 도입으로 제거 — 오프라인은 더 이상 실패가 아니다.
     WHISPER_NOT_FRIEND(HttpStatus.FORBIDDEN, "WHISPER_NOT_FRIEND", "친구에게만 귓속말을 보낼 수 있습니다."),
-    WHISPER_TARGET_OFFLINE(HttpStatus.CONFLICT, "WHISPER_TARGET_OFFLINE", "상대가 접속 중이 아니라 귓속말을 전할 수 없습니다."),
 
     // 방 초대 (-100)
     INVITATION_DUPLICATE(HttpStatus.CONFLICT, "INVITATION_DUPLICATE", "이미 보낸 초대가 있습니다."),
