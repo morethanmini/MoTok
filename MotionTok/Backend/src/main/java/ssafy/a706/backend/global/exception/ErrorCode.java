@@ -20,6 +20,11 @@ public enum ErrorCode {
     INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "AUTH_INVALID_CREDENTIALS", "이메일 또는 비밀번호가 올바르지 않습니다."),
     INVALID_TOKEN(HttpStatus.UNAUTHORIZED, "AUTH_INVALID_TOKEN", "유효하지 않은 토큰입니다."),
     ACCOUNT_NOT_ACTIVE(HttpStatus.FORBIDDEN, "AUTH_ACCOUNT_NOT_ACTIVE", "이용이 제한된 계정입니다."),
+    // 기간 정지는 ACCOUNT_NOT_ACTIVE와 분리한다 — 클라이언트가 "언제 풀리는지"를 안내해야 하는데
+    // 영구 제재·탈퇴와 같은 코드로 내려가면 그 구분이 응답에서 사라진다.
+    ACCOUNT_SUSPENDED(HttpStatus.FORBIDDEN, "AUTH_ACCOUNT_SUSPENDED", "정지된 계정입니다."),
+    // 영구 정지도 코드를 나눈다 — 기간 정지 문구("기간이 끝나면 다시 로그인")를 영구 제재에 띄우면 거짓말이 된다.
+    ACCOUNT_BANNED(HttpStatus.FORBIDDEN, "AUTH_ACCOUNT_BANNED", "영구 정지된 계정입니다."),
 
     // 소셜 로그인 (명세서 POST /auth/social/{provider})
     UNSUPPORTED_OAUTH_PROVIDER(HttpStatus.BAD_REQUEST, "AUTH_UNSUPPORTED_OAUTH_PROVIDER", "지원하지 않는 소셜 로그인 제공자입니다."),
@@ -51,6 +56,16 @@ public enum ErrorCode {
 
     // user
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "존재하지 않는 계정입니다."),
+
+    // 계정 제재(관리자) — 정지 상태는 Redis TTL, 이력은 sanction_history가 나눠 갖는다
+    SANCTION_SELF_FORBIDDEN(HttpStatus.BAD_REQUEST, "SANCTION_SELF_FORBIDDEN", "자기 자신은 제재할 수 없습니다."),
+    SANCTION_TARGET_ADMIN(HttpStatus.FORBIDDEN, "SANCTION_TARGET_ADMIN", "관리자는 제재할 수 없습니다."),
+    SANCTION_NOT_SUSPENDED(HttpStatus.CONFLICT, "SANCTION_NOT_SUSPENDED", "정지 중인 계정이 아닙니다."),
+    SANCTION_ALREADY_BANNED(HttpStatus.CONFLICT, "SANCTION_ALREADY_BANNED", "이미 영구 정지된 계정입니다."),
+    // 남의 경고를 확인하려는 요청도 여기로 떨어진다 — 조회 조건에 userId가 들어가 '없음'과 구분되지 않는다.
+    // 존재 여부를 알려 주지 않는 쪽이 안전하다.
+    SANCTION_WARNING_NOT_FOUND(HttpStatus.NOT_FOUND, "SANCTION_WARNING_NOT_FOUND", "존재하지 않는 경고입니다."),
+    SANCTION_NOT_BANNED(HttpStatus.CONFLICT, "SANCTION_NOT_BANNED", "영구 정지된 계정이 아닙니다."),
 
     // room
     ROOM_NOT_FOUND(HttpStatus.NOT_FOUND, "ROOM_NOT_FOUND", "존재하지 않는 방입니다."),
