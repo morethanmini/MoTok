@@ -905,9 +905,13 @@ function beep(freq = 660, dur = 0.08) {
   color: #2b2b33;
 }
 .dr-canvas {
+  display: block;
   width: 100%;
-  height: 100%;
-  object-fit: contain;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: fill;
 }
 
 /* 상단바 — 주제어는 게임 내내 필요한 핵심 정보라 오버레이 위(z-index)에 항상 보이게 둔다.
