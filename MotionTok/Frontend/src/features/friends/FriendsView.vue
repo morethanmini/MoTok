@@ -89,7 +89,7 @@ const whisper = useWhisper()
 const whisperTarget = ref<{ userId: number; nickname: string } | null>(null)
 function openWhisper(friend: { userId: number; nickname: string }) {
   whisperTarget.value = friend
-  void whisper.open(friend.userId)
+  void whisper.open(friend.userId, friend.nickname)
 }
 function closeWhisper() {
   whisperTarget.value = null
