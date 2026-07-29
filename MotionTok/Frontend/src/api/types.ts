@@ -647,6 +647,10 @@ export type GameEvent =
       roundNo?: number | null
       /** 게임④ 로테이션(-48) — 전체 라운드 수(참가자 수). 로테이션 없는 게임은 null */
       totalRounds?: number | null
+      /** 게임④ 모드(-9) — 'pose'(출제 대결) | 'chain'(연속 서바이벌). 그 외 게임은 null */
+      mode?: string | null
+      /** 게임④ 연속 서바이벌(-9) — 날아올 벽 수. 이때 challenge는 포즈 시드다 */
+      wallCount?: number | null
       serverNow: number
       startAt: number
       endAt: number

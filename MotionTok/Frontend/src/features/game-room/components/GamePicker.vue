@@ -4,16 +4,14 @@ import { ref } from 'vue'
 import { GAME_CATALOG, type GameEntry } from '../data'
 import PixelButton from '@/components/common/PixelButton.vue'
 
-defineEmits<{ close: []; launch: [game: GameEntry, difficulty?: string] }>()
+/**
+ * 이 창은 "무슨 게임을 할지"만 고른다. 모드·난이도·벽 수는 고른 뒤 설정 창(GameSetupModal)이
+ * 받는다 — 성격이 다른 두 결정을 한 화면에 섞으면 상세 패널이 스크롤되고(게임④에서 이미
+ * 썸네일이 잘려 보였다) 옵션이 있는 게임이 늘어날수록 나빠진다.
+ */
+defineEmits<{ close: []; launch: [game: GameEntry] }>()
 
 const selected = ref<GameEntry | null>(null)
-/** 게임④(-9) 전용 — 난이도별 벽 접근 속도(쉬움 7s/보통 6s/어려움 5s)를 방장이 시작 전에 고른다 */
-const difficulty = ref<'easy' | 'normal' | 'hard'>('easy')
-const DIFFICULTIES: { key: 'easy' | 'normal' | 'hard'; label: string }[] = [
-  { key: 'easy', label: '쉬움' },
-  { key: 'normal', label: '보통' },
-  { key: 'hard', label: '어려움' },
-]
 </script>
 
 <template>
@@ -65,26 +63,7 @@ const DIFFICULTIES: { key: 'easy' | 'normal' | 'hard'; label: string }[] = [
               <li v-for="(step, i) in selected.howToPlay" :key="i">{{ step }}</li>
             </ol>
 
-            <template v-if="selected.id === 'shape'">
-              <h3 class="detail-h">난이도</h3>
-              <div class="diff-buttons">
-                <button
-                  v-for="d in DIFFICULTIES"
-                  :key="d.key"
-                  class="diff-btn"
-                  :class="{ on: difficulty === d.key }"
-                  @click="difficulty = d.key"
-                >
-                  {{ d.label }}
-                </button>
-              </div>
-            </template>
-
-            <PixelButton
-              class="start-game-btn"
-              variant="mint"
-              @click="$emit('launch', selected, selected.id === 'shape' ? difficulty : undefined)"
-            >
+            <PixelButton class="start-game-btn" variant="mint" @click="$emit('launch', selected)">
               플레이 ▶
             </PixelButton>
           </template>
@@ -230,20 +209,6 @@ const DIFFICULTIES: { key: 'easy' | 'normal' | 'hard'; label: string }[] = [
 .detail-h { margin: 14px 0 6px; font-size: 10px; color: var(--c-coral); }
 .detail-desc { margin: 0; font-size: 11.5px; color: var(--c-ink-soft); line-height: 1.7; }
 .detail-steps { margin: 0; padding-left: 18px; font-size: 11.5px; color: var(--c-ink-soft); line-height: 1.9; }
-.diff-buttons { display: flex; gap: 6px; }
-.diff-btn {
-  flex: 1;
-  padding: 8px 4px;
-  background: #fff;
-  border: 2px solid var(--c-ink-soft);
-  border-radius: 10px;
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: var(--t-fast);
-}
-.diff-btn.on { background: var(--c-mint); color: #fff; box-shadow: var(--shadow-sm); }
 .start-game-btn { align-self: flex-end; margin-top: auto; }
 
 .foot { margin: 18px 0 0; font-size: 11px; color: #a99f86; line-height: 1.7; }

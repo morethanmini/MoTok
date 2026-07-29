@@ -211,7 +211,14 @@ export class AvatarRig {
 
   /** 매 프레임: 정규화 포즈 → 공유 솔버 → 각 메시의 position/quaternion 갱신 */
   updatePose(p: NormalizedPose) {
-    const s = solveSkeleton(p, this.cfg, this.state)
+    this.applySolved(solveSkeleton(p, this.cfg, this.state))
+  }
+
+  /**
+   * 이미 풀린 골격을 그대로 입힌다 — 출제 포즈처럼 솔버를 다시 돌릴 필요가 없을 때.
+   * 목표 포즈 썸네일(createPoseThumb)이 판정·벽과 <b>같은</b> SolvedSkeleton을 쓰게 하는 통로다.
+   */
+  applySolved(s: SolvedSkeleton) {
     this.lastSolved = s
 
     setBetween(this.torso, 0, 0, s.hip.x, s.hip.y)

@@ -59,6 +59,10 @@ public class GameSessionRepository {
         if (session.difficulty() != null) {
             fields.put("difficulty", session.difficulty());
         }
+        if (session.mode() != null) {
+            fields.put("mode", session.mode());
+            fields.put("wallCount", String.valueOf(session.wallCount()));
+        }
         // 이전 라운드 잔재(이번 라운드 제출 점수)를 지우고 새로 시작한다. 로테이션 누적 점수(totals)는 별도 키라 안 지워진다.
         redisTemplate.delete(key);
         redisTemplate.delete(scoresKey(roomId));
@@ -80,6 +84,7 @@ public class GameSessionRepository {
         String encodedChallenge = (String) f.get("challenge");
         String setterOrderRaw = (String) f.get("setterOrder");
         String roundIndexRaw = (String) f.get("roundIndex");
+        String wallCountRaw = (String) f.get("wallCount");
         return Optional.of(new GameSession(
                 (String) f.get("sessionId"),
                 Long.parseLong((String) f.get("gameId")),
@@ -93,7 +98,9 @@ public class GameSessionRepository {
                 setterOrderRaw == null || setterOrderRaw.isBlank()
                         ? List.of() : List.of(setterOrderRaw.split(",")),
                 roundIndexRaw == null ? 0 : Integer.parseInt(roundIndexRaw),
-                (String) f.get("difficulty")
+                (String) f.get("difficulty"),
+                (String) f.get("mode"),
+                wallCountRaw == null ? 0 : Integer.parseInt(wallCountRaw)
         ));
     }
 

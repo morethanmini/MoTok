@@ -22,6 +22,7 @@ import { GAME_CATALOG, type GameEntry } from './data'
 import { CHAT_REPORT_REASONS, CHAT_REPORT_DETAIL_MAX, canSubmitChatReport, chatReportErrorMessage } from './chatReport'
 import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
+import GameSetupModal from './components/GameSetupModal.vue'
 import ReportIcon from './components/ReportIcon.vue'
 import HostWaitingOverlay from './components/HostWaitingOverlay.vue'
 import InviteFriendsModal from './components/InviteFriendsModal.vue'
@@ -249,6 +250,8 @@ watch(
 const speakerOn = ref(true)
 const screenOn = ref(false)
 const picker = ref(false)
+/** 게임을 고른 뒤 모드·난이도를 정하는 설정 창의 대상 게임(-9). null이면 닫힘 */
+const setupGame = ref<GameEntry | null>(null)
 
 // 탭 닫기·주소창 이탈 시 keepalive 퇴장 통보 + bfcache 복원 시 로비로(뒤로가기 복귀 차단)
 useRoomUnloadLeave(() => route.query.room as string | undefined)
@@ -539,7 +542,9 @@ const drawFeed = ref<GameEvent[]>([])
  * 함수 안의 선언 전 참조를 잡지 않는다).
  */
 watch(
-  () => activeGame.value?.id === 'shape',
+  // 설정 창(-9)도 인게임 베드를 직접 깔기 때문에 같이 내린다 — 소유 판정을 여기 한 곳에 모아두면
+  // 창을 닫고 게임으로 넘어가는 사이에 테마가 잠깐 살아나는 일이 없다.
+  () => activeGame.value?.id === 'shape' || setupGame.value?.id === 'shape',
   (ownsAudio) => (ownsAudio ? bgm.suspendForGame() : bgm.resumeAfterGame()),
 )
 
@@ -637,6 +642,14 @@ const BODY_FIT_GRADE: Record<number, { label: string; color: string }> = {
 function bodyFitGrade(score: number) {
   return BODY_FIT_GRADE[score] ?? { label: 'FAIL', color: '#ff5d73' }
 }
+/**
+ * 게임④ 연속 서바이벌(-9) — 등급 역산이 성립하지 않는 모드.
+ * 위 배지는 "점수가 곧 등급"이라는 전제(100/85/70)로 만들어졌는데, 연속 모드의 점수는 벽 N장
+ * 누적 총점이라 780점 같은 값이 와서 전부 FAIL로 보인다. 진행률도 일치율이 아니라 점수 비율이다.
+ */
+const bodyFitChain = computed(() => activeSession.value?.mode === 'chain')
+/** 연속 서바이벌 만점 — 벽 수 × PERFECT(100). 중계된 진행률을 점수로 되돌리는 기준 */
+const bodyFitChainMax = computed(() => (activeSession.value?.wallCount ?? 10) * 100)
 const scoreboardRows = computed(() => {
   const rows = Object.entries(liveScores.value).map(([userId, r]) => ({ userId, ...r }))
   rows.sort(
@@ -671,6 +684,11 @@ function applyGameEvent(e: GameEvent) {
       difficulty: e.difficulty ?? null,
       roundNo: e.roundNo ?? null,
       totalRounds: e.totalRounds ?? null,
+      mode: e.mode ?? null,
+      wallCount: e.wallCount ?? null,
+      // 연속 서바이벌은 사람이 출제하지 않으므로 GAME_START의 challenge가 포즈 시드다
+      // (출제 대결에서는 여기가 null이고 나중에 POSE_SET으로 랜드마크가 온다)
+      chainSeed: e.mode === 'chain' ? (e.challenge ?? null) : null,
       topicWord: e.topicWord ?? null,
       turnOrder: e.turnOrder ?? null,
       turnDurationSec: e.turnDurationSec ?? null,
@@ -737,7 +755,32 @@ function openPicker() {
 function roomPlayerCount(): number {
   return lk.participants.value.length || participantCount.value
 }
-async function launch(g: GameEntry, difficulty?: string) {
+/**
+ * 게임 선택 → (옵션이 있으면) 설정 창 → 시작.
+ *
+ * <p>게임④만 모드·난이도·벽 수가 있어서 설정 창을 한 번 더 띄운다. 옵션이 없는 게임까지
+ * 거치게 하면 "시작 버튼만 있는 빈 창"이 생긴다. 방장이 아니거나 서버에 연결되지 않았으면
+ * 설정할 게 없으므로(게임 제안·로컬 폴백 경로) 지금처럼 곧바로 launch로 보낸다.</p>
+ */
+function pick(g: GameEntry) {
+  if (g.id === 'shape' && g.playable && roomChat.connected.value && selfIsHost.value) {
+    picker.value = false
+    setupGame.value = g
+    return
+  }
+  void launch(g)
+}
+function startWithSetup(difficulty: string, mode: string, wallCount?: number) {
+  const g = setupGame.value
+  setupGame.value = null
+  if (g) void launch(g, difficulty, mode, wallCount)
+}
+function backToPicker() {
+  setupGame.value = null
+  picker.value = true
+}
+
+async function launch(g: GameEntry, difficulty?: string, mode?: string, wallCount?: number) {
   picker.value = false
   // 캐치캐치리듬은 전용 STOMP 채널을 쓴다 — 공용 게임 세션(GAME_START) 경로를 타지 않고
   // 컴포넌트가 자기 생명주기를 소유한다. 난이도 선택·시작은 컴포넌트 안에서.
@@ -761,15 +804,17 @@ async function launch(g: GameEntry, difficulty?: string) {
       flash(`${g.name} 는 ${g.minPlayers}명부터 시작할 수 있어요`)
       return
     }
-    // 게임④(-9): 출제자는 관전하는 룰이라 1인 방에선 라운드가 성립 안 함 —
-    // 시작 시점 인원을 재조회해 혼자면 서버 세션 없이 로컬 연습 모드로 돌린다.
+    // 게임④(-9): 혼자면 서버 세션을 만들지 않고 로컬 연습 모드로 돌린다.
+    // 출제 대결은 출제자가 관전하는 룰이라 라운드 자체가 성립하지 않고, 연속 서바이벌은
+    // 혼자서도 성립하지만 1인 세션을 허용하면 순위가 항상 1등이라 랭킹을 혼자 쌓을 수 있다
+    // (서버도 같은 이유로 2인 미만을 거부한다 — 여기 검사는 그 거부를 먼저 안내하는 것).
     if (g.id === 'shape' && (await memberCountNow()) < 2) {
-      flash('혼자 있어서 연습 모드로 시작해요 — 출제와 플레이를 모두 해요')
+      flash('혼자 있어서 연습 모드로 시작해요 — 랜덤 벽이 계속 날아와요')
       activeSession.value = null
       activeGame.value = g
       return
     }
-    roomChat.startGame(g.gameId, undefined, difficulty)
+    roomChat.startGame(g.gameId, undefined, difficulty, mode, wallCount)
     return
   }
   // 서버 미연동 데모 — 로컬 솔로 플레이 폴백. 멀티 전용 게임(minPlayers>1)은 혼자
@@ -1270,19 +1315,22 @@ const startHint = computed(() =>
             :class="{ me: row.userId === myParticipantId }"
           >
             <span class="gs-name">{{ row.nickname }}</span>
+            <!-- 등급 배지는 출제 대결 전용 — 연속 서바이벌 점수는 누적 총점이라 역산이 안 된다 -->
             <span
-              v-if="activeGame?.id === 'shape' && row.finished"
+              v-if="activeGame?.id === 'shape' && !bodyFitChain && row.finished"
               class="gs-badge"
               :style="{ color: bodyFitGrade(row.score ?? 0).color, borderColor: bodyFitGrade(row.score ?? 0).color }"
             >
               {{ bodyFitGrade(row.score ?? 0).label }}
             </span>
-            <!-- 게임④는 별이 없다 — 진행 중이면 실시간 일치율(holdProgress)을 보여준다 -->
+            <!-- 게임④는 별이 없다 — 출제 대결은 실시간 일치율, 연속 서바이벌은 누적 점수를 보여준다 -->
             <span v-else class="gs-val">{{
               row.finished
                 ? `${row.score}점 ✓`
                 : activeGame?.id === 'shape'
-                  ? `일치율 ${Math.round(row.holdProgress * 100)}%`
+                  ? bodyFitChain
+                    ? `${Math.round(row.holdProgress * bodyFitChainMax)}점`
+                    : `일치율 ${Math.round(row.holdProgress * 100)}%`
                   : `⭐ ${row.starsLit}`
             }}</span>
           </div>
@@ -1406,7 +1454,16 @@ const startHint = computed(() =>
     </footer>
 
     <!-- 게임 선택 모달 -->
-    <GamePicker v-if="picker" @close="picker = false" @launch="launch" />
+    <GamePicker v-if="picker" @close="picker = false" @launch="pick" />
+
+    <!-- 게임④(-9) 설정 창 — 모드·벽 수·난이도. 옵션이 있는 게임만 이 단계를 거친다 -->
+    <GameSetupModal
+      v-if="setupGame"
+      :game="setupGame"
+      :member-count="roomPlayerCount()"
+      @back="backToPicker"
+      @start="startWithSetup"
+    />
 
     <!-- 친구 초대 (-100) -->
     <InviteFriendsModal
