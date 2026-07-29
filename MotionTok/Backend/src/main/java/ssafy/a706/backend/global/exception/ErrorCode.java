@@ -101,6 +101,7 @@ public enum ErrorCode {
 
     // chat
     CHAT_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "CHAT_NOT_IN_ROOM", "방 참가자만 채팅을 보낼 수 있습니다."),
+    CHAT_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "CHAT_RATE_LIMITED", "채팅을 너무 자주 보냈습니다. 잠시 후 다시 시도해 주세요."),
 
     // chat report
     CHAT_MESSAGE_NOT_FOUND(HttpStatus.NOT_FOUND, "CHAT_MESSAGE_NOT_FOUND", "존재하지 않거나 만료된 채팅입니다."),
