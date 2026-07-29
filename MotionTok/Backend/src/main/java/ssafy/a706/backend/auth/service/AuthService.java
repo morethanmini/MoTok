@@ -24,6 +24,7 @@ import ssafy.a706.backend.auth.ratelimit.LoginAttemptLimiter;
 import ssafy.a706.backend.auth.session.SingleSessionPolicy;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.global.text.ProfanityFilter;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
 import ssafy.a706.backend.global.config.StompSessionRegistry;
 import ssafy.a706.backend.presence.service.PresenceService;
@@ -57,12 +58,17 @@ public class AuthService {
     private final SingleSessionPolicy singleSessionPolicy;
     private final LoginAttemptLimiter loginAttemptLimiter;
     private final RejoinPolicy rejoinPolicy;
+    private final ProfanityFilter profanityFilter;
 
     public AvailabilityResponse checkEmail(String email) {
         return new AvailabilityResponse(!userRepository.existsByEmail(email.trim().toLowerCase()));
     }
 
     public AvailabilityResponse checkNickname(String nickname) {
+        // 가입(@NoProfanity)에서만 걸리면 "중복확인은 통과했는데 가입은 실패"가 되므로 같은 검사를 태운다(-152).
+        if (profanityFilter.contains(nickname)) {
+            throw new BusinessException(ErrorCode.PROFANITY_DETECTED);
+        }
         return new AvailabilityResponse(!userRepository.existsByNickname(nickname.trim()));
     }
 

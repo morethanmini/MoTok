@@ -11,4 +11,6 @@ import type { WhisperMessage } from '../types'
 export const whispersApi = {
   /** GET /friends/{userId}/whispers — 그 친구와의 최근 대화(시간순). */
   history: (userId: number) => http.get<WhisperMessage[]>(`/friends/${userId}/whispers`),
+  /** GET /friends/whispers/pending — 오프라인 동안 도착한 귓속말을 비우면서 받아온다(-160). */
+  pending: () => http.get<WhisperMessage[]>('/friends/whispers/pending'),
 }

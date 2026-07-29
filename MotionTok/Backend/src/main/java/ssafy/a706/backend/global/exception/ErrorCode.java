@@ -11,6 +11,7 @@ public enum ErrorCode {
 
     // common
     INVALID_INPUT(HttpStatus.BAD_REQUEST, "COMMON_INVALID_INPUT", "잘못된 입력입니다."),
+    PROFANITY_DETECTED(HttpStatus.BAD_REQUEST, "COMMON_PROFANITY_DETECTED", "비속어가 포함되어 있습니다. 표현을 바꿔 주세요."),
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "COMMON_UNAUTHORIZED", "인증이 필요합니다."),
     FORBIDDEN(HttpStatus.FORBIDDEN, "COMMON_FORBIDDEN", "권한이 없습니다."),
     NOT_FOUND(HttpStatus.NOT_FOUND, "COMMON_NOT_FOUND", "리소스를 찾을 수 없습니다."),
@@ -115,6 +116,7 @@ public enum ErrorCode {
 
     // chat
     CHAT_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "CHAT_NOT_IN_ROOM", "방 참가자만 채팅을 보낼 수 있습니다."),
+    CHAT_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "CHAT_RATE_LIMITED", "채팅을 너무 자주 보냈습니다. 잠시 후 다시 시도해 주세요."),
 
     // chat report
     CHAT_MESSAGE_NOT_FOUND(HttpStatus.NOT_FOUND, "CHAT_MESSAGE_NOT_FOUND", "존재하지 않거나 만료된 채팅입니다."),
@@ -140,8 +142,8 @@ public enum ErrorCode {
     FRIEND_NOT_FOUND(HttpStatus.NOT_FOUND, "FRIEND_NOT_FOUND", "친구가 아닙니다."),
 
     // 친구 귓속말 (-150) — 전역 STOMP 개인큐 기반 1:1 대화
+    // WHISPER_TARGET_OFFLINE은 오프라인 수신함(-160) 도입으로 제거 — 오프라인은 더 이상 실패가 아니다.
     WHISPER_NOT_FRIEND(HttpStatus.FORBIDDEN, "WHISPER_NOT_FRIEND", "친구에게만 귓속말을 보낼 수 있습니다."),
-    WHISPER_TARGET_OFFLINE(HttpStatus.CONFLICT, "WHISPER_TARGET_OFFLINE", "상대가 접속 중이 아니라 귓속말을 전할 수 없습니다."),
 
     // 방 초대 (-100)
     INVITATION_DUPLICATE(HttpStatus.CONFLICT, "INVITATION_DUPLICATE", "이미 보낸 초대가 있습니다."),

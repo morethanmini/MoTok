@@ -18,6 +18,7 @@ import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.global.config.StompSessionRegistry;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.global.text.ProfanityFilter;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
 import ssafy.a706.backend.presence.service.PresenceService;
 import ssafy.a706.backend.user.entity.User;
@@ -75,7 +76,8 @@ class AuthRefreshServiceTest {
             mock(StompSessionRegistry.class),
             mock(SingleSessionPolicy.class),
             mock(LoginAttemptLimiter.class),
-            mock(RejoinPolicy.class));
+            mock(RejoinPolicy.class),
+            mock(ProfanityFilter.class));
 
     @BeforeEach
     void notBlocked() {

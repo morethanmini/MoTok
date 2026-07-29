@@ -383,15 +383,17 @@ defineExpose({ canvas: canvasEl })
     </p>
 
     <div v-if="phase === 'result'" class="overlay result">
-      <p class="tier" :style="{ color: tier.color }">{{ tier.grade }}</p>
-      <p class="tier-label">{{ tier.label }}</p>
-      <p class="final">{{ score.toLocaleString() }}</p>
-      <p class="detail">
-        PERFECT {{ counts.perfect }} · GOOD {{ counts.good }} · MISS {{ counts.miss }}
-      </p>
-      <p class="detail">최대 콤보 {{ maxCombo }} · 정확도 {{ accuracy }}%</p>
-      <p v-if="fullCombo" class="full-combo">FULL COMBO!</p>
-      <slot name="result-actions" />
+      <div class="result-card">
+        <p class="tier" :style="{ color: tier.color }">{{ tier.grade }}</p>
+        <p class="tier-label">{{ tier.label }}</p>
+        <p class="final">{{ score.toLocaleString() }}</p>
+        <p class="detail">
+          PERFECT {{ counts.perfect }} · GOOD {{ counts.good }} · MISS {{ counts.miss }}
+        </p>
+        <p class="detail">최대 콤보 {{ maxCombo }} · 정확도 {{ accuracy }}%</p>
+        <p v-if="fullCombo" class="full-combo">FULL COMBO!</p>
+        <slot name="result-actions" />
+      </div>
     </div>
   </div>
 </template>
@@ -402,6 +404,7 @@ defineExpose({ canvas: canvasEl })
   width: 100%;
   height: 100%;
   overflow: hidden;
+  font-family: var(--font-pixel);
 }
 .hidden-video {
   position: absolute;
@@ -483,30 +486,56 @@ defineExpose({ canvas: canvasEl })
   font-size: 0.85rem;
 }
 .result .tier {
-  font-size: clamp(3rem, 13vh, 6rem);
-  font-weight: 900;
+  margin: 0;
+  font-size: clamp(2.6rem, 10vh, 4.6rem);
+  font-weight: 400;
   line-height: 1;
   letter-spacing: 0.05em;
 }
+.result {
+  padding: clamp(0.8rem, 3vh, 1.4rem);
+}
+.result-card {
+  display: flex;
+  width: min(100%, 25rem);
+  max-height: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  overflow: auto;
+  padding: clamp(1rem, 3vh, 1.6rem);
+  border: 2px solid #d7b09a;
+  border-radius: 0.9rem;
+  background: #fffdf8;
+  box-shadow: 5px 5px 0 rgba(131, 79, 58, 0.22);
+}
 .result .tier-label {
+  margin: 0;
   font-size: 1rem;
   color: #7a6a60;
-  margin-top: -0.2rem;
 }
 .result .full-combo {
+  margin: 0.15rem 0;
   font-size: 0.9rem;
-  font-weight: 700;
+  font-weight: 400;
   letter-spacing: 0.12em;
   color: #ff9e3d;
 }
 .result .final {
-  font-size: clamp(2.5rem, 10vh, 4.5rem);
-  font-weight: 700;
+  margin: 0.2rem 0;
+  font-size: clamp(2.1rem, 7vh, 3.4rem);
+  font-weight: 400;
   color: #e07a4f;
   line-height: 1.1;
 }
 .result .detail {
-  font-size: 0.95rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.35rem 0.45rem;
+  border-radius: 0.35rem;
+  background: #fff4ec;
+  font-size: clamp(0.72rem, 1.7vh, 0.9rem);
+  line-height: 1.45;
   color: #5c4a3f;
 }
 </style>
