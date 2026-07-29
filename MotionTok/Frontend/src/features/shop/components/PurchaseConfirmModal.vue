@@ -102,4 +102,19 @@ h3 { margin: 4px 0 16px; }
 
 .warn { margin: -4px 0 12px; font-size: 10px; color: var(--c-coral); }
 .actions { display: flex; gap: 9px; }
+.actions :deep(.px-btn) {
+  border: 3px solid #925c47;
+  border-radius: 7px;
+  box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), inset -2px -3px 0 rgba(120,58,47,.2), 4px 4px 0 #a66b50;
+}
+.actions :deep(.v-primary) { background: #ef6d70; }
+.actions :deep(.v-yellow) { background: #f4cf77; color: #4a3328; }
+.actions :deep(.px-btn:hover:not(:disabled)) {
+  transform: translate(-2px, -2px);
+  box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), inset -2px -3px 0 rgba(120,58,47,.2), 4px 4px 0 #a66b50;
+}
+.actions :deep(.px-btn:active:not(:disabled)) {
+  transform: translate(2px, 2px);
+  box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), inset -2px -3px 0 rgba(120,58,47,.2), 2px 2px 0 #a66b50;
+}
 </style>
