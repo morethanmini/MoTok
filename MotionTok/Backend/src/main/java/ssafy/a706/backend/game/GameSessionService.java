@@ -463,11 +463,11 @@ public class GameSessionService {
         if (session.gameId() == BODY_FIT_GAME_ID && sender.userId().equals(session.setterUserId())) {
             return;
         }
-        // 연속 서바이벌은 벽 N장을 한 번에 정산해 제출하므로 상한이 라운드 1장 기준(100)이 아니다 —
-        // 100으로 깎으면 10벽을 다 통과한 사람과 1벽만 통과한 사람이 같은 점수가 된다.
-        // 점수는 클라이언트가 계산해 보내는 값이라(다른 게임도 동일) 상한만 모드에 맞춰 열어준다.
-        int scoreCap = session.isChain() ? session.wallCount() * MAX_SCORE : MAX_SCORE;
-        int score = clamp(request.score() == null ? 0 : request.score(), 0, scoreCap);
+        // 연속 서바이벌도 상한은 100이다 — 클라이언트가 누적 총점이 아니라 벽 1장당 평균을 보낸다.
+        // 총점을 받으면 그 값이 leaderboards.best_score(GREATEST)에 그대로 영속되고
+        // PointCalculator(scoreBonus = score/10, 0~100 만점 전제)를 통과하면서 랭킹·포인트가
+        // 모드에 따라 30배까지 벌어진다. 벽 수는 전원 같아서 평균 순위 = 총점 순위다.
+        int score = clamp(request.score() == null ? 0 : request.score(), 0, MAX_SCORE);
         int starsHit = clamp(request.starsHit() == null ? 0 : request.starsHit(), 0, MAX_STARS);
         GamePlayerScore playerScore = new GamePlayerScore(
                 sender.userId(), sender.displayName(), score,
