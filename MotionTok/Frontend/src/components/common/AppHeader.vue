@@ -141,6 +141,14 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
     </nav>
 
     <div class="account">
+      <button
+        v-if="isAdmin"
+        class="admin-tab"
+        :class="{ 'is-active': current === RouteName.Admin }"
+        @click="onNav(RouteName.Admin)"
+      >
+        관리자
+      </button>
       <BgmToggle />
       <button class="coin" title="포인트 충전" @click="showCharge = true">
         <img class="coin-icon" :src="headerCoin" alt="" aria-hidden="true" /> {{ balance.toLocaleString() }} <b>＋</b>
@@ -159,7 +167,6 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
           </div>
           <!-- 마이페이지·설정은 회원 전용 — 게스트에게는 헤더에서 숨긴다 -->
           <template v-if="!session.isGuest">
-            <button v-if="isAdmin" class="menu-item" @click="onMenuNav(RouteName.Admin)">게임 관리</button>
             <button class="menu-item" @click="onMenuNav(RouteName.MyPage)">마이페이지</button>
             <button class="menu-item" @click="onMenuNav(RouteName.AccountSettings)">설정</button>
           </template>
@@ -229,6 +236,9 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 }
 
 .account { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.admin-tab { order: -1; flex: 0 0 auto; height: 39px; padding: 0 13px; border: 2px solid #b78d5d; border-radius: 8px; background: #fff7e5; box-shadow: 2px 2px 0 #e2d0b5; color: #4b372b; font-size: 12px; font-weight: 700; }
+.admin-tab:hover { background: #fff0b6; }
+.admin-tab.is-active { border-color: #925c47; background: #e7c996; box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), 3px 3px 0 #a66b50; color: #34251f; }
 .coin { height: 39px; padding: 0 12px; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; display: flex; align-items: center; gap: 7px; font-weight: 700; }
 .coin b { color: #36a17f; }
 .avatar-wrap { position: relative; }
@@ -330,6 +340,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   .nav { gap: 2px; }
   .nav button { padding: 8px 7px; font-size: 13px; }
   .account { gap: 6px; }
+  .admin-tab { height: 35px; padding: 0 9px; font-size: 11px; }
   .coin { height: 35px; padding: 0 9px; font-size: 12px; }
   .coin-icon { width: 16px; height: 16px; }
   .nickname { font-size: 15px; }
@@ -347,6 +358,6 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   .top { padding: 8px 12px; }
   .brand :deep(.name) { font-size: 16px; }
   .brand :deep(.mark) { width: 38px; height: 38px; font-size: 19px; }
-  .account .coin, .nickname { display: none; }
+  .account .coin, .admin-tab, .nickname { display: none; }
 }
 </style>
