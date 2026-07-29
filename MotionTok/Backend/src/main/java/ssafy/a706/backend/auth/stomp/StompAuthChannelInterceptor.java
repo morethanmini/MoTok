@@ -3,6 +3,7 @@ package ssafy.a706.backend.auth.stomp;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -18,6 +19,7 @@ import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.auth.principal.GuestPrincipal;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
+import ssafy.a706.backend.auth.session.SessionRevocationStore;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 
@@ -43,6 +45,7 @@ import java.util.List;
  * 이후 같은 연결의 모든 프레임(SUBSCRIBE/SEND)에 자동으로 붙여 준다.
  * 그래서 컨트롤러에서 {@code Principal} 파라미터로 바로 꺼내 쓸 수 있고, 프레임마다 재검증하지 않는다.
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class StompAuthChannelInterceptor implements ChannelInterceptor {
@@ -53,6 +56,7 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
     private static final String MEMBER_ONLY_PREFIX = "/topic/lobby";
 
     private final JwtTokenProvider tokenProvider;
+    private final SessionRevocationStore sessionRevocationStore;
 
     /**
      * 채널에 메시지가 들어가기 직전 호출된다. CONNECT 프레임일 때만 JWT를 검증한다.
@@ -126,7 +130,33 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
         if (tokenProvider.isRefresh(claims)) {
             throw new BusinessException(ErrorCode.INVALID_TOKEN);
         }
+        rejectRevokedSession(claims);
         return toAuthentication(claims);
+    }
+
+    /**
+     * 폐기된 세션(sid)의 토큰으로는 CONNECT도 못 한다 — 밀어내기가 소켓을 닫아도(SingleSessionPolicy)
+     * 옛 액세스 토큰이 살아 있으면 재연결로 실시간을 되살릴 수 있기 때문이다. HTTP 필터와 같은 경계·같은
+     * fail-open(레디스 장애 시 서명 검증만으로 통과) 정책을 적용한다.
+     */
+    private void rejectRevokedSession(Claims claims) {
+        String sid = tokenProvider.getSessionId(claims);
+        if (sid == null) {
+            return; // 게스트·sid 도입 이전 토큰
+        }
+        SessionRevocationStore.Reason reason;
+        try {
+            reason = sessionRevocationStore.reasonOf(sid);
+        } catch (RuntimeException e) {
+            log.warn("세션 폐기 목록 조회 실패 — STOMP CONNECT를 서명 검증만으로 통과시킨다(fail-open)", e);
+            return;
+        }
+        if (reason == SessionRevocationStore.Reason.DISPLACED) {
+            throw new BusinessException(ErrorCode.SESSION_DISPLACED);
+        }
+        if (reason != null) {
+            throw new BusinessException(ErrorCode.INVALID_TOKEN);
+        }
     }
 
     /**
