@@ -49,8 +49,6 @@ const pixelUrl = (name: string) => `url('/assets/intro/pixel/${name}.svg')`
 
 <template>
   <div class="float-stage">
-    <span class="badge">PLAY · MOVE · PARTY</span>
-
     <article
       v-for="(it, i) in items"
       :key="i"

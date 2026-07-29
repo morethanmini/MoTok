@@ -18,10 +18,12 @@ import ssafy.a706.backend.game.repository.GameRepository;
 @RequiredArgsConstructor
 public class GameCatalogSeeder implements ApplicationRunner {
 
+    /** 핑거 스타 90초 매치 총 시간(초) — FE FingerStarGame MATCH_SECONDS와 동기화 필수. */
+    private static final int FINGER_STAR_TOTAL_SEC = 90;
     private static final String FINGER_STAR_RULES =
-            "두 손 열 손가락을 별 위치에 맞게 벌려 별자리 모양을 만드는 게임이에요. "
-                    + "어떤 손가락이든 별 위에 가 있으면 그 별이 켜지고, 모든 별을 동시에 켠 채 유지하면 완성! "
-                    + "목표 모양과 비슷할수록 높은 점수를 받아요.";
+            "90초 동안 화면에 나타나는 별자리를 최대한 많이 완성하는 게임이에요. "
+                    + "두 손 열 손가락을 별 위치에 맞게 벌려 모든 별을 동시에 켠 채 3초 유지하면 완성 — "
+                    + "즉시 다음 별자리가 나와요. 완성 개수가 많을수록, 같으면 평균 점수가 높을수록 이겨요.";
     private static final String FINGER_STAR_CONTROLS =
             "카메라에 두 손이 잘 보이도록 자리를 잡고, 열 손가락 끝을 움직여 화면 속 별 위에 올려놓아요.";
 
@@ -54,7 +56,7 @@ public class GameCatalogSeeder implements ApplicationRunner {
                     .mode("VERSUS")
                     .minPlayers(1)
                     .maxPlayers(8)
-                    .roundDurationSec(30)
+                    .roundDurationSec(FINGER_STAR_TOTAL_SEC)
                     .countdownSec(3)
                     .supportsBot(false)
                     .active(true)
@@ -63,11 +65,12 @@ public class GameCatalogSeeder implements ApplicationRunner {
                     .controls(FINGER_STAR_CONTROLS)
                     .build());
             log.info("game catalog seeded: id=1 핑거 스타");
-        } else if (existing.getRules() == null) {
-            // 상세 안내 컬럼(-75) 추가 전에 시드된 행 — 규칙·조작법만 백필한다(멱등).
+        } else if (existing.getRoundDurationSec() != FINGER_STAR_TOTAL_SEC || existing.getRules() == null) {
+            // 90초 매치 개편 전(라운드 30s) 또는 상세 안내(-75) 전에 시드된 행 — 규칙을 백필한다(멱등).
+            existing.updateSessionRules(FINGER_STAR_TOTAL_SEC, existing.getMinPlayers());
             existing.updateGuide(FINGER_STAR_RULES, FINGER_STAR_CONTROLS);
             gameRepository.save(existing);
-            log.info("game catalog backfilled: id=1 rules/controls");
+            log.info("game catalog backfilled: id=1 roundDurationSec={} rules/controls", FINGER_STAR_TOTAL_SEC);
         }
 
         // 그림으로 말해요(명세 v0.2.20) — roundDurationSec은 총 그리기 시간,

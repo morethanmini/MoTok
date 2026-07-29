@@ -1,7 +1,7 @@
 /** 게임 컴포넌트에 내려주는 진행 중 세션 정보 (GAME_START 수신으로 구성, 모든 게임 공용). */
 export interface ActiveGameSession {
   sessionId: string
-  /** 핑거 스타 별자리 키 — 그림으로 말해요 세션에서는 빈 문자열 */
+  /** 핑거 스타(게임①): 공유 시드(숫자 문자열) — 전원이 같은 별자리 순서를 뽑는다. 그 외 게임은 빈 문자열 */
   constellationKey: string
   /** 라운드 시작/종료 — 서버 epoch millis (타이머 권위는 서버) */
   startAt: number

@@ -2,12 +2,16 @@
 /**
  * 접속 친구 한 명. 이름·현재 상태 문구와 온라인 여부 점.
  * 박스를 누르면 공개 프로필을 열도록 open을 올린다 — 조회는 LobbyView가 한다(친구 화면과 같은 컴포저블).
+ *
+ * 귓속말(-150)은 <b>별도 버튼</b>이다. 박스 전체를 귓속말에 주면 전적을 볼 길이 없어지고,
+ * 프로필을 한 번 더 거치게 하면 "친구에게 말 걸기"가 두 번 클릭이 된다 — 둘 다 자주 하는 행동이라
+ * 각자 자기 자리를 준다. 안 읽은 말이 있으면 그 버튼에 개수를 띄운다.
  */
 import type { Friend } from '../data'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 
-defineProps<{ friend: Friend }>()
-defineEmits<{ open: [] }>()
+defineProps<{ friend: Friend; unread?: number }>()
+defineEmits<{ open: []; whisper: [] }>()
 </script>
 
 <template>
@@ -26,6 +30,16 @@ defineEmits<{ open: [] }>()
       <b>{{ friend.name }}</b>
       <small>{{ friend.game }}</small>
     </div>
+    <button
+      type="button"
+      class="whisper-btn"
+      :aria-label="`${friend.name}님에게 귓속말`"
+      title="귓속말"
+      @click.stop="$emit('whisper')"
+    >
+      💬
+      <span v-if="unread" class="unread">{{ unread > 9 ? '9+' : unread }}</span>
+    </button>
     <i class="status" :class="{ offline: !friend.online }" />
   </div>
 </template>
@@ -78,8 +92,40 @@ defineEmits<{ open: [] }>()
   font-size: 12px;
   line-height: 1.1;
 }
-.status {
+.whisper-btn {
+  position: relative;
   margin-left: auto;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 2px solid #8e714e;
+  border-radius: 9px;
+  background: #fff8e6;
+  box-shadow: 2px 2px 0 #d9c7a8;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.whisper-btn:hover { background: #fff0b9; }
+.whisper-btn:active { transform: translate(2px, 2px); box-shadow: none; }
+.whisper-btn .unread {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  min-width: 17px;
+  padding: 0 4px;
+  border: 2px solid #fff;
+  border-radius: 9px;
+  background: #e2564a;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+}
+
+.status {
+  margin-left: 10px;
   margin-right: 16px;
   width: 12px;
   height: 12px;

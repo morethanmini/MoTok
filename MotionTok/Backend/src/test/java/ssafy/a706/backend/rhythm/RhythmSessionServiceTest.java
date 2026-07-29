@@ -14,6 +14,7 @@ import ssafy.a706.backend.auth.principal.MemberPrincipal;
 import ssafy.a706.backend.game.GameSettledEvent;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
+import ssafy.a706.backend.liveroom.service.LiveRoomService;
 import ssafy.a706.backend.rhythm.dto.RhythmEventResponse;
 import ssafy.a706.backend.rhythm.dto.RhythmRequests;
 import ssafy.a706.backend.rhythm.model.RhythmPlayerScore;
@@ -51,6 +52,9 @@ class RhythmSessionServiceTest {
     @Mock SimpMessagingTemplate messagingTemplate;
     @Mock TaskScheduler rhythmTaskScheduler;
     @Mock ApplicationEventPublisher eventPublisher;
+
+    /** 방 상태 전환이 서비스 경유로 바뀌었다(-148) — 그 안에 로비 실시간 갱신 알림이 붙어 있다. */
+    @Mock LiveRoomService liveRoomService;
 
     @InjectMocks RhythmSessionService service;
 
@@ -133,7 +137,7 @@ class RhythmSessionServiceTest {
                 .isEqualTo(RhythmGameSeeder.COUNTDOWN_SEC * 1000L);
 
         verify(sessionRepository).saveSession(eq(ROOM_ID), any(RhythmSession.class));
-        verify(liveRoomRepository).updateStatus(ROOM_ID, "PLAYING");
+        verify(liveRoomService).changeStatus(ROOM_ID, "PLAYING");
         verify(rhythmTaskScheduler).schedule(any(Runnable.class), any(java.time.Instant.class));
     }
 
@@ -229,7 +233,7 @@ class RhythmSessionServiceTest {
         assertThat(event.results().get(1).score()).isZero();
 
         verify(sessionRepository).markEnded(ROOM_ID);
-        verify(liveRoomRepository).updateStatus(ROOM_ID, "WAITING");
+        verify(liveRoomService).changeStatus(ROOM_ID, "WAITING");
     }
 
     @Test
