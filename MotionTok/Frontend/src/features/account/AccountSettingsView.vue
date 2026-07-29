@@ -191,7 +191,12 @@ onMounted(() => {
 </script>
 
 <template>
-  <AppPage title="설정" max-width="560px" title-style="plain">
+  <AppPage class="settings-page" title="설정" max-width="560px" title-style="none">
+    <section class="settings-titlebar">
+      <p>MY MOTION SPACE</p>
+      <h1>설정</h1>
+      <span>계정 정보를 안전하게 관리해요.</span>
+    </section>
     <div class="stack">
       <PixelCard title="닉네임 변경">
         <label class="field">
@@ -314,11 +319,13 @@ onMounted(() => {
 
 <style scoped>
 .stack { display: grid; gap: 16px; }
+.settings-page { background: #fff8e9; }.settings-page :deep(.app-page) { padding-top: 34px; }.settings-titlebar { margin: 0 auto 18px; padding: 0 6px; }.settings-titlebar p { margin: 0 0 8px; color: #a8704f; font-size: 9px; letter-spacing: 1px; }.settings-titlebar h1 { margin: 0; color: #4b3429; font-family: var(--font-pixel); font-size: 22px; font-weight: 400; }.settings-titlebar span { display: block; margin-top: 9px; color: #856957; font-size: 10px; }.stack :deep(.card) { border: 3px solid #9a6b4f; border-radius: 13px; background: #fffaf0; box-shadow: 5px 5px 0 #d5b28c; }.stack :deep(.card-head) { padding-bottom: 11px; border-bottom: 2px solid #ead5b8; }.stack :deep(.card-head h2) { color: #4b3429; font-size: 17px; }
 .field { display: block; margin-bottom: 14px; font-size: 9px; font-weight: 700; }
 .field input {
   width: 100%; height: 44px; margin-top: 6px; padding: 0 12px;
   border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; outline: 0;
 }
+.field { color: #664737; }.field input { border-color: #c79b77; border-radius: 7px; background: #fffef9; }.stack :deep(.px-btn) { border: 2px solid #9a6b4f; border-radius: 6px; box-shadow: 2px 2px 0 #bd916e; }.inline-btn { border-color: #9a6b4f; border-radius: 6px; background: #f7df9e; color: #51382c; box-shadow: 2px 2px 0 #bd916e; }.check-msg { color: #987b67; }
 .withdraw-title { margin: 0 0 7px; color: var(--c-coral); }
 .withdraw-warn { margin: 0 0 14px; font-size: 11px; color: var(--c-muted); line-height: 1.7; }
 .withdraw-warn b { color: var(--c-coral); }
