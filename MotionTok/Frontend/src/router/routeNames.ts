@@ -29,6 +29,10 @@ export const RouteName = {
   DevWallLab: 'dev-wall-lab',
   /** 게임④ 인게임 화면(모톡 템플릿) — 개발 전용, 솔로 루프 (-47) */
   DevBodyFitGame: 'dev-body-fit-game',
+  /** 게임⑤ 릴 감기 판정 랩 — 개발 전용 (-10) */
+  DevFishingLab: 'dev-fishing-lab',
+  /** 게임⑤ 낚시 게임 루프(캐스팅→대기→입질→챔질→힘겨루기) — 개발 전용 (-10) */
+  DevFishingGame: 'dev-fishing-game',
 } as const
 
 export type RouteName = (typeof RouteName)[keyof typeof RouteName]
