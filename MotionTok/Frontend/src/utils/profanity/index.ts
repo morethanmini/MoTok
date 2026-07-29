@@ -5,10 +5,15 @@
  *   import { containsProfanity } from '@/utils/profanity'
  *   if (containsProfanity(title)) { ...안내... }
  *
- * 단어 목록은 ./wordlist.ts 에서 base64로 관리합니다(원문을 소스에 평문으로 두지 않기 위함).
- * ⚠️ UX 안내용 1차 필터일 뿐 우회가 가능하므로, 실제 차단은 서버 검증이 담당해야 합니다.
+ * 사전은 이중화되어 있다(S15P11A706-152):
+ *   - 번들 내장본(./wordlist.ts) — 즉시 사용 가능한 폴백
+ *   - 서버 정본(GET /api/v1/profanity/wordlist) — loadRemoteWordlist()가 받아서 교체.
+ *     BE 검증·마스킹과 같은 리소스 파일이라 판정이 서버와 일치하게 된다.
+ * ⚠️ UX 안내용 1차 필터일 뿐 우회가 가능하므로, 실제 차단(닉네임·방 제목 거절)과
+ *    채팅 마스킹은 서버가 담당한다.
  */
 import { ENCODED_BAD_WORDS } from './wordlist'
+import { http } from '@/api/http'
 
 /** base64(UTF-8) -> 문자열. 한글 등 멀티바이트를 올바로 복원한다. */
 function decodeBase64(b64: string): string {
@@ -38,12 +43,43 @@ function normalize(text: string): string {
     .replace(RE_REPEAT, '$1')
 }
 
-// 원문 사전은 모듈 로드 시 한 번만 디코딩·정규화해 둔다(런타임 메모리에만 존재).
-const NORMALIZED_WORDS = ENCODED_BAD_WORDS.map((w) => normalize(decodeBase64(w))).filter(Boolean)
+/**
+ * 인코딩 사전 -> 정규화 사전. BE(ProfanityFilter)와 같은 규칙:
+ * 정규화 결과가 1글자로 "줄어든" 항목은 정상 문장을 마구 잡으므로 버린다
+ * (원문부터 1글자인 항목은 큐레이터 의도로 보고 유지).
+ */
+function buildNormalized(encoded: readonly string[]): string[] {
+  return encoded
+    .map((w) => decodeBase64(w))
+    .filter((raw) => raw.length === 1 || normalize(raw).length >= 2)
+    .map((raw) => normalize(raw))
+    .filter(Boolean)
+}
+
+// 번들 내장본으로 시작하고, 서버 정본을 받으면 통째로 교체한다.
+let normalizedWords: string[] = buildNormalized(ENCODED_BAD_WORDS)
+let remoteLoaded = false
+
+/**
+ * 서버 정본 사전을 받아 교체한다(실패해도 던지지 않음 — 번들 폴백 유지).
+ * 여러 번 불러도 다운로드는 한 번이다. 앱 시작 시 fire-and-forget으로 부른다.
+ */
+export async function loadRemoteWordlist(): Promise<void> {
+  if (remoteLoaded) return
+  try {
+    const data = await http.get<{ words?: string[] }>('/v1/profanity/wordlist')
+    if (Array.isArray(data.words) && data.words.length > 0) {
+      normalizedWords = buildNormalized(data.words)
+      remoteLoaded = true
+    }
+  } catch {
+    // 서버 미연동/오프라인 — 번들 내장본으로 계속 간다. 최종 강제는 어차피 서버.
+  }
+}
 
 /** 텍스트에 사전 속 비속어가 포함되면 true. */
 export function containsProfanity(text: string | null | undefined): boolean {
   if (!text) return false
   const normalized = normalize(text)
-  return NORMALIZED_WORDS.some((word) => normalized.includes(word))
+  return normalizedWords.some((word) => normalized.includes(word))
 }

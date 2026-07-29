@@ -8,6 +8,7 @@ import * as authApi from '@/api/auth'
 import { ApiError } from '@/api/client'
 import { authApi as recoveryApi } from '@/api'
 import { warmUpMotionModels } from '@/composables/motionModels'
+import { containsProfanity } from '@/utils/profanity'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelCat from './components/PixelCat.vue'
@@ -176,6 +177,13 @@ async function checkNickname() {
     nicknameChecked.value = true
     nicknameAvailable.value = false
     nicknameMsg.value = '닉네임은 2~16자여야 해요.'
+    return
+  }
+  // 서버(중복확인·가입 @NoProfanity)와 같은 검사를 미리 태운다 — 왕복 없이 즉시 안내
+  if (containsProfanity(value)) {
+    nicknameChecked.value = true
+    nicknameAvailable.value = false
+    nicknameMsg.value = '✕ 닉네임에 사용할 수 없는 단어가 있어요'
     return
   }
   checkingNickname.value = true
