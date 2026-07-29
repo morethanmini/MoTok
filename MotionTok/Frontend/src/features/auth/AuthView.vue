@@ -273,8 +273,9 @@ async function submitLogin() {
   submitError.value = ''
   submitting.value = true
   try {
+    // rememberMe는 서버가 Refresh 쿠키 수명으로 반영한다(영구 쿠키 vs 세션 쿠키).
     const token = await authApi.login(email.value.trim(), password.value, rememberMe.value)
-    session.applyToken(token, rememberMe.value)
+    session.applyToken(token)
     router.push({ name: RouteName.Lobby })
   } catch (e) {
     submitError.value = messageFor(e, {

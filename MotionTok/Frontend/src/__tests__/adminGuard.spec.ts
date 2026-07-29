@@ -3,7 +3,7 @@ import type { RouteLocationNormalized } from 'vue-router'
 
 import { requireAdmin } from '../router'
 import { RouteName } from '../router/routeNames'
-import { setTokens, clearTokens, readAccessClaims } from '../api/token'
+import { setAccessToken, clearTokens, readAccessClaims } from '../api/token'
 import { useAccessDenied } from '../composables/useAccessDenied'
 
 /** role 클레임까지 담은 가짜 JWT — 프론트는 서명을 검증하지 않는다(routerGuard.spec와 동일 방식). */
@@ -25,24 +25,24 @@ describe('관리자 라우트 가드 (S15P11A706-133)', () => {
   })
 
   it('role 클레임을 토큰에서 읽는다', () => {
-    setTokens(fakeJwt('member', 'ADMIN'))
+    setAccessToken(fakeJwt('member', 'ADMIN'))
     expect(readAccessClaims()?.role).toBe('ADMIN')
   })
 
   it('ADMIN role이면 통과한다', () => {
-    setTokens(fakeJwt('member', 'ADMIN'))
+    setAccessToken(fakeJwt('member', 'ADMIN'))
     expect(requireAdmin(adminOnly)).toBe(true)
     expect(deniedMessage.value).toBe('')
   })
 
   it('일반 회원(USER)은 로비로 돌려보내고 권한 없음 안내를 띄운다', () => {
-    setTokens(fakeJwt('member', 'USER'))
+    setAccessToken(fakeJwt('member', 'USER'))
     expect(requireAdmin(adminOnly)).toEqual({ name: RouteName.Lobby })
     expect(deniedMessage.value).not.toBe('')
   })
 
   it('role 클레임이 없는 구 토큰은 막는다 (재로그인 필요)', () => {
-    setTokens(fakeJwt('member'))
+    setAccessToken(fakeJwt('member'))
     expect(requireAdmin(adminOnly)).toEqual({ name: RouteName.Lobby })
     expect(deniedMessage.value).not.toBe('')
   })
