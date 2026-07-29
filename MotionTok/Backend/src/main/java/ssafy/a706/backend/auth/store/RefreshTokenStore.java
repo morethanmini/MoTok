@@ -1,6 +1,8 @@
 package ssafy.a706.backend.auth.store;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.RedisSystemException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -28,7 +30,15 @@ import java.util.List;
  *   <li>{@code hash} — 지금 유효한 토큰의 해시</li>
  *   <li>{@code prevHash}/{@code prevUntil} — 직전 토큰과 그 유예 만료 시각(epoch ms). 아래 grace 참고</li>
  *   <li>{@code persistent} — 로그인 시 rememberMe 여부. 회전할 때 쿠키 수명을 원래대로 다시 세우는 데 쓴다</li>
+ *   <li>{@code sid} — 이 세션의 ID(JWT sid claim과 동일). 회전을 거쳐도 유지되며,
+ *       밀어내기·로그아웃이 폐기 목록에 올릴 대상을 여기서 읽는다(SessionRevocationStore)</li>
  * </ul>
+ *
+ * <h3>sid 가드 — 밀려난 기기의 갱신이 현 세션을 지우면 안 된다</h3>
+ * 단일 세션이라 새 로그인이 이 키를 통째로 덮어쓴다(save). 밀려난 옛 기기의 스케줄러가 그 뒤에
+ * 옛 토큰으로 갱신을 시도하면, 해시만 보던 시절엔 "모르는 토큰 = 유출"로 오인해 <b>새 로그인의
+ * 세션까지 지웠다</b>. 그래서 회전 스크립트는 저장된 sid와 제시된 토큰의 sid가 다르면 재사용
+ * 판정(DEL) 없이 그냥 거절한다(NONE) — 남의 세션 토큰은 유출 증거가 아니라 그저 남의 것이다.
  *
  * <h3>재사용 탐지와 grace</h3>
  * 회전 뒤에도 옛 토큰이 다시 오면 둘 중 하나다 — (a) 유출된 토큰을 누가 쓰고 있거나,
@@ -40,6 +50,7 @@ import java.util.List;
  * 각자 회전해, 나중에 저장된 쪽만 살아남고 클라이언트가 든 토큰은 죽는다 —
  * 다음 갱신에서 그게 재사용으로 잡히는 자기 발등 찍기가 된다.</p>
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class RefreshTokenStore {
@@ -50,6 +61,7 @@ public class RefreshTokenStore {
     private static final String FIELD_PREV_HASH = "prevHash";
     private static final String FIELD_PREV_UNTIL = "prevUntil";
     private static final String FIELD_PERSISTENT = "persistent";
+    private static final String FIELD_SESSION = "sid";
 
     /** 회전 직후 직전 토큰도 받아 주는 시간. 겹쳐 날아간 갱신 요청을 재사용으로 오인하지 않을 만큼만 짧게 잡는다. */
     public static final Duration GRACE = Duration.ofSeconds(30);
@@ -70,10 +82,14 @@ public class RefreshTokenStore {
 
     /**
      * KEYS[1]=키, ARGV[1]=제시된 토큰 해시, ARGV[2]=새 토큰 해시,
-     * ARGV[3]=현재 시각(ms), ARGV[4]=grace 만료(ms), ARGV[5]=키 TTL(ms).
+     * ARGV[3]=현재 시각(ms), ARGV[4]=grace 만료(ms), ARGV[5]=키 TTL(ms), ARGV[6]=제시된 토큰의 sid(없으면 빈 문자열).
      * 반환 0=NONE, 1=ROTATED, 2=GRACE, 3=REUSED — {@link #VERDICTS} 순서와 같다.
+     * sid 가드(클래스 주석)가 맨 앞에 선다 — 다른 세션의 토큰은 재사용 판정(DEL)에 닿기 전에 걸러야 한다.
+     * 저장된 sid가 없으면(도입 이전 세션) 가드를 건너뛰어 기존 세션을 깨지 않는다.
      */
     private static final RedisScript<Long> ROTATE = new DefaultRedisScript<>("""
+            local sid = redis.call('HGET', KEYS[1], 'sid')
+            if sid and sid ~= ARGV[6] then return 0 end
             local current = redis.call('HGET', KEYS[1], 'hash')
             if not current then return 0 end
             if current == ARGV[1] then
@@ -96,28 +112,46 @@ public class RefreshTokenStore {
      * 로그인·소셜 로그인으로 세션을 새로 연다. 이전 회전 기록(prev*)까지 통째로 버려야
      * 옛 세션의 직전 토큰이 grace를 타고 되살아나지 않는다.
      */
-    public void save(Long userId, String refreshToken, Duration ttl, boolean persistent) {
+    public void save(Long userId, String refreshToken, Duration ttl, boolean persistent, String sessionId) {
         String key = KEY + userId;
         redis.delete(key);
         redis.opsForHash().put(key, FIELD_HASH, hash(refreshToken));
         redis.opsForHash().put(key, FIELD_PERSISTENT, persistent ? "1" : "0");
+        redis.opsForHash().put(key, FIELD_SESSION, sessionId);
         redis.expire(key, ttl);
     }
 
     /**
      * 제시된 토큰을 검사하고, 현재 토큰이면 그 자리에서 새 토큰으로 회전시킨다.
      * {@link Verdict#ROTATED}일 때만 {@code next}가 저장된다 — 그 외에는 저장 상태가 바뀌지 않거나(GRACE),
-     * 세션이 지워진다(REUSED).
+     * 세션이 지워진다(REUSED). {@code presentedSessionId}는 제시된 토큰의 sid claim —
+     * 저장된 sid와 다르면 밀려난 옛 세션의 토큰이므로 아무것도 건드리지 않고 거절한다(NONE).
      */
-    public Verdict rotate(Long userId, String presented, String next, Duration ttl) {
+    public Verdict rotate(Long userId, String presented, String next, Duration ttl, String presentedSessionId) {
         long now = System.currentTimeMillis();
         Long code = redis.execute(ROTATE, List.of(KEY + userId),
                 hash(presented),
                 hash(next),
                 String.valueOf(now),
                 String.valueOf(now + GRACE.toMillis()),
-                String.valueOf(ttl.toMillis()));
+                String.valueOf(ttl.toMillis()),
+                presentedSessionId == null ? "" : presentedSessionId);
         return VERDICTS[code == null ? 0 : code.intValue()];
+    }
+
+    /** 현재 세션의 ID(sid). 세션이 없거나 sid 도입 이전에 열린 세션이면 null. */
+    public String sessionId(Long userId) {
+        try {
+            Object stored = redis.opsForHash().get(KEY + userId, FIELD_SESSION);
+            return stored == null ? null : stored.toString();
+        } catch (RedisSystemException e) {
+            // 해시 도입(키맵 v0.3) 전의 평문 String 키가 남아 있으면 HGET이 WRONGTYPE으로 터진다.
+            // 로그인 경로가 이 조회를 save()보다 먼저 타므로 여기서 던지면 그 사용자는 로그인 자체가
+            // 막힌다 — sid 없는 레거시 세션으로 취급하고 넘어간다. 로그인이 이어지면 save()가
+            // 키를 지우고 해시로 다시 써서 스스로 치유된다.
+            log.warn("auth:refresh:{} 구 포맷 키 감지 — sid 없음으로 취급한다 (로그인 시 해시로 재작성됨)", userId);
+            return null;
+        }
     }
 
     /** 로그인 때 고른 rememberMe — 회전 시 쿠키 수명을 원래대로 유지하려고 읽는다. */

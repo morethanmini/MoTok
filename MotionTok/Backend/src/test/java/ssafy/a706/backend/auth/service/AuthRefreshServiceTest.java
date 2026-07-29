@@ -10,6 +10,7 @@ import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
 import ssafy.a706.backend.auth.oauth.OauthLinkService;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.ratelimit.LoginAttemptLimiter;
+import ssafy.a706.backend.auth.session.SessionRevocationStore;
 import ssafy.a706.backend.auth.session.SingleSessionPolicy;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.global.config.StompSessionRegistry;
@@ -32,6 +33,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 /**
  * 갱신 요청의 세 갈래 — 정상 회전 / 동시 요청(grace) / 재사용.
@@ -43,10 +46,12 @@ import static org.mockito.Mockito.mock;
 class AuthRefreshServiceTest {
 
     private static final long USER_ID = 42L;
+    private static final String SESSION_ID = "sid-42-current";
     private static final Duration REFRESH_TTL = Duration.ofDays(14);
 
     private final UserRepository userRepository = mock(UserRepository.class);
     private final RefreshTokenStore refreshTokenStore = mock(RefreshTokenStore.class);
+    private final SessionRevocationStore sessionRevocationStore = mock(SessionRevocationStore.class);
     private final JwtTokenProvider tokenProvider = new JwtTokenProvider(
             "test-secret-key-for-motok-auth-service-spec-0123456789",
             3_600_000L, REFRESH_TTL.toMillis(), 1_800_000L);
@@ -63,6 +68,7 @@ class AuthRefreshServiceTest {
             mock(PresenceService.class),
             mock(StompSessionRegistry.class),
             mock(SingleSessionPolicy.class),
+            sessionRevocationStore,
             mock(LoginAttemptLimiter.class),
             mock(RejoinPolicy.class));
 
@@ -74,11 +80,11 @@ class AuthRefreshServiceTest {
                 .build();
         ReflectionTestUtils.setField(user, "id", USER_ID);
         given(userRepository.findById(USER_ID)).willReturn(Optional.of(user));
-        return tokenProvider.createRefreshToken(USER_ID);
+        return tokenProvider.createRefreshToken(USER_ID, SESSION_ID);
     }
 
     private void verdict(RefreshTokenStore.Verdict verdict) {
-        given(refreshTokenStore.rotate(eq(USER_ID), anyString(), anyString(), any(Duration.class)))
+        given(refreshTokenStore.rotate(eq(USER_ID), anyString(), anyString(), any(Duration.class), anyString()))
                 .willReturn(verdict);
     }
 
@@ -142,9 +148,42 @@ class AuthRefreshServiceTest {
     @Test
     @DisplayName("Access 토큰을 갱신에 쓰려는 시도는 거절한다(type=refresh만 허용)")
     void rejectsAccessTokenAsRefresh() {
-        String accessToken = tokenProvider.createAccessToken(USER_ID, "모톡러", "USER");
+        String accessToken = tokenProvider.createAccessToken(USER_ID, "모톡러", "USER", SESSION_ID);
 
         assertThatThrownBy(() -> service.refresh(accessToken))
                 .isInstanceOf(BusinessException.class);
+    }
+
+    // ── 단일 세션 밀어내기(v0.2.25) — sid 폐기와 갱신의 접점 ─────────────────
+
+    @Test
+    @DisplayName("밀려난 세션의 갱신은 회전을 건드리지 않고 전용 코드(SESSION_DISPLACED)로 거절한다")
+    void rejectsDisplacedSessionWithDedicatedCode() {
+        String token = activeUserRefreshToken();
+        given(sessionRevocationStore.reasonOf(SESSION_ID))
+                .willReturn(SessionRevocationStore.Reason.DISPLACED);
+
+        assertThatThrownBy(() -> service.refresh(token))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.SESSION_DISPLACED);
+        // 폐기가 확인된 뒤에는 저장소에 손대지 않는다 — 새 로그인의 세션을 흔들 이유가 없다.
+        verify(refreshTokenStore, never())
+                .rotate(anyLong(), anyString(), anyString(), any(Duration.class), anyString());
+    }
+
+    @Test
+    @DisplayName("갱신으로 나가는 Access·Refresh 토큰은 세션 ID(sid)를 그대로 물려받는다")
+    void keepsSessionIdAcrossRotation() {
+        String token = activeUserRefreshToken();
+        verdict(RefreshTokenStore.Verdict.ROTATED);
+
+        IssuedTokens issued = service.refresh(token);
+
+        assertThat(tokenProvider.getSessionId(tokenProvider.parse(issued.body().accessToken())))
+                .isEqualTo(SESSION_ID);
+        assertThat(tokenProvider.getSessionId(tokenProvider.parse(issued.refreshToken())))
+                .isEqualTo(SESSION_ID);
+        // 판정에도 같은 sid가 넘어가야 저장된 세션과 대조된다(sid 가드).
+        verify(refreshTokenStore).rotate(eq(USER_ID), anyString(), anyString(), any(Duration.class), eq(SESSION_ID));
     }
 }
