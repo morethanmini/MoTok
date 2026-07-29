@@ -218,8 +218,9 @@ function onVolumeInput(e: Event) {
 }
 
 .tile.compact { width: 100%; aspect-ratio: var(--camera-aspect, 8 / 5); }
-.tile-video { width: 100%; height: 100%; object-fit: cover; background: #eee6cf; }
-.tile.compact .tile-video { object-fit: cover; }
+/* 내 타일과 같은 규칙 — 타일 비율과 영상 비율이 다를 때 잘라내지 않고 남는 자리를 회색 여백으로.
+   여기 <video>는 카메라일 수도, 게임 화면 트랙일 수도 있어 비율 차이가 더 크다. */
+.tile-video { width: 100%; height: 100%; object-fit: contain; background: var(--c-letterbox); }
 .tile-video.mirror { transform: scaleX(-1); }
 
 .cam-off {

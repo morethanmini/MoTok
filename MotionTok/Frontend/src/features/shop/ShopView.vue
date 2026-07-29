@@ -56,6 +56,7 @@ const MOCK_ITEMS: Item[] = [
   { id: 6, name: '반짝임 효과', category: 'EFFECT', itemType: 'SHOP', pricePoint: 450, imageUrl: '', owned: false },
   { id: 7, name: '음표 스티커', category: 'STICKER', itemType: 'SHOP', pricePoint: 200, imageUrl: '/assets/item/sticker/note_1.png', owned: false },
   { id: 8, name: '별 스티커', category: 'STICKER', itemType: 'SHOP', pricePoint: 250, imageUrl: '/assets/item/sticker/star_1.png', owned: false },
+  { id: 9, name: '고양이 풍선 스티커', category: 'STICKER', itemType: 'SHOP', pricePoint: 1500, imageUrl: '/assets/item/sticker/cat_balloon.gif', owned: false },
 ]
 
 const CATEGORIES: { key: ItemCategory | 'ALL'; label: string; emoji: string }[] = [
