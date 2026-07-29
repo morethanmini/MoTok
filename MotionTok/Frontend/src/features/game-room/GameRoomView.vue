@@ -113,6 +113,7 @@ const amRoomHost = computed(() => !!hostId.value && myParticipantId.value === ho
  */
 const detailLoaded = computed(() => hostId.value !== null)
 
+
 /** 상세/수정 응답을 화면 상태에 반영. 두 경로가 같은 LiveRoomDetail을 돌려주므로 한 곳에 모았다. */
 function applyDetail(d: LiveRoomDetail) {
   capacity.value = d.maxPlayers
@@ -139,6 +140,9 @@ const participantNames = computed<Record<string, string>>(() => {
 const connected = computed(() => lk.state.value === ConnectionState.Connected)
 const lkLocal = computed(() => lk.participants.value.find((p) => p.isLocal) ?? null)
 const remotes = computed(() => lk.participants.value.filter((p) => !p.isLocal))
+
+/** 게임 목록의 "혼자 플레이" 흐름에서만 빈 참가자 슬롯을 숨긴다. */
+const isSoloPlay = computed(() => route.query.solo === '1')
 
 interface Slot { view: ParticipantView | null; host: boolean }
 // self를 뺀 나머지 정원만큼 슬롯을 미리 만든다. 참가자가 있으면 채우고, 없으면 빈 자리.
@@ -1148,11 +1152,12 @@ const startHint = computed(() =>
           'four-player': capacity === 4,
           'three-player': capacity === 3,
           'two-player': capacity === 2,
+          'solo-play': isSoloPlay,
         }"
         :style="capacity === 2 ? { '--two-player-aspect': selfVideoAspect * 2 } : undefined"
       >
         <div
-          v-if="isSideBySideLayout"
+          v-if="!isSoloPlay && isSideBySideLayout"
           class="side-tray"
           :class="capacity <= 6 ? 'side-tray-left-two' : 'side-tray-left'"
         >
@@ -1268,7 +1273,7 @@ const startHint = computed(() =>
 
         <!-- 나머지 참가자 — 인원수(2~8명)에 맞춰 열 수가 달라지는 그리드 -->
         <div
-          v-if="isSideBySideLayout"
+          v-if="!isSoloPlay && isSideBySideLayout"
           class="side-tray"
           :class="isEightPlayerLayout ? 'side-tray-right' : capacity === 5 ? 'side-tray-right-two' : 'side-tray-right-three'"
         >
@@ -1286,7 +1291,7 @@ const startHint = computed(() =>
             @volume="changeVolume(slot, $event)"
           />
         </div>
-        <div v-else class="others-tray" :style="{ '--cols': othersColumns }">
+        <div v-if="!isSoloPlay && !isSideBySideLayout" class="others-tray" :style="{ '--cols': othersColumns }">
           <ParticipantTile
             v-for="(slot, i) in otherSlots"
             :key="i"
@@ -2127,6 +2132,31 @@ const startHint = computed(() =>
 }
 /* 타일 비율은 레이아웃이 8/5로 고정하는데 실제 카메라는 4:3일 수도 있다 — cover면 그 차이만큼
    얼굴이 잘려 나간다. 잘라내지 않고 남는 자리를 회색 여백으로 둔다(스티커 오버레이의 fit도 같은 값). */
+/* 솔로는 방 정원과 상관없이 다인 그리드 규칙을 전부 해제하고 내 화면 한 장만 채운다. */
+.cam-stage.solo-play,
+.cam-stage.solo-play.two-player,
+.cam-stage.solo-play.three-player,
+.cam-stage.solo-play.four-player {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  aspect-ratio: auto;
+  align-self: stretch;
+  align-items: stretch;
+  justify-content: center;
+}
+.cam-stage.solo-play .self-tile.self-spot {
+  flex: 0 1 auto;
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: var(--camera-aspect, 8 / 5);
+  align-self: center;
+  place-self: center;
+}
 .self-video { object-fit: contain; background: var(--c-letterbox); }
 .cam-off { background: linear-gradient(135deg, #bfe9ff, #d7e7ad); color: var(--room-muted); }
 .cam-on-btn { border-color: #925c47; border-radius: 7px; background: #4078cf; box-shadow: 3px 3px 0 #a66b50; }

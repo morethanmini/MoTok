@@ -63,6 +63,7 @@ async function play() {
   try {
     const result = await roomsApi.create({
       title: `${session.profile?.nickname ?? '나'}의 1인 플레이`.slice(0, 30),
+      // 실시간 방 서버는 최소 2명 정원을 요구한다. 혼자일 때의 빈 슬롯은 게임 화면에서만 숨긴다.
       visibility: 'PRIVATE', maxPlayers: 2,
       password: String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0'),
     })
@@ -72,7 +73,7 @@ async function play() {
 }
 function goDevice(game: Game, roomId: string) {
   detailOpen.value = false
-  router.push({ name: RouteName.DeviceSetup, query: { game: game.name, room: roomId } })
+  router.push({ name: RouteName.DeviceSetup, query: { game: game.name, room: roomId, solo: '1' } })
 }
 </script>
 
