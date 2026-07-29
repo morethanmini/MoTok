@@ -109,11 +109,12 @@ function onReported() {
 </script>
 
 <template>
-  <PixelModal @close="$emit('close')">
+  <PixelModal variant="lobby" @close="$emit('close')">
     <div class="up">
       <!-- 모서리의 눈에 띄는 자리는 닫기의 것 (AvatarPickerModal과 같은 자리 규칙) -->
       <button type="button" class="close" title="닫기" aria-label="닫기" @click="emit('close')">✕</button>
 
+      <p class="profile-kicker">FRIEND PROFILE</p>
       <UserAvatar class="avatar" :src="profile?.avatarUrl" :alt="`${nickname} 프로필 사진`" />
       <h3>{{ nickname }}</h3>
       <!-- 상태 줄 — 항상 같은 높이를 차지해 아래 내용이 밀리지 않는다 -->
@@ -291,4 +292,21 @@ h3 { margin: 0; font-size: 16px; }
   font-size: 8px; color: var(--c-muted); text-decoration: underline; cursor: pointer;
 }
 .report-link:hover { color: var(--c-coral); }
+
+/* 로비 친구 카드 톤 */
+.up { padding: 4px; }
+.profile-kicker { margin: 1px 0 10px; color: #a56d4e; font-family: var(--font-pixel); font-size: 8px; letter-spacing: 1px; }
+.close { top: -10px; right: -10px; border-color: #8d6048; border-radius: 7px; background: #fff0b6; color: #6a4533; box-shadow: 3px 3px 0 #c79b77; }
+.avatar { width: 76px; height: 76px; margin-bottom: 10px; border: 3px solid #8d6048; background: #fff0b6; box-shadow: 3px 3px 0 #d0a47a; }
+h3 { color: #51382c; font-family: var(--font-pixel); font-size: 17px; font-weight: 400; }
+.state { color: #896e5d; }
+.hero { gap: 10px; margin-bottom: 13px; }
+.hero > div { height: 61px; padding-top: 9px; border-color: #c79b77; border-radius: 8px; background: #fff8e9; box-shadow: 3px 3px 0 #e4c8a8; }
+.hero dt { color: #9b6c51; opacity: 1; }.hero dd { color: #563b2d; }
+.records { height: 160px; padding: 29px 11px 12px; border: 2px solid #c79b77; border-radius: 9px; background: #fff8e9; box-shadow: inset 0 0 0 3px #fffdf7; }
+.records-title { top: 8px; left: 11px; padding: 3px 5px; color: #875b43; font-family: var(--font-pixel); font-size: 8px; background: #fff0b6; }
+.records-state { color: #896e5d; }.chips { gap: 7px; }.chip { border-color: #b98b68; border-radius: 6px; background: #f7df9e; box-shadow: 2px 2px 0 #ddba94; }.chip.on { border-color: #8d6048; background: #dcecbf; box-shadow: 2px 2px 0 #b7cd90; }.chip-name { color: #5b3f30; }
+.stats > div { border-color: #c79b77; border-radius: 7px; background: #fffdf7; }.stats dt { color: #9b6c51; }.stats dd { color: #5b8d45; }
+.up :deep(.px-btn) { border: 2px solid #925c47; border-radius: 7px; box-shadow: 3px 3px 0 #bd916e; }
+.report-link { color: #a56d4e; font-size: 9px; }
 </style>

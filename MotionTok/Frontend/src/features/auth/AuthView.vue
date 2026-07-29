@@ -449,7 +449,7 @@ onMounted(async () => {
     <section v-else class="card">
       <PixelCat :shy="catShy" />
       <div class="head">
-        <BrandLogo size="sm" subtitle="친구들과 움직일 준비가 되었나요?" title="MoToK" />
+        <BrandLogo size="sm" :subtitle="isSignup ? '회원가입' : '로그인'" title="MoToK" />
       </div>
 
       <template v-if="isSignup">
@@ -1126,5 +1126,152 @@ onMounted(async () => {
 .modal-leave-to .modal-card {
   transform: scale(0.9) translateY(10px);
   opacity: 0;
+}
+
+/* Lobby garden treatment */
+.page {
+  position: relative;
+  min-height: 100%;
+  height: auto;
+  overflow: hidden;
+  padding: 46px 20px 82px;
+  background:
+    linear-gradient(rgba(255,255,255,.18) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.18) 1px, transparent 1px),
+    linear-gradient(180deg, #bfe9ff 0%, #dff2e9 72%, #eedcae 72%);
+  background-size: 20px 20px, 20px 20px, 100% 100%;
+}
+.garden-backdrop { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.garden-cloud { position: absolute; width: 180px; opacity: .68; animation: auth-cloud 18s ease-in-out infinite; }
+.cloud-one { top: 7%; left: 10%; }
+.cloud-two { top: 30%; right: 9%; width: 140px; animation-delay: -8s; }
+.garden-sign {
+  position: absolute;
+  left: max(5%, calc(50% - 520px));
+  bottom: 96px;
+  z-index: 1;
+  padding: 12px 16px;
+  border: 3px solid #86593f;
+  border-radius: 7px;
+  background: #e7c996;
+  box-shadow: inset 2px 2px 0 rgba(255,255,255,.45), 5px 5px 0 rgba(115,73,49,.28);
+  color: #845943;
+  font-size: 9px;
+  line-height: 1.25;
+  letter-spacing: 1px;
+  transform: rotate(-3deg);
+}
+.garden-sign strong { color: #493127; font-size: 17px; letter-spacing: 0; }
+.garden-cat { position: absolute; right: max(5%, calc(50% - 530px)); bottom: 45px; width: min(25vw, 270px); filter: drop-shadow(5px 7px 0 rgba(91,66,47,.16)); }
+.garden-grass { position: absolute; inset: auto 0 -6px; height: 76px; background-repeat: repeat-x; background-position: left bottom; background-size: auto 76px; }
+.card {
+  z-index: 2;
+  width: 460px;
+  border: 4px solid #8c6047;
+  border-radius: 12px;
+  background: #fff9ea;
+  box-shadow: inset 3px 3px 0 rgba(255,255,255,.6), inset -4px -4px 0 rgba(191,146,98,.12), 9px 9px 0 rgba(121,82,57,.42);
+}
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 9px;
+  border: 1px dashed rgba(154,103,71,.35);
+  border-radius: 7px;
+  pointer-events: none;
+}
+.head { position: relative; z-index: 1; padding-bottom: 14px; border-bottom: 2px solid #e7cfaa; }
+.field, .remember-row, .submit, .divider, .social, .signup-cta { position: relative; z-index: 1; }
+.field input {
+  border-color: #b98963;
+  border-radius: 7px;
+  background: #fffef9;
+  box-shadow: inset 2px 2px 0 rgba(161,111,76,.08);
+}
+.field input:focus { border-color: #ef8b74; box-shadow: 0 0 0 3px rgba(239,139,116,.18); }
+.inline-btn { border-color: #a77554; border-radius: 6px; background: #d7e7ad; box-shadow: 2px 2px 0 #c29772; }
+.submit :deep(.px-btn), .submit { border-color: #925c47; border-radius: 7px; box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), inset -2px -3px 0 rgba(120,58,47,.2), 4px 4px 0 #a66b50; }
+.social button { border-color: #b98963; border-radius: 7px; box-shadow: 3px 3px 0 #d6b88e; }
+.divider span { background: #fff9ea; }
+.back { z-index: 2; color: #8d6048; }
+.modal-card { background: #fff9ea; }
+@keyframes auth-cloud { 0%,100% { transform: translateX(-9px); } 50% { transform: translateX(14px) translateY(-4px); } }
+@media (max-width: 900px) {
+  .garden-cat { right: 4%; width: 190px; opacity: .55; }
+  .garden-sign { left: 5%; }
+}
+@media (max-width: 620px) {
+  .page { padding: 26px 14px 72px; }
+  .card { padding: 23px 20px; }
+  .garden-cat, .garden-sign { display: none; }
+  .garden-cloud { width: 110px; }
+}
+
+/* Keep the surrounding area quiet; the lobby language lives in the form card, not a decorative scene. */
+.page {
+  background: var(--c-cream);
+  background-image: radial-gradient(circle at 1px 1px, rgba(56, 38, 61, 0.1) 1px, transparent 1.5px);
+  background-size: 18px 18px;
+}
+
+/* Preserve the lobby's warm wood depth on hover instead of the global ink shadow. */
+.card :deep(.px-btn:hover:not(:disabled)) {
+  transform: translate(-2px, -2px);
+  box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), inset -2px -3px 0 rgba(120,58,47,.2), 4px 4px 0 #a66b50;
+}
+.social button:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 3px 3px 0 #d6b88e;
+}
+.inline-btn:hover {
+  transform: translateY(-50%) translate(-1px, -1px);
+  box-shadow: 2px 2px 0 #c29772;
+}
+
+/* Give the authentication form the same comfortable scale as the lobby panels. */
+.card {
+  width: 520px;
+  padding: 36px;
+}
+.head { margin-bottom: 27px; padding-bottom: 17px; }
+.field { margin-top: 16px; font-size: 11px; }
+.field input { height: 52px; margin-top: 8px; padding: 0 15px; font-size: 13px; }
+.hint, .check-msg, .countdown { font-size: 9px; }
+.input-wrap.solo { margin-top: 8px; }
+.inline-btn { right: 7px; height: 37px; padding: 0 12px; font-size: 9px; }
+.submit { margin-top: 25px; }
+.card :deep(.px-btn.s-lg) { height: 56px; font-size: 16px; }
+.remember-row { margin-top: 14px; }
+.remember, .recovery-links, .recovery-links button { font-size: 10px; }
+.social { gap: 10px; }
+.social button { height: 49px; font-size: 12px; }
+.signup-cta, .signup-cta button { font-size: 11px; }
+.back { top: 19px; right: 19px; font-size: 10px; }
+@media (max-width: 620px) {
+  .card { width: 100%; padding: 23px 20px; }
+  .field { font-size: 9px; }
+  .field input { height: 45px; font-size: inherit; }
+  .card :deep(.px-btn.s-lg) { height: 49px; font-size: 14px; }
+}
+
+/* Larger readable type across the authentication flow. */
+.head :deep(.s-sm .mark) { width: 48px; height: 48px; font-size: 24px; }
+.head :deep(.s-sm .name) { font-size: 20px; }
+.head :deep(.s-sm .sub) { margin-top: 5px; font-size: 15px; color: #8d6048; }
+.field { font-size: 13px; }
+.field input { font-size: 15px; }
+.hint, .check-msg, .countdown { font-size: 11px; }
+.inline-btn { font-size: 11px; }
+.remember, .recovery-links, .recovery-links button { font-size: 12px; }
+.social button { font-size: 14px; }
+.signup-cta, .signup-cta button { font-size: 13px; }
+.signup-cta { transform: translateY(12px); }
+.back { font-size: 12px; }
+@media (max-width: 620px) {
+  .field { font-size: 11px; }
+  .field input { font-size: 13px; }
+  .hint, .check-msg, .countdown, .inline-btn { font-size: 9px; }
+  .remember, .recovery-links, .recovery-links button, .signup-cta, .signup-cta button { font-size: 11px; }
+  .head :deep(.s-sm .sub) { font-size: 13px; }
 }
 </style>

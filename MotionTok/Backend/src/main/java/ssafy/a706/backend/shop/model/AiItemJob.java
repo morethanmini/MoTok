@@ -40,7 +40,12 @@ public class AiItemJob {
     @Column(nullable = false, length = 16)
     private AiJobStatus status;
 
-    /** 완료 시 생성된 Item의 id. DONE 이전에는 null. */
+    /** 생성 완료 시 워커가 올린 이미지 URL. Item과 무관하게 job 자체가 보관한다 — "생성 → 확인 → 저장" 흐름에서
+     * 저장 전에도 프론트가 결과 미리보기를 받아야 하기 때문이다. */
+    @Column(name = "image_url", length = 512)
+    private String imageUrl;
+
+    /** 유저가 저장을 확정해 생성된 Item의 id. 저장 전(또는 재시도로 버려진 경우)에는 null. */
     @Column(name = "item_id")
     private Long itemId;
 

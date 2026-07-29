@@ -25,6 +25,7 @@ const conversations = reactive(new Map<number, WhisperMessage[]>())
 const unread = reactive(new Map<number, number>())
 /** 지금 열려 있는 대화창의 상대. 열려 있는 대화는 도착 즉시 읽음 처리한다. */
 const openWith = ref<number | null>(null)
+const openNickname = ref('')
 /**
  * 방금 도착한 <b>안 읽은</b> 귓속말 — 앱 전역 알림(토스트)이 이걸 지켜본다.
  *
@@ -75,8 +76,9 @@ export function useWhisper() {
   }
 
   /** 대화창을 연다 — 처음 여는 상대면 이력을 한 번 받아 온다. */
-  async function open(userId: number) {
+  async function open(userId: number, nickname = '친구') {
     openWith.value = userId
+    openNickname.value = nickname
     unread.set(userId, 0)
     if (incoming.value?.conversationWith === userId) incoming.value = null
     if (loadedHistory.has(userId)) return
@@ -96,6 +98,7 @@ export function useWhisper() {
 
   function close() {
     openWith.value = null
+    openNickname.value = ''
   }
 
   /** @returns 발행 성공 여부. 실패(미연결)면 호출부가 안내한다. */
@@ -109,6 +112,7 @@ export function useWhisper() {
 
   return {
     openWith: readonly(openWith),
+    openNickname: readonly(openNickname),
     /** 전역 알림용 — App.vue가 지켜보고 토스트를 띄운다. 소비 후 clearIncoming()으로 비운다. */
     incoming: readonly(incoming),
     clearIncoming: () => (incoming.value = null),

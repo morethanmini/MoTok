@@ -19,7 +19,6 @@ import { useSessionStore } from '@/stores/session'
 import { useAsyncData } from '@/composables/useAsyncData'
 import { useLobbyLive } from '@/composables/useLobbyLive'
 import { useWhisper } from '@/composables/useWhisper'
-import { stompConnected } from '@/composables/useGlobalStomp'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
 import { useUserProfile } from '@/composables/useUserProfile'
@@ -30,7 +29,6 @@ import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import UserProfileModal from '@/components/common/UserProfileModal.vue'
-import WhisperModal from '@/components/common/WhisperModal.vue'
 import RoomCard from './components/RoomCard.vue'
 import FriendItem from './components/FriendItem.vue'
 import InviteCardStack from './components/InviteCardStack.vue'
@@ -264,20 +262,12 @@ const pwBusy = ref(false)
  * 수신함은 앱 수명(useWhisper)에 있어서, 로비에 없던 동안 온 말도 안 읽음으로 쌓여 있다.
  */
 const whisper = useWhisper()
-const whisperTarget = ref<{ userId: number; nickname: string } | null>(null)
 function openWhisper(friend: Friend) {
-  whisperTarget.value = { userId: friend.userId, nickname: friend.name }
-  void whisper.open(friend.userId)
-}
-function closeWhisper() {
-  whisperTarget.value = null
-  whisper.close()
-}
-function sendWhisper(text: string) {
-  if (!whisperTarget.value) return
-  if (!whisper.send(whisperTarget.value.userId, text)) {
-    flash('실시간 연결이 끊겨 있어요. 잠시 후 다시 시도해 주세요')
+  if (whisper.openWith.value === friend.userId) {
+    whisper.close()
+    return
   }
+  void whisper.open(friend.userId, friend.name)
 }
 
 /** 상호작용 중에 도착한 변화를 쌓아 뒀다가 모달이 닫히면 반영한다. */
@@ -541,8 +531,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
               :key="f.userId"
               :friend="f"
               :unread="whisper.unreadWith(f.userId)"
-              @open="viewer.open(f.userId, f.name)"
-              @whisper="openWhisper(f)"
+              @open="openWhisper(f)"
             />
             <p v-if="friends.length === 0" class="friends-empty">
               <img class="friends-empty-toys pixel-image" :src="lobbyEmptyCatToys" alt="" aria-hidden="true" />
@@ -605,14 +594,6 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
       @reported="flash"
     />
 
-    <WhisperModal
-      v-if="whisperTarget"
-      :nickname="whisperTarget.nickname"
-      :messages="whisper.messagesWith(whisperTarget.userId)"
-      :connected="stompConnected"
-      @close="closeWhisper"
-      @send="sendWhisper"
-    />
     <PixelToast :message="toast" />
 
     <!-- 스플래시 -->

@@ -166,8 +166,10 @@ export function normalizePose(lm: LandmarkPoint[], mirror: boolean): NormalizedP
 // 사용자 팔 길이 기준값(어깨너비 단위) — 인체 표준 비율로 시작해서, 관측된 최대
 // 투영 길이로 자동 캘리브레이션한다 (팔을 한 번 쭉 뻗으면 그 사용자 기준으로 수렴).
 // 캡은 트래킹 스파이크가 기준을 영구히 부풀리는 것을 막는다.
-const REF_UPPER_INIT = 0.72
-const REF_FORE_INIT = 0.62
+// 랜덤 출제(randomPose.ts)도 이 길이로 팔을 뻗어 만든다 — 그래야 지정한 각도가 단축법에
+// 깎이지 않고 그대로 아바타에 나온다. 두 값이 갈라지면 랜덤 포즈의 팔만 짧아진다.
+export const REF_UPPER_INIT = 0.72
+export const REF_FORE_INIT = 0.62
 const REF_UPPER_CAP = 0.9
 const REF_FORE_CAP = 0.8
 

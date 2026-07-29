@@ -11,7 +11,6 @@ import {
 import { useAsyncData } from '@/composables/useAsyncData'
 import { useLobbyLive } from '@/composables/useLobbyLive'
 import { useWhisper } from '@/composables/useWhisper'
-import { stompConnected } from '@/composables/useGlobalStomp'
 import AppPage from '@/components/common/AppPage.vue'
 import PixelCard from '@/components/common/PixelCard.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -19,7 +18,6 @@ import PixelToast from '@/components/common/PixelToast.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserProfileModal from '@/components/common/UserProfileModal.vue'
 import AddFriendModal from './components/AddFriendModal.vue'
-import WhisperModal from '@/components/common/WhisperModal.vue'
 import { useToast } from '@/composables/useToast'
 import { useUserProfile } from '@/composables/useUserProfile'
 import lobbyFriendCats from '@/assets/lobby/lobby-friend-cats.png'
@@ -86,20 +84,8 @@ function reloadAll() {
  * 창을 닫아 둔 사이에 온 말도 안 읽음으로 쌓여 있어야 한다.
  */
 const whisper = useWhisper()
-const whisperTarget = ref<{ userId: number; nickname: string } | null>(null)
 function openWhisper(friend: { userId: number; nickname: string }) {
-  whisperTarget.value = friend
-  void whisper.open(friend.userId)
-}
-function closeWhisper() {
-  whisperTarget.value = null
-  whisper.close()
-}
-function sendWhisper(text: string) {
-  if (!whisperTarget.value) return
-  if (!whisper.send(whisperTarget.value.userId, text)) {
-    flash('실시간 연결이 끊겨 있어요. 잠시 후 다시 시도해 주세요')
-  }
+  void whisper.open(friend.userId, friend.nickname)
 }
 
 const pendingRefresh = ref(false)
@@ -279,14 +265,6 @@ async function removeFriend(f: Friend) {
     <PixelToast :message="toast" />
     <AddFriendModal v-if="showAddModal" v-model="target" @close="showAddModal = false" @send="sendRequest" />
 
-    <WhisperModal
-      v-if="whisperTarget"
-      :nickname="whisperTarget.nickname"
-      :messages="whisper.messagesWith(whisperTarget.userId)"
-      :connected="stompConnected"
-      @close="closeWhisper"
-      @send="sendWhisper"
-    />
     <!-- 랭킹과 같은 모달·같은 조회 규칙. 가입일·접속시간·게임별 전적(-141)은 모달이 직접 그린다. -->
     <UserProfileModal
       v-if="viewer.isOpen.value"

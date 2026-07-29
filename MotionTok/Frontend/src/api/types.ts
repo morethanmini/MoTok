@@ -189,9 +189,26 @@ export interface PurchaseResponse {
   balanceAfter: number
 }
 export interface AiItemRequest {
-  name?: string
-  strokes: object[]
-  category?: ItemCategory
+  name: string
+  category: ItemCategory
+  sketchBase64: string
+}
+export type AiItemJobStatus = 'PENDING' | 'PROCESSING' | 'DONE' | 'FAILED'
+export interface AiItemJobResponse {
+  jobId: number
+  status: AiItemJobStatus
+}
+export interface AiItemJobStatusResponse {
+  jobId: number
+  status: AiItemJobStatus
+  itemId: number | null
+  imageUrl: string | null
+  errorMessage: string | null
+}
+/** POST /shop/ai-items/{jobId}/save 응답 — 이 호출로만 인벤토리에 지급된다("생성 → 확인 → 저장"). */
+export interface AiItemSaveResponse {
+  itemId: number
+  imageUrl: string
 }
 
 // ── 라이브룸 (구 rooms → live-rooms, 명세 §4) ──────
@@ -631,6 +648,10 @@ export type GameEvent =
       roundNo?: number | null
       /** 게임④ 로테이션(-48) — 전체 라운드 수(참가자 수). 로테이션 없는 게임은 null */
       totalRounds?: number | null
+      /** 게임④ 모드(-9) — 'pose'(출제 대결) | 'chain'(연속 서바이벌). 그 외 게임은 null */
+      mode?: string | null
+      /** 게임④ 연속 서바이벌(-9) — 날아올 벽 수. 이때 challenge는 포즈 시드다 */
+      wallCount?: number | null
       serverNow: number
       startAt: number
       endAt: number

@@ -22,10 +22,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class GameEventResponseFactoryTest {
 
     @Test
-    @DisplayName("게임④ 시작 — 과제·출제자·난이도·로테이션이 제 필드에 들어간다")
+    @DisplayName("게임④ 시작 — 과제·출제자·난이도·로테이션·모드가 제 필드에 들어간다")
     void gameStart_maps_body_fit_fields() {
         GameEventResponse e = GameEventResponse.gameStart(
-                "sess", 4L, "CHALLENGE", "orion", "setter-1", "hard", 100L, 200L, 300L, 2, 5);
+                "sess", 4L, "CHALLENGE", "orion", "setter-1", "hard", 100L, 200L, 300L, 2, 5,
+                "pose", null);
 
         assertThat(e.type()).isEqualTo(GameEventResponse.EventType.GAME_START);
         assertThat(e.sessionId()).isEqualTo("sess");
@@ -39,10 +40,27 @@ class GameEventResponseFactoryTest {
         assertThat(e.endAt()).isEqualTo(300L);
         assertThat(e.roundNo()).isEqualTo(2);
         assertThat(e.totalRounds()).isEqualTo(5);
+        assertThat(e.mode()).isEqualTo("pose");
+        assertThat(e.wallCount()).isNull(); // 출제 대결은 벽 수가 없다
         // 게임⑩ 칸은 비어 있어야 한다
         assertThat(e.topicWord()).isNull();
         assertThat(e.turnOrder()).isNull();
         assertThat(e.seq()).isNull();
+    }
+
+    @Test
+    @DisplayName("게임④ 연속 서바이벌 시작 — 시드는 challenge, 벽 수는 wallCount, 출제자는 없다")
+    void gameStart_maps_chain_fields() {
+        GameEventResponse e = GameEventResponse.gameStart(
+                "sess", 4L, "123456789", null, null, "normal", 100L, 200L, 300L, null, null,
+                "chain", 20);
+
+        assertThat(e.challenge()).isEqualTo("123456789"); // 포즈 시드 — 전원이 같은 벽을 만드는 입력
+        assertThat(e.mode()).isEqualTo("chain");
+        assertThat(e.wallCount()).isEqualTo(20);
+        assertThat(e.setterUserId()).isNull();
+        assertThat(e.roundNo()).isNull(); // 로테이션이 없다
+        assertThat(e.totalRounds()).isNull();
     }
 
     @Test
