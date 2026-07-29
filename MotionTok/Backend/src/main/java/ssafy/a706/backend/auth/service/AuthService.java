@@ -18,6 +18,7 @@ import ssafy.a706.backend.auth.oauth.OauthProvider;
 import ssafy.a706.backend.auth.oauth.OauthUserInfo;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.principal.GuestPrincipal;
+import ssafy.a706.backend.auth.session.SingleSessionPolicy;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
@@ -49,6 +50,7 @@ public class AuthService {
     private final LiveRoomService liveRoomService;
     private final PresenceService presenceService;
     private final StompSessionRegistry stompSessionRegistry;
+    private final SingleSessionPolicy singleSessionPolicy;
     private final RejoinPolicy rejoinPolicy;
 
     public AvailabilityResponse checkEmail(String email) {
@@ -249,6 +251,10 @@ public class AuthService {
     }
 
     private IssuedTokens issueTokens(User user, boolean persistent) {
+        // 새 로그인이 기존 세션을 밀어낸다(단일 세션) — Refresh 토큰은 아래 save()가 덮어써 이미 무효화되지만,
+        // 옛 기기의 액세스 토큰·웹소켓은 그대로 살아 있어 따로 알리고 끊어야 한다.
+        singleSessionPolicy.displacePrevious(user.getId());
+
         String accessToken = tokenProvider.createAccessToken(
                 user.getId(), user.getNickname(), user.getRole().name());
         String refreshToken = tokenProvider.createRefreshToken(user.getId());

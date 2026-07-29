@@ -6,9 +6,10 @@
  */
 /**
  * 세션이 끝난 이유. 안내 문구가 갈린다 —
- * 회원은 "다시 로그인해 주세요", 게스트는 "로그인하면 더 즐길 수 있어요"(회원 전환 유도).
+ * 회원은 "다시 로그인해 주세요", 게스트는 "로그인하면 더 즐길 수 있어요"(회원 전환 유도),
+ * displaced는 "다른 곳에서 로그인했어요"(본인이 아니면 비밀번호를 바꿔야 하는 상황).
  */
-export type SessionEndReason = 'member' | 'guest'
+export type SessionEndReason = 'member' | 'guest' | 'displaced'
 
 type Handler = (reason: SessionEndReason) => void
 

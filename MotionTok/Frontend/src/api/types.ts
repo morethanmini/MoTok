@@ -378,9 +378,10 @@ export interface PresenceQueueMessage {
   currentRoomId: string | null
 }
 
-/** /user/queue/notifications — 방 초대·친구 요청 알림 봉투(-100/-57). */
+/** /user/queue/notifications — 방 초대·친구 요청·세션 밀림 알림 봉투(-100/-57). */
 export interface UserNotification<T = unknown> {
-  type: 'ROOM_INVITATION' | 'FRIEND_REQUEST' | 'FRIEND_LIST_CHANGED'
+  /** SESSION_DISPLACED: 같은 계정으로 다른 곳에서 로그인해 이 세션이 밀려났다(단일 세션). */
+  type: 'ROOM_INVITATION' | 'FRIEND_REQUEST' | 'FRIEND_LIST_CHANGED' | 'SESSION_DISPLACED'
   payload: T | null
 }
 

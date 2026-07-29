@@ -15,6 +15,7 @@ import { useAccessDenied } from '@/composables/useAccessDenied'
 import { useGuestSignupPrompt } from '@/composables/useGuestSignupPrompt'
 import { usePresenceHeartbeat } from '@/composables/usePresenceHeartbeat'
 import { useGlobalStomp } from '@/composables/useGlobalStomp'
+import { useSessionDisplaced } from '@/composables/useSessionDisplaced'
 import LoginRequiredModal from '@/components/common/LoginRequiredModal.vue'
 import GuestSignupPromptModal from '@/components/common/GuestSignupPromptModal.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
@@ -34,6 +35,8 @@ const { open: guestPrompt, close: closeGuestPrompt } = useGuestSignupPrompt()
 useGlobalStomp()
 // 접속 상태 하트비트 — 화면과 무관하게 앱 수명 동안 돌아야 하므로 여기서 한 번만 켠다(-57).
 usePresenceHeartbeat()
+// 단일 세션 — 다른 곳에서 로그인하면 이 세션이 밀려난다. 게임 중에도 떠야 해서 앱 셸이 맡는다.
+useSessionDisplaced()
 
 /**
  * 귓속말 도착 알림(-150) — 어느 화면에 있든 떠야 하므로 앱 셸이 맡는다.
@@ -60,7 +63,6 @@ function goLogin() {
 // 만료됐을 때(refreshScheduler) 알려 준다. 조용히 튕기면 "왜 갑자기 안 되지?"가 되므로
 // 안내를 먼저 띄우고, 확인을 누르면 로그인 화면으로 보낸다.
 // 게스트에게는 같은 자리에서 회원 전환을 권한다 — 만료가 곧 가입을 이야기할 기회다.
-// (다른 기기 로그인으로 밀려나는 경우는 단일 세션 작업에서 같은 자리에 붙는다)
 const sessionExpired = ref<SessionEndReason | null>(null)
 /** 게스트 이용 시간(분). 토큰에서 읽으므로 서버 설정이 바뀌면 문구도 따라간다. */
 const guestMinutes = ref<number | null>(null)
@@ -123,6 +125,15 @@ function guestPromptTo(mode: 'login' | 'signup') {
       <div class="icon">🎮</div>
       <h3>게스트 시간{{ guestMinutes ? `(${guestMinutes}분)` : '' }}이 만료되었어요!</h3>
       <p>로그인하고 다양한 사람들과<br />더 많은 게임을 즐겨보세요.</p>
+      <PixelButton variant="primary" block @click="confirmSessionExpired">로그인하러 가기</PixelButton>
+    </div>
+    <div v-else-if="sessionExpired === 'displaced'" class="expired">
+      <div class="icon">🔑</div>
+      <h3>다른 곳에서 로그인했어요</h3>
+      <p>
+        같은 계정으로 새로 로그인해서 이 화면의 연결이 끊어졌어요.<br />
+        본인이 아니라면 비밀번호를 바꿔 주세요.
+      </p>
       <PixelButton variant="primary" block @click="confirmSessionExpired">로그인하러 가기</PixelButton>
     </div>
     <div v-else class="expired">
