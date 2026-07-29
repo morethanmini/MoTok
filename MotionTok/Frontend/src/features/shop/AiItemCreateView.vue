@@ -31,6 +31,10 @@ const modalOpen = ref(false)
 const phase = ref<'generating' | 'done' | 'failed'>('generating')
 const jobStatus = ref<AiItemJobStatus | ''>('')
 const resultImageUrl = ref<string | null>(null)
+const showPointConfirm = ref(false)
+type GeneratedResult = { jobId: number; imageUrl: string }
+const generatedResults = ref<GeneratedResult[]>([])
+const selectedResultJobId = ref<number | null>(null)
 const showClearConfirm = ref(false)
 type DrawingTool = 'pen' | 'eraser' | 'fill'
 const drawingTool = ref<DrawingTool>('pen')
@@ -203,6 +207,7 @@ function hasDrawing(): boolean {
 
 const generatingLabel = computed(() => (jobStatus.value === 'PENDING' ? '대기 중…' : '그리는 중…'))
 const canRetry = computed(() => attemptCount.value < MAX_ATTEMPTS)
+const selectedResult = computed(() => generatedResults.value.find(({ jobId }) => jobId === selectedResultJobId.value) ?? null)
 
 /** AI 모델이 이 해상도로 학습돼 있어, 저해상도 원본을 그대로 보내면 인식률이 떨어진다. */
 const SKETCH_TARGET_SIZE = 1024
@@ -239,12 +244,23 @@ function canvasToSketchBase64(): string {
  * 모달을 닫은 뒤 다시 눌렀을 때도 이어서 올라간다(재시도 후 2회차가 되도록) — 페이지를
  * 벗어나기 전까진 초기화하지 않는다.
  */
-async function generate() {
+function requestGenerate() {
   if (!hasDrawing()) return flash('먼저 그림을 그려 주세요')
   const trimmedName = name.value.trim()
   if (!trimmedName) return flash('아이템 이름을 입력해 주세요')
   name.value = trimmedName
+  showPointConfirm.value = true
+}
 
+async function generate() {
+  showPointConfirm.value = false
+  attemptCount.value = 0
+  generatedResults.value = []
+  selectedResultJobId.value = null
+  await generateAgain()
+}
+
+async function generateAgain() {
   attemptCount.value += 1
   openGenerating()
   await startJob(canvasToSketchBase64())
@@ -255,7 +271,8 @@ async function generate() {
  * 남으므로 유저가 그림을 고친 뒤 "AI로 생성하기"를 다시 누르면 새 job이 만들어진다(2회차).
  */
 function retry() {
-  closeModal()
+  if (!canRetry.value) return
+  void generateAgain()
 }
 
 function openGenerating() {
@@ -314,7 +331,15 @@ async function pollJob(jobId: number, attempt = 0, consecutiveFailures = 0) {
   jobStatus.value = status.status
 
   if (status.status === 'DONE') {
+    if (!status.imageUrl) {
+      failMessage.value = '생성된 이미지를 불러오지 못했어요'
+      phase.value = 'failed'
+      return
+    }
     resultImageUrl.value = status.imageUrl
+    const result = { jobId, imageUrl: status.imageUrl }
+    generatedResults.value = [...generatedResults.value, result]
+    selectedResultJobId.value = jobId
     phase.value = 'done'
     return
   }
@@ -329,10 +354,11 @@ async function pollJob(jobId: number, attempt = 0, consecutiveFailures = 0) {
 
 /** "저장하기" — 이 호출로만 인벤토리에 지급된다. 성공하면 모달을 닫는다. */
 async function save() {
-  if (!currentJobId.value || saving.value) return
+  const jobId = selectedResultJobId.value
+  if (!jobId || saving.value) return
   saving.value = true
   try {
-    await shopApi.saveAiItem(currentJobId.value)
+    await shopApi.saveAiItem(jobId)
     flash('인벤토리에 저장됐어요!')
     closeModal()
   } catch (e) {
@@ -410,7 +436,7 @@ function onBackdropClose() {
             <option value="BACKGROUND">배경</option>
           </select>
         </label>
-        <PixelButton variant="primary" size="lg" block :disabled="modalOpen" @click="generate">
+        <PixelButton variant="primary" size="lg" block :disabled="modalOpen" @click="requestGenerate">
           ✨ AI로 생성하기
         </PixelButton>
       </PixelCard>
@@ -428,15 +454,26 @@ function onBackdropClose() {
         </template>
 
         <template v-else-if="phase === 'done'">
-          <b class="modal-title">짜잔, 이렇게 만들어졌어요!</b>
-          <div class="result-frame">
-            <img :src="resultImageUrl ?? ''" alt="생성된 아이템" />
+          <b class="modal-title">{{ generatedResults.length === 1 ? '아이템이 완성됐어요!' : '마음에 드는 결과를 골라 주세요' }}</b>
+          <p class="result-guide">{{ generatedResults.length === 1 ? '이대로 만들거나, 한 번 더 생성해 볼 수 있어요.' : '선택한 결과만 인벤토리에 저장돼요.' }}</p>
+          <div class="result-options" :class="{ compare: generatedResults.length > 1 }">
+            <button
+              v-for="(result, index) in generatedResults"
+              :key="result.jobId"
+              type="button"
+              class="result-frame"
+              :class="{ selected: selectedResultJobId === result.jobId }"
+              @click="selectedResultJobId = result.jobId"
+            >
+              <img :src="result.imageUrl" :alt="`${index + 1}번째 생성 아이템`" />
+              <span v-if="generatedResults.length > 1" class="result-badge">{{ index === 0 ? '첫 결과' : '다시 생성' }}</span>
+            </button>
           </div>
           <div class="modal-actions">
-            <PixelButton variant="mint" :disabled="saving" @click="save">
-              {{ saving ? '저장 중…' : '저장하기' }}
+            <PixelButton variant="primary" :disabled="saving || !selectedResult" @click="save">
+              {{ saving ? '생성 중…' : generatedResults.length === 1 ? '이대로 생성' : '선택한 아이템 생성' }}
             </PixelButton>
-            <PixelButton v-if="canRetry" @click="retry">다시 만들기</PixelButton>
+            <PixelButton v-if="canRetry" @click="retry">다시 생성하기 <small>1회</small></PixelButton>
           </div>
         </template>
 
@@ -447,6 +484,19 @@ function onBackdropClose() {
         </template>
       </div>
     </PixelModal>
+
+    <div v-if="showPointConfirm" class="clear-confirm-backdrop" role="presentation" @click.self="showPointConfirm = false">
+      <section class="point-confirm" role="dialog" aria-modal="true" aria-labelledby="point-confirm-title">
+        <span class="point-confirm-coin">●</span>
+        <p class="point-confirm-kicker">AI ITEM STUDIO</p>
+        <h2 id="point-confirm-title">1,500 포인트를 사용할까요?</h2>
+        <p>생성을 시작하면 포인트가 즉시 소모돼요.<br />결과는 한 번 더 생성해 비교할 수 있어요.</p>
+        <div class="clear-confirm-actions">
+          <PixelButton @click="showPointConfirm = false">취소</PixelButton>
+          <PixelButton variant="primary" @click="generate">생성하기</PixelButton>
+        </div>
+      </section>
+    </div>
 
     <div v-if="showClearConfirm" class="clear-confirm-backdrop" role="presentation" @click.self="showClearConfirm = false">
       <section class="clear-confirm" role="dialog" aria-modal="true" aria-labelledby="clear-confirm-title">
@@ -504,7 +554,9 @@ function onBackdropClose() {
   overflow: hidden;
 }
 .result-frame img { width: 85%; height: 85%; object-fit: contain; }
-.modal-actions { display: flex; gap: 10px; }
+.result-options { display: flex; justify-content: center; margin-bottom: 18px; }.result-options.compare { gap: 10px; }.result-options.compare .result-frame { width: 150px; height: 150px; margin: 0; }
+.result-frame { position: relative; padding: 0; cursor: pointer; transition: transform .15s ease, box-shadow .15s ease; }.result-frame.selected { border-color: #9a6b4f; box-shadow: 4px 4px 0 #c99971; transform: translate(-2px, -2px); }.result-badge { position: absolute; top: 7px; left: 7px; padding: 4px 6px; border: 1px solid #8b5c42; border-radius: 4px; background: #fff0b5; color: #604131; font-size: 8px; }.result-guide { margin: -4px 0 12px; color: #896e5d; font-size: 10px; }
+.modal-actions { display: flex; gap: 10px; }.modal-actions small { font-size: 8px; opacity: .75; }
 .modal-actions :deep(.px-btn) { flex: 1; }
 .pad {
   width: 100%;
@@ -587,6 +639,7 @@ function onBackdropClose() {
 .history-actions { display: flex; align-items: center; gap: 6px; }.history-actions > button { display: grid; width: 30px; height: 30px; place-items: center; padding: 0; border: 2px solid #b98a67; border-radius: 6px; background: #fffdf5; color: #704c38; font-size: 17px; line-height: 1; }.history-actions :deep(.px-btn) { width: auto; min-width: 78px; padding: 0 9px; border-color: #9a6b4f; background: #f7e1ad; box-shadow: 2px 2px 0 #bd916e; color: #51382c; font-size: 9px; }.history-actions > button:disabled { opacity: .38; cursor: not-allowed; }.history-actions > button:not(:disabled):hover { transform: translate(-1px, -1px); box-shadow: 2px 2px 0 #d6b08b; }
 .clear-confirm-backdrop { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(62, 41, 29, .38); }
 .clear-confirm { width: min(100%, 350px); padding: 28px 24px 22px; border: 3px solid #8b5c42; border-radius: 14px; background: #fff8e7; box-shadow: 6px 6px 0 #70452f; text-align: center; }
+.point-confirm { width: min(100%, 370px); padding: 30px 24px 24px; border: 3px solid #8b5c42; border-radius: 14px; background: linear-gradient(145deg, #fff9e8, #f8e3a9); box-shadow: 6px 6px 0 #70452f; text-align: center; }.point-confirm-coin { display: grid; width: 42px; height: 42px; margin: 0 auto 10px; place-items: center; border: 3px solid #9a6b3c; border-radius: 50%; background: #ffd65d; color: #fff1a1; font-size: 20px; box-shadow: inset 0 0 0 3px #f1b83d; }.point-confirm-kicker { margin: 0 0 9px; color: #a8704f; font-size: 8px; letter-spacing: 1px; }.point-confirm h2 { margin: 0; color: #503528; font-family: var(--font-pixel); font-size: 14px; font-weight: 400; }.point-confirm > p:not(.point-confirm-kicker) { margin: 13px 0 21px; color: #7a604c; font-size: 10px; line-height: 1.7; }
 .clear-confirm-icon { display: grid; width: 36px; height: 36px; margin: 0 auto 12px; place-items: center; border: 2px solid #a96a4e; border-radius: 50%; background: #f8cf80; color: #66402e; font-family: var(--font-pixel); font-size: 19px; }
 .clear-confirm h2 { margin: 0; color: #503528; font-family: var(--font-pixel); font-size: 15px; font-weight: 400; }
 .clear-confirm p { margin: 12px 0 20px; color: #896e5d; font-size: 11px; }
