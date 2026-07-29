@@ -192,6 +192,8 @@ export interface AiItemRequest {
   name: string
   category: ItemCategory
   sketchBase64: string
+  /** 재생성 요청이면 최초 결제 job의 id. 없으면 서버가 새 결제(포인트 차감)로 처리한다. */
+  parentJobId?: number
 }
 export type AiItemJobStatus = 'PENDING' | 'PROCESSING' | 'DONE' | 'FAILED'
 export interface AiItemJobResponse {
