@@ -1,19 +1,49 @@
 <script setup lang="ts">
 /** 게임 선택 모달. 왼쪽에서 게임을 고르면 오른쪽에 설명·플레이 방법이 뜨고, "게임 시작하기"로 launch(게임) 이벤트를 낸다. */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { GAME_CATALOG, type GameEntry } from '../data'
 import PixelButton from '@/components/common/PixelButton.vue'
 
-defineEmits<{ close: []; launch: [game: GameEntry, difficulty?: string] }>()
+const props = defineProps<{
+  /**
+   * 지금 방에 있는 사람 수 — 게임④ 모드 선택지를 가른다(혼자면 연속 서바이벌만).
+   * 최종 판정은 서버가 한다(시작 누르는 순간 인원이 바뀌는 레이스가 있다).
+   */
+  memberCount?: number
+}>()
+
+defineEmits<{
+  close: []
+  launch: [game: GameEntry, difficulty?: string, mode?: string, wallCount?: number]
+}>()
 
 const selected = ref<GameEntry | null>(null)
-/** 게임④(-9) 전용 — 난이도별 벽 접근 속도(쉬움 7s/보통 6s/어려움 5s)를 방장이 시작 전에 고른다 */
+/** 게임④(-9) 전용 — 난이도별 벽 접근 속도(쉬움 6s/보통 5s/어려움 4s)를 방장이 시작 전에 고른다 */
 const difficulty = ref<'easy' | 'normal' | 'hard'>('easy')
 const DIFFICULTIES: { key: 'easy' | 'normal' | 'hard'; label: string }[] = [
   { key: 'easy', label: '쉬움' },
   { key: 'normal', label: '보통' },
   { key: 'hard', label: '어려움' },
 ]
+
+/**
+ * 게임④ 모드(-9). 기본은 출제 대결 — 게임 설명("출제자가 취한 포즈가 그대로 벽의 구멍이 되고")
+ * 그대로인 쪽이고, 남이 낸 포즈를 맞춘다는 이 게임의 컨셉을 지키는 유일한 모드다.
+ */
+const mode = ref<'pose' | 'chain'>('pose')
+const MODES: { key: 'pose' | 'chain'; label: string; hint: string }[] = [
+  { key: 'pose', label: '출제 대결', hint: '돌아가며 내 포즈로 출제 — 출제자는 그 라운드를 관전해요' },
+  { key: 'chain', label: '연속 서바이벌', hint: '랜덤 벽이 계속 날아와요 — 전원이 동시에 뛰고 점수로 승부' },
+]
+/** 연속 서바이벌 분량 — 무한은 승부가 안 나서(끝이 없다) 방에서는 빼고 솔로에만 남겼다 */
+const WALL_CHOICES = [10, 20, 30]
+const wallCount = ref(10)
+
+/** 혼자면 출제 대결이 성립하지 않는다(내가 낸 포즈를 내가 푼다) — 연속 서바이벌만 남긴다 */
+const soloOnly = computed(() => (props.memberCount ?? 1) < 2)
+const modes = computed(() => (soloOnly.value ? MODES.filter((m) => m.key === 'chain') : MODES))
+const effectiveMode = computed<'pose' | 'chain'>(() => (soloOnly.value ? 'chain' : mode.value))
+const activeMode = computed(() => MODES.find((m) => m.key === effectiveMode.value))
 </script>
 
 <template>
@@ -66,6 +96,38 @@ const DIFFICULTIES: { key: 'easy' | 'normal' | 'hard'; label: string }[] = [
             </ol>
 
             <template v-if="selected.id === 'shape'">
+              <h3 class="detail-h">게임 모드</h3>
+              <div class="diff-buttons">
+                <button
+                  v-for="m in modes"
+                  :key="m.key"
+                  class="diff-btn"
+                  :class="{ on: effectiveMode === m.key }"
+                  @click="mode = m.key"
+                >
+                  {{ m.label }}
+                </button>
+              </div>
+              <p class="mode-hint">{{ activeMode?.hint }}</p>
+              <p v-if="soloOnly" class="mode-hint solo">
+                혼자라서 연속 서바이벌만 할 수 있어요 — 출제 대결은 2명부터예요
+              </p>
+
+              <template v-if="effectiveMode === 'chain'">
+                <h3 class="detail-h">벽 수</h3>
+                <div class="diff-buttons">
+                  <button
+                    v-for="n in WALL_CHOICES"
+                    :key="n"
+                    class="diff-btn"
+                    :class="{ on: wallCount === n }"
+                    @click="wallCount = n"
+                  >
+                    {{ n }}
+                  </button>
+                </div>
+              </template>
+
               <h3 class="detail-h">난이도</h3>
               <div class="diff-buttons">
                 <button
@@ -83,7 +145,17 @@ const DIFFICULTIES: { key: 'easy' | 'normal' | 'hard'; label: string }[] = [
             <PixelButton
               class="start-game-btn"
               variant="mint"
-              @click="$emit('launch', selected, selected.id === 'shape' ? difficulty : undefined)"
+              @click="
+                selected.id === 'shape'
+                  ? $emit(
+                      'launch',
+                      selected,
+                      difficulty,
+                      effectiveMode,
+                      effectiveMode === 'chain' ? wallCount : undefined,
+                    )
+                  : $emit('launch', selected)
+              "
             >
               플레이 ▶
             </PixelButton>
@@ -244,6 +316,9 @@ const DIFFICULTIES: { key: 'easy' | 'normal' | 'hard'; label: string }[] = [
   transition: var(--t-fast);
 }
 .diff-btn.on { background: var(--c-mint); color: #fff; box-shadow: var(--shadow-sm); }
+/* 모드는 이름만으론 뭐가 다른지 모른다 — 고른 모드의 한 줄 설명을 바로 아래에 붙인다 */
+.mode-hint { margin: 6px 0 0; font-size: 10.5px; color: #a99f86; line-height: 1.6; }
+.mode-hint.solo { color: var(--c-coral); }
 .start-game-btn { align-self: flex-end; margin-top: auto; }
 
 .foot { margin: 18px 0 0; font-size: 11px; color: #a99f86; line-height: 1.7; }

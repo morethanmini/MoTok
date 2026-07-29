@@ -25,7 +25,7 @@ import {
 } from './skeleton'
 import { drawSilhouette } from './silhouette'
 import { randomPose, type Rng } from './randomPose'
-import { chainApproachMs, chainGapMs } from './chainSchedule'
+import { chainApproachMs, chainGapMs, seededRng } from './chainSchedule'
 import {
   GRADE_POINTS,
   gradeOf as gradeFromIou,
@@ -77,6 +77,11 @@ const isMultiplayer = computed(() => !!props.session)
 const isSetter = computed(
   () => !!props.session?.setterUserId && props.session.setterUserId === props.myUserId,
 )
+/**
+ * 연속 서바이벌(-9) — 서버가 정한 모드. 출제자·로테이션이 없고 전원이 동시에 뛴다.
+ * chain(로컬 컨베이어 on/off)과 구분한다: 벽을 다 받으면 chain은 꺼지지만 세션은 아직 chainMode다.
+ */
+const chainMode = computed(() => props.session?.mode === 'chain')
 
 const videoRef = ref<HTMLVideoElement>()
 const glCanvasRef = ref<HTMLCanvasElement>()
@@ -491,6 +496,19 @@ function judgeFlyingWall(w: FlyingWall, now: number) {
   } else {
     combo.value = 0
   }
+  emitChainProgress()
+}
+
+/**
+ * 연속 서바이벌 중계 — 승부인데 끝나고서야 결과를 알면 재미의 절반이 날아간다.
+ *
+ * <p>PROGRESS 레일을 그대로 재사용한다(필드 추가 없음): starsLit 자리에 콤보, holdProgress
+ * 자리에 점수 진행률. 점수는 벽이 판정될 때만 변하므로 4Hz로 보낼 필요가 없다 — 여기서만 보낸다.</p>
+ */
+function emitChainProgress() {
+  if (!isMultiplayer.value || !chainMode.value) return
+  const max = (chainTarget.value || 1) * GRADE_POINTS.PERFECT
+  emit('progress', combo.value, Math.min(1, totalScore.value / max))
 }
 
 /** 연속 모드 한 틱 — 스폰·이동·판정·반납을 전부 여기서 한다 */
@@ -670,8 +688,9 @@ function liveJudge(now: number) {
     liveOverflow.value = live.overflow
     rig.setOverflow(live.overflow)
     // 별 개념이 없는 게임이라 starsLit=0, 일치율을 holdProgress(0~1)에 싣는다 —
-    // 출제자 관전 화면과 방 스코어보드가 이 값으로 갱신된다
-    if (isMultiplayer.value) emit('progress', 0, Math.min(1, live.iou / 100))
+    // 출제자 관전 화면과 방 스코어보드가 이 값으로 갱신된다.
+    // 연속 서바이벌은 순간 일치율이 아니라 누적 점수로 승부하므로 다른 값을 보낸다(emitChainProgress).
+    if (isMultiplayer.value && !chainMode.value) emit('progress', 0, Math.min(1, live.iou / 100))
   }
 }
 
@@ -726,6 +745,35 @@ function tickSolo(now: number) {
       phase.value = 'idle'
     }
   }
+}
+
+/**
+ * 멀티 연속 서바이벌 — 출제 페이즈가 없고 startAt부터 컨베이어가 바로 돈다.
+ *
+ * <p>서버는 시드·벽 수·startAt·endAt만 준다. 벽마다 이벤트를 주고받지 않고 각 클라가 같은
+ * 스케줄을 재생하므로(chainSchedule) 네트워크 지연이 벽 위치에 나타나지 않는다.</p>
+ */
+function tickChainMulti(now: number) {
+  const s = props.session!
+  const srv = serverNow()
+  if (srv < s.startAt) {
+    phase.value = 'wait'
+    timerSec.value = Math.max(0, Math.ceil((s.startAt - srv) / 1000))
+    return
+  }
+  if (chain.value) {
+    phase.value = 'incoming'
+    chainTick(now)
+    return
+  }
+  // 컨베이어가 접혔다 = 할당된 벽을 다 받았다. 누적 총점을 한 번만 제출한다
+  // (서버는 최초 1회만 수리하고, 상한도 벽 수 × 100으로 열려 있다).
+  if (!finishedSent) {
+    finishedSent = true
+    const grade: Grade = bestCombo.value > 0 ? 'PASS' : 'FAIL'
+    emit('finished', { score: totalScore.value, grade, iou: liveIou.value })
+  }
+  phase.value = !props.results && srv > s.endAt + STALE_MS ? 'stale' : 'result'
 }
 
 /** 멀티 모드 — 서버 타임라인(startAt=출제 시작, endAt=벽 도착)에 페이즈를 맞춘다 */
@@ -790,8 +838,11 @@ function tickMulti(now: number) {
  */
 function tickPhase() {
   if (!stage) return
-  if (isMultiplayer.value && props.session) tickMulti(performance.now())
-  else tickSolo(performance.now())
+  const now = performance.now()
+  if (isMultiplayer.value && props.session) {
+    if (chainMode.value) tickChainMulti(now)
+    else tickMulti(now)
+  } else tickSolo(now)
   // 사이드 맞춤도 여기서 — ResizeObserver만 걸면 zoom 변경이 다시 리사이즈를 부르는 관계라
   // 갱신이 새는 경우가 있었다. 이미 도는 타이머에 얹으면 컨테이너가 어떻게 바뀌든 자가 복구된다.
   fitSide()
@@ -826,9 +877,44 @@ watch(
     round.value = s.roundNo ?? 1
     if (wall) wall.mesh.visible = false
     rig?.setOverflow([])
+    if (s.mode === 'chain') startChainFromSession(s)
   },
   { immediate: true },
 )
+
+/**
+ * 서버가 연 연속 서바이벌 세션에 컨베이어를 물린다 — 전원이 같은 벽을 같은 순간에 받는 지점.
+ *
+ * <p>세 값을 서버에서 그대로 받아 쓴다: 시드(포즈 수열) · 벽 수(할당량) · startAt(첫 벽 출발).
+ * startAt은 서버 시계라 rAF 시계로 환산해 넣는다 — 이후 벽 위치는 전부 이 원점에서 계산되므로
+ * 시계 오프셋만 맞으면 화면이 일치한다.</p>
+ */
+function startChainFromSession(s: ActiveGameSession) {
+  chainTarget.value = s.wallCount ?? 10
+  chainRng = seededRng(s.chainSeed ?? String(s.sessionId))
+  chain.value = true
+  chainSpawns = 0
+  chainArrived.value = 0
+  combo.value = 0
+  bestCombo.value = 0
+  totalScore.value = 0
+  history.value = []
+  chainSummary.value = null
+  // 서버 startAt → rAF 시계. serverNow()가 곧 Date.now()+오프셋이라 그 차이만큼 미래로 민다
+  chainNextStart = performance.now() + (s.startAt - serverNow())
+  phase.value = 'wait'
+}
+
+/**
+ * 1인 방(로컬 연습) — 출제 대결이 성립하지 않으므로(내가 낸 포즈를 내가 푼다) 연속만 돌린다.
+ *
+ * <p>인식이 잡힌 뒤에 켠다 — 카메라가 데워지기 전에 시작하면 첫 벽 두어 장을 그냥 잃는다.
+ * dev 라우트(!embedded)는 두 모드를 다 눌러봐야 하는 개발 도구라 자동 시작하지 않는다.</p>
+ */
+watch(tracked, (on) => {
+  if (!on || !props.embedded || isMultiplayer.value) return
+  if (!chain.value && !chainSummary.value && !roundBusy()) toggleChain()
+})
 
 // 멀티: POSE_SET 도착 → 전원이 같은 렌더 함수로 같은 벽을 만든다 (§9-2)
 watch(
@@ -1222,9 +1308,17 @@ onBeforeUnmount(() => {
           </ul>
         </div>
 
-        <!-- 솔로: 내 포즈로 출제(3초 카운트다운) vs 연속 랜덤(벽이 계속 온다) — 같은 라운드 루프를 탄다 -->
+        <!--
+          솔로 조작. ▶ 시작(내 포즈로 출제)은 dev 라우트 전용이다 — 1인 방에서는 내가 낸 포즈를
+          내가 푸는 셈이라 게임이 성립하지 않고, 연속 서바이벌이 자동으로 돌아간다(watch(tracked)).
+        -->
         <div v-if="!isMultiplayer" class="start-row">
-          <button class="btn-start" :disabled="!tracked || chain || roundBusy()" @click="startRound">
+          <button
+            v-if="!embedded"
+            class="btn-start"
+            :disabled="!tracked || chain || roundBusy()"
+            @click="startRound"
+          >
             ▶ {{ round === 0 ? '시작' : '다음' }}
           </button>
           <button

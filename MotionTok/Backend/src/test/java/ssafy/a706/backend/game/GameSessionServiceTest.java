@@ -190,10 +190,10 @@ class GameSessionServiceTest {
         assertThat(event.setterUserId()).isNull();
         assertThat(event.roundNo()).isNull();
         assertThat(event.challenge()).isEqualTo(saved.challenge());
-        // 벽 20장이 다 날아올 시간 — 쉬움 기준 약 43.8초(마지막 벽 도착 + 꼬리 여유 1.5초).
-        // 다음 벽은 앞 벽이 도착하기 전(접근 시간의 0.66배)에 출발하므로 20 × 접근시간보다 짧다.
-        // 이 범위가 깨지면 FE chainSchedule과 식이 어긋났다는 신호다.
-        assertThat(event.endAt() - event.startAt()).isBetween(40_000L, 50_000L);
+        // 벽 20장이 다 날아올 시간 = FE chainSchedule.chainDurationMs(6000, 20, 5) + 꼬리 여유 1500.
+        // FE 테스트(bodyFitChainSchedule.spec.ts)가 42304를 못박고 있다 — 두 언어를 한 테스트에서
+        // 돌릴 수 없으므로 같은 숫자를 양쪽에 박아 식이 어긋나는 순간 실패하게 한다.
+        assertThat(event.endAt() - event.startAt()).isEqualTo(42_304L + 1_500L);
     }
 
     /** 벽 수는 서버가 정하는 선택지(10/20/30)만 받는다 — 위조·오타는 기본값으로 떨어뜨린다. */
@@ -214,8 +214,8 @@ class GameSessionServiceTest {
         verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
         GameEventResponse event = eventCaptor.getValue();
         assertThat(event.wallCount()).isEqualTo(10);
-        // 10벽은 약 28초 — 벽 수가 절반이면 시간도 짧아진다(20벽 40~50초와 겹치지 않는다)
-        assertThat(event.endAt() - event.startAt()).isBetween(24_000L, 33_000L);
+        // 10벽 = chainDurationMs(6000, 10, 5) 26614 + 꼬리 1500 (FE 테스트와 같은 숫자)
+        assertThat(event.endAt() - event.startAt()).isEqualTo(26_614L + 1_500L);
     }
 
     /** 연속 서바이벌은 벽 N장을 한 번에 정산해 제출한다 — 100점으로 깎으면 승부가 뭉개진다. */

@@ -6,6 +6,7 @@ import {
   chainDurationMs,
   chainGapMs,
   chainGapRatio,
+  seededRng,
 } from '@/features/games/body-fit/chainSchedule'
 import { randomPose } from '@/features/games/body-fit/randomPose'
 
@@ -52,24 +53,43 @@ describe('chainSchedule', () => {
     // 무한(0)은 종료 시각이 없다
     expect(chainDurationMs(EASY_MS, 0, SPAN_Z)).toBe(0)
   })
+
+  /**
+   * 서버(GameSessionService.chainDurationMillis)가 같은 식을 Java로 미러하고 있다.
+   * 어긋나면 마지막 벽 도착 전에 정산되거나(점수 유실) 끝난 뒤 빈 화면으로 기다리게 되는데,
+   * 두 언어를 한 테스트에서 돌릴 수 없으므로 양쪽을 같은 숫자에 못박아 드리프트를 잡는다.
+   * BE GameSessionServiceTest의 endAt 기대값 = 이 값 + 꼬리 여유 1500ms.
+   */
+  it('BE와 못박은 값 — 이 숫자가 바뀌면 서버 endAt도 같이 갱신해야 한다', () => {
+    expect(Math.round(chainDurationMs(6000, 10, SPAN_Z))).toBe(26614) // 쉬움
+    expect(Math.round(chainDurationMs(6000, 20, SPAN_Z))).toBe(42304)
+    expect(Math.round(chainDurationMs(6000, 30, SPAN_Z))).toBe(56923)
+    expect(Math.round(chainDurationMs(5000, 20, SPAN_Z))).toBe(36870) // 보통
+    expect(Math.round(chainDurationMs(4000, 20, SPAN_Z))).toBe(32597) // 어려움
+  })
 })
 
-describe('randomPose 시드 주입', () => {
-  /** mulberry32 — 테스트용 결정론 PRNG(구현체는 FE 본코드와 무관하게 여기서만 쓴다) */
-  const seeded = (seed: number) => () => {
-    seed = (seed + 0x6d2b79f5) | 0
-    let t = seed
-    t = Math.imul(t ^ (t >>> 15), t | 1)
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-
+describe('시드 → 벽 수열', () => {
   it('같은 시드는 같은 포즈를, 다른 시드는 다른 포즈를 만든다', () => {
-    const a = randomPose(undefined, seeded(42))
-    const b = randomPose(undefined, seeded(42))
-    const c = randomPose(undefined, seeded(43))
+    const a = randomPose(undefined, seededRng('42'))
+    const b = randomPose(undefined, seededRng('42'))
+    const c = randomPose(undefined, seededRng('43'))
     expect(b).toEqual(a) // 방에서 전원이 같은 벽을 보는 근거
     expect(c).not.toEqual(a)
+  })
+
+  /**
+   * 실제로 방에서 벌어지는 일 — 참가자마다 rng를 따로 만들어 벽 30장을 뽑는다.
+   * 한 장만 어긋나도 그 뒤 전부가 갈리므로(수열이라) 승부가 무의미해진다.
+   */
+  it('참가자마다 따로 만든 생성기가 벽 30장 전부 같은 수열을 낸다', () => {
+    const seed = '8675309'
+    const player = (s: string) => {
+      const rng = seededRng(s)
+      return Array.from({ length: 30 }, () => randomPose(undefined, rng))
+    }
+    expect(player(seed)).toEqual(player(seed))
+    expect(player('8675310')).not.toEqual(player(seed))
   })
 
   it('난수원을 안 넘기면 기존 동작(Math.random)을 유지한다', () => {
