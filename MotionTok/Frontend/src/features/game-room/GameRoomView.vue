@@ -1138,13 +1138,14 @@ const startHint = computed(() =>
           />
           <!-- 내 <video>는 원본 캡처(게임 입력용)라 스티커가 없다. 발행 트랙에는 합성돼 나가므로
                내 화면에도 같은 스티커를 얹어 준다. self-video는 좌우 반전이라 mirrored,
-               object-fit:cover로 잘리는 영역까지 같은 기하로 맞춘다.
+               object-fit:contain으로 회색 여백이 생기므로 fit도 contain — 그래야 스티커가
+               여백이 아니라 영상 사각형 안 같은 자리에 얹힌다.
                영상 비율은 타일 레이아웃이 이미 재고 있는 selfVideoAspect를 그대로 쓴다. -->
           <StickerOverlay
             v-if="selfCamOn"
             :sprites="decor.sprites.value"
             mirrored
-            fit="cover"
+            fit="contain"
             :frame-aspect="selfVideoAspect"
           />
           <div v-if="!selfCamOn" class="cam-off">
@@ -1680,7 +1681,7 @@ const startHint = computed(() =>
   background: #fff; border: 3px solid var(--c-mint); border-radius: 14px 14px 10px 14px;
   box-shadow: 4px 4px 0 rgba(43, 35, 51, 0.2);
 }
-.self-video { width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); background: #eee6cf; }
+.self-video { width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); background: var(--c-letterbox); }
 .cam-off { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; background: #f3ead2; color: #a99f86; }
 .cam-off { background: linear-gradient(135deg, var(--c-mint-soft), #fff0c4); }
 .cam-on-btn { padding: 10px 16px; border: 3px solid var(--c-ink-soft); border-radius: 11px; background: var(--c-mint); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
@@ -2067,8 +2068,9 @@ const startHint = computed(() =>
   aspect-ratio: var(--camera-aspect, 8 / 5);
   place-self: stretch;
 }
-.self-video { object-fit: cover; background: #f7ecd6; }
-.cam-stage.side-layout .self-video { object-fit: cover; }
+/* 타일 비율은 레이아웃이 8/5로 고정하는데 실제 카메라는 4:3일 수도 있다 — cover면 그 차이만큼
+   얼굴이 잘려 나간다. 잘라내지 않고 남는 자리를 회색 여백으로 둔다(스티커 오버레이의 fit도 같은 값). */
+.self-video { object-fit: contain; background: var(--c-letterbox); }
 .cam-off { background: linear-gradient(135deg, #bfe9ff, #d7e7ad); color: var(--room-muted); }
 .cam-on-btn { border-color: #925c47; border-radius: 7px; background: #4078cf; box-shadow: 3px 3px 0 #a66b50; }
 .self-label {
