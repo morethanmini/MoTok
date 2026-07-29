@@ -7,7 +7,7 @@
  *
  * 각 도메인 모듈(api/modules/*)은 이 파일의 http.get/post/... 만 사용합니다.
  */
-import { emitSessionExpired } from './authEvents'
+import { emitAccountBlocked, emitSessionExpired, type AccountBlockKind } from './authEvents'
 import {
   accessTokenRemainingMs,
   clearTokens,
@@ -63,6 +63,15 @@ function buildUrl(path: string, query?: Query): string {
 
 /** 남은 시간이 이보다 적으면 요청 전에 미리 갱신한다. */
 const REFRESH_SKEW_MS = 5 * 60 * 1000
+
+/**
+ * 백엔드 ErrorCode의 제재 코드 → 안내에 쓸 종류.
+ * 탈퇴·비활성(AUTH_ACCOUNT_NOT_ACTIVE)은 여기 없다 — 그건 로그인 경로에서만 나오고 문구가 다르다.
+ */
+const BLOCK_CODES: Record<string, AccountBlockKind> = {
+  AUTH_ACCOUNT_SUSPENDED: 'SUSPENDED',
+  AUTH_ACCOUNT_BANNED: 'BANNED',
+}
 
 let refreshInFlight: Promise<boolean> | null = null
 
@@ -186,7 +195,14 @@ async function request<T>(
   const payload = isJson ? await res.json().catch(() => null) : null
 
   if (!res.ok) {
-    throw new ApiError(res.status, (payload ?? {}) as Partial<ApiErrorBody>)
+    const error = new ApiError(res.status, (payload ?? {}) as Partial<ApiErrorBody>)
+    // 계정 제재는 재시도로 풀리지 않는다 — 토큰은 멀쩡하고 계정이 막힌 것이라 갱신도 무의미하다.
+    // 화면마다 403을 따로 해석하게 두면 어떤 화면은 조용히 빈 목록을 보여 주므로 여기서 한 번에 알린다.
+    const blockKind = error.status === 403 ? BLOCK_CODES[error.code] : undefined
+    if (blockKind) {
+      emitAccountBlocked(blockKind)
+    }
+    throw error
   }
   return payload as T
 }
@@ -224,5 +240,7 @@ export const httpEnvelope = {
     request<ApiEnvelope<T>>('PUT', path, { body }).then((r) => r.data),
   patch: <T>(path: string, body?: unknown) =>
     request<ApiEnvelope<T>>('PATCH', path, { body }).then((r) => r.data),
-  delete: <T>(path: string) => request<ApiEnvelope<T>>('DELETE', path).then((r) => r.data),
+  // 정지 해제처럼 사유를 실어 보내는 DELETE가 있어 본문을 허용한다(http.delete와 동일).
+  delete: <T>(path: string, body?: unknown) =>
+    request<ApiEnvelope<T>>('DELETE', path, { body }).then((r) => r.data),
 }
