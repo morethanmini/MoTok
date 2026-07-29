@@ -194,7 +194,7 @@
     </div>
 
     <div class="card">
-      <div class="card-h h-notif">⑥ 알림 · 프레즌스 · 귓속말<span class="tag">✅ 구현 (-57 · -143 · -149 · -150)</span></div>
+      <div class="card-h h-notif">⑥ 알림 · 프레즌스 · 귓속말<span class="tag">✅ 구현 (-57 · -143 · -149 · -150 · -160)</span></div>
       <div class="card-body">
         <div class="kv"><div class="row"><code>chan:user:{userId}</code>
           <div class="badges"><span class="badge b-todo">📋</span><span class="badge b-type">Pub/Sub</span><span class="badge b-ttl">TTL —</span></div></div>
@@ -211,6 +211,9 @@
         <div class="kv"><div class="row"><code>whisper:{작은userId}:{큰userId}</code>
           <div class="badges"><span class="badge b-new">v0.4 신규(-150)</span><span class="badge b-type">Stream</span><span class="badge b-ttl">TTL 7d</span></div></div>
           <div class="desc">친구 1:1 귓속말 로그. 엔트리 필드는 <code>senderId</code>·<code>senderNickname</code>·<code>text</code>·<code>sentAt</code>(ISO-8601), MAXLEN 약 200(근사 trim). <b>두 id를 오름차순으로 붙여 쌍마다 키 하나를 강제</b>한다 — 보낸 사람 기준으로 키를 만들면 A→B와 B→A가 갈라져 같은 대화가 둘로 쪼개진다. 대기실 채팅(<code>room:{roomId}:chat</code>)과 같은 Stream을 쓰는 이유도 같다: XADD가 발급하는 ID를 그대로 메시지 식별자로 쓰면 신고(-132) 방식을 재사용할 수 있다. TTL이 방 채팅(24h)보다 긴 것은 <b>방을 나가도 이어지는 대화</b>이기 때문. 실시간 배달은 <code>/user/queue/whisper</code>가 하고 이 키는 대화창을 열 때의 이력 조회용(<code>GET /api/friends/{userId}/whispers</code>)이다.</div></div>
+        <div class="kv"><div class="row"><code>whisper:pending:{userId}</code>
+          <div class="badges"><span class="badge b-new">v0.4 신규(-160)</span><span class="badge b-type">Stream</span><span class="badge b-ttl">TTL 7d</span></div></div>
+          <div class="desc">오프라인 수신자의 <b>미배달 귓속말 수신함</b>. 발신 시 상대가 오프라인이면 개인 큐 배달 대신 여기 적재한다(종전의 <code>WHISPER_TARGET_OFFLINE</code> 거절은 제거). 엔트리 필드는 대화 로그와 같고, 여기에 대화 Stream이 발급한 <b>원본 <code>whisperId</code></b>를 추가로 실어 나른다 — 회수분·이력·실시간 수신분을 클라이언트가 whisperId 하나로 중복 제거하기 위함(수신함 Stream 자체의 엔트리 ID는 쓰지 않는다). 대화 원장(<code>whisper:{a}:{b}</code>)과의 역할 분담: 원장은 <b>대화 내용의 진실</b>, 이 키는 <b>"안 배달된 게 있다"는 수신자 기준 신호</b> — 수신함이 날아가도 내용은 원장에 남는다. 회수는 <code>GET /api/friends/whispers/pending</code>이 <b>비우면서 반환</b>(읽은 엔트리만 XDEL — 키 통째 DEL은 회수 중 도착분을 지운다). MAXLEN 약 200 · TTL은 원장과 같은 7d — 원장이 사라진 메시지를 수신함만 더 오래 들고 있을 이유가 없다.</div></div>
         <div class="note">(2026-07-27 반영, -57) 프레즌스 구현됨 — <code>presence:{userId}</code>가 <b>전역</b> 접속 상태를 담는다. <code>room:{roomId}:members</code>는 "그 방에 누가 있나"만 알려 주므로 "이 사용자가 어느 방에 있나"를 알려면 <code>rooms:index</code> 전수 조회가 필요했다 — 이 키가 그 역인덱스를 겸한다(친구방 입장 -98이 여기서 roomId를 읽는다).<br><b>(2026-07-28 갱신, -142/-143)</b> 종전에 HTTP 하트비트를 쓴 이유는 "프론트 STOMP가 게임룸에서만 연결되어 연결 여부로 판정하면 로비 사용자가 오프라인으로 보인다"였다. 로그인 직후부터 전역 연결을 열면서 <b>그 전제가 사라졌다</b>. 다만 주기 비트는 없애지 않았다 — TTL을 갱신할 주체가 사라지고, 총 접속시간(-141)이 "직전 비트와의 간격"을 델타로 쌓는데 그 델타가 TTL로 clamp되어 긴 세션이 통째로 잘리기 때문이다. <b>비트의 의미는 그대로 두고 전송 수단만 바꿨다.</b> 참고로 방 단위 프레즌스(<code>RoomPresenceTracker</code>)는 아직 인메모리라 인스턴스가 2대 이상이면 갈라진다 — 이 키가 그 교체의 참고 구현이다.</div>
       </div>
     </div>
@@ -240,6 +243,7 @@
     <ul>
       <li><b>(2026-07-28 반영, -142/-143)</b> ⑥에 <code>presence:{userId}:sessions</code>(Hash · TTL 60s) 신규 — 멀티탭 세션 원장. 프레즌스 갱신 경로가 <code>POST /api/presence/heartbeat</code>에서 <code>SEND /app/presence/heartbeat</code>로 바뀌었고 <b>HTTP 엔드포인트는 제거</b>됐다. <code>presence:{userId}</code>의 표현(필드·TTL·오프라인 판정)은 <b>변경 없음</b> — 소비자(친구 목록·친구방·접속시간 스윕)는 무수정이다.</li>
       <li><b>(2026-07-28 반영, -150)</b> ⑥에 <code>whisper:{작은id}:{큰id}</code>(Stream · TTL 7d · MAXLEN ~200) 신규 — 친구 1:1 귓속말.</li>
+      <li><b>(2026-07-29 반영, -160)</b> ⑥에 <code>whisper:pending:{userId}</code>(Stream · TTL 7d · MAXLEN ~200) 신규 — 오프라인 수신자의 미배달 귓속말 수신함. 발신 시 오프라인 거절(<code>WHISPER_TARGET_OFFLINE</code>)이 <b>적재로 대체</b>됐고 에러 코드도 삭제. 회수는 <code>GET /api/friends/whispers/pending</code>(비우면서 반환).</li>
       <li><b>(2026-07-28 반영, -149)</b> <code>chan:user:{userId}</code>의 용도 정정 — 개인 알림은 STOMP 개인 큐로 구현됐고, 이 Pub/Sub 채널은 <b>스케일아웃 시 인스턴스 간 릴레이</b> 용도로만 남는다.</li>
     </ul>
 
