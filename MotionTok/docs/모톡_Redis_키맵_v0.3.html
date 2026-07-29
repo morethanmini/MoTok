@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>모톡 — Redis 키 설계 v0.4</title>
+<title>모톡 — Redis 키 설계 v0.5</title>
 <style>
   :root{
     --ink:#1d1b2e; --sub:#5c5876; --line:#e4e1f0; --bg:#fbfaff;
@@ -79,7 +79,7 @@
 <body>
 <div class="wrap">
   <span class="doc-badge">DOCS · REDIS DESIGN</span>
-  <h1>모톡 — Redis 키 설계 v0.4</h1>
+  <h1>모톡 — Redis 키 설계 v0.5</h1>
   <p class="lede">원칙(D5): 휘발 데이터는 Redis, 영속 데이터는 MySQL · v0.2 대비 2026-07-21 커밋 이력을 근거로 실제 구현 상태를 전면 대조·갱신했다.
   각 카드에 <span class="badge b-done">✅ 구현됨</span> / <span class="badge b-todo">📋 미구현·설계뿐</span> 배지를 붙여 지금 뭐가 실제로 도는지 한눈에 구분한다.</p>
 
@@ -166,6 +166,12 @@
           필드 — <code>hash</code>: 현재 토큰 해시 / <code>prevHash</code>·<code>prevUntil</code>: 직전 토큰 해시와 유예 만료(epoch ms) / <code>persistent</code>: 로그인 시 rememberMe(회전할 때 쿠키 수명을 유지하는 데 쓴다).<br>
           갱신은 "검사 + 회전"을 <b>Lua 한 덩어리</b>로 돌린다(원자성). 나눠 실행하면 동시에 들어온 두 갱신이 각자 회전해 클라이언트가 든 토큰이 죽는다.
           회전 직후 <b>30초(grace)</b> 안에 <code>prevHash</code>가 오면 회전 없이 통과시키고, 그 창을 넘긴 옛 토큰은 <b>재사용</b>으로 보고 키를 DEL한다.</div></div>
+        <div class="kv"><div class="row"><code>auth:suspended:{userId}</code>
+          <div class="badges"><span class="badge b-new">v0.5 신규(-112)</span><span class="badge b-type">String</span><span class="badge b-ttl">TTL = 정지 기간</span></div></div>
+          <div class="desc"><b>기간 정지 상태(-112 후속)</b> · 값은 정지 사유. <b>TTL이 곧 남은 정지 기간이고 만료가 곧 해제다</b> — <code>users.status</code>에 담으면 만료 때 ACTIVE로 되돌릴 주체(배치·lazy 체크)가 반드시 필요해지고, 그게 밀리면 이미 풀렸어야 할 계정이 계속 막힌다. TTL은 그 복구 작업 자체를 없앤다. 읽는 곳은 요청마다 도는 <code>JwtAuthenticationFilter</code>(EXISTS 한 번)와 STOMP CONNECT — Access 토큰은 서명만으로 유효해서(기본 1시간) 이미 발급된 토큰을 즉시 막으려면 요청마다 물어보는 수밖에 없다. 이력(누가 언제 왜 몇 일)은 TTL이 증발한 뒤에도 남아야 하므로 RDB <code>sanction_history</code>가 따로 갖는다. 수동 해제는 DEL, 부과 시 <code>auth:refresh:{userId}</code>·<code>presence:{userId}</code>도 함께 지운다</div></div>
+        <div class="kv"><div class="row"><code>auth:banned:{userId}</code>
+          <div class="badges"><span class="badge b-new">v0.5 신규(-105)</span><span class="badge b-type">String</span><span class="badge b-ttl">TTL 없음</span></div></div>
+          <div class="desc"><b>영구 정지 상태 (-105)</b> · 값은 정지 사유. <b>TTL을 걸지 않는다</b> — 스스로 풀려서는 안 되는 상태라 만료가 있으면 그게 버그다. 기간 정지가 TTL을 쓰는 이유(만료를 되돌릴 주체를 없애기 위해)가 여기서는 반대로 작동한다. 원천은 RDB <code>users.status=BANNED</code>이고 이 키는 <b>요청마다 도는 인증 경로용 캐시</b>다 — Access 토큰은 서명만으로 유효해서(기본 1시간) DB를 보지 않으면 밴을 걸어도 이미 발급된 토큰이 그대로 통한다. 되돌릴 주체 문제는 생기지 않는다: 유일한 전이가 관리자의 명시적 해제이고 그때 상태와 이 키를 함께 지운다. 위의 <code>auth:suspended</code>와 EXISTS <b>한 번</b>으로 함께 조회한다(둘 다 없는 게 대부분이라 왕복을 늘리지 않는다). 밴 부과 시 <code>auth:suspended:{userId}</code>는 지운다 — 영구가 기간을 흡수한다</div></div>
         <div class="kv"><div class="row"><code>auth:pwreset:{token}</code>
           <div class="badges"><span class="badge b-todo">📋</span><span class="badge b-type">String</span><span class="badge b-ttl">TTL 30m</span></div></div>
           <div class="desc">비밀번호 재설정 1회성 토큰 — 코드에 미구현(이메일 <b>인증</b>만 있고 비번 <b>재설정</b>은 아직 없음)</div></div>
@@ -236,6 +242,12 @@
   </div>
 
   <div class="changelog">
+    <h2>v0.4 → v0.5 변경 이력</h2>
+    <ul>
+      <li><b>(2026-07-29 반영, -105)</b> ⑤에 <code>auth:banned:{userId}</code>(String · <b>TTL 없음</b>) 신규 — 영구 정지. 기간 정지와 <b>반대 이유로</b> TTL이 없다: 스스로 풀려서는 안 되는 상태라 만료가 있으면 버그다. 원천은 <code>users.status=BANNED</code>이고 이 키는 인증 경로용 캐시다. 두 키는 EXISTS 한 번으로 함께 본다(<code>AccountBlockStore.blockOf</code>) — 인증 경로마다 왕복을 둘로 늘리지 않고, 한쪽만 확인하는 경로가 생기는 것도 막는다.</li>
+      <li><b>(2026-07-29 반영, -112 후속)</b> ⑤에 <code>auth:suspended:{userId}</code>(String · TTL = 정지 기간) 신규 — 관리자 기간 정지의 <b>상태 저장소</b>. ERD 초안(-105)의 "<code>SANCTION</code> 생성 시 <code>USER.status</code>를 SUSPENDED로 갱신하고 해제는 로그인 시점 lazy 체크" 방식을 대체한다: 상태를 컬럼에 담으면 만료를 되돌릴 주체가 반드시 필요하고, 그게 밀리거나 특정 경로를 안 타면 이미 풀렸어야 할 계정이 계속 막힌다. 이력은 RDB <code>sanction_history</code>가 갖는다(TTL이 증발한 뒤에도 남아야 하는 사실). <code>users.status</code>는 스스로 풀리지 않는 상태(BANNED·DELETED) 전용으로 남는다.</li>
+    </ul>
+
     <h2>v0.3 → v0.4 변경 이력</h2>
     <ul>
       <li><b>(2026-07-28 반영, -142/-143)</b> ⑥에 <code>presence:{userId}:sessions</code>(Hash · TTL 60s) 신규 — 멀티탭 세션 원장. 프레즌스 갱신 경로가 <code>POST /api/presence/heartbeat</code>에서 <code>SEND /app/presence/heartbeat</code>로 바뀌었고 <b>HTTP 엔드포인트는 제거</b>됐다. <code>presence:{userId}</code>의 표현(필드·TTL·오프라인 판정)은 <b>변경 없음</b> — 소비자(친구 목록·친구방·접속시간 스윕)는 무수정이다.</li>
