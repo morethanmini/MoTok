@@ -169,7 +169,12 @@ watch(
   () => props.video,
   (video) => {
     hand.stop()
-    if (video) void hand.start(video, onFrame)
+    if (!video) return
+    // 실패(모델 로드·GPU 초기화)를 삼키면 화면은 도는데 손만 안 잡히는 상태가 된다(-161).
+    // 한 번 재시도하고, 그래도 안 되면 hand.error가 대기 패널에 표시된다.
+    void hand.start(video, onFrame).then((ok) => {
+      if (!ok && props.video === video) return hand.start(video, onFrame)
+    })
   },
   { immediate: true },
 )
