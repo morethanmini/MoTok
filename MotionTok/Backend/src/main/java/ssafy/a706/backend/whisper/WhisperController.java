@@ -34,4 +34,15 @@ public class WhisperController {
                                                 @PathVariable Long targetUserId) {
         return whisperService.history(principal.id(), targetUserId);
     }
+
+    /**
+     * GET /friends/whispers/pending — 오프라인 동안 도착한 귓속말을 <b>비우면서</b> 반환한다(-160).
+     * 우체통 수거 모델이라 GET인데 부수효과가 있다 — 같은 메시지를 두 번 배지에 세지 않기 위한
+     * 의도된 선택이고, 회수 후에도 내용은 대화 로그에 남아 이력 조회로 다시 볼 수 있다.
+     * 로그인 후 귓속말 구독을 시작할 때 한 번 부른다.
+     */
+    @GetMapping("/whispers/pending")
+    public List<WhisperMessageResponse> pending(@AuthenticationPrincipal MemberPrincipal principal) {
+        return whisperService.drainPending(principal.id());
+    }
 }
