@@ -4,6 +4,7 @@ import type {
   AiItemJobResponse,
   AiItemJobStatusResponse,
   AiItemRequest,
+  AiItemSaveResponse,
   Item,
   ItemCategory,
   PurchaseResponse,
@@ -17,4 +18,6 @@ export const shopApi = {
   createAiItem: (body: AiItemRequest) => http.post<AiItemJobResponse>('/shop/ai-items', body),
   /** 생성 작업 상태 조회 — DONE/FAILED가 될 때까지 폴링한다. */
   getAiItemJob: (jobId: number) => http.get<AiItemJobStatusResponse>(`/shop/ai-items/${jobId}`),
+  /** 결과를 확인한 뒤 저장을 확정 — 이 호출로만 인벤토리에 지급된다. */
+  saveAiItem: (jobId: number) => http.post<AiItemSaveResponse>(`/shop/ai-items/${jobId}/save`),
 }
