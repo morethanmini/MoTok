@@ -132,6 +132,7 @@ function onError(message: string) {
   flex-direction: column;
   height: 100dvh;
   background: #f7f3ef;
+  font-family: var(--font-pixel);
 }
 .bar {
   display: flex;

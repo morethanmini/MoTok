@@ -16,6 +16,7 @@ import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.global.config.StompSessionRegistry;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.global.text.ProfanityFilter;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
 import ssafy.a706.backend.presence.service.PresenceService;
 import ssafy.a706.backend.user.entity.User;
@@ -73,7 +74,8 @@ class AuthLoginSessionTest {
             singleSessionPolicy,
             mock(SessionRevocationStore.class),
             loginAttemptLimiter,
-            mock(RejoinPolicy.class));
+            mock(RejoinPolicy.class),
+            mock(ProfanityFilter.class));
 
     private void activeUser() {
         User user = User.builder()

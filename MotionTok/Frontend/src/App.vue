@@ -25,6 +25,7 @@ import { useWhisper } from '@/composables/useWhisper'
 import { stompConnected } from '@/composables/useGlobalStomp'
 import WhisperModal from '@/components/common/WhisperModal.vue'
 import { useToast } from '@/composables/useToast'
+import { loadRemoteWordlist } from '@/utils/profanity'
 
 const router = useRouter()
 const session = useSessionStore()
@@ -39,6 +40,9 @@ useGlobalStomp()
 usePresenceHeartbeat()
 // 단일 세션 — 다른 곳에서 로그인하면 이 세션이 밀려난다. 게임 중에도 떠야 해서 앱 셸이 맡는다.
 useSessionDisplaced()
+// 비속어 사전 서버 정본(-152) — 가입 폼(비로그인)에서도 쓰이므로 앱 시작 시 한 번 받아 둔다.
+// 몇 KB짜리 공개 GET이고 실패해도 번들 내장본으로 동작하므로 기다리지 않는다.
+void loadRemoteWordlist()
 
 /**
  * 귓속말 도착 알림(-150) — 어느 화면에 있든 떠야 하므로 앱 셸이 맡는다.

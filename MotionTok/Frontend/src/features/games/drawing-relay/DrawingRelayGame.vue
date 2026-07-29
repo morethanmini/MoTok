@@ -905,9 +905,10 @@ function beep(freq = 660, dur = 0.08) {
   color: #2b2b33;
 }
 .dr-canvas {
+  display: block;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
 }
 
 /* 상단바 — 주제어는 게임 내내 필요한 핵심 정보라 오버레이 위(z-index)에 항상 보이게 둔다.
@@ -945,8 +946,9 @@ function beep(freq = 660, dur = 0.08) {
 .dr-time-fill { height: 100%; background: linear-gradient(90deg, #7fbf6c, #ffd23f); transition: width 0.1s linear; }
 .dr-timer { font-size: 26px; font-weight: 700; min-width: 88px; text-align: right; color: #b0452b; }
 .dr-close {
-  width: 44px; height: 44px; border: 3px solid rgba(43, 43, 51, 0.4); border-radius: 10px;
-  background: rgba(239, 233, 220, 0.85); color: #2b2b33; font-size: 18px; cursor: pointer;
+  width: 44px; height: 44px; border: 0; border-radius: 0;
+  background: transparent; color: #2b2b33; font-size: 24px; font-weight: 700 !important;
+  box-shadow: none; cursor: pointer;
 }
 
 /* 하단바 — 상태는 좌하단, 차례 버튼은 우하단 모서리에 붙인다 */

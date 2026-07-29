@@ -112,7 +112,7 @@ export const debugSkin: CatchSkin = {
     if (note.hand !== 'any') {
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.font = `900 ${Math.round(note.radius)}px monospace`
+      ctx.font = `${Math.round(note.radius * 0.9)}px "DNF Bit Bit", monospace`
       ctx.fillText(note.hand === 'left' ? 'L' : 'R', note.x, note.y)
     }
     if (note.cross) {
@@ -140,7 +140,7 @@ export const debugSkin: CatchSkin = {
     ctx.arc(fx.x, fx.y, fx.radius * (0.8 + t * 2.4), 0, Math.PI * 2)
     ctx.stroke()
     ctx.fillStyle = color
-    ctx.font = `bold ${Math.round(fx.radius * 0.9)}px monospace`
+    ctx.font = `${Math.round(fx.radius * 0.78)}px "DNF Bit Bit", monospace`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.fillText(fx.judgement.toUpperCase(), fx.x, fx.y - t * fx.radius * 2)

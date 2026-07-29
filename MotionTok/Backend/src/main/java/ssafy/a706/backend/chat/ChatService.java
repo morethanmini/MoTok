@@ -9,6 +9,7 @@ import ssafy.a706.backend.chat.dto.ChatMessageResponse;
 import ssafy.a706.backend.chat.dto.ChatSendRequest;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.global.text.ProfanityFilter;
 import ssafy.a706.backend.signal.RoomMembershipReader;
 
 import java.time.Instant;
@@ -37,6 +38,8 @@ public class ChatService {
     private final RoomMembershipReader membershipReader;
     private final SimpMessagingTemplate messagingTemplate;
     private final ChatLogRepository chatLogRepository;
+    private final ProfanityFilter profanityFilter;
+    private final ChatRateLimiter rateLimiter;
 
     /**
      * 일반 채팅(TALK). 검증 순서: 입력 형식 → 방 존재 → 발신자 참가.
@@ -49,6 +52,11 @@ public class ChatService {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
         requireMembership(roomId, sender);
+        // 참가 검증 뒤에 세는 이유 — 방에 없는 발신의 실패까지 도배 카운터에 얹지 않는다(-159).
+        rateLimiter.ensureAllowed(sender.userId());
+        // 비속어는 거절하지 않고 마스킹해서 흘려보낸다(S15P11A706-152). 저장·방송 모두 마스킹본이라
+        // 신고(-131/-132) 증거에도 원문 욕설이 실리지 않는다 — 발신자도 브로드캐스트 에코로 마스킹본을 본다.
+        text = profanityFilter.mask(text);
         // 발신자 신원·시각은 서버가 확정한다(클라이언트 입력 불신). 저장 후 발급된 chatId를 함께 방송한다.
         Instant sentAt = Instant.now();
         String chatId = chatLogRepository.appendTalk(
@@ -70,6 +78,10 @@ public class ChatService {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
         requireMembership(roomId, sender);
+        // 제안도 같은 채팅 토픽에 브로드캐스트되므로 일반 채팅과 같은 카운터로 도배를 막는다(-159).
+        rateLimiter.ensureAllowed(sender.userId());
+        // gameName은 클라이언트 임의 문자열이 채팅 토픽에 그대로 에코되므로 채팅과 같이 마스킹한다(-152).
+        gameName = profanityFilter.mask(gameName);
         // text는 구형/단순 클라이언트용 표시 폴백 — 커스텀 렌더링은 type·gameId·gameName으로.
         String text = String.format("'%s' 게임을 제안했습니다.", gameName);
         Instant sentAt = Instant.now();
