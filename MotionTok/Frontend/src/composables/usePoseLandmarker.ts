@@ -15,65 +15,39 @@ import {
   PoseLandmarker,
   type PoseLandmarkerResult,
 } from '@mediapipe/tasks-vision'
+import { fetchModelBuffer, type LoadProgress } from './modelCache'
 
 export type { PoseLandmarkerResult }
+export type { LoadProgress }
 
 const WASM_PATH = '/mediapipe/wasm'
 // full(9MB): lite(5.5MB)보다 랜드마크가 정확·안정 — 아바타 뭉뚝함 개선 (2026-07-27 실기).
 // 저사양에서 fps가 부족하면 pose_landmarker_lite.task로 되돌린다 (파일 둘 다 배치돼 있음)
 const MODEL_PATH = '/mediapipe/models/pose_landmarker_full.task'
 
-/** 로딩 진행률 콜백 — fraction은 0~1. */
-export type LoadProgress = (fraction: number) => void
-
 /** 모델 다운로드(9MB)에 로딩바 0~90%를 배정, 나머지는 wasm 로드 + GPU 초기화 구간. */
 const MODEL_WEIGHT = 0.9
 
 let landmarkerPromise: Promise<PoseLandmarker> | null = null
+let landmarkerReady = false
 
-/** 모델 .task 파일을 스트리밍으로 받아 실제 바이트 진행률을 콜백으로 흘려보낸다. */
-async function fetchModelBuffer(onProgress?: LoadProgress): Promise<Uint8Array> {
-  const res = await fetch(MODEL_PATH)
-  if (!res.ok) throw new Error(`model fetch failed: ${res.status}`)
-
-  const total = Number(res.headers.get('Content-Length')) || 0
-  if (!res.body || !total) {
-    const buf = new Uint8Array(await res.arrayBuffer())
-    onProgress?.(MODEL_WEIGHT)
-    return buf
-  }
-
-  const reader = res.body.getReader()
-  const chunks: Uint8Array[] = []
-  let received = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    chunks.push(value)
-    received += value.length
-    onProgress?.(Math.min(received / total, 1) * MODEL_WEIGHT)
-  }
-
-  const out = new Uint8Array(received)
-  let offset = 0
-  for (const chunk of chunks) {
-    out.set(chunk, offset)
-    offset += chunk.length
-  }
-  return out
+/** 인스턴스가 이미 준비됐는지 동기로 알려준다(-161) — useHandLandmarker와 같은 용도. */
+export function isPoseLandmarkerReady(): boolean {
+  return landmarkerReady
 }
 
 /** 싱글턴 로더 — 실패하면 다음 호출에서 재시도할 수 있게 프라미스를 비운다. */
 function loadLandmarker(onProgress?: LoadProgress): Promise<PoseLandmarker> {
   if (!landmarkerPromise) {
     landmarkerPromise = (async () => {
-      const modelBuffer = await fetchModelBuffer(onProgress)
+      const modelBuffer = await fetchModelBuffer(MODEL_PATH, MODEL_WEIGHT, onProgress)
       const fileset = await FilesetResolver.forVisionTasks(WASM_PATH)
       const landmarker = await PoseLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetBuffer: modelBuffer, delegate: 'GPU' },
         runningMode: 'VIDEO',
         numPoses: 1,
       })
+      landmarkerReady = true
       onProgress?.(1)
       return landmarker
     })()
