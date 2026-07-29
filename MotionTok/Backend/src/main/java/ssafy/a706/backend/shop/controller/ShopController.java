@@ -14,6 +14,7 @@ import ssafy.a706.backend.auth.principal.MemberPrincipal;
 import ssafy.a706.backend.shop.controller.dto.AiItemJobCreateRequest;
 import ssafy.a706.backend.shop.controller.dto.AiItemJobCreateResponse;
 import ssafy.a706.backend.shop.controller.dto.AiItemJobStatusResponse;
+import ssafy.a706.backend.shop.controller.dto.AiItemSaveResponse;
 import ssafy.a706.backend.shop.controller.dto.ItemResponse;
 import ssafy.a706.backend.shop.controller.dto.PurchaseResponse;
 import ssafy.a706.backend.shop.model.ItemCategory;
@@ -60,5 +61,12 @@ public class ShopController {
     public AiItemJobStatusResponse getAiItemJob(@AuthenticationPrincipal MemberPrincipal principal,
                                                 @PathVariable Long jobId) {
         return aiItemJobService.getJob(principal.id(), jobId);
+    }
+
+    /** POST /shop/ai-items/{jobId}/save — 생성 결과를 확인한 뒤 저장을 확정해 인벤토리에 지급받는다. */
+    @PostMapping("/ai-items/{jobId}/save")
+    public AiItemSaveResponse saveAiItem(@AuthenticationPrincipal MemberPrincipal principal,
+                                         @PathVariable Long jobId) {
+        return aiItemJobService.save(principal.id(), jobId);
     }
 }

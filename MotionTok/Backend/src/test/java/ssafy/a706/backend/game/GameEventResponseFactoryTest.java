@@ -100,33 +100,35 @@ class GameEventResponseFactoryTest {
     @Test
     @DisplayName("진행 상황 — 참가자 지표가 제 필드에 들어간다")
     void progress_maps_fields() {
-        GameEventResponse e = GameEventResponse.progress("sess", "u1", "닉", 7, 0.5);
+        GameEventResponse e = GameEventResponse.progress("sess", "u1", "닉", 7, 0.5, 2);
 
         assertThat(e.type()).isEqualTo(GameEventResponse.EventType.PROGRESS);
         assertThat(e.userId()).isEqualTo("u1");
         assertThat(e.nickname()).isEqualTo("닉");
         assertThat(e.starsLit()).isEqualTo(7);
         assertThat(e.holdProgress()).isEqualTo(0.5);
+        assertThat(e.completedCount()).isEqualTo(2);
         assertThat(e.score()).isNull();
     }
 
     @Test
     @DisplayName("완주 — score와 starsHit이 뒤바뀌지 않는다")
     void playerFinished_maps_fields() {
-        GameEventResponse e = GameEventResponse.playerFinished("sess", "u1", "닉", 85, 3);
+        GameEventResponse e = GameEventResponse.playerFinished("sess", "u1", "닉", 85, 3, 1);
 
         assertThat(e.type()).isEqualTo(GameEventResponse.EventType.PLAYER_FINISHED);
         assertThat(e.userId()).isEqualTo("u1");
         assertThat(e.nickname()).isEqualTo("닉");
         assertThat(e.score()).isEqualTo(85);
         assertThat(e.starsHit()).isEqualTo(3);
+        assertThat(e.completedCount()).isEqualTo(1);
         assertThat(e.starsLit()).isNull();
     }
 
     @Test
     @DisplayName("정산 — results가 제 자리에 들어간다")
     void gameEnd_maps_results() {
-        List<GameResultEntry> results = List.of(new GameResultEntry(1, "u1", "닉", 100, 3, true, 10));
+        List<GameResultEntry> results = List.of(new GameResultEntry(1, "u1", "닉", 100, 3, true, 10, 1));
         GameEventResponse e = GameEventResponse.gameEnd("sess", results);
 
         assertThat(e.type()).isEqualTo(GameEventResponse.EventType.GAME_END);

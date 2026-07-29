@@ -8,6 +8,7 @@ import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.shop.controller.dto.AiItemJobCreateRequest;
 import ssafy.a706.backend.shop.controller.dto.AiItemJobCreateResponse;
 import ssafy.a706.backend.shop.controller.dto.AiItemJobStatusResponse;
+import ssafy.a706.backend.shop.controller.dto.AiItemSaveResponse;
 import ssafy.a706.backend.shop.controller.dto.InternalAiJobCompleteResponse;
 import ssafy.a706.backend.shop.controller.dto.InternalAiJobResponse;
 import ssafy.a706.backend.shop.model.AiItemJob;
@@ -64,7 +65,7 @@ public class AiItemJobService {
         return new AiItemJobCreateResponse(job.getId(), job.getStatus());
     }
 
-    /** GET /shop/ai-items/{jobId} — 본인 작업만 조회 가능. */
+    /** GET /shop/ai-items/{jobId} — 본인 작업만 조회 가능. imageUrl은 저장 여부와 무관하게 job이 직접 들고 있다. */
     public AiItemJobStatusResponse getJob(Long userId, Long jobId) {
         AiItemJob job = aiItemJobRepository.findById(jobId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.AI_JOB_NOT_FOUND));
@@ -72,10 +73,8 @@ public class AiItemJobService {
             throw new BusinessException(ErrorCode.AI_JOB_FORBIDDEN);
         }
 
-        String imageUrl = job.getItemId() == null ? null
-                : itemRepository.findById(job.getItemId()).map(Item::getImageUrl).orElse(null);
-
-        return new AiItemJobStatusResponse(job.getId(), job.getStatus(), job.getItemId(), imageUrl, job.getErrorMessage());
+        return new AiItemJobStatusResponse(
+                job.getId(), job.getStatus(), job.getItemId(), job.getImageUrl(), job.getErrorMessage());
     }
 
     /**
@@ -99,7 +98,9 @@ public class AiItemJobService {
     }
 
     /**
-     * POST /internal/ai-jobs/{jobId}/complete — 이미지 업로드 → Item 생성 → UserItem 지급 → job DONE.
+     * POST /internal/ai-jobs/{jobId}/complete — 이미지 업로드 → job.imageUrl 기록 → job DONE.
+     * Item 생성·UserItem 지급은 더 이상 여기서 하지 않는다 — 유저가 결과를 보고
+     * "저장하기"(POST /shop/ai-items/{jobId}/save)를 눌러야 인벤토리에 들어간다("생성 → 확인 → 저장").
      * PROCESSING이 아닌 job(중복 호출 등)은 AI_JOB_INVALID_STATE로 막는다.
      */
     @Transactional
@@ -114,23 +115,55 @@ public class AiItemJobService {
         String imageUrl = storageService.putBytes(
                 UploadPurpose.AI_ITEM, job.getUserId(), GENERATED_IMAGE_CONTENT_TYPE, imageBytes);
 
+        if (aiItemJobRepository.completeWithImage(jobId, imageUrl) == 0) {
+            throw new BusinessException(ErrorCode.AI_JOB_INVALID_STATE);
+        }
+
+        return new InternalAiJobCompleteResponse(jobId, imageUrl);
+    }
+
+    /**
+     * POST /shop/ai-items/{jobId}/save — 생성 결과를 확인한 유저가 저장을 확정하면 그제서야
+     * Item을 만들고 지급한다. 이미 저장된 job(job.itemId != null)이면 새로 만들지 않고 기존
+     * 결과를 그대로 돌려준다(멱등). DONE이 아닌 job은 저장할 결과가 없으므로 400.
+     *
+     * <p>동시 저장 요청 방지: Item을 먼저 만들고 {@link AiItemJobRepository#attachItem}으로
+     * job에 원자적으로 연결한다. 연결에 실패하면(먼저 저장된 요청이 이미 있음) 방금 만든 Item은
+     * 아무에게도 지급하지 않고 버리고, 먼저 성공한 쪽의 결과를 돌려준다 — 중복 지급 방지가
+     * 핵심이라 고아 Item 하나가 남는 건 감수한다.</p>
+     */
+    @Transactional
+    public AiItemSaveResponse save(Long userId, Long jobId) {
+        AiItemJob job = aiItemJobRepository.findById(jobId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.AI_JOB_NOT_FOUND));
+        if (!job.getUserId().equals(userId)) {
+            throw new BusinessException(ErrorCode.AI_JOB_FORBIDDEN);
+        }
+        if (job.getItemId() != null) {
+            return new AiItemSaveResponse(job.getItemId(), job.getImageUrl());
+        }
+        if (job.getStatus() != AiJobStatus.DONE) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT, "아직 생성이 완료되지 않은 작업입니다.");
+        }
+
         Item item = itemRepository.save(Item.builder()
                 .name(job.getName())
                 .category(job.getCategory())
                 .itemType(ItemType.AI_CUSTOM)
                 .pricePoint(null)
-                .imageUrl(imageUrl)
+                .imageUrl(job.getImageUrl())
                 .creatorId(job.getUserId())
                 .active(true)
                 .build());
 
-        userItemRepository.save(UserItem.builder().userId(job.getUserId()).itemId(item.getId()).build());
-
-        if (aiItemJobRepository.complete(jobId, item.getId()) == 0) {
-            throw new BusinessException(ErrorCode.AI_JOB_INVALID_STATE);
+        if (aiItemJobRepository.attachItem(jobId, item.getId()) == 0) {
+            AiItemJob winner = aiItemJobRepository.findById(jobId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.AI_JOB_NOT_FOUND));
+            return new AiItemSaveResponse(winner.getItemId(), job.getImageUrl());
         }
 
-        return new InternalAiJobCompleteResponse(item.getId(), imageUrl);
+        userItemRepository.save(UserItem.builder().userId(userId).itemId(item.getId()).build());
+        return new AiItemSaveResponse(item.getId(), job.getImageUrl());
     }
 
     /** POST /internal/ai-jobs/{jobId}/fail — job을 FAILED로 바꾸고 errorMessage 기록. */

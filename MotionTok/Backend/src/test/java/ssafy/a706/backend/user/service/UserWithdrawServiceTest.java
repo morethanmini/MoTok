@@ -52,7 +52,8 @@ class UserWithdrawServiceTest {
 
     private final UserService service = new UserService(userRepository,
             mock(PointHistoryRepository.class), passwordEncoder,
-            refreshTokenStore, oauthAccountRepository, oauthClientResolver, rejoinPolicy, storageService);
+            refreshTokenStore, oauthAccountRepository, oauthClientResolver, rejoinPolicy, storageService,
+            mock(ssafy.a706.backend.conntime.service.ConnectTimeService.class));
 
     private User localUser() {
         User user = User.builder()
