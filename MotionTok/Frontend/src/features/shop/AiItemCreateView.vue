@@ -36,6 +36,9 @@ type GeneratedResult = { jobId: number; imageUrl: string }
 const generatedResults = ref<GeneratedResult[]>([])
 const selectedResultJobId = ref<number | null>(null)
 const showClearConfirm = ref(false)
+/** "다시 생성하기"로 모달을 닫은 직후 true — 이미 결제한 세션의 2회차이므로 다음 생성 클릭 때
+ * 포인트 확인 모달을 건너뛴다. */
+const pendingRetry = ref(false)
 type DrawingTool = 'pen' | 'eraser' | 'fill'
 const drawingTool = ref<DrawingTool>('pen')
 const brushSize = ref(4)
@@ -240,15 +243,25 @@ function canvasToSketchBase64(): string {
 }
 
 /**
- * "AI로 생성하기" — 검증 후 모달을 열고 생성을 시작한다. attemptCount는 "다시 만들기"로
- * 모달을 닫은 뒤 다시 눌렀을 때도 이어서 올라간다(재시도 후 2회차가 되도록) — 페이지를
- * 벗어나기 전까진 초기화하지 않는다.
+ * "AI로 생성하기" — 검증 후 진행한다. attemptCount는 "다시 생성하기"로 모달을 닫은 뒤
+ * 다시 눌렀을 때도 이어서 올라간다(재시도 후 2회차가 되도록) — 페이지를 벗어나기 전까진
+ * 초기화하지 않는다.
+ *
+ * pendingRetry가 서 있으면(방금 "다시 생성하기"로 모달을 닫은 직후) 이미 결제를 마친
+ * 세션의 2회차이므로 포인트 확인 모달 없이 바로 재생성한다. 그 외엔 새 세션이라 먼저
+ * 포인트 확인을 받는다.
  */
 function requestGenerate() {
   if (!hasDrawing()) return flash('먼저 그림을 그려 주세요')
   const trimmedName = name.value.trim()
   if (!trimmedName) return flash('아이템 이름을 입력해 주세요')
   name.value = trimmedName
+
+  if (pendingRetry.value) {
+    pendingRetry.value = false
+    void generateAgain()
+    return
+  }
   showPointConfirm.value = true
 }
 
@@ -257,6 +270,7 @@ async function generate() {
   attemptCount.value = 0
   generatedResults.value = []
   selectedResultJobId.value = null
+  pendingRetry.value = false // 새 결제 세션 시작 — 이 시점엔 항상 false이지만 안전망으로 명시
   await generateAgain()
 }
 
@@ -267,12 +281,15 @@ async function generateAgain() {
 }
 
 /**
- * 모달의 "다시 만들기" — 이번 결과는 저장하지 않고 버리고 모달만 닫는다. 캔버스는 그대로
- * 남으므로 유저가 그림을 고친 뒤 "AI로 생성하기"를 다시 누르면 새 job이 만들어진다(2회차).
+ * 모달의 "다시 생성하기" — 모달만 닫는다. 캔버스도, 지금까지의 generatedResults(첫 결과)도
+ * 그대로 둔다 — 유저가 그림을 고친 뒤(또는 그대로) "AI로 생성하기"를 다시 눌러야 2회차가
+ * 시작된다. pendingRetry를 세워 두면 다음 생성 클릭 때 포인트 확인 모달을 건너뛴다
+ * (이미 결제한 세션이므로).
  */
 function retry() {
   if (!canRetry.value) return
-  void generateAgain()
+  pendingRetry.value = true
+  closeModal()
 }
 
 function openGenerating() {
@@ -490,7 +507,7 @@ function onBackdropClose() {
         <span class="point-confirm-coin">●</span>
         <p class="point-confirm-kicker">AI ITEM STUDIO</p>
         <h2 id="point-confirm-title">1,500 포인트를 사용할까요?</h2>
-        <p>생성을 시작하면 포인트가 즉시 소모돼요.<br />결과는 한 번 더 생성해 비교할 수 있어요.</p>
+        <p>1,500 포인트로 최대 2번까지 생성해 볼 수 있어요.<br />두 결과 중 마음에 드는 것만 골라 저장하면 돼요.</p>
         <div class="clear-confirm-actions">
           <PixelButton @click="showPointConfirm = false">취소</PixelButton>
           <PixelButton variant="primary" @click="generate">생성하기</PixelButton>
