@@ -157,7 +157,7 @@ async function enter() {
   // 그냥 들어가면 방금 옮긴 자리가 반영되지 않는다(사용자에겐 그냥 사라진 것으로 보인다).
   if (decor.dirty.value) await decor.save()
   proceedingToRoom = true
-  router.push({ name: RouteName.GameRoom, query: { game: game.value, room: room.value, cam: camOn.value ? '1' : '0', mic: micOn.value ? '1' : '0' } })
+  router.push({ name: RouteName.GameRoom, query: { game: game.value, room: room.value, cam: camOn.value ? '1' : '0', mic: micOn.value ? '1' : '0', ...(route.query.solo === '1' ? { solo: '1' } : {}) } })
 }
 useRoomUnloadLeave(() => route.query.room as string | undefined)
 let notified = false
