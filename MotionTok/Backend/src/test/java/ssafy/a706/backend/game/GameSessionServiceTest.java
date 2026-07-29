@@ -218,9 +218,13 @@ class GameSessionServiceTest {
         assertThat(event.endAt() - event.startAt()).isEqualTo(26_614L + 1_500L);
     }
 
-    /** 연속 서바이벌은 벽 N장을 한 번에 정산해 제출한다 — 100점으로 깎으면 승부가 뭉개진다. */
+    /**
+     * 연속 서바이벌 점수는 누적 총점이 아니라 벽 1장당 평균(0~100)이다 — 상한이 다른 게임과 같다.
+     * 총점을 받으면 그 값이 leaderboards.best_score(GREATEST)로 영속되고 PointCalculator
+     * (scoreBonus = score/10, 0~100 전제)를 지나면서 게임④ 랭킹·포인트가 모드에 따라 30배 벌어진다.
+     */
     @Test
-    void 연속_서바이벌은_점수상한이_벽수만큼_열린다() {
+    void 연속_서바이벌도_점수상한은_100이다() {
         when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
         when(membershipReader.isMember(eq(ROOM_ID), any())).thenReturn(true);
         long now = System.currentTimeMillis();
@@ -233,29 +237,11 @@ class GameSessionServiceTest {
                 new LiveRoomMemberValue("1", "방장", false, 0),
                 new LiveRoomMemberValue("2", "참가자", false, 1)));
 
-        service.finish(ROOM_ID, new GameFinishRequest(870, 0), host);
+        service.finish(ROOM_ID, new GameFinishRequest(78, 0), host);
+        assertThat(scoreCaptor.getValue().score()).isEqualTo(78); // 평균 78점은 그대로
 
-        assertThat(scoreCaptor.getValue().score()).isEqualTo(870); // 10벽 × 100 이내라 그대로
-    }
-
-    /** 상한 자체는 여전히 있다 — 벽 수를 넘는 점수는 깎는다. */
-    @Test
-    void 연속_서바이벌도_벽수_상한을_넘으면_깎인다() {
-        when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
-        when(membershipReader.isMember(eq(ROOM_ID), any())).thenReturn(true);
-        long now = System.currentTimeMillis();
-        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(
-                new GameSession("s4", 4L, "12345", null, now - 1_000, now + 60_000,
-                        GameSession.STATUS_PLAYING, List.of(), 0, "easy", "chain", 10)));
-        ArgumentCaptor<GamePlayerScore> scoreCaptor = ArgumentCaptor.forClass(GamePlayerScore.class);
-        when(sessionRepository.saveScoreIfAbsent(eq(ROOM_ID), scoreCaptor.capture())).thenReturn(true);
-        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
-                new LiveRoomMemberValue("1", "방장", false, 0),
-                new LiveRoomMemberValue("2", "참가자", false, 1)));
-
-        service.finish(ROOM_ID, new GameFinishRequest(99_999, 0), host);
-
-        assertThat(scoreCaptor.getValue().score()).isEqualTo(1_000);
+        service.finish(ROOM_ID, new GameFinishRequest(870, 0), member);
+        assertThat(scoreCaptor.getValue().score()).isEqualTo(100); // 총점을 보내면 깎인다
     }
 
     /** 게임④ 출제 페이즈(-86): 출제자 포즈 제출 → challenge 저장 + POSE_SET 배포. */

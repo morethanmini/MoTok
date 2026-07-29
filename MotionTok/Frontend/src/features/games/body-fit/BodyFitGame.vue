@@ -525,11 +525,25 @@ function emitChainProgress() {
 const chainMaxScore = computed(() => (chainTarget.value || 1) * GRADE_POINTS.PERFECT)
 
 /**
- * 중계로 받은 진행률을 다시 점수로 환산한다 — 완주한 사람은 서버가 확정한 점수를 그대로 쓴다.
- * (PROGRESS는 필드 추가 없이 기존 레일을 재사용하느라 점수를 0~1로 눌러 보낸다)
+ * 서버에 제출하는 연속 서바이벌 점수 — 누적 총점이 아니라 <b>벽 1장당 평균</b>(0~100)이다.
+ *
+ * <p>총점을 그대로 보내면 안 된다. 서버가 그 값을 leaderboards.best_score(GREATEST)에 영속하고
+ * PointCalculator(scoreBonus = score/10, 0~100 만점 전제)로 포인트를 지급하는데, 30벽이면
+ * 3000점이 들어가 게임④ 멀티 랭킹이 <b>되돌릴 수 없게</b> 오염되고 포인트도 30배가 나간다.</p>
+ *
+ * <p>벽 수는 전원 같으므로 <b>평균 순위 = 총점 순위</b>다 — 승부 결과는 그대로고 눈금만 바뀐다.
+ * 나눗셈의 분모는 받은 벽이 아니라 할당량이다(중간에 그만둔 사람이 평균으로 이득을 보면 안 된다).</p>
+ */
+const chainAverage = computed(() =>
+  Math.round(totalScore.value / (chainTarget.value || 1)),
+)
+
+/**
+ * 순위 카드에 쓸 점수 — 제출값과 같은 0~100 눈금으로 맞춘다.
+ * 진행 중인 사람은 중계된 진행률(= 평균/100)을, 완주한 사람은 서버가 확정한 평균을 쓴다.
  */
 function chainScoreOf(row: { holdProgress: number; finished: boolean; score: number | null }): number {
-  return row.finished && row.score !== null ? row.score : row.holdProgress * chainMaxScore.value
+  return row.finished && row.score !== null ? row.score : row.holdProgress * GRADE_POINTS.PERFECT
 }
 
 /** 연속 서바이벌 실시간 순위 — 벽이 판정될 때마다 순서가 뒤집힌다 */
@@ -787,17 +801,22 @@ function tickChainMulti(now: number) {
     timerSec.value = Math.max(0, Math.ceil((s.startAt - srv) / 1000))
     return
   }
+  // 서버가 정한 종료 시각을 넘겼거나 결과가 이미 왔으면 컨베이어를 접는다.
+  // 없으면 두 가지가 터진다 ① 가려진 창·프레임 드랍으로 늦은 클라는 벽을 다 못 받아
+  // 제출을 못 하고 0점으로 정산된다 ② 세션이 끝난 뒤에도 벽마다 PROGRESS를 보내
+  // 서버가 매번 "진행 중 세션 없음" 에러로 되받아친다.
+  if (chain.value && (srv >= s.endAt || props.results)) stopChain()
   if (chain.value) {
     phase.value = 'incoming'
     chainTick(now)
     return
   }
-  // 컨베이어가 접혔다 = 할당된 벽을 다 받았다. 누적 총점을 한 번만 제출한다
+  // 컨베이어가 접혔다 = 할당된 벽을 다 받았거나 서버가 끝냈다. 점수를 한 번만 제출한다
   // (서버는 최초 1회만 수리하고, 상한도 벽 수 × 100으로 열려 있다).
   if (!finishedSent) {
     finishedSent = true
     const grade: Grade = bestCombo.value > 0 ? 'PASS' : 'FAIL'
-    emit('finished', { score: totalScore.value, grade, iou: liveIou.value })
+    emit('finished', { score: chainAverage.value, grade, iou: liveIou.value })
   }
   phase.value = !props.results && srv > s.endAt + STALE_MS ? 'stale' : 'result'
 }
@@ -916,6 +935,13 @@ watch(
  * 시계 오프셋만 맞으면 화면이 일치한다.</p>
  */
 function startChainFromSession(s: ActiveGameSession) {
+  // 연달아 시작한 경우(결과 → 새 판) 이전 컨베이어의 벽을 반납한다 — 안 하면 핸들 풀(4개)이
+  // 묶여 새 벽이 안 뜬다. 마운트 직전(immediate)에는 flying이 비어 있어 아무 일도 하지 않는다.
+  for (const w of flying) {
+    w.handle.mesh.visible = false
+    pool.push(w.handle)
+  }
+  flying = []
   chainTarget.value = s.wallCount ?? 10
   chainRng = seededRng(s.chainSeed ?? String(s.sessionId))
   chain.value = true
@@ -1347,6 +1373,10 @@ onBeforeUnmount(() => {
           <!-- 연속 모드의 성적 — 이번 콤보와 최고 기록. 모드를 켠 적이 있으면 계속 보여준다 -->
           <p v-if="chain || bestCombo" class="combo">
             🔥 {{ combo }}콤보 <small>최고 {{ bestCombo }}</small>
+          </p>
+          <!-- 순위·랭킹에 올라가는 값은 벽 평균이다 — 위 누적 총점과 다른 숫자라 같이 보여준다 -->
+          <p v-if="isMultiplayer && chainMode" class="combo">
+            📊 벽 평균 <b>{{ chainAverage }}</b>점 <small>순위 기준</small>
           </p>
           <ul class="history">
             <li v-for="h in history.slice(0, 5)" :key="h.round">
