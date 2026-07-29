@@ -17,6 +17,7 @@ import ssafy.a706.backend.auth.email.EmailVerificationService;
 import ssafy.a706.backend.auth.password.PasswordResetService;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
+import ssafy.a706.backend.auth.ratelimit.GuestStartLimiter;
 import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
 
 /**
@@ -36,6 +37,7 @@ public class AuthController {
     private final AuthService authService;
     private final EmailVerificationService emailVerificationService;
     private final PasswordResetService passwordResetService;
+    private final GuestStartLimiter guestStartLimiter;
 
     /** GET /auth/availability/email — 이메일 중복 확인 */
     @GetMapping("/availability/email")
@@ -136,6 +138,8 @@ public class AuthController {
      */
     @PostMapping("/guest")
     public ResponseEntity<GuestResponse> guest(HttpServletRequest http) {
+        // 호출마다 24시간짜리 1인방이 생기는 비인증 엔드포인트라 IP 기준으로 빈도를 막는다.
+        guestStartLimiter.ensureAllowed(http);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .header(HttpHeaders.SET_COOKIE, RefreshCookies.clear(http))
                 .body(authService.guestLogin());

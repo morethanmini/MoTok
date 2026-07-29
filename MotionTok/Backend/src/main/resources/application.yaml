@@ -121,6 +121,14 @@ app:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
 
+  # 인증 엔드포인트 남용 방지. 여러 사람이 같은 공인 IP를 쓰는 망(학원·사내망)이 주 사용처라
+  # IP 기준 한도는 "한 명"이 아니라 "한 강의실"을 기준으로 잡았다. 시연 등으로 더 필요하면 env로 올린다.
+  rate-limit:
+    login-fail-threshold: ${LOGIN_FAIL_THRESHOLD:5}   # 이 횟수부터 차단(1분→5분→15분으로 증가)
+    login-fail-window: 30m                            # 실패 카운터 수명. 이 시간 조용하면 처음부터 다시 센다
+    guest-per-minute: ${GUEST_PER_MINUTE:10}          # 게스트 시작 IP당 분당 — 같은 망에서 동시에 눌러도 통과할 정도
+    guest-per-hour: ${GUEST_PER_HOUR:100}             # 게스트 시작 IP당 시간당 — 스크립트(분당 수천)와는 자릿수가 다르다
+
   # 회원가입 이메일 인증 정책 (API 명세서 v0.2.1)
   email-verification:
     code-ttl: 5m           # 인증번호 유효시간

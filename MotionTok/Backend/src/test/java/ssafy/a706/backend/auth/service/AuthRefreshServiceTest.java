@@ -9,6 +9,7 @@ import ssafy.a706.backend.auth.email.EmailVerificationService;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
 import ssafy.a706.backend.auth.oauth.OauthLinkService;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
+import ssafy.a706.backend.auth.ratelimit.LoginAttemptLimiter;
 import ssafy.a706.backend.auth.session.SingleSessionPolicy;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.global.config.StompSessionRegistry;
@@ -62,6 +63,7 @@ class AuthRefreshServiceTest {
             mock(PresenceService.class),
             mock(StompSessionRegistry.class),
             mock(SingleSessionPolicy.class),
+            mock(LoginAttemptLimiter.class),
             mock(RejoinPolicy.class));
 
     private String activeUserRefreshToken() {
