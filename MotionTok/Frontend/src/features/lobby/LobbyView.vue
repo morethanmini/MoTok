@@ -263,6 +263,10 @@ const pwBusy = ref(false)
  */
 const whisper = useWhisper()
 function openWhisper(friend: Friend) {
+  if (whisper.openWith.value === friend.userId) {
+    whisper.close()
+    return
+  }
   void whisper.open(friend.userId, friend.name)
 }
 
