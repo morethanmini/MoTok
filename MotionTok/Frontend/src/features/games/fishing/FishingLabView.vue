@@ -72,7 +72,85 @@ const fitReason = ref<'ok' | 'few' | 'still' | 'line'>('few')
  */
 const pumpCfg = reactive({ ...DEFAULT_PUMP })
 const pump = createPump(pumpCfg)
-const pumpOut = reactive({ rate: 0, revs: 0, active: false, ampPx: 0 })
+const pumpOut = reactive({ rate: 0, revs: 0, active: false, ampPx: 0, avgRate: 0, sec: 0 })
+
+/**
+ * 지속 속도(왕복/s) — 첫 반주기부터 마지막 반주기까지의 구간으로 낸다.
+ *
+ * feed의 rate는 마지막 반주기 간격의 역수라 **순간값**이다. 2026-07-29 실측에서 y왕복이
+ * 순간 1.28/s로 찍혔는데 어종표를 잡을 때 쓴 지속 속도는 0.37~0.63이었다 — 두 숫자가
+ * 3배 차이인데 화면에는 순간값만 보여서 어느 쪽인지 알 수가 없었다. 밸런스는 지속 속도로
+ * 정해지므로 그쪽을 화면의 주 숫자로 올린다.
+ *
+ * 구간 안의 반주기 간격은 halves-1개다(양 끝이 시각이라 간격이 하나 적다).
+ */
+function sustained(d: { halves: number; firstTick: number; lastTick: number }) {
+  const sec = (d.lastTick - d.firstTick) / 1000
+  // halves 3 미만이면 구간이 한 개도 안 나온다
+  if (d.halves < 3 || sec <= 0) return { rate: 0, sec: 0 }
+  return { rate: (d.halves - 1) / 2 / sec, sec }
+}
+
+/**
+ * 양손 신호 실측 — 판정을 "손목 y 하나"에서 **양손 상대값**으로 옮기는 재설계의 검증용
+ * (2026-07-29 논의). 세 판정이 전부 손목 y라서 게임이 "손을 위아래로 흔들기" 하나가 됐고,
+ * px 문턱들이 전부 화각·체격에 의존한다. 양손 상대값은 둘 다 같은 깊이 평면에 있어
+ * z 투영 문제가 상쇄되고, 차이값이라 체격·앉은 거리에 무관하다.
+ *
+ * 확인해야 하는 것 4개 — 이 숫자가 나오기 전에 판정기를 다시 짜면 회전 판정 때의 실수를
+ * 반복한다:
+ *   ① 양손이 노트북 화각에 동시에 들어오는가 → 미검출 프레임
+ *   ② 양손을 잇는 선(=로드)의 각도가 파워 게이지로 쓸 만큼 넓게 움직이는가 → 각도 범위
+ *   ③ 양손 사이 거리 왕복이 손목 y 왕복보다 빠른가 → rate 직접 비교 (핵심)
+ *   ④ MediaPipe가 좌우 손목을 뒤집는가 → 스왑 의심 프레임
+ *
+ * ③은 pump.ts를 그대로 재사용한다 — 슈미트 트리거는 스칼라 하나만 받으므로 입력을
+ * 손목 y에서 양손 거리로 바꾸면 끝이다. 진폭 문턱만 작은 동작에 맞춰 낮춘다(90 → 30):
+ * 이 방식의 기대 효과가 "작은 동작으로 빠르게"라 90px을 요구하면 전제가 무너진다.
+ */
+const twoCfg = reactive({ ...DEFAULT_PUMP, minAmpPx: 30 })
+const twoPump = createPump(twoCfg)
+const two = reactive({
+  visible: false,
+  /** 양손 사이 거리(px) */
+  distPx: 0,
+  /** 로드 각도(deg) — 양손을 잇는 선의 기울기. 0 = 수평 */
+  angleDeg: 0,
+  /** 관측된 각도 범위 — 넓어야 파워 게이지가 성립한다 */
+  angleMin: 999,
+  angleMax: -999,
+  /** 양손 중점 x — 조준에 쓸 값. 한 손의 흔들림이 평균으로 상쇄된다 */
+  midX: 0,
+  /** 거리 왕복 — pump.ts 재사용 */
+  rate: 0,
+  revs: 0,
+  ampPx: 0,
+  /** 지속 속도(왕복/s)와 그 구간 길이(초) — 결정에 쓰는 숫자는 이쪽이다 */
+  avgRate: 0,
+  sec: 0,
+  /** 양손 중 하나라도 못 본 프레임 — 누적 */
+  lost: 0,
+  /**
+   * 미검출률(%) — 최근 500ms 창.
+   *
+   * 누적 프레임만 보여줬더니 판단에 쓸 수 없었다(2026-07-29): 손 내리고 있던 시간이 전부
+   * 섞여서 "488f"가 화각 문제인지 그냥 쉰 건지 구분이 안 됐다. 비율로 낸다.
+   */
+  lostPct: 0,
+  /**
+   * 관측된 미검출률 최솟값 — "양손을 제대로 들고 있을 때" 값이다.
+   *
+   * 창 값만으로는 여전히 못 믿는다: `측정값 복사`를 누르려면 손이 마우스로 나가야 해서
+   * 마지막 창은 항상 오염된다(2026-07-29에 손실=100%로 찍힌 이유). 최솟값은 그 영향을 안 받는다.
+   */
+  lostPctMin: 100,
+  /** 좌우 스왑 의심 프레임 */
+  swaps: 0,
+})
+/** 40°는 파워 게이지를 5단계로 나눌 수 있는 최소치 — 이보다 좁으면 각도 방식이 안 된다 */
+const angleSpan = computed(() =>
+  two.angleMax > two.angleMin ? Math.round(two.angleMax - two.angleMin) : 0,
+)
 
 /**
  * 활성 판정 — 실제 게임에서 캐스팅과 릴 감기는 **동시에 존재하지 않는 페이즈**다
@@ -128,8 +206,10 @@ function snapshotText(): string {
   const n = (v: number, d = 2) => v.toFixed(d)
   return [
     `[낚시랩] 페이즈=${activeJudge.value === 'reel' ? '릴감기' : '캐스팅'} 손=${handSide.value === 'right' ? '오른손' : '왼손'} 기준바퀴=${targetLaps.value}`,
-    `펌핑: ${n(pumpOut.revs)}왕복 (${pumpEffPct.value}%) rate=${n(pumpOut.rate)} 진폭=${Math.round(pumpOut.ampPx)}px`,
+    `펌핑: ${n(pumpOut.revs)}왕복 (${pumpEffPct.value}%) 지속=${n(pumpOut.avgRate)}/s (${n(pumpOut.sec, 1)}s 구간) 순간=${n(pumpOut.rate)} 진폭=${Math.round(pumpOut.ampPx)}px`,
     `회전: ${n(out.revs)}바퀴 (${effPct.value}%) rate=${n(out.rate)} 연속=${out.runLen} 추적=${fitReason.value}`,
+    `양손: 지속=${n(two.avgRate)}/s vs y지속=${n(pumpOut.avgRate)}/s | 구간=${n(two.sec, 1)}s 순간=${n(two.rate)} 거리=${Math.round(two.distPx)}px 진폭=${Math.round(two.ampPx)}px`,
+    `양손각도: ${n(two.angleDeg, 1)}° 범위=${angleSpan.value}° 중점x=${Math.round(two.midX)} 미검출=최저${two.lostPctMin}%/현재${two.lostPct}%(${two.lost}f) 스왑=${two.swaps}f`,
     `힘겨루기: ${f.name} ${fightOut.state} ${n(fightSec.value, 1)}s (이론 ${n(idealCatchSeconds(f), 1)}s / 목표 ${f.targetSec}s) 요구=${n(f.requiredRate)} 현재=${n(pumpOut.rate)}`,
     `캐스팅: 발사=${castOut.fires}회 하향=${Math.round(castOut.downVel)}px/s 낙하=${Math.round(castOut.dropPx)}px 거리=${n(castOut.lastPower)} 단계=${castOut.phase}`,
     `지표: fps=${m.fps}(최저${m.fpsMin}) 추론=${m.inferMs}ms 손실=${m.lossPct}% vis=${m.visMin} 가장자리=${m.edgeMin} 이탈=${m.outOfSafe}f`,
@@ -247,6 +327,8 @@ let lostFrames = 0
 let inferSum = 0
 let visMinWin = 1
 let edgeMinWin = 0.5
+/** 500ms 창에서 양손 중 하나라도 못 본 프레임 수 */
+let twoLostWin = 0
 
 /** 세로 반경(장축) px */
 function ryPx() {
@@ -262,6 +344,40 @@ function onPose(result: PoseLandmarkerResult, inferenceMs: number) {
   inferSum += inferenceMs
 
   const lm = result.landmarks?.[0]
+
+  // 양손 신호 — 주 손목을 놓쳐도 계속 재도록 단일 손목 판정보다 **앞에서** 처리한다.
+  // "양손이 다 보이는가"가 첫 번째 미지수라, 한 손이 사라지는 프레임이 측정 대상이다.
+  const wl = lm?.[WRIST.left]
+  const wr = lm?.[WRIST.right]
+  if (wl && wr && (wl.visibility ?? 0) >= VIS_MIN && (wr.visibility ?? 0) >= VIS_MIN) {
+    // 거울 좌표로 잰다 — 화면에 보이는 대로여야 숫자와 유저 체감이 일치한다
+    const lx = (1 - wl.x) * W
+    const ly = wl.y * H
+    const rx = (1 - wr.x) * W
+    const ry = wr.y * H
+    two.visible = true
+    two.distPx = Math.hypot(rx - lx, ry - ly)
+    two.midX = (lx + rx) / 2
+    two.angleDeg = (Math.atan2(ry - ly, rx - lx) * 180) / Math.PI
+    two.angleMin = Math.min(two.angleMin, two.angleDeg)
+    two.angleMax = Math.max(two.angleMax, two.angleDeg)
+    // 거울 화면에서 유저의 왼손은 화면 왼쪽(작은 x)에 찍힌다 — 뒤집혔으면 스왑을 의심한다.
+    // 손을 교차하면 정상적으로도 올라가므로 "0이어야 한다"가 아니라 추세만 본다.
+    if (lx > rx) two.swaps++
+    const t = twoPump.feed(two.distPx, performance.now())
+    two.rate = t.rate
+    two.revs = t.revs
+    const td = twoPump.debug()
+    two.ampPx = td.ampPx
+    const ts = sustained(td)
+    two.avgRate = ts.rate
+    two.sec = ts.sec
+  } else {
+    two.visible = false
+    two.lost++
+    twoLostWin++
+  }
+
   const w = lm?.[WRIST[handSide.value]]
   const vis = w?.visibility ?? 0
   if (!w || vis < VIS_MIN) {
@@ -310,7 +426,11 @@ function onPose(result: PoseLandmarkerResult, inferenceMs: number) {
   pumpOut.rate = p.rate
   pumpOut.revs = p.revs
   pumpOut.active = p.active
-  pumpOut.ampPx = pump.debug().ampPx
+  const pd = pump.debug()
+  pumpOut.ampPx = pd.ampPx
+  const ps = sustained(pd)
+  pumpOut.avgRate = ps.rate
+  pumpOut.sec = ps.sec
 
   // 캐스팅 판정 — 같은 쪽 어깨 y를 기준으로 젖힘을 본다. 릴 감기 페이즈에서는 돌리지 않는다.
   const sh = lm?.[SHOULDER[handSide.value]]
@@ -345,11 +465,16 @@ function flushStats() {
   m.lossPct = frames ? Math.round((lostFrames / frames) * 100) : 0
   m.visMin = visMinWin < 1 ? visMinWin.toFixed(2) : '–'
   m.edgeMin = edgeMinWin < 0.5 ? edgeMinWin.toFixed(3) : '–'
+  if (frames) {
+    two.lostPct = Math.round((twoLostWin / frames) * 100)
+    two.lostPctMin = Math.min(two.lostPctMin, two.lostPct)
+  }
   frames = 0
   lostFrames = 0
   inferSum = 0
   visMinWin = 1
   edgeMinWin = 0.5
+  twoLostWin = 0
 }
 
 /** 슬라이더가 바뀌면 궤도 형태를 갱신한다. cfg는 참조 공유라 즉시 반영된다 */
@@ -367,7 +492,26 @@ function snapTrackToHand() {
 function resetAll() {
   reel = createReel(track.cx, track.cy, rxPx(), ryPx(), cfg)
   pump.reset()
-  Object.assign(pumpOut, { rate: 0, revs: 0, active: false, ampPx: 0 })
+  Object.assign(pumpOut, { rate: 0, revs: 0, active: false, ampPx: 0, avgRate: 0, sec: 0 })
+  twoPump.reset()
+  twoLostWin = 0
+  Object.assign(two, {
+    visible: false,
+    distPx: 0,
+    angleDeg: 0,
+    angleMin: 999,
+    angleMax: -999,
+    midX: 0,
+    rate: 0,
+    revs: 0,
+    ampPx: 0,
+    avgRate: 0,
+    sec: 0,
+    lost: 0,
+    lostPct: 0,
+    lostPctMin: 100,
+    swaps: 0,
+  })
   cast.reset()
   Object.assign(castOut, { phase: 'idle', aimX: null, downVel: 0, dropPx: 0, fires: 0, lastAim: 0, lastPower: 0 })
   fight.reset(FISH[fishIdx.value]!)
@@ -614,6 +758,63 @@ onBeforeUnmount(() => {
           <p class="hint">
             <b>리셋</b> → {{ targetLaps }}바퀴 돌리기 → 두 숫자 비교. 한 동작으로 동시에 측정된다.
             펌핑은 손목 y의 왕복만 보므로 궤도·중심·평면이 필요 없다.
+          </p>
+        </section>
+
+        <section class="verdict">
+          <h2>양손 신호 — 재설계 검증</h2>
+          <div class="cmp">
+            <div :class="['box', two.avgRate > pumpOut.avgRate ? 'win' : 'lose']">
+              <div class="nm">양손 거리 왕복 · 지속</div>
+              <div class="pc">{{ two.avgRate.toFixed(2) }}</div>
+              <div class="sub">
+                왕복/s · {{ two.sec.toFixed(1) }}s 구간 · 순간 {{ two.rate.toFixed(2) }} · 진폭
+                {{ Math.round(two.ampPx) }}px
+              </div>
+            </div>
+            <div :class="['box', pumpOut.avgRate >= two.avgRate ? 'win' : 'lose']">
+              <div class="nm">손목 y 왕복 · 지속 (현행)</div>
+              <div class="pc">{{ pumpOut.avgRate.toFixed(2) }}</div>
+              <div class="sub">
+                왕복/s · {{ pumpOut.sec.toFixed(1) }}s 구간 · 순간 {{ pumpOut.rate.toFixed(2) }} ·
+                진폭 {{ Math.round(pumpOut.ampPx) }}px
+              </div>
+            </div>
+          </div>
+          <p class="hint">
+            큰 숫자가 <b>지속 속도</b>(첫 반주기~마지막 반주기 구간 평균)다. 어종표 requiredRate는
+            이 숫자로 정해야 한다 — 순간값은 3배까지 높게 찍힌다. <b>구간이 10s 이상</b> 쌓인
+            값만 신뢰한다.
+          </p>
+          <dl>
+            <dt>양손 인식</dt>
+            <dd :class="two.visible ? 'ok' : 'bad'">
+              {{ two.visible ? 'YES' : 'NO' }}
+              <em>스왑 {{ two.swaps }}f</em>
+            </dd>
+            <dt>미검출률</dt>
+            <dd :class="two.lostPctMin <= 5 ? 'ok' : 'bad'">
+              최저 {{ two.lostPctMin }}<em
+                >% / 현재 {{ two.lostPct }}% · 누적 {{ two.lost }}f · 5% 이하면 합격</em
+              >
+            </dd>
+            <dt>로드 각도</dt>
+            <dd>{{ two.angleDeg.toFixed(1) }} <em>°</em></dd>
+            <dt>각도 범위</dt>
+            <dd :class="angleSpan >= 40 ? 'ok' : 'bad'">
+              {{ angleSpan }} <em>° 누적 / 40° 이상이면 파워 게이지 성립</em>
+            </dd>
+            <dt>양손 거리</dt>
+            <dd class="big">{{ Math.round(two.distPx) }} <em>px</em></dd>
+            <dt>중점 x (조준)</dt>
+            <dd>{{ Math.round(two.midX) }}</dd>
+          </dl>
+          <p class="hint">
+            <b>리셋</b> 후 순서대로 — ① 양손으로 막대 잡은 것처럼 들고 <b>손목을 당겼다 밀기</b>를
+            <b>10초 이상</b> 쉬지 않고: 두 지속 속도를 비교해 왼쪽이 크면 릴 감기를 이걸로 바꾼다.
+            ② 잡은 막대를 <b>기울여보기</b>: 각도 범위가 40°를 넘으면 파워를 속도 대신 각도로 잴
+            수 있고, 그러면 게이지를 미리 보여줄 수 있다. ③ 그 동안 <b>미검출률 최저</b>가 5%를
+            넘거나 스왑이 오르면 양손 전제 자체가 무너진다.
           </p>
         </section>
 
