@@ -26,15 +26,21 @@ public class GlobalExceptionHandler {
                 .body(ErrorResponse.of(ec.getCode(), e.getMessage(), req.getRequestURI()));
     }
 
-    /** Bean Validation 실패 — 첫 번째 필드 오류 메시지를 노출한다. */
+    /**
+     * Bean Validation 실패 — 첫 번째 필드 오류 메시지를 노출한다.
+     * 비속어 위반(@NoProfanity)만은 FE가 별도 안내를 띄울 수 있게 PROFANITY_DETECTED 코드로 구분한다(-152).
+     */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> handleValidation(MethodArgumentNotValidException e, HttpServletRequest req) {
+        boolean profanity = e.getBindingResult().getFieldErrors().stream()
+                .anyMatch(fe -> "NoProfanity".equals(fe.getCode()));
+        ErrorCode ec = profanity ? ErrorCode.PROFANITY_DETECTED : ErrorCode.INVALID_INPUT;
         String msg = e.getBindingResult().getFieldErrors().stream()
                 .findFirst()
                 .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
-                .orElse(ErrorCode.INVALID_INPUT.getMessage());
-        return ResponseEntity.status(ErrorCode.INVALID_INPUT.getStatus())
-                .body(ErrorResponse.of(ErrorCode.INVALID_INPUT.getCode(), msg, req.getRequestURI()));
+                .orElse(ec.getMessage());
+        return ResponseEntity.status(ec.getStatus())
+                .body(ErrorResponse.of(ec.getCode(), msg, req.getRequestURI()));
     }
 
     /** 요청 본문을 읽을 수 없는 경우(잘못된 JSON·인코딩 등) — 클라이언트 오류이므로 400. */

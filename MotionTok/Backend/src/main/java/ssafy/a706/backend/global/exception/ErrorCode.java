@@ -11,6 +11,7 @@ public enum ErrorCode {
 
     // common
     INVALID_INPUT(HttpStatus.BAD_REQUEST, "COMMON_INVALID_INPUT", "잘못된 입력입니다."),
+    PROFANITY_DETECTED(HttpStatus.BAD_REQUEST, "COMMON_PROFANITY_DETECTED", "비속어가 포함되어 있습니다. 표현을 바꿔 주세요."),
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "COMMON_UNAUTHORIZED", "인증이 필요합니다."),
     FORBIDDEN(HttpStatus.FORBIDDEN, "COMMON_FORBIDDEN", "권한이 없습니다."),
     NOT_FOUND(HttpStatus.NOT_FOUND, "COMMON_NOT_FOUND", "리소스를 찾을 수 없습니다."),

@@ -9,6 +9,7 @@ import ssafy.a706.backend.friend.model.FriendshipStatus;
 import ssafy.a706.backend.friend.repository.FriendshipRepository;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.global.text.ProfanityFilter;
 import ssafy.a706.backend.presence.model.PresenceState;
 import ssafy.a706.backend.presence.service.PresenceService;
 import ssafy.a706.backend.whisper.dto.WhisperMessageResponse;
@@ -48,6 +49,7 @@ public class WhisperService {
     private final PresenceService presenceService;
     private final WhisperLogRepository whisperLogRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final ProfanityFilter profanityFilter;
 
     @Transactional(readOnly = true)
     public void send(MemberPrincipal sender, Long targetUserId, WhisperSendRequest request) {
@@ -63,11 +65,14 @@ public class WhisperService {
             throw new BusinessException(ErrorCode.WHISPER_TARGET_OFFLINE);
         }
 
+        // 대기실 채팅과 같은 규칙(-152): 비속어는 마스킹해서 저장·전달한다(거절 아님).
+        String masked = profanityFilter.mask(text.trim());
+
         Instant sentAt = Instant.now();
         String whisperId = whisperLogRepository.append(
-                sender.id(), targetUserId, sender.displayName(), text.trim(), sentAt);
+                sender.id(), targetUserId, sender.displayName(), masked, sentAt);
         WhisperLogEntry entry = new WhisperLogEntry(
-                whisperId, sender.id(), sender.displayName(), text.trim(), sentAt);
+                whisperId, sender.id(), sender.displayName(), masked, sentAt);
 
         deliver(targetUserId, WhisperMessageResponse.forViewer(entry, targetUserId, sender.id()));
         deliver(sender.id(), WhisperMessageResponse.forViewer(entry, sender.id(), targetUserId));

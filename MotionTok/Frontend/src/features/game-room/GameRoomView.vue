@@ -18,6 +18,7 @@ import { useRoomChat } from '@/composables/useRoomChat'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
+import { containsProfanity } from '@/utils/profanity'
 import { GAME_CATALOG, type GameEntry } from './data'
 import { CHAT_REPORT_REASONS, CHAT_REPORT_DETAIL_MAX, canSubmitChatReport, chatReportErrorMessage } from './chatReport'
 import ParticipantTile from './components/ParticipantTile.vue'
@@ -934,6 +935,11 @@ async function openSettings() {
 
 async function submitSettings(payload: NewRoom) {
   if (settingsSubmitting.value) return
+  // 방 생성(로비)과 동일한 선검사 — 서버(@NoProfanity)가 최종 거절한다
+  if (containsProfanity(payload.title)) {
+    flash('방 제목에 사용할 수 없는 단어가 있어요')
+    return
+  }
   settingsSubmitting.value = true
   try {
     // 전체 상태 재전송(명세 §4) — 제목만 바꿔도 4필드를 다 보낸다.
