@@ -395,10 +395,19 @@ export interface PresenceQueueMessage {
   currentRoomId: string | null
 }
 
-/** /user/queue/notifications — 방 초대·친구 요청·세션 밀림 알림 봉투(-100/-57). */
+/** /user/queue/notifications — 방 초대·친구 요청·세션 밀림·관리자 경고 알림 봉투(-100/-57/-105). */
 export interface UserNotification<T = unknown> {
-  /** SESSION_DISPLACED: 같은 계정으로 다른 곳에서 로그인해 이 세션이 밀려났다(단일 세션). */
-  type: 'ROOM_INVITATION' | 'FRIEND_REQUEST' | 'FRIEND_LIST_CHANGED' | 'SESSION_DISPLACED'
+  /**
+   * SESSION_DISPLACED: 같은 계정으로 다른 곳에서 로그인해 이 세션이 밀려났다(단일 세션).
+   * SANCTION_WARNING: 관리자 경고가 도착했다(-105). payload = WarningNotice — 이것만 세션을
+   * 끊지 않는다(경고는 접근을 막지 않는다). 서버 UserNotification 팩토리와 값이 일치해야 한다.
+   */
+  type:
+    | 'ROOM_INVITATION'
+    | 'FRIEND_REQUEST'
+    | 'FRIEND_LIST_CHANGED'
+    | 'SESSION_DISPLACED'
+    | 'SANCTION_WARNING'
   payload: T | null
 }
 
@@ -745,20 +754,118 @@ export interface UserReportListResponse {
   totalElements: number
   totalPages: number
 }
-export type SanctionType = 'WARNING' | 'SUSPENSION' | 'PERMANENT_BAN'
-export interface SanctionRequest {
-  userId: number
-  type: SanctionType
+/**
+ * 제재 이력 유형 — 부과(SUSPEND)와 수동 해제(RELEASE)가 시간순으로 쌓이는 append-only 이력이다.
+ *
+ * 명세 초안(-105)의 WARNING·SUSPENSION·PERMANENT_BAN과 다르다. 영구 정지는 스스로 풀리지 않는
+ * 상태라 users.status(BANNED)가 표현하고 기간 정지만 이쪽이 맡는다 — "지금 정지 중인가"는
+ * Redis TTL, "누가 언제 왜 몇 일"은 이력이 나눠 가지므로 유형이 곧 부과/해제가 된다.
+ */
+export type SanctionType = 'WARN' | 'SUSPEND' | 'RELEASE' | 'BAN' | 'UNBAN'
+
+/**
+ * 경고 부과 요청. 기간도 차단도 없어 사유가 전부다 —
+ * 정지는 접근이 막히는 것으로 전달되지만 경고는 문구가 전달의 전부다.
+ */
+export interface WarnUserRequest {
   reason: string
-  endsAt?: string | null
+  reportId?: number | null
+  reportType?: SanctionRefType | null
 }
-export interface Sanction {
+
+/**
+ * 당사자에게 보여 줄 경고 한 건. **집행자·근거 신고는 담기지 않는다** —
+ * 어느 관리자가 내렸는지 알려 주면 개인에 대한 항의 대상이 되고, 신고 id는 신고자 역추적 여지가 된다.
+ */
+export interface WarningNotice {
+  id: number
+  reason: string
+  createdAt: string
+}
+
+/**
+ * 제재 근거가 된 신고가 어느 테이블의 행인지.
+ *
+ * 사용자 신고(user_reports)와 채팅 신고(chat_reports)는 별개 테이블이고 id가 각각 1부터
+ * 증가한다. 유형 없이 id만 남기면 `refReportId: 7`이 어느 쪽 7번인지 알 수 없다 —
+ * 관리자가 제재 근거를 되짚을 수 없고, 그게 이력을 남기는 이유의 절반이다.
+ */
+export type SanctionRefType = 'USER_REPORT' | 'CHAT_REPORT'
+
+/**
+ * 정지 부과 요청. days는 1~365 — 그보다 길면 영구 정지로 표현해야 할 다른 결정이다.
+ *
+ * `reportId`와 `reportType`은 **짝**이다. 한쪽만 보내면 서버가 400으로 끊는다 —
+ * 되짚을 수 없는 참조가 이력에 남는 걸 막기 위해서다. 직권 제재면 둘 다 생략한다.
+ */
+export interface SuspendUserRequest {
+  days: number
+  reason: string
+  reportId?: number | null
+  reportType?: SanctionRefType | null
+}
+
+/**
+ * 영구 정지 부과 요청.
+ *
+ * `days`가 없는 것이 기간 정지와의 차이다 — 필드를 두고 null을 "영구"로 해석하면 같은 요청에
+ * 기간을 넣었다 뺐다 하다가 실수로 영구 제재가 나간다. 그건 되돌리기 가장 어려운 실수다.
+ */
+export interface BanUserRequest {
+  reason: string
+  reportId?: number | null
+  reportType?: SanctionRefType | null
+}
+
+/** 정지·영구정지 수동 해제 요청 — 해제도 이력에 남는 결정이라 사유가 필수다. */
+export interface ReleaseSuspensionRequest {
+  reason: string
+}
+
+/**
+ * 지금 이 계정에 걸려 있는 제재 — 기간 정지와 영구 정지를 한 응답에 담는다.
+ *
+ * 둘을 따로 조회하면 그 사이에 상태가 바뀌어 화면이 엇갈린다. 정상적으로는 동시에 서지 않는다
+ * (영구 정지를 걸 때 서버가 기간 정지 키를 지운다).
+ */
+export interface SanctionStatus {
+  suspended: boolean
+  suspendReason: string | null
+  /** Redis TTL을 읽은 값이라 초 단위 오차가 있다. 기간 정지가 아니면 null. */
+  remainingSeconds: number | null
+  releaseAt: string | null
+  /** 영구 정지 — 남은 기간이라는 개념이 없다. 관리자가 해제할 때까지 유지된다. */
+  banned: boolean
+  banReason: string | null
+  /** 누적 횟수(이력 기준) — TTL이 만료돼도 남는다. 반복 위반자 판단용. */
+  suspendCount: number
+  banCount: number
+  warnCount: number
+}
+
+/** 제재 이력 한 줄. 닉네임은 제재 시점 스냅샷이라 그 뒤 바뀌거나 탈퇴해도 그대로다. */
+export interface SanctionHistoryEntry {
   id: number
   userId: number
-  adminId: number
+  userNickname: string
+  adminUserId: number
+  adminNickname: string
   type: SanctionType
-  startsAt: string
-  endsAt: string | null
+  /** 정지 일수. RELEASE는 기간 개념이 없어 null. */
+  days: number | null
+  reason: string
+  refReportId: number | null
+  /** 위 id가 어느 신고인지. 직권 제재면 id와 함께 null이다. */
+  refReportType: SanctionRefType | null
+  createdAt: string
+}
+
+export interface SanctionHistoryListResponse {
+  sanctions: SanctionHistoryEntry[]
+  page: number
+  size: number
+  totalElements: number
+  totalPages: number
 }
 export interface AuditLog {
   id: number
