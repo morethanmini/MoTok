@@ -101,12 +101,38 @@ public class SessionTerminator {
      *       Refresh는 새 로그인이 덮어쓰고, 프레즌스를 지우면 친구 목록에 오프라인→온라인이
      *       한 번 깜빡이며 접속시간이 로그인마다 끊겨 정산된다.</li>
      * </ul>
-     * 방 상태 정리도 하지 않는다 — 소켓 종료가 {@link RoomPresenceTracker}를 거쳐 퇴장으로 이어진다.
+     *
+     * <p><b>방 퇴장은 {@link #terminate}와 똑같이 즉시 한다.</b> 종전에는 소켓 종료가
+     * {@link RoomPresenceTracker}의 유예 경로를 거쳐 알아서 퇴장으로 이어지도록 맡겼는데, 그 길은
+     * {@value #CLOSE_DELAY_SECONDS}초(소켓 종료) + 15초(재연결 유예) = <b>17초</b>가 걸린다.
+     * 밀려난 사람이 방장이었다면 그 17초 동안 아무에게도 시작 권한이 없고, SFU 강제 퇴장은 즉시라
+     * 남은 참가자 화면에서는 방장이 이미 사라진 상태다 — 프론트는 이걸 "방장이 아직 기기 점검 중"으로
+     * 읽어 10초 뒤 입장 대기 오버레이를 띄운다. 유예는 <b>돌아올 수 있는 세션</b>을 위한 것이고
+     * 밀려난 세션은 sid가 폐기돼 돌아오지 못하므로, 기다릴 이유가 없다.</p>
+     *
+     * <p><b>밀어낼 세션이 없으면 아무것도 하지 않는다.</b> 종전에는 이전 세션의 유무와 무관하게
+     * 알림을 쏘고 소켓을 닫았다. 그런데 알림·종료는 sid가 아니라 <b>userId로</b> 나가므로, 받는 쪽에는
+     * 밀려난 세션과 방금 로그인한 세션이 섞여 있다 — 첫 로그인인데도 "다른 곳에서 로그인했어요"가
+     * 뜨고 로그인하자마자 튕기는 자기 발등 찍기가 됐다(로컬에서 Refresh 토큰을 비우고 테스트할 때
+     * 특히 잘 재현된다: 밀어낼 세션이 하나도 없는데 알림만 나갔다).
+     * 이전 세션의 sid를 먼저 확인하고, 없으면 알릴 대상도 끊을 대상도 없으므로 그대로 돌아간다.</p>
+     *
+     * <p>sid를 기준으로 삼는 것은 "밀어낸다 = 그 세션을 식별해 폐기한다"이기 때문이다. sid 도입
+     * (v0.2.25) 이전에 열린 세션은 폐기할 수단이 없어 알림만 보내는 반쪽 처리가 되므로 대상에서 빠진다 —
+     * 그 세션들은 Refresh가 새 로그인에 덮여 죽고 Access는 만료를 기다린다(v0.2.24와 같은 동작).</p>
      */
     public void displacePrevious(Long userId) {
-        sessionRevocationStore.revokeCurrent(userId, SessionRevocationStore.Reason.DISPLACED);
+        String previousSid = refreshTokenStore.sessionId(userId);
+        if (previousSid == null) {
+            return;
+        }
+        sessionRevocationStore.revoke(previousSid, SessionRevocationStore.Reason.DISPLACED);
         userNotifier.notify(userId, UserNotification.sessionDisplaced());
-        ejectFromSfu(userId, roomPresenceTracker.roomsOfMember(userId));
+
+        // 재실 목록은 방을 비우기 전에 읽는다 — terminate와 같은 이유(비운 뒤엔 끊을 대상을 잃는다).
+        List<String> rooms = roomPresenceTracker.roomsOfMember(userId);
+        roomPresenceTracker.evictFromRooms(userId);
+        ejectFromSfu(userId, rooms);
 
         CompletableFuture.runAsync(() -> {
             try {

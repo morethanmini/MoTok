@@ -19,6 +19,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -49,8 +50,15 @@ class SessionTerminatorTest {
             sessionRevocationStore, refreshTokenStore, roomPresenceTracker,
             stompSessionRegistry, presenceService, sfuParticipantEjector, userNotifier);
 
+    private static final String PREVIOUS_SID = "sid-42-previous";
+
     private void inNoRoom() {
         given(roomPresenceTracker.roomsOfMember(USER_ID)).willReturn(List.of());
+    }
+
+    /** 밀어낼 이전 세션이 있는 상태. sid가 없으면 displacePrevious는 아무것도 하지 않는다. */
+    private void hasPreviousSession() {
+        given(refreshTokenStore.sessionId(USER_ID)).willReturn(PREVIOUS_SID);
     }
 
     @Nested
@@ -133,12 +141,13 @@ class SessionTerminatorTest {
         @DisplayName("옛 세션의 sid를 폐기한 뒤에 알린다 — 알림을 무시해도 API는 이미 막혀 있다")
         void revokesBeforeNotifying() {
             inNoRoom();
+            hasPreviousSession();
 
             terminator.displacePrevious(USER_ID);
 
             InOrder order = inOrder(sessionRevocationStore, userNotifier);
             order.verify(sessionRevocationStore)
-                    .revokeCurrent(USER_ID, SessionRevocationStore.Reason.DISPLACED);
+                    .revoke(PREVIOUS_SID, SessionRevocationStore.Reason.DISPLACED);
             order.verify(userNotifier).notify(eq(USER_ID), any(UserNotification.class));
             verify(sfuParticipantEjector, never()).eject(anyString(), anyString());
         }
@@ -147,6 +156,7 @@ class SessionTerminatorTest {
         @DisplayName("옛 기기가 방에 있었다면 SFU 미디어도 강제 퇴장시킨다")
         void ejectsSfuParticipantFromOccupiedRooms() {
             given(roomPresenceTracker.roomsOfMember(USER_ID)).willReturn(List.of("room-1", "room-2"));
+            hasPreviousSession();
 
             terminator.displacePrevious(USER_ID);
 
@@ -155,9 +165,24 @@ class SessionTerminatorTest {
         }
 
         @Test
+        @DisplayName("방에서도 즉시 뺀다 — 방장이었다면 위임이 유예(2+15초)를 기다리지 않는다")
+        void evictsFromRoomsImmediately() {
+            given(roomPresenceTracker.roomsOfMember(USER_ID)).willReturn(List.of("room-1"));
+            hasPreviousSession();
+
+            terminator.displacePrevious(USER_ID);
+
+            InOrder order = inOrder(roomPresenceTracker);
+            // 재실 목록이 먼저 — 비운 뒤에 읽으면 SFU에서 끊을 방을 잃는다(terminate와 같은 계약).
+            order.verify(roomPresenceTracker).roomsOfMember(USER_ID);
+            order.verify(roomPresenceTracker).evictFromRooms(USER_ID);
+        }
+
+        @Test
         @DisplayName("Refresh·프레즌스는 건드리지 않는다 — 곧 같은 사용자가 다시 붙는다")
         void leavesRefreshAndPresenceToTheNewLogin() {
             inNoRoom();
+            hasPreviousSession();
 
             terminator.displacePrevious(USER_ID);
 
@@ -167,6 +192,24 @@ class SessionTerminatorTest {
             verify(presenceService, never()).clear(anyLong());
             // 소켓 종료는 알림이 나갈 유예(2초) 뒤라 이 시점에는 아직 닫히지 않았다.
             verify(stompSessionRegistry, never()).closeAllOf(anyLong());
+        }
+
+        @Test
+        @DisplayName("밀어낼 세션이 없으면 알리지도 끊지도 않는다 — 첫 로그인이 자기 자신을 밀어내면 안 된다")
+        void doesNothingWhenThereIsNoPreviousSession() {
+            // sessionId가 null = 이전 세션 없음(첫 로그인, 또는 Redis의 Refresh 토큰을 비운 로컬 테스트).
+            given(refreshTokenStore.sessionId(USER_ID)).willReturn(null);
+
+            terminator.displacePrevious(USER_ID);
+
+            // 알림·종료는 sid가 아니라 userId로 나간다. 밀어낼 세션이 없는데도 보내면 방금 로그인한
+            // 세션이 그 알림을 받아 "다른 곳에서 로그인했어요"를 띄우고 스스로 튕긴다.
+            verify(userNotifier, never()).notify(anyLong(), any(UserNotification.class));
+            verify(sessionRevocationStore, never()).revoke(anyString(), any());
+            verify(roomPresenceTracker, never()).evictFromRooms(anyLong());
+            verify(sfuParticipantEjector, never()).eject(anyString(), anyString());
+            // 유예 뒤 닫기까지 예약되지 않았는지 — 예약됐다면 2초 뒤 새 세션의 소켓이 끊긴다.
+            verify(stompSessionRegistry, after(2500).never()).closeAllOf(anyLong());
         }
     }
 }
