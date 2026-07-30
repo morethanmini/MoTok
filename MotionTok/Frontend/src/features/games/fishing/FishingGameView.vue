@@ -27,10 +27,12 @@ import { createHook, DEFAULT_HOOK } from './hook'
 import { createPump, DEFAULT_PUMP } from './pump'
 import { createLoop, DEFAULT_LOOP, type LoopState } from './loop'
 import { createNormalizer, SHOULDER, VIS_MIN, WRIST } from './normalize'
+import { drawFrame } from './render/drawFrame'
+import { debugSkin } from './render/skins/debug'
+import type { Splash } from './render/types'
 
 const W = DEFAULT_LOOP.width
 const H = DEFAULT_LOOP.height
-const WATER_Y = DEFAULT_LOOP.waterY
 
 /**
  * 크랭크 손 — 고정이다.
@@ -68,7 +70,7 @@ const reelRate = ref(0)
  */
 let marker: { x: number; y: number } | null = null
 /** 물보라·이펙트 */
-let splashes: { x: number; y: number; r: number; life: number }[] = []
+let splashes: Splash[] = []
 /** 마지막 페이즈 — 전환 시점에 판정기를 리셋하기 위한 비교값 */
 let prevPhase = st.value.phase
 
@@ -438,199 +440,26 @@ function frame(now: number) {
   draw()
 }
 
+/**
+ * 그리기는 전부 스킨이 한다 — 이 화면은 계측 스킨을 쓴다(render/skins/debug.ts).
+ *
+ * 판정에 쓰인 숫자를 보는 게 목적인 화면이라 손목 마커·문턱 게이지가 필요하고, 그래서 정식
+ * 화면과 스킨이 다르다. HUD 문구는 계속 DOM에 둔다 — 여기는 송출되지 않으므로 캔버스에
+ * 그릴 이유가 없고, 로그 패널과 같이 스크롤되는 편이 읽기 낫다.
+ */
 function draw() {
   const cv = canvasRef.value
-  const video = videoRef.value
   const ctx = cv?.getContext('2d')
-  if (!cv || !ctx || !video) return
-  const s = st.value
-
-  // 하늘·바다
-  const sky = ctx.createLinearGradient(0, 0, 0, WATER_Y)
-  sky.addColorStop(0, '#1c2a5e')
-  sky.addColorStop(1, '#2a3f8c')
-  ctx.fillStyle = sky
-  ctx.fillRect(0, 0, W, WATER_Y)
-  const sea = ctx.createLinearGradient(0, WATER_Y, 0, H)
-  sea.addColorStop(0, '#0f2f66')
-  sea.addColorStop(1, '#081735')
-  ctx.fillStyle = sea
-  ctx.fillRect(0, WATER_Y, W, H - WATER_Y)
-
-  // 캠 — 물 위에 반투명으로 겹친다(기획 §게임 화면 구성: 내 캠은 반투명)
-  if (video.readyState >= 2) {
-    ctx.save()
-    ctx.globalAlpha = 0.18
-    ctx.translate(W, 0)
-    ctx.scale(-1, 1)
-    ctx.drawImage(video, 0, 0, W, H)
-    ctx.restore()
-  }
-
-  // 수면선
-  ctx.strokeStyle = 'rgba(255,255,255,0.28)'
-  ctx.lineWidth = 2
-  ctx.beginPath()
-  ctx.moveTo(0, WATER_Y)
-  ctx.lineTo(W, WATER_Y)
-  ctx.stroke()
-
-  for (const f of s.fishes) drawFish(ctx, f, s)
-  drawSplashes(ctx)
-  if (s.bobber.visible) drawBobber(ctx, s)
-  if (s.phase === 'idle' && aim.locked) drawAim(ctx)
-  if (marker) drawSignalMarker(ctx, s)
-  drawGauges(ctx, s)
-}
-
-function drawFish(ctx: CanvasRenderingContext2D, f: LoopState['fishes'][number], s: LoopState) {
-  const r = 8 + (1 - f.spec.requiredRate) * 14
-  const isActive = f === s.active
-  ctx.save()
-  ctx.translate(f.x, f.y)
-  if (f.dir < 0) ctx.scale(-1, 1)
-  ctx.fillStyle = isActive ? '#FFD23F' : '#3ddcff'
-  ctx.globalAlpha = f.interest === 'none' ? 0.75 : 1
-  ctx.beginPath()
-  ctx.moveTo(-r * 0.9, 0)
-  ctx.lineTo(-r * 1.6, -r * 0.55)
-  ctx.lineTo(-r * 1.6, r * 0.55)
-  ctx.closePath()
-  ctx.fill()
-  ctx.beginPath()
-  ctx.ellipse(0, 0, r, r * 0.6, 0, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.fillStyle = '#0d1020'
-  ctx.beginPath()
-  ctx.arc(r * 0.5, -r * 0.12, r * 0.11, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.restore()
-
-  // 관심 단계 표시 — 대기의 긴장감을 눈에 보이게 한다
-  if (f.interest === 'curious') drawMark(ctx, f.x, f.y - r - 12, '?', '#FFD23F')
-  else if (f.interest === 'approaching' && s.phase === 'waiting')
-    drawMark(ctx, f.x, f.y - r - 12, '!', '#FF9F43')
-  else if (isActive && s.phase === 'bite') drawMark(ctx, f.x, f.y - r - 14, '!!', '#FF5D73')
-}
-
-function drawMark(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, color: string) {
-  ctx.save()
-  ctx.font = 'bold 20px system-ui, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.fillStyle = color
-  ctx.shadowColor = color
-  ctx.shadowBlur = 12
-  ctx.fillText(text, x, y)
-  ctx.restore()
-}
-
-function drawBobber(ctx: CanvasRenderingContext2D, s: LoopState) {
-  const shake = s.phase === 'bite' ? Math.sin(performance.now() * 0.03) * 4 : 0
-  const bx = s.bobber.x
-  const by = s.bobber.y + shake
-  // 낚싯줄 — 화면 아래 중앙(앵글러)에서 찌까지
-  ctx.strokeStyle = 'rgba(244,240,255,0.5)'
-  ctx.lineWidth = 1.5
-  ctx.beginPath()
-  ctx.moveTo(W / 2, H - 12)
-  ctx.lineTo(bx, by)
-  ctx.stroke()
-  ctx.fillStyle = '#FF5D73'
-  ctx.beginPath()
-  ctx.arc(bx, by - 4, 7, Math.PI, 0)
-  ctx.fill()
-  ctx.fillStyle = '#F4F0FF'
-  ctx.beginPath()
-  ctx.arc(bx, by + 2, 7, 0, Math.PI)
-  ctx.fill()
-}
-
-/**
- * 조준 미리보기 — 좌우 조준선과, 착수 가능 범위(가까이~멀리)를 함께 보여준다.
- * 거리는 스윙 최고 속도로 정해지므로 미리보기 게이지가 없다(cast.ts 주석 ③) — 대신 "이 선
- * 위 어딘가에 떨어진다"는 범위를 보여줘서 세게/약하게 던지는 감을 잡게 한다.
- */
-function drawAim(ctx: CanvasRenderingContext2D) {
-  const nearY = H - DEFAULT_LOOP.landNearMarginPx
-  const farY = WATER_Y + DEFAULT_LOOP.landFarMarginPx
-  ctx.save()
-  // 착수 가능 범위 — 세로 막대
-  ctx.strokeStyle = 'rgba(198,255,94,0.35)'
-  ctx.lineWidth = 3
-  ctx.beginPath()
-  ctx.moveTo(aim.x, farY)
-  ctx.lineTo(aim.x, nearY)
-  ctx.stroke()
-  // 던지는 라인
-  ctx.strokeStyle = '#C6FF5E'
-  ctx.lineWidth = 2
-  ctx.setLineDash([5, 5])
-  ctx.beginPath()
-  ctx.moveTo(W / 2, H - 12)
-  ctx.lineTo(aim.x, nearY)
-  ctx.stroke()
-  ctx.setLineDash([])
-  // 양 끝 표시 — 위가 멀리, 아래가 가까이
-  const pulse = 5 + Math.sin(performance.now() / 160) * 2
-  for (const y of [farY, nearY]) {
-    ctx.beginPath()
-    ctx.arc(aim.x, y, pulse, 0, Math.PI * 2)
-    ctx.stroke()
-  }
-  ctx.fillStyle = 'rgba(198,255,94,0.8)'
-  ctx.font = '10px system-ui, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.fillText('세게', aim.x, farY - 10)
-  ctx.fillText('약하게', aim.x, nearY + 18)
-  ctx.restore()
-}
-
-function drawSplashes(ctx: CanvasRenderingContext2D) {
-  ctx.save()
-  ctx.strokeStyle = 'rgba(191,233,255,0.7)'
-  ctx.lineWidth = 3
-  for (const p of splashes) {
-    ctx.globalAlpha = Math.max(0, p.life / 0.6)
-    ctx.beginPath()
-    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
-    ctx.stroke()
-  }
-  ctx.restore()
-}
-
-function drawSignalMarker(ctx: CanvasRenderingContext2D, s: LoopState) {
-  if (!marker) return
-  const color =
-    s.phase === 'bite' ? '#FF5D73' : s.phase === 'fighting' && s.reeling ? '#C6FF5E' : '#3ddcff'
-  ctx.save()
-  ctx.shadowColor = color
-  ctx.shadowBlur = 14
-  ctx.fillStyle = color
-  ctx.beginPath()
-  ctx.arc(marker.x, marker.y, 8, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.restore()
-}
-
-function drawGauges(ctx: CanvasRenderingContext2D, s: LoopState) {
-  if (s.phase === 'fighting') {
-    const w = W - 40
-    ctx.fillStyle = 'rgba(11,19,48,0.7)'
-    ctx.fillRect(20, H - 34, w, 16)
-    ctx.fillStyle = s.reeling ? '#C6FF5E' : '#FF5D73'
-    ctx.fillRect(20, H - 34, w * s.progress, 16)
-    ctx.strokeStyle = 'rgba(244,240,255,0.3)'
-    ctx.lineWidth = 1
-    ctx.strokeRect(20, H - 34, w, 16)
-  }
-  if (s.phase === 'bite') {
-    const w = W - 40
-    const p = s.biteLeftSec / DEFAULT_LOOP.biteWindowSec
-    ctx.fillStyle = 'rgba(11,19,48,0.7)'
-    ctx.fillRect(20, H - 34, w, 10)
-    ctx.fillStyle = '#FFD23F'
-    ctx.fillRect(20, H - 34, w * p, 10)
-  }
+  if (!cv || !ctx) return
+  drawFrame(ctx, debugSkin, DEFAULT_LOOP, {
+    state: st.value,
+    aim,
+    marker,
+    splashes,
+    video: videoRef.value ?? null,
+    tMs: performance.now(),
+    hud: hud.value,
+  })
 }
 
 onMounted(async () => {
