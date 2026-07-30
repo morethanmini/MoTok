@@ -229,6 +229,13 @@ services:
       - '--web.listen-address=127.0.0.1:9100'   # ★ 루프백만. SSH 터널로 접근한다
     network_mode: host        # 호스트 네트워크 지표를 보려면 필요
     volumes:
+      # ⚠ rslave 는 호스트의 `/` 가 shared 마운트여야 동작한다. Ubuntu(systemd)는 기본이 shared 라
+      #   문제없지만, 아니면 컨테이너가 아래 오류로 기동 실패한다:
+      #     "path / is mounted on / but it is not a shared or slave mount"
+      #   배포 전 한 줄로 확인:  findmnt -o TARGET,PROPAGATION /     → shared 여야 한다
+      #   (private 이면 `sudo mount --make-rshared /` 하거나 이 줄에서 ,rslave 를 뺀다.
+      #    빼도 지표는 다 나온다 — 배포 후 새로 생긴 마운트가 반영되지 않을 뿐이다.
+      #    실측 확인: rslave 없이 cpu·memory·filesystem·sockstat·filefd 전부 수집됨)
       - /:/host:ro,rslave
     mem_limit: 128m
     logging:
