@@ -28,6 +28,11 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
 
+    // 관측(-153) — actuator가 지표를 모으고, prometheus 레지스트리가 그것을 텍스트로 노출한다.
+    // 수집·저장·질의는 서버 밖(노트북 Prometheus)에서 한다. 여기서는 "현재 값을 놔두기만" 한다.
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'io.micrometer:micrometer-registry-prometheus'
+
     // JWT (jjwt)
     implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
