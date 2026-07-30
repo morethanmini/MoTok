@@ -3,6 +3,7 @@ package ssafy.a706.backend.game;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.event.EventListener;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
@@ -24,6 +25,7 @@ import ssafy.a706.backend.game.model.GameSession;
 import ssafy.a706.backend.game.repository.GameRepository;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.liveroom.event.LiveRoomClosedEvent;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
@@ -667,6 +669,16 @@ public class GameSessionService {
         if (prev != null) {
             prev.cancel(false);
         }
+    }
+
+    /**
+     * 방 폐쇄(-164) — 정산 예약과 세션 잔재를 함께 정리한다. 방이 사라졌는데 예약만 남으면
+     * 발화 시 삭제된 방을 조회·부활시키려다 실패하고, 세션 키는 30분간 유령으로 남는다.
+     */
+    @EventListener
+    public void onRoomClosed(LiveRoomClosedEvent event) {
+        cancelScheduledEnd(event.roomId());
+        sessionRepository.deleteAllForRoom(event.roomId());
     }
 
     private GameSession requireActiveSession(String roomId) {

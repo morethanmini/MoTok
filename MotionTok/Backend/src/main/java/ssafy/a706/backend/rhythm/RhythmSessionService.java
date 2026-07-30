@@ -3,12 +3,14 @@ package ssafy.a706.backend.rhythm;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.event.EventListener;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.game.GameSettledEvent;
 import ssafy.a706.backend.game.dto.GameResultEntry;
+import ssafy.a706.backend.liveroom.event.LiveRoomClosedEvent;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
@@ -246,6 +248,12 @@ public class RhythmSessionService {
         if (prev != null) {
             prev.cancel(false);
         }
+    }
+
+    /** 방 폐쇄(-164) — 사라진 방의 정산 예약을 정리한다(게임 세션과 동일한 이유). */
+    @EventListener
+    public void onRoomClosed(LiveRoomClosedEvent event) {
+        cancelScheduledEnd(event.roomId());
     }
 
     private RhythmSession requireActiveSession(String roomId) {
