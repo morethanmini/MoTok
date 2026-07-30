@@ -53,6 +53,7 @@ class UserAvatarServiceTest {
             mock(PointHistoryRepository.class),
             mock(PasswordEncoder.class),
             mock(RefreshTokenStore.class),
+            mock(ssafy.a706.backend.auth.session.SessionRevocationStore.class),
             mock(OauthAccountRepository.class),
             mock(OauthClientResolver.class),
             mock(RejoinPolicy.class),
