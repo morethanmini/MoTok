@@ -72,4 +72,31 @@ class DrawJudgeTest {
         assertThat(DrawJudge.parseGuesses(null)).isEmpty();
         assertThat(DrawJudge.parseGuesses("  ")).isEmpty();
     }
+
+    @Test
+    @DisplayName("응답 파싱 — 항목 안의 콤마가 항목을 쪼개지 않는다")
+    void parseGuessesKeepsCommasInsideItems() {
+        // 콤마로 단순 분리하면 "집"과 "주택"이 두 항목이 되어 순위가 밀리고 뒤쪽이 잘려 나갔다
+        assertThat(DrawJudge.parseGuesses("[\"집, 주택\",\"텐트\",\"산\"]"))
+                .containsExactly("집, 주택", "텐트", "산");
+    }
+
+    @Test
+    @DisplayName("응답 파싱 — 코드펜스로 감싸도 배열만 뽑는다")
+    void parseGuessesCodeFence() {
+        assertThat(DrawJudge.parseGuesses("```json\n[\"집\",\"텐트\"]\n```"))
+                .containsExactly("집", "텐트");
+    }
+
+    @Test
+    @DisplayName("정답 매칭 — 설명이 붙은 항목이어도 한 글자 주제어를 놓치지 않는다")
+    void findAnswerRankOneCharTopicWithExplanation() {
+        // 모델이 프롬프트를 어기고 설명을 덧붙이면, normalize가 괄호·공백을 지워
+        // "집직사각형과삼각형으로그린단순한집"이 되고 한 글자 주제는 포함 매칭이 막혀 0점이 됐다
+        assertThat(DrawJudge.findAnswerRank("집", List.of("집 (직사각형과 삼각형으로 그린 단순한 집)", "텐트")))
+                .isEqualTo(1);
+        assertThat(DrawJudge.findAnswerRank("해", List.of("텐트", "해(태양)"))).isEqualTo(2);
+        // 단어 단위 비교라 "배구"가 "배"로 쪼개지지는 않는다 — 오탐은 늘지 않는다
+        assertThat(DrawJudge.findAnswerRank("배", List.of("배구", "바다"))).isZero();
+    }
 }

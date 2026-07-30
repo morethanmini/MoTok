@@ -32,7 +32,7 @@ public record UserNotification(String type, Object payload) {
 
     /**
      * 같은 계정으로 다른 곳에서 로그인해 이 세션이 밀려났다(단일 세션).
-     * 받는 쪽은 안내를 띄우고 스스로 로그아웃한다 — 서버도 곧 이 연결을 끊는다(SingleSessionPolicy).
+     * 받는 쪽은 안내를 띄우고 스스로 로그아웃한다 — 서버도 곧 이 연결을 끊는다(SessionTerminator).
      */
     public static UserNotification sessionDisplaced() {
         return new UserNotification("SESSION_DISPLACED", null);
