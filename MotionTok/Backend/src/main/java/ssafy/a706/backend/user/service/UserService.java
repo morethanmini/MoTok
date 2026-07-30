@@ -12,6 +12,7 @@ import ssafy.a706.backend.auth.oauth.OauthUserInfo;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.oauth.entity.OauthAccount;
 import ssafy.a706.backend.auth.oauth.repository.OauthAccountRepository;
+import ssafy.a706.backend.auth.session.SessionRevocationStore;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.conntime.service.ConnectTimeService;
 import ssafy.a706.backend.global.exception.BusinessException;
@@ -60,6 +61,7 @@ public class UserService {
     private final PointHistoryRepository pointHistoryRepository;
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenStore refreshTokenStore;
+    private final SessionRevocationStore sessionRevocationStore;
     private final OauthAccountRepository oauthAccountRepository;
     private final OauthClientResolver oauthClientResolver;
     private final RejoinPolicy rejoinPolicy;
@@ -195,7 +197,18 @@ public class UserService {
         });
     }
 
-    /** PATCH /users/me/password — 현재 비밀번호 확인 후 변경. 변경 시 Refresh 토큰을 무효화해 다른 세션을 로그아웃시킨다. */
+    /**
+     * PATCH /users/me/password — 현재 비밀번호 확인 후 변경. 변경하면 그 계정의 세션은 <b>즉시</b> 끝난다.
+     *
+     * <p>옛 비밀번호로 열린 세션을 살려 둘 이유가 없다. Refresh만 지우던 시절엔 이미 발급된 액세스
+     * 토큰이 만료(30분)까지 살아, 비밀번호를 바꾼 뒤에도 그 창 동안 계정을 계속 쓸 수 있었다 —
+     * 비밀번호 변경이 곧 "샌 자격증명 차단"인 경로에서 그 창은 그대로 공격 창이다.
+     * 그래서 sid를 폐기 목록에 올려 액세스 토큰까지 그 자리에서 죽인다(v0.2.25 정책 확장).</p>
+     *
+     * <p>단일 세션이라 죽는 세션은 결국 <b>바꾼 본인의 것</b>이다. 이건 부작용이 아니라 의도다 —
+     * 프론트는 성공 응답을 받으면 "비밀번호가 변경됐으니 다시 로그인해 주세요"로 안내하고 로그인 화면으로
+     * 보낸다. 종전에도 Refresh가 죽어 결국 튕겼는데, 그게 30분 뒤 엉뚱한 "세션이 만료되었어요"로 왔을 뿐이다.</p>
+     */
     @Transactional
     public void changePassword(Long userId, String currentPassword, String newPassword) {
         User user = findActiveById(userId);
@@ -205,6 +218,8 @@ public class UserService {
             throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
         }
         user.changePassword(passwordEncoder.encode(newPassword));
+        // 폐기가 먼저 — sid는 아래 delete가 지울 Refresh 해시에 들어 있다.
+        sessionRevocationStore.revokeCurrent(userId, SessionRevocationStore.Reason.CREDENTIALS_CHANGED);
         refreshTokenStore.delete(userId);
     }
 
@@ -236,6 +251,9 @@ public class UserService {
         user.softDelete();
         userRepository.saveAndFlush(user);
         oauthAccountRepository.deleteByUser(user); // 연동 해제 — 쿨다운이 지나면 같은 소셜 계정으로 신규 가입 가능
+        // 탈퇴한 계정의 액세스 토큰이 만료까지 남아 있으면 그 창 동안 없는 사용자로 API를 쓸 수 있다.
+        // 폐기가 먼저 — sid는 아래 delete가 지울 Refresh 해시에 들어 있다.
+        sessionRevocationStore.revokeCurrent(userId, SessionRevocationStore.Reason.WITHDRAWN);
         refreshTokenStore.delete(userId);
     }
 

@@ -3,6 +3,7 @@ package ssafy.a706.backend.auth.session;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
@@ -73,7 +74,33 @@ class SessionRevocationStoreTest {
         given(valueOps.get(KEY)).willReturn("LOGGED_OUT");
         assertThat(store.reasonOf(SID)).isEqualTo(SessionRevocationStore.Reason.LOGGED_OUT);
 
+        given(valueOps.get(KEY)).willReturn("CREDENTIALS_CHANGED");
+        assertThat(store.reasonOf(SID)).isEqualTo(SessionRevocationStore.Reason.CREDENTIALS_CHANGED);
+
+        given(valueOps.get(KEY)).willReturn("WITHDRAWN");
+        assertThat(store.reasonOf(SID)).isEqualTo(SessionRevocationStore.Reason.WITHDRAWN);
+
         given(valueOps.get(KEY)).willReturn(null);
+        assertThat(store.reasonOf(SID)).isNull();
+    }
+
+    // ── fail-open — 조회 실패는 "폐기 아님"이다 ─────────────────────────────
+    // 호출자가 셋(REST 필터·토큰 갱신·STOMP CONNECT)이라 각자 try/catch를 들면 한 곳만 빠뜨려도
+    // 그 경로만 장애 시 500을 낸다. 실제로 토큰 갱신이 그렇게 빠져 있었다 — 그래서 여기로 모았다.
+
+    @Test
+    @DisplayName("Redis 장애로 조회가 실패하면 폐기되지 않은 것으로 본다 — 장애가 곧 전면 인증 장애가 되면 안 된다")
+    void failsOpenWhenRedisIsDown() {
+        given(valueOps.get(KEY)).willThrow(new RedisConnectionFailureException("connection refused"));
+
+        assertThat(store.reasonOf(SID)).isNull();
+    }
+
+    @Test
+    @DisplayName("모르는 사유 문자열도 폐기 아님으로 본다 — 롤링 배포 중 새 인스턴스가 쓴 값을 옛 인스턴스가 읽는 경우")
+    void failsOpenOnUnknownReason() {
+        given(valueOps.get(KEY)).willReturn("SOMETHING_FROM_THE_FUTURE");
+
         assertThat(store.reasonOf(SID)).isNull();
     }
 }

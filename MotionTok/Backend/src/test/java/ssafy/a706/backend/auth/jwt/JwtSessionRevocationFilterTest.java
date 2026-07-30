@@ -3,7 +3,6 @@ package ssafy.a706.backend.auth.jwt;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -72,17 +71,8 @@ class JwtSessionRevocationFilterTest {
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
     }
 
-    @Test
-    @DisplayName("Redis 장애 시 서명 검증만으로 통과시킨다(fail-open) — 폐기 확인이 전면 장애가 되면 안 된다")
-    void failsOpenOnRedisFailure() throws Exception {
-        given(revocationStore.reasonOf(SID))
-                .willThrow(new RedisConnectionFailureException("connection refused"));
-
-        filter.doFilter(requestWith(provider.createAccessToken(42L, "모톡러", "USER", SID)),
-                new MockHttpServletResponse(), new MockFilterChain());
-
-        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
-    }
+    // Redis 장애 시의 fail-open은 스토어가 책임진다(SessionRevocationStoreTest) —
+    // 스토어가 예외 대신 null을 주므로 필터에서는 위 authenticatesUnrevokedToken과 같은 경로가 된다.
 
     @Test
     @DisplayName("게스트 토큰은 sid가 없어 폐기 목록을 조회하지 않는다")

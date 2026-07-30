@@ -2,6 +2,7 @@ package ssafy.a706.backend.user.service;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 import ssafy.a706.backend.auth.oauth.OauthProvider;
@@ -10,6 +11,7 @@ import ssafy.a706.backend.auth.oauth.client.OauthClient;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.oauth.entity.OauthAccount;
 import ssafy.a706.backend.auth.oauth.repository.OauthAccountRepository;
+import ssafy.a706.backend.auth.session.SessionRevocationStore;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
@@ -30,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -45,6 +48,7 @@ class UserWithdrawServiceTest {
     private final UserRepository userRepository = mock(UserRepository.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
     private final RefreshTokenStore refreshTokenStore = mock(RefreshTokenStore.class);
+    private final SessionRevocationStore sessionRevocationStore = mock(SessionRevocationStore.class);
     private final OauthAccountRepository oauthAccountRepository = mock(OauthAccountRepository.class);
     private final OauthClientResolver oauthClientResolver = mock(OauthClientResolver.class);
     private final RejoinPolicy rejoinPolicy = mock(RejoinPolicy.class);
@@ -52,7 +56,8 @@ class UserWithdrawServiceTest {
 
     private final UserService service = new UserService(userRepository,
             mock(PointHistoryRepository.class), passwordEncoder,
-            refreshTokenStore, oauthAccountRepository, oauthClientResolver, rejoinPolicy, storageService,
+            refreshTokenStore, sessionRevocationStore,
+            oauthAccountRepository, oauthClientResolver, rejoinPolicy, storageService,
             mock(ssafy.a706.backend.conntime.service.ConnectTimeService.class));
 
     private User localUser() {
@@ -89,6 +94,36 @@ class UserWithdrawServiceTest {
         assertThat(user.getStatus()).isEqualTo(UserStatus.DELETED);
         verify(rejoinPolicy).record("me@motok.com", WithdrawnIdentifierType.EMAIL);
         verify(refreshTokenStore).delete(USER_ID);
+    }
+
+    // ── 탈퇴 시 세션 폐기(v0.2.26) — 탈퇴한 계정의 액세스 토큰이 만료까지 살아 있으면 안 된다 ──────
+
+    @Test
+    @DisplayName("탈퇴하면 액세스 토큰까지 폐기한다 — Refresh를 지우기 전에 폐기해야 sid를 읽을 수 있다")
+    void revokesSessionBeforeDeletingRefresh() {
+        User user = localUser();
+        given(passwordEncoder.matches("pw", "hashed")).willReturn(true);
+        given(oauthAccountRepository.findAllByUser(user)).willReturn(List.of());
+
+        service.withdraw(USER_ID, new WithdrawRequest("pw", null, null, null));
+
+        // 순서가 곧 동작이다 — delete가 먼저 돌면 sid가 사라져 폐기가 조용히 no-op이 된다.
+        InOrder order = inOrder(sessionRevocationStore, refreshTokenStore);
+        order.verify(sessionRevocationStore)
+                .revokeCurrent(USER_ID, SessionRevocationStore.Reason.WITHDRAWN);
+        order.verify(refreshTokenStore).delete(USER_ID);
+    }
+
+    @Test
+    @DisplayName("본인 확인에 실패하면 세션을 폐기하지 않는다 — 남의 세션을 끊는 수단이 되면 안 된다")
+    void keepsSessionWhenOwnershipCheckFails() {
+        localUser();
+        given(passwordEncoder.matches("wrong", "hashed")).willReturn(false);
+
+        assertThatThrownBy(() -> service.withdraw(USER_ID, new WithdrawRequest("wrong", null, null, null)))
+                .isInstanceOf(BusinessException.class);
+
+        verify(sessionRevocationStore, never()).revokeCurrent(any(), any());
     }
 
     @Test
