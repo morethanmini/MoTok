@@ -348,7 +348,16 @@ export interface Game {
   supportsBot: boolean
   category: string
   thumbnailUrl: string
+  /**
+   * 지금 이 게임을 시작할 수 있나 — `active`이고 playerCount 조건도 맞을 때만 true.
+   * (playerCount 쿼리를 안 보내면 인원 조건은 보지 않는다)
+   */
   playable: boolean
+  /**
+   * 관리자가 열어 둔 게임인가(games.is_active). playable과 나뉘어 있는 건 화면이 이유를
+   * 구분해 안내해야 하기 때문이다 — "점검 중이라 닫힘"과 "인원이 모자람"은 할 일이 다르다.
+   */
+  active: boolean
 }
 export interface GameDetail {
   id: number
