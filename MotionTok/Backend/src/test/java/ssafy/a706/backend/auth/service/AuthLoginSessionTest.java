@@ -12,16 +12,14 @@ import ssafy.a706.backend.auth.oauth.OauthLinkService;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.ratelimit.LoginAttemptLimiter;
 import ssafy.a706.backend.auth.session.SessionRevocationStore;
-import ssafy.a706.backend.auth.session.SingleSessionPolicy;
+import ssafy.a706.backend.auth.session.SessionTerminator;
 import ssafy.a706.backend.auth.store.AccountBlock;
 import ssafy.a706.backend.auth.store.AccountBlockStore;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
-import ssafy.a706.backend.global.config.StompSessionRegistry;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.global.text.ProfanityFilter;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
-import ssafy.a706.backend.presence.service.PresenceService;
 import ssafy.a706.backend.user.entity.User;
 import ssafy.a706.backend.user.repository.UserRepository;
 import ssafy.a706.backend.user.withdrawal.RejoinPolicy;
@@ -57,7 +55,7 @@ class AuthLoginSessionTest {
     private final UserRepository userRepository = mock(UserRepository.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
     private final RefreshTokenStore refreshTokenStore = mock(RefreshTokenStore.class);
-    private final SingleSessionPolicy singleSessionPolicy = mock(SingleSessionPolicy.class);
+    private final SessionTerminator sessionTerminator = mock(SessionTerminator.class);
     private final LoginAttemptLimiter loginAttemptLimiter = mock(LoginAttemptLimiter.class);
     private final JwtTokenProvider tokenProvider = new JwtTokenProvider(
             "test-secret-key-for-motok-auth-service-spec-0123456789",
@@ -80,9 +78,7 @@ class AuthLoginSessionTest {
             mock(OauthClientResolver.class),
             mock(OauthLinkService.class),
             mock(LiveRoomService.class),
-            mock(PresenceService.class),
-            mock(StompSessionRegistry.class),
-            singleSessionPolicy,
+            sessionTerminator,
             mock(SessionRevocationStore.class),
             loginAttemptLimiter,
             mock(RejoinPolicy.class),
@@ -111,7 +107,7 @@ class AuthLoginSessionTest {
 
         service.login(new LoginRequest(EMAIL, PASSWORD, true));
 
-        verify(singleSessionPolicy).displacePrevious(USER_ID);
+        verify(sessionTerminator).displacePrevious(USER_ID);
     }
 
     @Test
@@ -123,7 +119,7 @@ class AuthLoginSessionTest {
         assertThatThrownBy(() -> service.login(new LoginRequest(EMAIL, "wrong-password-1234", true)))
                 .isInstanceOf(BusinessException.class);
 
-        verify(singleSessionPolicy, never()).displacePrevious(anyLong());
+        verify(sessionTerminator, never()).displacePrevious(anyLong());
         verify(refreshTokenStore, never()).save(anyLong(), anyString(), any(Duration.class), anyBoolean(), anyString());
     }
 

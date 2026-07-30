@@ -283,6 +283,18 @@ public class UserSanctionService {
         return SanctionHistoryListResponse.from(sanctionHistoryRepository.findByUserId(targetId, pageable));
     }
 
+    /**
+     * 제재 내역 전체 목록(최신순) — 대상을 정하지 않고 훑는 조회. userId·type은 선택 필터다.
+     *
+     * <p>{@link #history}와 응답 형태를 공유한다. 필터를 걸면 같은 결과가 나오는데도 DTO가
+     * 다르면, 화면이 "회원을 지정했는가"에 따라 두 벌의 렌더링을 갖게 된다.</p>
+     */
+    public SanctionHistoryListResponse searchHistory(Long userId, SanctionType type, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id"));
+        return SanctionHistoryListResponse.from(
+                sanctionHistoryRepository.search(userId, type, pageable));
+    }
+
     /** 집행자 — 토큰의 role은 ADMIN이지만 그 사이 계정이 사라졌을 수 있어 실제 행을 확인한다. */
     private User admin(Long adminId) {
         return userRepository.findById(adminId)

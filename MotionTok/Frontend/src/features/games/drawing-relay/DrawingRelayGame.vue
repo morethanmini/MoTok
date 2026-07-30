@@ -8,7 +8,9 @@
  *
  * 조작(MediaPipe): 펜 손(기본 오른손)은 엄지+검지 핀치로 그리고 손을 펴면 이동,
  * 지우개 손(기본 왼손)은 주먹을 쥐고 문지르면 지운다 — 왼손잡이 모드로 역할 스왑.
- * 두 손은 각자 상태(스무딩·히스테리시스·진행 중 획)를 갖고 동시에 동작할 수 있다.
+ * 두 손은 각자 상태(스무딩·히스테리시스)를 갖지만 <b>획은 한 번에 하나만</b> 연다 — 획
+ * 릴레이(DrawOp)에 소스 구분이 없어 수신 측은 화가당 진행 중 획 하나만 재생하므로, 두 획이
+ * 동시에 열리면 원격에서 한 획으로 합쳐져 두 손 사이를 잇는 선/지움이 그쪽 캔버스에만 남는다.
  * 펜 끝은 엄지·검지 중점을 써 손을 펴는 순간의 이동을 줄이고, 전환 프레임 동안
  * 그려지는 꼬리는 획을 점 목록으로 보관했다가 펜 업 시점에 소급 삭제한다(trimStrokeTail).
  * 입력은 손 인식뿐 — 카메라 영상이 있어야 시작할 수 있다(마우스 폴백은 로컬 테스트
@@ -77,6 +79,16 @@ const PEN_COLOR = '#26262e'
 const PEN_WIDTH = 5
 const PAPER_COLOR = '#fdfdf8'
 const ERASER_WIDTH = 60
+/**
+ * 채점 이미지 data URL 상한(문자 수). GMS 릴레이는 요청 본문이 이 근처를 넘으면 400을 던진다
+ * (실측 경계: 65.6KB 성공 / 100KB 실패). 프롬프트·JSON 오버헤드까지 같은 본문에 실리므로
+ * 마진을 두고 60,000자로 잡았다. BE의 DRAW_MAX_IMAGE_CHARS와 함께 움직여야 한다.
+ */
+const MAX_IMAGE_CHARS = 60_000
+/** 상한을 맞출 때까지 낮춰 볼 JPEG 화질 — 선화라 0.5까지 내려도 형태는 그대로다 */
+const JPEG_QUALITIES = [0.85, 0.7, 0.55, 0.4]
+/** 화질로도 안 되면 줄여 볼 해상도 배율(원본 → 2/3 → 1/2) */
+const SNAPSHOT_SCALES = [1, 2 / 3, 0.5]
 /** 주먹(지우개) 전환에 필요한 연속 프레임 수 — 순간 오인식으로 지워지는 것 방지 */
 const FIST_CONFIRM_FRAMES = 3
 
@@ -102,7 +114,7 @@ interface PainterLayer {
 }
 const layers = new Map<string, PainterLayer>()
 
-/** 진행 중인 획의 소유자 — 펜 손·지우개 손·원격 화가가 각자 하나씩 갖는다(동시 사용 가능) */
+/** 진행 중인 획의 소유자 — 펜 손·지우개 손·원격 화가가 각자 하나씩 갖는다. 로컬 두 손은 한 번에 한 획만 연다(파일 상단 주석) */
 interface StrokeSource {
   stroke: Stroke | null
 }
@@ -145,13 +157,44 @@ function composite(ctx: CanvasRenderingContext2D) {
   for (const layer of orderedLayers()) ctx.drawImage(layer.canvas, 0, 0)
 }
 
-/** 채점용 완성 그림(PNG data URL) */
+/** 채점용 완성 그림(JPEG data URL — 크기 상한에 맞춰 인코딩된다) */
 function snapshot(): string {
-  const flat = document.createElement('canvas')
-  flat.width = W
-  flat.height = H
-  composite(flat.getContext('2d')!)
-  return flat.toDataURL('image/png')
+  return encodeWithinLimit(W, H)
+}
+
+/**
+ * 채점용 이미지를 GMS 게이트웨이가 받아주는 크기 안으로 맞춰 내보낸다.
+ *
+ * <p>무압축 PNG로 내보내면 잉크가 빽빽할수록(8명이 열심히 그릴수록) data URL이 커지는데,
+ * GMS 릴레이는 요청 본문이 65KB를 넘어가는 구간부터 <b>모델을 부르지도 않고</b> 400을 돌려준다
+ * (실측: 65.6KB 성공 / 100KB 실패, 실패는 0.4초 만에 반환). 그래서 크기를 결과로 두지 않고
+ * 목표로 두고 인코딩한다 — 화질을 낮춰 보고, 그래도 넘치면 해상도를 줄여 다시 합성한다.
+ * 오프화이트 배경에 검은 선뿐이라 JPEG로 바꿔도 인식에는 지장이 없다.</p>
+ */
+function encodeWithinLimit(width: number, height: number): string {
+  const draw = (w: number, h: number) => {
+    const flat = document.createElement('canvas')
+    flat.width = w
+    flat.height = h
+    const ctx = flat.getContext('2d')!
+    ctx.imageSmoothingQuality = 'high'
+    ctx.scale(w / W, h / H)
+    composite(ctx)
+    return flat
+  }
+  let canvas = draw(width, height)
+  let smallest = canvas.toDataURL('image/jpeg', JPEG_QUALITIES[0])
+  for (const scale of SNAPSHOT_SCALES) {
+    if (scale !== 1) canvas = draw(Math.round(width * scale), Math.round(height * scale))
+    for (const quality of JPEG_QUALITIES) {
+      const encoded = canvas.toDataURL('image/jpeg', quality)
+      if (encoded.length < smallest.length) smallest = encoded
+      if (encoded.length <= MAX_IMAGE_CHARS) return encoded
+    }
+  }
+  // 여기까지 왔으면 어떤 조합으로도 상한을 못 맞춘 것 — 그래도 가장 작은 걸 보내고
+  // 판정은 서버에 맡긴다(서버가 같은 상한으로 400을 돌려준다).
+  return smallest
 }
 
 function resetPaper() {
@@ -272,7 +315,12 @@ watch(
   () => props.video,
   (video) => {
     hand.stop()
-    if (video) void hand.start(video, onFrame)
+    if (!video) return
+    // 실패(모델 로드·GPU 초기화)를 삼키면 화면은 도는데 손만 안 잡히는 상태가 된다(-161).
+    // 한 번 재시도하고, 그래도 안 되면 hand.error가 대기 패널에 표시된다.
+    void hand.start(video, onFrame).then((ok) => {
+      if (!ok && props.video === video) return hand.start(video, onFrame)
+    })
   },
   { immediate: true },
 )
@@ -660,14 +708,18 @@ function updatePenHand(lm: NormalizedPoint[] | null) {
   // 주먹은 엄지·검지 끝도 가까워 핀치로 읽히므로, 펜 손이 주먹인 동안은 펜을 잠근다
   const down = !penHand.fist && applyPinchHysteresis(penHand.active, pinchRatio(lm))
   const canAct = phase.value === 'drawing' && inputAllowed()
-  if (down && canAct) {
+  // 지우개 획이 열려 있는 동안은 펜 획을 시작하지 않는다(한 번에 한 획 — 파일 상단 주석).
+  // 늘어진 왼손이 주먹으로 오인돼 지우개 획이 열린 채 펜을 시작하면, 수신 측이 두 손의
+  // point를 한 획으로 합쳐 두 손 사이를 잇는 검은 선이 원격 캔버스에만 남는다.
+  const drawing = down && canAct && !eraseHand.stroke
+  if (drawing) {
     drawTo(myLayer(), penHand, penHand.x, penHand.y, 'pen')
   } else {
     // 펜을 놓는 순간 — 손을 펴는 동안 그려진 꼬리를 소급 삭제
     endStroke(myLayer(), penHand, true)
   }
   penHand.active = down
-  penDrawing.value = down && canAct
+  penDrawing.value = drawing
 }
 
 function updateEraseHand(lm: NormalizedPoint[] | null) {
@@ -683,10 +735,12 @@ function updateEraseHand(lm: NormalizedPoint[] | null) {
   updateFist(eraseHand, lm)
 
   const canAct = phase.value === 'drawing' && inputAllowed()
-  if (eraseHand.fist && canAct) drawTo(myLayer(), eraseHand, eraseHand.x, eraseHand.y, 'erase')
+  // 펜 획이 열려 있는 동안은 지우개 획을 시작하지 않는다(한 번에 한 획 — 파일 상단 주석)
+  const active = eraseHand.fist && canAct && !penHand.stroke
+  if (active) drawTo(myLayer(), eraseHand, eraseHand.x, eraseHand.y, 'erase')
   else endStroke(myLayer(), eraseHand)
   eraseHand.active = eraseHand.fist
-  erasing.value = eraseHand.fist && canAct
+  erasing.value = active
 }
 
 // ── 렌더링 (도화지 + 펜/지우개 커서) ──────────

@@ -97,20 +97,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     /**
      * 세션 폐기 여부. sid가 없는 토큰(게스트·도입 이전 발급분)은 대조할 열쇠가 없어 통과한다.
-     * Redis 장애 시에도 통과시킨다(fail-open) — 서명 검증만으로 서비스를 유지하고, 폐기 반영이
-     * 최대 액세스 수명만큼 늦는 것을 감수한다. 여기서 막으면 Redis 장애가 곧 전면 장애가 된다.
+     * Redis 장애 시의 fail-open은 스토어가 책임진다({@link SessionRevocationStore#reasonOf}) —
+     * 호출자마다 try/catch를 들면 한 곳만 빠뜨려도 그 경로만 정책이 갈린다.
      */
     private SessionRevocationStore.Reason revocationOf(Claims claims) {
         String sid = tokenProvider.getSessionId(claims);
-        if (sid == null) {
-            return null;
-        }
-        try {
-            return sessionRevocationStore.reasonOf(sid);
-        } catch (RuntimeException e) {
-            logger.warn("세션 폐기 목록 조회 실패 — 서명 검증만으로 통과시킨다(fail-open)", e);
-            return null;
-        }
+        return sid == null ? null : sessionRevocationStore.reasonOf(sid);
     }
 
     /**

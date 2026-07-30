@@ -12,6 +12,7 @@ import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import RhythmThumbnail from './components/RhythmThumbnail.vue'
 import FingerStarThumbnail from './components/FingerStarThumbnail.vue'
+import DrawingThumbnail from './components/DrawingThumbnail.vue'
 import heroFishingCat from '@/assets/games-catalog/hero-fishing-cat-transparent.png'
 import lobbyRoomListBoard from '@/assets/lobby/lobby-room-list-board.png'
 import lobbyGardenGrassTile from '@/assets/lobby/lobby-garden-grass-tile.png'
@@ -24,7 +25,7 @@ const GAME_ART: Record<number, string> = {
   2: '/assets/intro/fishing-rod.png',
   3: '/assets/intro/tambourine.png',
   5: '/assets/intro/person.png',
-  6: '/assets/intro/sketchbook.png',
+  10: '/assets/intro/sketchbook.png',
 }
 const GAME_TONE = ['sky', 'mint', 'peach', 'lilac', 'butter']
 /**
@@ -33,14 +34,26 @@ const GAME_TONE = ['sky', 'mint', 'peach', 'lilac', 'butter']
  * 목데이터 전용 항목이 있지만 백엔드엔 존재하지 않는 이름이라 대응하지 않는다(id=3 확인 결과 반영).
  */
 const RHYTHM_GAME_ID = 2
-/** 핑거 스타 — 전용 썸네일(FingerStarThumbnail)을 쓴다. GAME_CATALOG 기준 서버 gameId=1. */
+/** 핑거 스타 — 전용 썸네일(FingerStarThumbnail)을 쓴다. 백엔드 시더 기준 id=1. */
 const FINGER_STAR_GAME_ID = 1
+/**
+ * 그림으로 말해요 — 이 게임 카드만 레이어형 썸네일(DrawingThumbnail)을 쓴다.
+ * 실제 백엔드 시더(GameCatalogSeeder) 기준 id=10 (2026-07-30 확인 후 MOCK_GAMES도 10으로 맞춤).
+ */
+const DRAWING_GAME_ID = 10
+/**
+ * MOCK_GAMES의 id는 실제 백엔드 시더(GameCatalogSeeder/RhythmGameSeeder) 기준으로 맞춘다.
+ * 확인 결과 백엔드에 실제로 존재하는 게임은 4개뿐(id 1 핑거 스타, 2 캐치캐치리듬,
+ * 4 몸 끼워 맞추기, 10 그림으로 말해요) — 아래 "모션 낚시"(2)·"리듬 터치"(3)·"자세 매치"(5)는
+ * 이름이 백엔드 어떤 게임과도 일치하지 않아 대응하는 실제 id가 없다(2026-07-30 확인).
+ * 즉 이 3개는 목데이터 전용 placeholder이며, id 숫자를 실제 게임과 임의로 짝짓지 않는다.
+ */
 const MOCK_GAMES: Game[] = [
-  { id: 1, name: '핑거 스타', description: '손끝으로 별자리를 완성해요', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '손동작', thumbnailUrl: '', playable: true },
-  { id: 2, name: '모션 낚시', description: '온몸으로 즐기는 낚시 게임', mode: 'SOLO', minPlayers: 1, maxPlayers: 4, supportsBot: false, category: '전신', thumbnailUrl: '', playable: true },
-  { id: 3, name: '리듬 터치', description: '비트에 맞춰 움직여요', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '리듬', thumbnailUrl: '', playable: true },
-  { id: 5, name: '자세 매치', description: '화면 속 자세를 따라 해요', mode: 'VERSUS', minPlayers: 2, maxPlayers: 8, supportsBot: true, category: '전신', thumbnailUrl: '', playable: false },
-  { id: 6, name: '그림으로 말해요', description: '그림 릴레이로 마음을 맞춰요', mode: 'COOP', minPlayers: 3, maxPlayers: 8, supportsBot: false, category: '파티', thumbnailUrl: '', playable: true },
+  { id: 1, name: '핑거 스타', description: '손끝으로 별자리를 완성해요', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '손동작', thumbnailUrl: '', playable: true, active: true },
+  { id: 2, name: '모션 낚시', description: '온몸으로 즐기는 낚시 게임', mode: 'SOLO', minPlayers: 1, maxPlayers: 4, supportsBot: false, category: '전신', thumbnailUrl: '', playable: true, active: true },
+  { id: 3, name: '리듬 터치', description: '비트에 맞춰 움직여요', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '리듬', thumbnailUrl: '', playable: true, active: true },
+  { id: 5, name: '자세 매치', description: '화면 속 자세를 따라 해요', mode: 'VERSUS', minPlayers: 2, maxPlayers: 8, supportsBot: true, category: '전신', thumbnailUrl: '', playable: false, active: true },
+  { id: 10, name: '그림으로 말해요', description: '그림 릴레이로 마음을 맞춰요', mode: 'COOP', minPlayers: 3, maxPlayers: 8, supportsBot: false, category: '파티', thumbnailUrl: '', playable: true, active: true },
 ]
 // listError면 화면에 보이는 건 서버 목록이 아니라 MOCK_GAMES다 — 이 상태에선 자동 시작을 붙이지 않는다.
 // (MOCK_GAMES의 id는 서버 games 테이블과 어긋나 있어서, 그대로 넘기면 엉뚱한 게임이 열린다)
@@ -51,11 +64,18 @@ const detailOpen = ref(false)
 const selected = ref<Game | null>(null)
 const soloPlayable = computed(() => !!selected.value?.playable && selected.value.minPlayers <= 1)
 const starting = ref(false)
+/**
+ * 관리자가 닫은 게임(-106)인지. `playable`이 false인 이유는 두 가지고(닫힘 / 인원 부족)
+ * 사용자가 취할 행동이 다르다 — 하나는 기다리는 것, 하나는 친구를 부르는 것.
+ * 서버가 두 값을 따로 주므로 문구도 나눈다.
+ */
+const closedByAdmin = (game: Game) => !game.active
 
 function artFor(game: Game) { return game.thumbnailUrl || GAME_ART[game.id] }
 function toneFor(game: Game) { return GAME_TONE[game.id % GAME_TONE.length] }
 function isRhythm(game: Game) { return game.id === RHYTHM_GAME_ID }
 function isFingerStar(game: Game) { return game.id === FINGER_STAR_GAME_ID }
+function isDrawing(game: Game) { return game.id === DRAWING_GAME_ID }
 async function openDetail(game: Game) {
   selected.value = game
   detailOpen.value = true
@@ -129,17 +149,18 @@ function goDevice(game: Game, roomId: string) {
             <div class="game-visual" :class="`tone-${toneFor(game)}`">
               <RhythmThumbnail v-if="isRhythm(game)" />
               <FingerStarThumbnail v-else-if="isFingerStar(game)" />
+              <DrawingThumbnail v-else-if="isDrawing(game)" />
               <img v-else-if="artFor(game)" :src="artFor(game)" alt="" />
               <button type="button" class="detail-button" :aria-label="`${game.name} 상세 보기`" @click.stop="openDetail(game)"><span>자세히</span><b>›</b></button>
             </div>
-            <div class="game-copy"><div class="game-title-row"><h3>{{ game.name }}</h3><span>{{ game.minPlayers }}~{{ game.maxPlayers }}인</span></div><p>{{ game.description }}</p><div class="game-meta"><span>{{ game.mode }}</span><span v-if="game.supportsBot">BOT 가능</span><span v-if="!game.playable">준비 중</span></div></div>
+            <div class="game-copy"><div class="game-title-row"><h3>{{ game.name }}</h3><span>{{ game.minPlayers }}~{{ game.maxPlayers }}인</span></div><p>{{ game.description }}</p><div class="game-meta"><span>{{ game.mode }}</span><span v-if="game.supportsBot">BOT 가능</span><span v-if="closedByAdmin(game)">점검 중</span><span v-else-if="!game.playable">준비 중</span></div></div>
           </article>
         </div>
       </section>
     </main>
 
     <PixelModal v-if="detailOpen && detail" variant="lobby" @close="detailOpen = false">
-      <section class="game-modal"><span class="modal-eyebrow">GAME GUIDE</span><h3>{{ detail.name }}</h3><div class="guide-block"><strong>게임 규칙</strong><p>{{ detail.rules }}</p></div><div v-if="detail.controls" class="guide-block"><strong>조작 방법</strong><p>{{ detail.controls }}</p></div><p v-if="selected?.playable && !soloPlayable" class="multi-notice">이 게임은 {{ selected.minPlayers }}명 이상이 함께 즐길 수 있어요. 로비에서 방을 만들어 친구를 초대해 주세요.</p><div class="modal-actions"><PixelButton block @click="detailOpen = false">닫기</PixelButton><PixelButton v-if="soloPlayable" variant="primary" block :disabled="starting" @click="play">혼자 플레이</PixelButton></div></section>
+      <section class="game-modal"><span class="modal-eyebrow">GAME GUIDE</span><h3>{{ detail.name }}</h3><div class="guide-block"><strong>게임 규칙</strong><p>{{ detail.rules }}</p></div><div v-if="detail.controls" class="guide-block"><strong>조작 방법</strong><p>{{ detail.controls }}</p></div><!-- 닫힘과 인원 부족을 나눠 안내한다 — 기다릴 일과 친구를 부를 일은 다르다 --><p v-if="selected && closedByAdmin(selected)" class="multi-notice">지금은 점검 중이라 플레이할 수 없어요. 잠시 뒤에 다시 확인해 주세요.</p><p v-else-if="selected?.playable && !soloPlayable" class="multi-notice">이 게임은 {{ selected.minPlayers }}명 이상이 함께 즐길 수 있어요. 로비에서 방을 만들어 친구를 초대해 주세요.</p><div class="modal-actions"><PixelButton block @click="detailOpen = false">닫기</PixelButton><PixelButton v-if="soloPlayable" variant="primary" block :disabled="starting" @click="play">혼자 플레이</PixelButton></div></section>
     </PixelModal>
     <PixelToast :message="toast" />
   </div>

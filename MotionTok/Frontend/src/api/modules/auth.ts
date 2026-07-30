@@ -1,5 +1,6 @@
 /** 인증 API (명세 §1). */
 import { http } from '../http'
+import { markOwnLoginStarted } from '../authEvents'
 import { setAccessToken, setGuestAccessToken, clearTokens } from '../token'
 import type {
   Availability,
@@ -17,6 +18,8 @@ export const authApi = {
   signup: (body: SignupRequest) => http.post<UserProfile>('/auth/signup', body),
 
   async login(body: LoginRequest) {
+    // 요청 '전에' 표시한다 — 서버가 보내는 밀어내기 알림이 이 응답보다 먼저 도착할 수 있다.
+    markOwnLoginStarted()
     const res = await http.post<TokenResponse>('/auth/login', body)
     setAccessToken(res.accessToken)
     return res
@@ -36,6 +39,7 @@ export const authApi = {
     http.get<Availability>('/auth/availability/nickname', { nickname }),
 
   async social(provider: SocialProvider, body: SocialLoginRequest) {
+    markOwnLoginStarted() // login과 같은 이유 — 소셜도 서버에서는 같은 밀어내기를 부른다.
     const res = await http.post<TokenResponse>(`/auth/social/${provider}`, body)
     setAccessToken(res.accessToken)
     return res

@@ -12,18 +12,22 @@ defineProps<{ message: string }>()
 <style scoped>
 .toast {
   position: fixed;
+  top: 50%;
   left: 50%;
-  bottom: 30px;
   z-index: 300;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   padding: 12px 17px;
-  background: var(--c-ink);
+  background: rgba(56, 38, 61, .9);
   color: #fff;
   border-radius: var(--radius-md);
   font-size: 11px;
-  box-shadow: 4px 4px 0 var(--c-yellow);
+  box-shadow: none;
 }
-.toast-enter-active { animation: px-pop 0.15s; }
+.toast-enter-active { animation: center-toast-pop 0.15s; }
 .toast-leave-active { transition: opacity 0.2s; }
 .toast-leave-to { opacity: 0; }
+@keyframes center-toast-pop {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+}
 </style>

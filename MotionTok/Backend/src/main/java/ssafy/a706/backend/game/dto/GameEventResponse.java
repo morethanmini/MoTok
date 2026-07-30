@@ -16,7 +16,7 @@ import java.util.List;
  *       각 클라이언트가 이 랜드마크로 같은 벽을 렌더한다.</li>
  *   <li>PROGRESS — 참가자 진행 상황 중계(비영속). userId·starsLit·holdProgress·completedCount 유효.</li>
  *   <li>PLAYER_FINISHED — 참가자 최초 제출 수리. score·starsHit·completedCount 유효.
- *       게임①은 score=90초 매치 총점, completedCount=완성 개수(1순위 승부 기준).</li>
+ *       게임①은 score=60초 매치 총점, completedCount=완성 개수(1순위 승부 기준).</li>
  *   <li>GAME_END — 서버 정산. results(순위 내림차순) 유효. 이후 방 상태는 WAITING 복귀.</li>
  *   <li>DRAW — 그리기 릴레이(게임 10, 비영속). userId(화가)·seq·ops 유효. 발신자는 자기 에코 무시.</li>
  *   <li>TURN_SKIPPED — 조기 차례 넘기기(게임 10). userId·turnIndex·remainingMs 유효 —
@@ -68,17 +68,70 @@ public record GameEventResponse(
         Integer answerRank,
         Integer turnIndex,
         Long remainingMs,
-        // 30 게임① 90초 매치(완성 개수) — PROGRESS·PLAYER_FINISHED에서만 유효
+        // 30 게임① 60초 매치(완성 개수) — PROGRESS·PLAYER_FINISHED에서만 유효
         Integer completedCount,
         // 31~32 게임④ 모드(-9)
         /** 게임④ 모드 — pose(출제 대결) | chain(연속 서바이벌). 다른 게임은 null */
         String mode,
         /** chain 모드에서 날아올 벽 수 — 클라이언트가 벽 스케줄을 재생하는 입력. 그 외 null */
-        Integer wallCount
+        Integer wallCount,
+        // 33~35 시작 준비 확인(-162)
+        /** 준비 확인 라운드 식별자 — GAME_PREPARE·GAME_READY_PROGRESS에서만 유효 */
+        String prepareId,
+        Integer readyCount,
+        Integer totalCount
 ) {
 
     public enum EventType {
-        GAME_START, POSE_SET, PROGRESS, PLAYER_FINISHED, GAME_END, DRAW, DRAW_RESULT, TURN_SKIPPED
+        GAME_START, POSE_SET, PROGRESS, PLAYER_FINISHED, GAME_END, DRAW, DRAW_RESULT, TURN_SKIPPED,
+        // -162 시작 준비 확인 / -164 방장 강제종료
+        GAME_PREPARE, GAME_READY_PROGRESS, GAME_ABORTED
+    }
+
+    /**
+     * 시작 준비 확인(-162) — 방장의 시작 요청을 수리하되 세션은 아직 만들지 않았다.
+     * 각 참가자는 모델 로드를 마치고 /game/ready로 회신하고, 전원 완료(또는 서버 타임아웃) 시
+     * 실제 GAME_START가 배포된다. gameId로 어떤 게임을 준비할지 알린다.
+     */
+    public static GameEventResponse gamePrepare(String prepareId, long gameId, int totalCount) {
+        return new GameEventResponse(
+                EventType.GAME_PREPARE, null, gameId,              // 1~3
+                null, null, null, null,                           // 4~7
+                null, null, null,                                 // 8~10
+                null, null, null, null, null, null, null,         // 11~17
+                null, null,                                       // 18~19
+                null, null, null, null, null, null, null, null,   // 20~27
+                null, null, null,                                 // 28~30
+                null, null,                                       // 31~32
+                prepareId, 0, totalCount);                        // 33~35
+    }
+
+    /** 준비 인원 중계(-162) — ready 수리 때마다 방 전체에 n/m을 알린다. */
+    public static GameEventResponse gameReadyProgress(String prepareId, int readyCount, int totalCount) {
+        return new GameEventResponse(
+                EventType.GAME_READY_PROGRESS, null, null,        // 1~3
+                null, null, null, null,                           // 4~7
+                null, null, null,                                 // 8~10
+                null, null, null, null, null, null, null,         // 11~17
+                null, null,                                       // 18~19
+                null, null, null, null, null, null, null, null,   // 20~27
+                null, null, null,                                 // 28~30
+                null, null,                                       // 31~32
+                prepareId, readyCount, totalCount);               // 33~35
+    }
+
+    /** 방장 강제종료(-164) — 정산 없이 세션 종료. 준비 확인 단계 취소면 sessionId가 null이다. */
+    public static GameEventResponse gameAborted(String sessionId) {
+        return new GameEventResponse(
+                EventType.GAME_ABORTED, sessionId, null,          // 1~3
+                null, null, null, null,                           // 4~7
+                null, null, null,                                 // 8~10
+                null, null, null, null, null, null, null,         // 11~17
+                null, null,                                       // 18~19
+                null, null, null, null, null, null, null, null,   // 20~27
+                null, null, null,                                 // 28~30
+                null, null,                                       // 31~32
+                null, null, null);                                // 33~35
     }
 
     public static GameEventResponse gameStart(String sessionId, long gameId, String challenge,
@@ -95,7 +148,8 @@ public record GameEventResponse(
                 roundNo, totalRounds,                             // 18~19
                 null, null, null, null, null, null, null, null,   // 20~27
                 null, null, null,                                 // 28~30
-                mode, wallCount);                                 // 31~32
+                mode, wallCount,                                  // 31~32
+                null, null, null);                                // 33~35
     }
 
     /** 그림으로 말해요 시작 — 주제어·화가 순서·턴 스케줄 파라미터를 함께 배포한다. */
@@ -112,7 +166,8 @@ public record GameEventResponse(
                 topicWord, turnOrder, turnDurationSec, handoverSec, // 20~23
                 null, null, null, null,                           // 24~27
                 null, null, null,                                 // 28~30
-                null, null);                                      // 31~32
+                null, null,                                       // 31~32
+                null, null, null);                                // 33~35
     }
 
     public static GameEventResponse poseSet(String sessionId, String setterUserId, String challenge) {
@@ -124,7 +179,8 @@ public record GameEventResponse(
                 null, null,                                       // 18~19
                 null, null, null, null, null, null, null, null,   // 20~27
                 null, null, null,                                 // 28~30
-                null, null);                                      // 31~32
+                null, null,                                       // 31~32
+                null, null, null);                                // 33~35
     }
 
     public static GameEventResponse progress(String sessionId, String userId, String nickname,
@@ -138,7 +194,8 @@ public record GameEventResponse(
                 null, null, null, null, null, null, null, null,   // 20~27
                 null, null,                                       // 28~29
                 completedCount,                                   // 30
-                null, null);                                      // 31~32
+                null, null,                                       // 31~32
+                null, null, null);                                // 33~35
     }
 
     public static GameEventResponse playerFinished(String sessionId, String userId, String nickname,
@@ -152,7 +209,8 @@ public record GameEventResponse(
                 null, null, null, null, null, null, null, null,   // 20~27
                 null, null,                                       // 28~29
                 completedCount,                                   // 30
-                null, null);                                      // 31~32
+                null, null,                                       // 31~32
+                null, null, null);                                // 33~35
     }
 
     public static GameEventResponse gameEnd(String sessionId, List<GameResultEntry> results) {
@@ -164,7 +222,8 @@ public record GameEventResponse(
                 null, null,                                       // 18~19
                 null, null, null, null, null, null, null, null,   // 20~27
                 null, null, null,                                 // 28~30
-                null, null);                                      // 31~32
+                null, null,                                       // 31~32
+                null, null, null);                                // 33~35
     }
 
     /** 그리기 릴레이 재방송 — 발신 페이로드 + 화가 userId. */
@@ -178,7 +237,8 @@ public record GameEventResponse(
                 null, null, null, null,                           // 20~23
                 seq, ops, null, null,                             // 24~27
                 null, null, null,                                 // 28~30
-                null, null);                                      // 31~32
+                null, null,                                       // 31~32
+                null, null, null);                                // 33~35
     }
 
     /** 조기 차례 넘기기 재방송 — 전 클라이언트가 remainingMs만큼 턴 스케줄을 앞당긴다. */
@@ -192,7 +252,8 @@ public record GameEventResponse(
                 null, null,                                       // 18~19
                 null, null, null, null, null, null, null, null,   // 20~27
                 turnIndex, remainingMs, null,                     // 28~30
-                null, null);                                      // 31~32
+                null, null,                                       // 31~32
+                null, null, null);                                // 33~35
     }
 
     /** AI 채점 결과 방송 — score 필드에 순위 점수(1위 100 … 5위 20)를 싣는다. */
@@ -207,6 +268,7 @@ public record GameEventResponse(
                 null, null, null, null,                           // 20~23
                 null, null, guesses, answerRank,                  // 24~27
                 null, null, null,                                 // 28~30
-                null, null);                                      // 31~32
+                null, null,                                       // 31~32
+                null, null, null);                                // 33~35
     }
 }

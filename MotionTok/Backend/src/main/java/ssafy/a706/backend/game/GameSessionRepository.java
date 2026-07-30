@@ -205,6 +205,16 @@ public class GameSessionRepository {
         );
     }
 
+    /**
+     * 방 폐쇄(-164) 시 세션 잔재 정리 — 세션·이번 라운드 점수·로테이션 누적을 지운다.
+     * ended 가드 키는 NX+TTL이라 남아 있어도 무해해 그대로 둔다.
+     */
+    public void deleteAllForRoom(String roomId) {
+        redisTemplate.delete(sessionKey(roomId));
+        redisTemplate.delete(scoresKey(roomId));
+        redisTemplate.delete(totalsKey(roomId));
+    }
+
     private String sessionKey(String roomId) {
         return "game:session:" + roomId;
     }

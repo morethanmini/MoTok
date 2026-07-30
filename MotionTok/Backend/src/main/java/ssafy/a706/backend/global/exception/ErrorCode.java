@@ -88,6 +88,10 @@ public enum ErrorCode {
 
     // game / session
     GAME_NOT_FOUND(HttpStatus.NOT_FOUND, "GAME_NOT_FOUND", "존재하지 않는 게임입니다."),
+    // 관리자가 닫은 게임(games.is_active=false)을 GAME_NOT_FOUND와 나누는 이유 — 카탈로그에는
+    // 여전히 보이는 게임이라 "존재하지 않는다"는 안내가 화면과 어긋난다. 다시 열리면 플레이되므로
+    // 404(영구적 부재)가 아니라 409(지금 상태의 충돌)다.
+    GAME_CLOSED(HttpStatus.CONFLICT, "GAME_CLOSED", "지금은 플레이할 수 없는 게임입니다."),
     SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "존재하지 않는 세션입니다."),
     GAME_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "GAME_NOT_IN_ROOM", "방 참가자만 게임에 참여할 수 있습니다."),
     GAME_SESSION_ALREADY_ACTIVE(HttpStatus.CONFLICT, "GAME_SESSION_ALREADY_ACTIVE", "이미 게임이 진행 중입니다."),

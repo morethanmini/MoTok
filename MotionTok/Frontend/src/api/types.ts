@@ -118,7 +118,13 @@ export interface WithdrawRequest {
   authorizationCode?: string
   redirectUri?: string
 }
-export type PointType = 'GAME_REWARD' | 'SHOP_PURCHASE' | 'AI_GENERATE' | 'GUEST_MIGRATE'
+/** AI_GENERATE_REFUND는 AI 아이템 생성 실패 시의 환급이라 항상 양수다(차감인 AI_GENERATE와 반대 방향). */
+export type PointType =
+  | 'GAME_REWARD'
+  | 'SHOP_PURCHASE'
+  | 'AI_GENERATE'
+  | 'GUEST_MIGRATE'
+  | 'AI_GENERATE_REFUND'
 export interface PointHistory {
   id: number
   amount: number
@@ -348,7 +354,16 @@ export interface Game {
   supportsBot: boolean
   category: string
   thumbnailUrl: string
+  /**
+   * 지금 이 게임을 시작할 수 있나 — `active`이고 playerCount 조건도 맞을 때만 true.
+   * (playerCount 쿼리를 안 보내면 인원 조건은 보지 않는다)
+   */
   playable: boolean
+  /**
+   * 관리자가 열어 둔 게임인가(games.is_active). playable과 나뉘어 있는 건 화면이 이유를
+   * 구분해 안내해야 하기 때문이다 — "점검 중이라 닫힘"과 "인원이 모자람"은 할 일이 다르다.
+   */
+  active: boolean
 }
 export interface GameDetail {
   id: number
@@ -629,7 +644,7 @@ export interface GameResultEntry {
   /** 핑거 스타(게임①)는 매치 총점 — 평균은 score/completedCount로 계산 */
   score: number
   starsHit: number
-  /** 핑거 스타(게임①) 90초 매치 완성 개수(1순위 승부 기준). 다른 게임은 null */
+  /** 핑거 스타(게임①) 60초 매치 완성 개수(1순위 승부 기준). 다른 게임은 null */
   completedCount?: number | null
   /** false = 미제출(중도 이탈·타임아웃) — 0점 처리 */
   finished: boolean
@@ -724,6 +739,27 @@ export type GameEvent =
       guesses: string[]
       answerRank: number
       score: number
+    }
+  | {
+      /** 시작 준비 확인(-162) — 세션은 아직 없다. 각자 모델을 채우고 ready를 회신하면
+       *  전원 완료(또는 서버 타임아웃 15초) 시 GAME_START가 온다 */
+      type: 'GAME_PREPARE'
+      prepareId: string
+      gameId: number
+      readyCount: number
+      totalCount: number
+    }
+  | {
+      /** 준비 인원 중계(-162) — ready 수리 때마다 n/m이 온다 */
+      type: 'GAME_READY_PROGRESS'
+      prepareId: string
+      readyCount: number
+      totalCount: number
+    }
+  | {
+      /** 방장 강제종료(-164) — 정산 없이 세션 종료. 준비 확인 단계 취소면 sessionId가 null */
+      type: 'GAME_ABORTED'
+      sessionId: string | null
     }
 
 // ── 관리자 ────────────────────────────────
@@ -869,6 +905,72 @@ export interface SanctionHistoryListResponse {
   totalElements: number
   totalPages: number
 }
+
+// ── 관리자 포인트 내역 (-106 후속) ────────────────
+/**
+ * 포인트 흐름의 방향 필터. 서버에는 이런 컬럼이 없다 — point_history.amount의 부호가
+ * 방향의 단일 원천이고(+적립/-사용), 이 값은 그걸 말로 고르기 위한 질의어다.
+ *
+ * type으로 대신할 수 없다: AI_GENERATE는 차감, AI_GENERATE_REFUND는 환급이라 유형만으로는
+ * 방향을 알 수 없다.
+ */
+export type PointDirection = 'EARN' | 'SPEND'
+
+export interface AdminPointHistoryEntry {
+  id: number
+  userId: number
+  /** 조회 시점의 닉네임(스냅샷이 아니다). 탈퇴 등으로 사용자 행이 없으면 null. */
+  nickname: string | null
+  /** +적립 / -사용. 부호를 그대로 쓴다 — 화면이 방향을 다시 계산하면 한 곳에서 틀린다. */
+  amount: number
+  type: PointType
+  refId: number | null
+  balanceAfter: number
+  createdAt: string
+}
+
+/**
+ * 대상 회원의 <b>전체</b> 적립·사용 합계와 현재 잔액 — 현재 페이지 합계가 아니다.
+ * 방향 필터를 걸어도 이 숫자는 좁아지지 않는다(두 값을 나란히 비교하는 게 요약의 목적).
+ */
+export interface AdminPointSummary {
+  earned: number
+  /** 쓴 금액. 서버가 음수 합을 양수로 뒤집어 준다. */
+  spent: number
+  currentBalance: number | null
+}
+
+export interface AdminPointHistoryListResponse {
+  histories: AdminPointHistoryEntry[]
+  page: number
+  size: number
+  totalElements: number
+  totalPages: number
+  /** 회원을 지정하지 않으면 null — 여러 사람의 포인트를 합친 숫자는 아무 질문에도 답하지 않는다. */
+  summary: AdminPointSummary | null
+}
+
+// ── 관리자 게임 관리 (-106) ───────────────────────
+/**
+ * 관리자 카탈로그 항목. 공개 목록의 `Game`과 나눠 두는 이유 — `Game.playable`은
+ * "지금 시작할 수 있나"라 인원 조건이 섞여 있어서, 그 값으로 토글을 그리면 인원 때문에
+ * false인 게임이 "숨김"으로 보인다. 여기서는 관리자가 쥔 스위치 하나(`active`)만 쓴다.
+ */
+export interface AdminGame {
+  id: number
+  name: string
+  mode: GameMode
+  category: string
+  minPlayers: number
+  maxPlayers: number
+  roundDurationSec: number
+  supportsBot: boolean
+  /** 혼자서도 시작할 수 있는 게임인가(min_players<=1) — 싱글/멀티 분류의 기준. */
+  soloCapable: boolean
+  /** false면 카탈로그에 잠긴 카드로 남고 시작이 거부된다. */
+  active: boolean
+}
+
 export interface AuditLog {
   id: number
   adminId: number
