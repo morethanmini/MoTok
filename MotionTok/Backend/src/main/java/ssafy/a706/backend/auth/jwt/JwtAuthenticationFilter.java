@@ -7,6 +7,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -14,7 +15,12 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import ssafy.a706.backend.auth.principal.GuestPrincipal;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
 import ssafy.a706.backend.auth.session.SessionRevocationStore;
+import ssafy.a706.backend.auth.store.AccountBlock;
+import ssafy.a706.backend.auth.store.AccountBlockStore;
+import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.global.response.ErrorResponse;
 import ssafy.a706.backend.user.enums.UserRole;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.util.List;
@@ -40,10 +46,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider tokenProvider;
     private final SessionRevocationStore sessionRevocationStore;
+    private final AccountBlockStore accountBlockStore;
+    private final ObjectMapper objectMapper;
 
-    public JwtAuthenticationFilter(JwtTokenProvider tokenProvider, SessionRevocationStore sessionRevocationStore) {
+    public JwtAuthenticationFilter(JwtTokenProvider tokenProvider,
+                                   SessionRevocationStore sessionRevocationStore,
+                                   AccountBlockStore accountBlockStore,
+                                   ObjectMapper objectMapper) {
         this.tokenProvider = tokenProvider;
         this.sessionRevocationStore = sessionRevocationStore;
+        this.accountBlockStore = accountBlockStore;
+        this.objectMapper = objectMapper;
     }
 
     /** 이 요청의 401이 "다른 곳 로그인으로 밀려남" 때문인가 — entry point가 오류 코드를 고를 때 쓴다. */
@@ -59,11 +72,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             try {
                 Claims claims = tokenProvider.parse(header.substring(BEARER.length()));
                 if (!tokenProvider.isRefresh(claims)) {
+                    // 세션 폐기를 먼저 본다 — 폐기된 자격이면 계정 상태를 더 물어볼 이유가 없다.
                     SessionRevocationStore.Reason revoked = revocationOf(claims);
                     if (revoked != null) {
                         request.setAttribute(REVOKED_ATTRIBUTE, revoked);
                     } else {
-                        SecurityContextHolder.getContext().setAuthentication(toAuthentication(claims));
+                        UsernamePasswordAuthenticationToken authentication = toAuthentication(claims);
+                        // 살아 있는 세션이어도 계정이 제재됐으면 여기서 끊는다(-105).
+                        AccountBlock block = blockOf(authentication);
+                        if (block.isBlocked()) {
+                            SecurityContextHolder.clearContext();
+                            writeBlocked(response, request.getRequestURI(), block);
+                            return;
+                        }
+                        SecurityContextHolder.getContext().setAuthentication(authentication);
                     }
                 }
             } catch (JwtException | IllegalArgumentException e) {
@@ -81,6 +103,44 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private SessionRevocationStore.Reason revocationOf(Claims claims) {
         String sid = tokenProvider.getSessionId(claims);
         return sid == null ? null : sessionRevocationStore.reasonOf(sid);
+    }
+
+    /**
+     * 계정 차단 확인 — Access 토큰은 서명만으로 유효해서(기본 30분) 제재를 걸어도 이미 발급된
+     * 토큰은 그대로 통한다. 즉시 차단하려면 요청마다 상태를 물어보는 수밖에 없다.
+     * 기간 정지·영구 정지를 Redis 왕복 한 번으로 함께 보고(AccountBlockStore#blockOf),
+     * 회원 토큰일 때만 탄다 — 게스트는 제재 대상이 아니다(RDB에 계정이 없다).
+     *
+     * <p>세션 폐기 조회와 같은 이유로 fail-open이다 — 여기서 막으면 Redis 장애가 곧 전면 장애가
+     * 된다. 감수하는 것은 장애 동안 제재가 최대 액세스 수명만큼 늦게 듣는 것뿐이고, 그 사이에도
+     * 새 토큰은 못 받는다(로그인이 users.status와 이 저장소를 함께 본다).</p>
+     */
+    private AccountBlock blockOf(UsernamePasswordAuthenticationToken authentication) {
+        if (!(authentication.getPrincipal() instanceof MemberPrincipal member)) {
+            return AccountBlock.NONE;
+        }
+        try {
+            return accountBlockStore.blockOf(member.id());
+        } catch (RuntimeException e) {
+            logger.warn("계정 제재 조회 실패 — 서명 검증만으로 통과시킨다(fail-open)", e);
+            return AccountBlock.NONE;
+        }
+    }
+
+    /**
+     * 인증을 비우고 넘기면 anyRequest().authenticated()에 걸려 401(인증 필요)이 나간다 —
+     * 토큰은 멀쩡한데 계정이 막힌 상황을 "로그인하세요"로 안내하게 되므로 여기서 403으로 끊는다.
+     * (InternalApiKeyFilter가 같은 이유로 직접 응답을 쓴다)
+     *
+     * <p>기간 정지와 영구 정지를 다른 코드로 내려보내는 이유 — 클라이언트가 "언제 풀리는지"를
+     * 안내해야 하는데, 영구 정지에 그 문구를 띄우면 거짓말이 된다.</p>
+     */
+    private void writeBlocked(HttpServletResponse res, String path, AccountBlock block) throws IOException {
+        ErrorCode ec = block == AccountBlock.BANNED ? ErrorCode.ACCOUNT_BANNED : ErrorCode.ACCOUNT_SUSPENDED;
+        res.setStatus(ec.getStatus().value());
+        res.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        res.setCharacterEncoding("UTF-8");
+        objectMapper.writeValue(res.getWriter(), ErrorResponse.of(ec.getCode(), ec.getMessage(), path));
     }
 
     private UsernamePasswordAuthenticationToken toAuthentication(Claims claims) {

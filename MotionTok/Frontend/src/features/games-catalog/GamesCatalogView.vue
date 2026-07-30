@@ -40,7 +40,9 @@ const MOCK_GAMES: Game[] = [
   { id: 5, name: '자세 매치', description: '화면 속 자세를 따라 해요', mode: 'VERSUS', minPlayers: 2, maxPlayers: 8, supportsBot: true, category: '전신', thumbnailUrl: '', playable: false },
   { id: 6, name: '그림으로 말해요', description: '그림 릴레이로 마음을 맞춰요', mode: 'COOP', minPlayers: 3, maxPlayers: 8, supportsBot: false, category: '파티', thumbnailUrl: '', playable: true },
 ]
-const { data: games } = useAsyncData(() => gamesApi.list(), MOCK_GAMES)
+// listError면 화면에 보이는 건 서버 목록이 아니라 MOCK_GAMES다 — 이 상태에선 자동 시작을 붙이지 않는다.
+// (MOCK_GAMES의 id는 서버 games 테이블과 어긋나 있어서, 그대로 넘기면 엉뚱한 게임이 열린다)
+const { data: games, error: listError } = useAsyncData(() => gamesApi.list(), MOCK_GAMES)
 const visibleGames = computed(() => session.isGuest ? games.value.filter((g) => g.minPlayers === 1) : games.value)
 const detail = ref<GameDetail | null>(null)
 const detailOpen = ref(false)
@@ -81,7 +83,24 @@ async function play() {
 }
 function goDevice(game: Game, roomId: string) {
   detailOpen.value = false
-  router.push({ name: RouteName.DeviceSetup, query: { game: game.name, room: roomId, solo: '1' } })
+  // 목 목록일 때 자동 시작을 건너뛰는 건 알리고 지나간다 — 조용히 빼면 "골랐는데 그 게임이
+  // 안 열리는" 이유를 알 길이 없다(방에서 직접 고르면 된다는 것도).
+  if (listError.value) flash('게임 목록을 서버에서 받지 못해 자동 시작을 건너뜁니다 — 방에서 직접 골라 주세요')
+  router.push({
+    name: RouteName.DeviceSetup,
+    query: {
+      game: game.name,
+      room: roomId,
+      solo: '1',
+      // 혼자 플레이는 발행을 받을 사람이 없어 캠·마이크를 끈 채로 시작한다.
+      // 게임 입력은 로컬 캡처를 쓰므로 꺼도 플레이된다. 대기실에서 켜면 그 선택이 방까지 간다.
+      cam: '0',
+      mic: '0',
+      // autostart — 대기실에서 입장하면 방에서 다시 고르지 않고 이 게임이 바로 열린다.
+      // 게임룸이 GAME_CATALOG의 gameId로 찾으므로 서버 게임 id를 그대로 넘긴다.
+      ...(listError.value ? {} : { autostart: String(game.id) }),
+    },
+  })
 }
 </script>
 
