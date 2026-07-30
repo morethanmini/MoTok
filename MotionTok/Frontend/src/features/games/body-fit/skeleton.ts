@@ -42,7 +42,7 @@ const MIN_SHOULDER_VIS = 0.5
  * 벽 구멍도 반드시 같은 배율로 그려야 3D 아바타와 정렬된다(wall.ts의 inViewport).
  * 판정은 judge.ts가 자기 캔버스에 원래 스케일로 그리므로 이 값과 무관하다.
  */
-export const STAGE_SCALE = 0.45
+export const STAGE_SCALE = 0.6
 
 /**
  * 아바타·포디움을 무대 아래쪽으로 내리는 월드 오프셋 (음수 = 아래).
@@ -52,19 +52,25 @@ export const STAGE_SCALE = 0.45
 export const STAGE_DROP = -0.8
 
 // ── 표준 골격 (어깨너비 = 1 단위) — 전원 같은 체형, 포즈만 다르다 (§5-1) ──
-export const NECK_LEN = 0.16
-export const UPPER_ARM_LEN = 0.42
-export const FOREARM_LEN = 0.38
-export const TORSO_LEN = 0.85
-export const TORSO_RADIUS = 0.3
+export const NECK_LEN = 0.14
+export const UPPER_ARM_LEN = 0.4
+export const FOREARM_LEN = 0.37
+export const TORSO_LEN = 0.94
+export const TORSO_RADIUS = 0.25
 export const HIP_HALF_WIDTH = 0.2
-export const LEG_LEN = 0.9
+export const LEG_LEN = 1.05
+/** Hip-to-leg clearance prevents the two leg capsules from crowding the crotch. */
+export const LEG_TOP_DROP = 0.12
 /** 발끝이 살짝 벌어지는 고정 포즈 (레퍼런스 턴어라운드의 스탠스) */
 export const LEG_SPLAY = 0.06
 /** 손 구 반경 = 캡슐 반경 × 이 값 */
 export const HAND_R_MUL = 1.3
 /** 다리 캡슐 반경 = 캡슐 반경 × 이 값 */
 export const LEG_R_MUL = 1.15
+
+// A slimmer torso needs its arm roots pulled inward; otherwise a visible gap
+// opens between the shoulder joints and the body.
+const SHOULDER_INSET = 0.76
 
 // 팔 체인 z 오프셋 — 렌더 전용. 팔짱·교차 포즈가 몸통을 관통해 보이지 않게
 // 어깨→손목으로 갈수록 몸 앞 레이어에 둔다. 실루엣(xy)에는 영향 없다.
@@ -342,18 +348,24 @@ export function solveSkeleton(
 
   const upperLen = UPPER_ARM_LEN * cfg.limbScale
   const foreLen = FOREARM_LEN * cfg.limbScale
+  const shoulderL: Pt = { x: p.shoulderL.x * SHOULDER_INSET, y: p.shoulderL.y }
+  const shoulderR: Pt = { x: p.shoulderR.x * SHOULDER_INSET, y: p.shoulderR.y }
+  // Solve from the measured shoulder first, then move the entire arm with the
+  // inset shoulder. This closes the visual gap without shortening either bone.
   const armL = solveArm(p.shoulderL, p.elbowL, p.wristL, state.armL, upperLen, foreLen, state)
   const armR = solveArm(p.shoulderR, p.elbowR, p.wristR, state.armR, upperLen, foreLen, state)
+  const armLShift = shoulderL.x - p.shoulderL.x
+  const armRShift = shoulderR.x - p.shoulderR.x
 
   return {
     anchor: { x: -hip.x, y: -TORSO_LEN - hip.y },
     head,
-    shoulderL: p.shoulderL,
-    shoulderR: p.shoulderR,
-    elbowL: armL.elbow,
-    wristL: armL.wrist,
-    elbowR: armR.elbow,
-    wristR: armR.wrist,
+    shoulderL,
+    shoulderR,
+    elbowL: { ...armL.elbow, x: armL.elbow.x + armLShift },
+    wristL: { ...armL.wrist, x: armL.wrist.x + armLShift },
+    elbowR: { ...armR.elbow, x: armR.elbow.x + armRShift },
+    wristR: { ...armR.wrist, x: armR.wrist.x + armRShift },
     hip,
   }
 }
