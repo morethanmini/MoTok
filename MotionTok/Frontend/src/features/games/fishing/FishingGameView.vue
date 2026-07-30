@@ -28,7 +28,7 @@ import { createPump, DEFAULT_PUMP } from './pump'
 import { createLoop, DEFAULT_LOOP, type LoopState } from './loop'
 import { createNormalizer, SHOULDER, VIS_MIN, WRIST } from './normalize'
 import { drawFrame } from './render/drawFrame'
-import { debugSkin } from './render/skins/debug'
+import { resolveSkin, SKINS } from './render/skins'
 import type { Splash } from './render/types'
 
 const W = DEFAULT_LOOP.width
@@ -42,6 +42,14 @@ const H = DEFAULT_LOOP.height
  * 오른손 크랭크가 지속 속도 1.24~1.49/s인데 왼손은 0.55~0.88/s로 절반 이하였다.
  */
 const crankSide = ref<'right' | 'left'>('right')
+/**
+ * 스킨 — 계측이 기본이다.
+ *
+ * 이 화면의 목적은 판정에 쓰인 숫자를 보는 것이므로 손목 마커·문턱 게이지가 필요하다. 정식
+ * 스킨을 여기서도 켤 수 있게 둔 이유는 **같은 판정 위에서** 두 화면을 번갈아 봐야 톤 차이만
+ * 비교되기 때문이다. 판정이 다른 두 화면을 비교하면 무엇 때문에 달라 보이는지 알 수 없다.
+ */
+const skinId = ref('debug')
 const pose = usePoseLandmarker()
 const videoRef = ref<HTMLVideoElement>()
 const canvasRef = ref<HTMLCanvasElement>()
@@ -451,7 +459,7 @@ function draw() {
   const cv = canvasRef.value
   const ctx = cv?.getContext('2d')
   if (!cv || !ctx) return
-  drawFrame(ctx, debugSkin, DEFAULT_LOOP, {
+  drawFrame(ctx, resolveSkin(skinId.value), DEFAULT_LOOP, {
     state: st.value,
     aim,
     marker,
@@ -498,6 +506,13 @@ onBeforeUnmount(() => {
         릴 {{ crankSide === 'right' ? '오른손' : '왼손' }}
       </button>
       <button type="button" @click="loop.reset()">다시</button>
+      <button
+        type="button"
+        title="같은 판정 위에서 톤만 바꿔 본다 — 정식 스킨은 손목 마커를 그리지 않는다"
+        @click="skinId = skinId === 'debug' ? 'cozy' : 'debug'"
+      >
+        스킨 {{ SKINS[skinId]?.label ?? skinId }}
+      </button>
       <div class="logbar">
         <button type="button" class="copy" @click="copyLog">
           {{ copied ? '복사됨 ✓' : '로그 복사' }}
