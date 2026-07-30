@@ -84,11 +84,20 @@ public class LiveRoomController {
         return ApiResponse.ok(liveRoomService.quickStart(principal));
     }
 
+    /**
+     * unload=true는 문서 언로드(새로고침 포함) 통보 — 즉시 나가지 않고 유예를 두어,
+     * 새로고침 복귀(재입장)면 없던 일로 한다(-164). 명시적 나가기는 기존대로 즉시 처리.
+     */
     @DeleteMapping("/{roomId}/members/me")
     public ApiResponse<Void> leave(
             @AuthenticationPrincipal AuthPrincipal principal,
-            @PathVariable String roomId) {
-        liveRoomService.leave(principal, roomId);
+            @PathVariable String roomId,
+            @RequestParam(name = "unload", defaultValue = "false") boolean unload) {
+        if (unload) {
+            liveRoomService.leaveOnUnload(principal, roomId);
+        } else {
+            liveRoomService.leave(principal, roomId);
+        }
         return ApiResponse.ok("방 나가기 완료");
     }
 

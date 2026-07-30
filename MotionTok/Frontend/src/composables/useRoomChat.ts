@@ -204,6 +204,18 @@ export function useRoomChat() {
     })
   }
 
+  /** 준비 완료 회신(-162) — GAME_PREPARE의 prepareId 그대로. 전원 모이면 GAME_START가 온다. */
+  function sendGameReady(prepareId: string) {
+    if (!currentRoomId) return
+    publishGlobal(`/app/rooms/${currentRoomId}/game/ready`, { prepareId })
+  }
+
+  /** 게임 강제종료(-164, 방장 전용 — 서버가 방장 검증). 수리되면 GAME_ABORTED가 배포된다. */
+  function sendGameAbort() {
+    if (!currentRoomId) return
+    publishGlobal(`/app/rooms/${currentRoomId}/game/abort`, {})
+  }
+
   /** 게임④ 출제자 포즈 제출(-86) — 서버가 검증 후 POSE_SET을 방 전체에 배포한다. */
   function sendPoseSubmit(pose: string) {
     if (!currentRoomId) return
@@ -278,6 +290,8 @@ export function useRoomChat() {
     sendChat,
     suggestGame,
     startGame,
+    sendGameReady,
+    sendGameAbort,
     sendPoseSubmit,
     sendGameProgress,
     sendGameFinish,
