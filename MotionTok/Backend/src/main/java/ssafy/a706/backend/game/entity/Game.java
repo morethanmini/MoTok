@@ -92,6 +92,17 @@ public class Game {
         this.controls = controls;
     }
 
+    /**
+     * 노출·플레이 허용 토글 (관리자, PATCH /v1/admin/games/{gameId}).
+     *
+     * <p>끄면 카탈로그에서 사라지는 대신 <b>목록에 남고 선택만 막힌다</b> —
+     * 조용히 사라지면 "어제 하던 게임이 왜 없지"에 답할 수 없다. 시작 거부는
+     * {@code GameSessionService}·{@code RhythmSessionService}가 서버에서 한 번 더 한다.</p>
+     */
+    public void changeActive(boolean active) {
+        this.active = active;
+    }
+
     /** 라운드 길이·최소 인원 갱신 — 이미 시딩된 행의 규칙 조정 백필용(시더는 멱등이라 insert만으로는 못 바꾼다). */
     public void updateSessionRules(int roundDurationSec, int minPlayers) {
         this.roundDurationSec = roundDurationSec;

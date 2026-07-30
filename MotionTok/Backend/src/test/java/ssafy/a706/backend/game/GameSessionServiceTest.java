@@ -88,10 +88,10 @@ class GameSessionServiceTest {
                 .thenReturn(Optional.of(Map.of("hostUserId", "1")));
     }
 
-    /** 카탈로그에서 게임1(핑거 스타, 90초 매치·카운트다운 3s)을 조회하도록 스텁. */
+    /** 카탈로그에서 게임1(핑거 스타, 60초 매치·카운트다운 3s)을 조회하도록 스텁. */
     private void givenGame1() {
         when(gameRepository.findById(1L)).thenReturn(Optional.of(Game.builder()
-                .id(1L).name("핑거 스타").roundDurationSec(90).countdownSec(3).active(true).build()));
+                .id(1L).name("핑거 스타").roundDurationSec(60).countdownSec(3).active(true).build()));
     }
 
     /** 카탈로그에서 게임4(몸 끼워 맞추기)를 조회하도록 스텁 — 라운드 길이는 모드별로 서버가 따로 정한다. */
@@ -108,6 +108,34 @@ class GameSessionServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.NOT_ROOM_HOST);
+    }
+
+    /**
+     * 관리자가 닫은 게임(-106)은 <b>GAME_NOT_FOUND가 아니다.</b> 닫힌 게임은 카탈로그에 잠긴
+     * 카드로 여전히 보이므로 "존재하지 않는다"고 답하면 화면과 어긋나고, 방장은 자기 방이
+     * 고장 났다고 읽는다. 다시 열리면 플레이되므로 404가 아니라 409다.
+     */
+    @Test
+    void 관리자가_닫은_게임은_GAME_CLOSED로_거부한다() {
+        givenRoomWithHost();
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(Game.builder()
+                .id(1L).name("핑거 스타").roundDurationSec(60).countdownSec(3).active(false).build()));
+
+        assertThatThrownBy(() -> service.start(ROOM_ID, new GameStartRequest(1L, null, null, null, null), host))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.GAME_CLOSED);
+    }
+
+    @Test
+    void 카탈로그에_없는_게임은_GAME_NOT_FOUND로_거부한다() {
+        givenRoomWithHost();
+        when(gameRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.start(ROOM_ID, new GameStartRequest(99L, null, null, null, null), host))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.GAME_NOT_FOUND);
     }
 
     @Test
@@ -130,10 +158,10 @@ class GameSessionServiceTest {
                 .convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
         GameEventResponse event = eventCaptor.getValue();
         assertThat(event.type()).isEqualTo(GameEventResponse.EventType.GAME_START);
-        // 게임① 과제 = 90초 매치 공유 시드(숫자 문자열) — 전원이 같은 별자리 순서를 뽑는 근거
+        // 게임① 과제 = 60초 매치 공유 시드(숫자 문자열) — 전원이 같은 별자리 순서를 뽑는 근거
         assertThat(event.challenge()).matches("\\d+");
         assertThat(event.constellationKey()).isEqualTo(event.challenge()); // 게임① 하위호환 필드 (-137)
-        assertThat(event.endAt() - event.startAt()).isEqualTo(90_000); // 90초 매치
+        assertThat(event.endAt() - event.startAt()).isEqualTo(60_000); // 60초 매치
         assertThat(event.startAt()).isLessThan(event.endAt());
         assertThat(event.serverNow()).isLessThanOrEqualTo(event.startAt());
     }
@@ -387,7 +415,7 @@ class GameSessionServiceTest {
         verify(messagingTemplate, never()).convertAndSend(eq(GAME_TOPIC), any(GameEventResponse.class));
     }
 
-    /** 게임① 90초 매치: 총점은 완성 개수×100 상한으로, 완성 개수는 이론상 최대치로 클램프된다. */
+    /** 게임① 60초 매치: 총점은 완성 개수×100 상한으로, 완성 개수는 이론상 최대치로 클램프된다. */
     @Test
     void 게임1_총점은_완성_개수_상한으로_클램프되어_기록된다() {
         when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
@@ -410,7 +438,7 @@ class GameSessionServiceTest {
         assertThat(scoreCaptor.getValue().completedCount()).isEqualTo(2);
     }
 
-    /** 게임① 90초 매치: 완성 개수 없이 총점만 주장하면 0점으로 잘린다(무완성 위조 차단). */
+    /** 게임① 60초 매치: 완성 개수 없이 총점만 주장하면 0점으로 잘린다(무완성 위조 차단). */
     @Test
     void 게임1_완성_개수가_없으면_총점도_0으로_잘린다() {
         when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
@@ -494,7 +522,7 @@ class GameSessionServiceTest {
         assertThat(end.results().get(0).pointsEarned()).isEqualTo(28);
     }
 
-    /** 게임① 90초 매치 순위(개선안): 완성 개수가 1순위, 개수가 같으면 총점(=평균)이 2순위. */
+    /** 게임① 60초 매치 순위(개선안): 완성 개수가 1순위, 개수가 같으면 총점(=평균)이 2순위. */
     @Test
     void 게임1_순위는_완성_개수_우선이고_동수면_총점으로_가른다() {
         givenRoomWithHost();
