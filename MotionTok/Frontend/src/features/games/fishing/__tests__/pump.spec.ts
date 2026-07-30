@@ -6,12 +6,17 @@ import { createPump, DEFAULT_PUMP, type PumpSample } from '../pump'
  *
  * 회전 판정(reel.ts)이 실기 효율 53~64%에서 막힌 뒤 대안으로 만든 것이라, 가장 중요한 건
  * **효율 100%가 나오는지**(①②)와 **미세 떨림으로 감기지 않는지**(④)다.
+ *
+ * 2026-07-30부터 진폭 문턱이 px가 아니라 **어깨너비 배수**다. 그래서 feed가 어깨너비를
+ * 함께 받고, 스펙도 카메라 거리 불변성을 회귀로 고정한다.
  */
 
 const TAU = Math.PI * 2
 const FPS = 30
 const DT = 1000 / FPS
 const CY = 240
+/** 실측 어깨너비 대역(148~206px)의 중간 */
+const SW = 165
 
 /** y = CY + sin(...)·ampPx 궤적을 laps 왕복만큼 흘려보낸다 */
 function pumpTrace(opts: {
@@ -20,8 +25,9 @@ function pumpTrace(opts: {
   ampPx: number
   fps?: number
   jitterPx?: number
+  sw?: number
 }): PumpSample {
-  const { laps, perSec, ampPx, fps = FPS, jitterPx = 0 } = opts
+  const { laps, perSec, ampPx, fps = FPS, jitterPx = 0, sw = SW } = opts
   const pump = createPump()
   const dt = 1000 / fps
   let s = 4242
@@ -32,14 +38,14 @@ function pumpTrace(opts: {
   let last: PumpSample = { rate: 0, revs: 0, active: false }
   for (let t = 0; t <= (laps / perSec) * 1000; t += dt) {
     const y = CY + Math.sin(TAU * perSec * (t / 1000)) * ampPx + rnd() * jitterPx
-    last = pump.feed(y, t)
+    last = pump.feed(y, sw, t)
   }
   return last
 }
 
 describe('펌핑 — 정상 왕복', () => {
   it('10왕복 · 0.9/s · 진폭 67px → 효율 90% 이상', () => {
-    // 진폭 문턱을 90px로 올린 뒤(무의식 흔들림 차단) 창이 차기까지 반주기 하나가 더 깎인다
+    // 사인 진폭 67px = 왕복 전체 폭 134px = 어깨너비 ×0.81. 문턱 ×0.5를 넘는다
     const r = pumpTrace({ laps: 10, perSec: 0.9, ampPx: 67 })
     expect(r.revs).toBeGreaterThanOrEqual(9)
     expect(r.active).toBe(true)
@@ -86,16 +92,16 @@ describe('펌핑 — 정상 왕복', () => {
     const pump = createPump()
     let t = 0
     for (; t <= 4000; t += DT) {
-      pump.feed(CY + Math.sin(TAU * (t / 1000)) * 67, t)
+      pump.feed(CY + Math.sin(TAU * (t / 1000)) * 67, SW, t)
     }
-    const moving = pump.feed(CY, t).rate
+    const moving = pump.feed(CY, SW, t).rate
     expect(moving).toBeGreaterThan(0.5)
     // 손을 멈춘 채 3초 경과
     for (let i = 0; i < 90; i++) {
       t += DT
-      pump.feed(CY, t)
+      pump.feed(CY, SW, t)
     }
-    expect(pump.feed(CY, t).rate).toBeLessThan(0.2)
+    expect(pump.feed(CY, SW, t).rate).toBeLessThan(0.2)
   })
 })
 
@@ -103,13 +109,13 @@ describe('펌핑 — 감기로 보지 않는 것', () => {
   it('정지 상태는 누적되지 않는다', () => {
     const pump = createPump()
     let last: PumpSample = { rate: 0, revs: 0, active: false }
-    for (let t = 0; t <= 3000; t += DT) last = pump.feed(CY, t)
+    for (let t = 0; t <= 3000; t += DT) last = pump.feed(CY, SW, t)
     expect(last.revs).toBe(0)
     expect(last.active).toBe(false)
   })
 
   it('진폭이 문턱 미만인 미세 떨림은 누적되지 않는다', () => {
-    // minAmpPx(26px)의 절반짜리 빠른 떨림
+    // 왕복 폭 12px = 어깨너비 ×0.07 — 실측 정지 노이즈(×0.075~0.16) 대역의 빠른 떨림
     const r = pumpTrace({ laps: 40, perSec: 8, ampPx: 6 })
     expect(r.revs).toBe(0)
     expect(r.active).toBe(false)
@@ -118,19 +124,25 @@ describe('펌핑 — 감기로 보지 않는 것', () => {
   it('불감대 안에서만 흔들면 반전으로 인정되지 않는다', () => {
     const pump = createPump()
     // 큰 진폭을 한 번 만들어 창을 채운 뒤(진폭 문턱 통과), 중앙에서만 미세하게 흔든다
-    for (let t = 0; t <= 300; t += DT) pump.feed(CY + Math.sin(TAU * (t / 300)) * 60, t)
+    for (let t = 0; t <= 300; t += DT) pump.feed(CY + Math.sin(TAU * (t / 300)) * 60, SW, t)
     const before = pump.debug().halves
     for (let t = 300; t <= 1000; t += DT) {
-      pump.feed(CY + Math.sin(TAU * 6 * (t / 1000)) * 3, t)
+      pump.feed(CY + Math.sin(TAU * 6 * (t / 1000)) * 3, SW, t)
     }
     // 중앙 미세 떨림은 불감대(진폭의 ±25%)를 못 넘어 반주기를 만들지 않는다
     expect(pump.debug().halves - before).toBeLessThanOrEqual(1)
   })
 
+  it('어깨 너비를 모르면 감기로 인정하지 않는다', () => {
+    const r = pumpTrace({ laps: 10, perSec: 0.9, ampPx: 67, sw: 0 })
+    expect(r.active).toBe(false)
+    expect(r.revs).toBe(0)
+  })
+
   it('reset이 누적을 지운다', () => {
     const pump = createPump()
     for (let t = 0; t <= 3000; t += DT) {
-      pump.feed(CY + Math.sin(TAU * (t / 1000)) * 67, t)
+      pump.feed(CY + Math.sin(TAU * (t / 1000)) * 67, SW, t)
     }
     expect(pump.debug().halves).toBeGreaterThan(3)
     pump.reset()
@@ -145,7 +157,7 @@ describe('펌핑 — 감기로 보지 않는 것', () => {
   })
 
   /**
-   * 지속 속도의 근거 — 랩이 어종표 requiredRate를 정할 때 쓰는 숫자다.
+   * 지속 속도의 근거 — 어종표 requiredRate를 정할 때 쓰는 숫자다.
    *
    * feed의 rate는 마지막 반주기 간격의 역수라 순간값이고, 지속 속도와 3배까지 벌어진다
    * (2026-07-29 실측: y왕복 순간 1.28/s vs 어종표를 잡은 지속 0.37~0.63/s). 순간값을 지속
@@ -156,7 +168,7 @@ describe('펌핑 — 감기로 보지 않는 것', () => {
     const pump = createPump()
     const HZ = 1.0
     for (let t = 0; t <= 10_000; t += DT) {
-      pump.feed(CY + Math.sin(TAU * HZ * (t / 1000)) * 67, t)
+      pump.feed(CY + Math.sin(TAU * HZ * (t / 1000)) * 67, SW, t)
     }
     const d = pump.debug()
     // 구간 안의 반주기 간격은 halves-1개다 — 양 끝이 시각이라 간격이 하나 적다
@@ -165,26 +177,36 @@ describe('펌핑 — 감기로 보지 않는 것', () => {
   })
 })
 
-describe('펌핑 — 회전 동작도 그대로 통과한다', () => {
+describe('펌핑 — 실측 대역과 거리 불변성', () => {
   it('타원 궤도로 돌린 손의 y성분만 봐도 왕복이 잡힌다', () => {
-    // 실측 크랭크: 장축 67px·종횡비 0.55 → y는 진폭 67px 사인파
+    // 실측 크랭크: 오른손 종횡비 0.21~0.23 → x는 버리고 y만 봐도 된다는 근거
     const pump = createPump()
     let last: PumpSample = { rate: 0, revs: 0, active: false }
     for (let t = 0; t <= (10 / 0.89) * 1000; t += DT) {
       const a = TAU * 0.89 * (t / 1000)
-      // x는 버리고 y만 넣는다 — 판정에 x가 필요 없다는 게 이 방식의 핵심
-      last = pump.feed(CY + Math.sin(a) * 67, t)
+      last = pump.feed(CY + Math.sin(a) * 67, SW, t)
     }
     expect(last.revs).toBeGreaterThanOrEqual(9)
   })
 
   /**
-   * 실측 감기 진폭(왕복 전체 폭)은 191~358px였다(2026-07-29 3인). 문턱은 그보다 충분히 낮아
-   * 실제 감기를 놓치지 않으면서, 무의식적 흔들림(수십 px)은 잘라야 한다.
+   * 2026-07-30 실측 3회 반복: 한 손 크랭크 y 진폭이 어깨너비 ×1.736 / ×1.735 / ×1.684,
+   * 손을 멈춘 노이즈가 ×0.075~0.16. 문턱은 그 사이에 있어야 한다.
    */
-  it('진폭 문턱이 실측 감기 진폭(191px 이상)보다 충분히 낮다', () => {
-    expect(DEFAULT_PUMP.minAmpPx).toBeLessThan(191 * 0.6)
-    // 26px은 너무 낮아 손을 어깨 근처에 두기만 해도 저절로 감겼다
-    expect(DEFAULT_PUMP.minAmpPx).toBeGreaterThan(50)
+  it('문턱이 실측 진폭과 노이즈 사이에 있다', () => {
+    // 실측 진폭 하한(×1.68)의 절반 아래 — 실제 감기를 놓치지 않는다
+    expect(DEFAULT_PUMP.minAmpSw).toBeLessThan(1.68 * 0.5)
+    // 실측 노이즈 상한(×0.16)의 2배 이상 — 손을 멈춘 상태로 감기지 않는다
+    expect(DEFAULT_PUMP.minAmpSw).toBeGreaterThan(0.16 * 2)
+  })
+
+  it('카메라 거리가 바뀌어도 같은 동작이면 같은 결과다 — 정규화 회귀', () => {
+    // 실측 두 거리(어깨 204px / 123px)에서 동작이 어깨너비에 비례해 줄어드는 경우.
+    // px 문턱이었다면 원거리에서 진폭이 문턱을 못 넘어 revs가 0이 됐다.
+    const near = pumpTrace({ laps: 10, perSec: 0.9, ampPx: 0.81 * 204 * 0.5, sw: 204 })
+    const far = pumpTrace({ laps: 10, perSec: 0.9, ampPx: 0.81 * 123 * 0.5, sw: 123 })
+    expect(near.revs).toBeGreaterThanOrEqual(9)
+    expect(far.revs).toBeGreaterThanOrEqual(9)
+    expect(Math.abs(near.revs - far.revs)).toBeLessThan(1)
   })
 })

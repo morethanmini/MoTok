@@ -13,11 +13,26 @@
  *
  * 지터 내성은 슈미트 트리거(이중 문턱)로 공짜로 얻는다 — reel.ts가 flipTolerance로 따로
  * 처리해야 했던 문제가 여기서는 구조에 내장된다.
+ *
+ * ── 2026-07-30 실측으로 확정된 것 ──
+ * ① **문턱만 틀렸었다.** 한 손 크랭크의 y 진폭은 어깨너비의 ×1.68~1.74이고 3회 반복
+ *    스프레드가 3%다. 이전 문턱 90px이 이 동작보다 컸던 게 "y로는 안 세어졌다"의 전부다.
+ *    신호는 처음부터 멀쩡했다.
+ * ② **호출부는 크랭크 손을 고정해야 한다.** "움직임이 큰 쪽을 자동 선택"은 3/3 실패했다 —
+ *    대를 잡은 손도 ×1.2 이상 함께 움직이고(실측 197~212px), 왼손으로 돌리면 오히려 반대
+ *    손이 더 움직인 세션도 있었다. 게임은 주손(오른손)으로 고정한다.
+ * ③ **x는 안 쓰는 게 맞다.** 오른손 크랭크의 궤도 종횡비가 0.21~0.23이다 — x 진폭이 y의
+ *    1/5뿐이라 x를 섞으면 신호 대 잡음만 나빠진다.
  */
 
 export interface PumpConfig {
-  /** 왕복 진폭이 이보다 작으면 감기로 보지 않는다(px). 미세 떨림 배제 */
-  minAmpPx: number
+  /**
+   * 왕복 진폭이 이보다 작으면 감기로 보지 않는다 (**어깨너비 배수**). 미세 떨림 배제.
+   *
+   * px 고정값이면 카메라 거리에 흔들린다 — 멀리 앉으면 같은 동작이 문턱을 못 넘는다.
+   * 어깨너비로 나누면 그게 사라진다(`normalize.ts`).
+   */
+  minAmpSw: number
   /** 진폭·중심을 재는 창(ms). rate 측정 창도 겸한다 */
   windowMs: number
   /**
@@ -36,9 +51,17 @@ export interface PumpConfig {
  */
 
 export const DEFAULT_PUMP: PumpConfig = {
-  // 26은 너무 낮았다 — 손을 어깨 근처에 두고만 있어도 저절로 감겼다(2026-07-29 실기).
-  // 실제 감기 진폭 실측치는 191~358px이므로 90은 넉넉히 아래이면서 무의식적 흔들림은 자른다.
-  minAmpPx: 90,
+  /*
+   * ×0.5 — 실측(2026-07-30, 3회 반복)에서 양쪽으로 3배씩 여유가 있는 자리다.
+   *
+   *   한 손 크랭크 y 진폭 : ×1.736 / ×1.735 / ×1.684  (스프레드 3%)
+   *   손을 멈춘 노이즈    : ×0.075 ~ ×0.16
+   *
+   * 노이즈의 3배이고 실제 진폭의 1/3.4다. 이전 값 90px은 *양팔을 크게 흔드는* 동작
+   * 실측치(191~358px)에 맞춰 잡은 값이라 한 손 크랭크에는 과했고, 그래서 "y로는 한 번도
+   * 안 세어졌다"는 결론이 나왔다 — 신호가 아니라 문턱이 틀렸던 것이다.
+   */
+  minAmpSw: 0.5,
   windowMs: 900,
   deadband: 0.25,
 }
@@ -75,8 +98,11 @@ export interface PumpDebug {
 }
 
 export interface Pump {
-  /** 손목 y(캔버스 px)를 넣고 현재 상태를 돌려준다 */
-  feed(y: number, now: number): PumpSample
+  /**
+   * @param y  크랭크 손 손목 y (캔버스 px)
+   * @param sw 어깨 너비(px) — 0이면 진폭 문턱을 판정할 수 없어 active가 false다
+   */
+  feed(y: number, sw: number, now: number): PumpSample
   reset(): void
   debug(): PumpDebug
 }
@@ -133,7 +159,7 @@ export function createPump(config: PumpConfig = DEFAULT_PUMP): Pump {
       return { ampPx: amp, halves, phase, firstTick, lastTick }
     },
 
-    feed(y, now) {
+    feed(y, sw, now) {
       hist.push({ y, t: now })
       while (hist.length && now - hist[0]!.t > config.windowMs) hist.shift()
 
@@ -147,7 +173,7 @@ export function createPump(config: PumpConfig = DEFAULT_PUMP): Pump {
         if (p.y > hi) hi = p.y
       }
       amp = hi - lo
-      if (amp < config.minAmpPx) {
+      if (!(sw > 0) || amp / sw < config.minAmpSw) {
         // 진폭 부족 = 정지 또는 미세 떨림. 위상은 유지한다(잠깐 느려진 것으로 방향을 잃지 않게)
         return { rate: rateAt(now), revs, active: false }
       }
