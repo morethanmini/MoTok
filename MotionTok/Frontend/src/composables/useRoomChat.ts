@@ -23,6 +23,7 @@
  *   watch(chat.gameEvents, ...)     // GAME_START/PROGRESS/PLAYER_FINISHED/GAME_END 수신
  */
 import { onScopeDispose, shallowRef, ref } from 'vue'
+import { roomsApi } from '@/api'
 import { publishGlobal, stompConnected, subscribeGlobal } from './useGlobalStomp'
 import type {
   ChatMessage,
@@ -42,7 +43,23 @@ export function useRoomChat() {
   let roomSubscriptions: Array<() => void> = []
   let currentRoomId: string | null = null
 
+  /**
+   * 이 방에 <b>입장</b>했는지 — connect()로 방 토픽을 얹고 발신 대상(currentRoomId)이 확정된 상태.
+   *
+   * <p>{@code connected}(전역 소켓)와 반드시 구분해야 한다. 전역 연결은 로비에서부터 살아 있어서
+   * 그것만 보고 발신하면 {@code currentRoomId}가 없어 조용히 버려지고(startGame 등의 가드),
+   * 수신도 {@code /topic/rooms/{id}/game} 구독 전이라 방송을 놓친다(토픽은 재생하지 않는다).
+   * 방에 들어간 직후 무언가를 자동으로 발신·수신해야 하는 쪽은 이 값을 기다려야 한다.</p>
+   */
+  const joined = ref(false)
+
   const messages = shallowRef<ChatMessage[]>([])
+  /**
+   * 입장 전(새로고침 이전 포함) 대화 이력(-164) — 서버 채팅 로그(Redis Stream)에서 회수한다.
+   * messages와 분리하는 이유: 말풍선 워처가 messages의 "새 항목"만 띄우는데, 이력을 거기에
+   * 섞으면 옛 대화가 화면에 말풍선으로 쏟아진다. 이력은 전체보기에서만 합쳐 보여준다.
+   */
+  const history = shallowRef<ChatMessage[]>([])
   const gameEvents = shallowRef<GameEvent[]>([])
   const lastError = ref<StompErrorPayload | null>(null)
   /** 방 정보 수정 알림(-130). 최신 1건만 들고 있으면 되므로 배열이 아니다. */
@@ -131,6 +148,7 @@ export function useRoomChat() {
     // 방을 옮기면 이전 방의 대화·이벤트가 남아 있으면 안 된다.
     // (연결이 앱 수명만큼 사니 이 초기화는 이제 '입장' 시점의 일이다.)
     messages.value = []
+    history.value = []
     gameEvents.value = []
     lastError.value = null
     roomUpdated.value = null
@@ -144,6 +162,14 @@ export function useRoomChat() {
       subscribeGlobal(`/topic/rooms/${roomId}/members`, handleMembersFrame),
       subscribeGlobal('/user/queue/errors', handleErrorFrame),
     ]
+    joined.value = true
+    // 이력 회수(-164) — 새로고침 전 대화를 되살린다. 구독을 건 뒤에 부르므로 그 사이 도착분과
+    // 겹칠 수 있어 chatId로 걸러 담는다. 실패해도 실시간 채팅에는 지장 없다.
+    void roomsApi.chatHistory(roomId).then((past) => {
+      if (currentRoomId !== roomId) return // 그 사이 방을 옮김
+      const liveIds = new Set(messages.value.map((m) => m.chatId))
+      history.value = past.filter((m) => !liveIds.has(m.chatId))
+    }).catch(() => {})
     return Promise.resolve()
   }
 
@@ -157,6 +183,8 @@ export function useRoomChat() {
     roomSubscriptions.forEach((dispose) => dispose())
     roomSubscriptions = []
     currentRoomId = null
+    joined.value = false
+    history.value = []
   }
 
   /** 채팅 발신. 로컬 append 없음 — 성공하면 같은 메시지가 구독 중인 topic으로 돌아온다. */
@@ -190,6 +218,18 @@ export function useRoomChat() {
       mode: mode ?? null,
       wallCount: wallCount ?? null,
     })
+  }
+
+  /** 준비 완료 회신(-162) — GAME_PREPARE의 prepareId 그대로. 전원 모이면 GAME_START가 온다. */
+  function sendGameReady(prepareId: string) {
+    if (!currentRoomId) return
+    publishGlobal(`/app/rooms/${currentRoomId}/game/ready`, { prepareId })
+  }
+
+  /** 게임 강제종료(-164, 방장 전용 — 서버가 방장 검증). 수리되면 GAME_ABORTED가 배포된다. */
+  function sendGameAbort() {
+    if (!currentRoomId) return
+    publishGlobal(`/app/rooms/${currentRoomId}/game/abort`, {})
   }
 
   /** 게임④ 출제자 포즈 제출(-86) — 서버가 검증 후 POSE_SET을 방 전체에 배포한다. */
@@ -251,9 +291,11 @@ export function useRoomChat() {
 
   return {
     connected: stompConnected,
+    joined,
     subscribeRaw,
     publishRaw,
     messages,
+    history,
     gameEvents,
     lastError,
     roomUpdated,
@@ -265,6 +307,8 @@ export function useRoomChat() {
     sendChat,
     suggestGame,
     startGame,
+    sendGameReady,
+    sendGameAbort,
     sendPoseSubmit,
     sendGameProgress,
     sendGameFinish,

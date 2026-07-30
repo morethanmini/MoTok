@@ -1,6 +1,6 @@
 /** 인증 API (명세 §1). */
 import { http } from '../http'
-import { setTokens, clearTokens } from '../token'
+import { setAccessToken, setGuestAccessToken, clearTokens } from '../token'
 import type {
   Availability,
   FindIdResponse,
@@ -18,17 +18,18 @@ export const authApi = {
 
   async login(body: LoginRequest) {
     const res = await http.post<TokenResponse>('/auth/login', body)
-    setTokens(res.accessToken, res.refreshToken)
+    setAccessToken(res.accessToken)
     return res
   },
 
+  /** 서버가 Refresh 쿠키까지 지운다 — 클라이언트는 HttpOnly 쿠키를 건드릴 수 없다. */
   async logout() {
     await http.post<void>('/auth/logout')
     clearTokens()
   },
 
-  refresh: (refreshToken: string) =>
-    http.post<TokenResponse>('/auth/token/refresh', { refreshToken }),
+  /** Refresh 토큰은 쿠키로 실려 나가므로 보낼 본문이 없다. */
+  refresh: () => http.post<TokenResponse>('/auth/token/refresh'),
 
   checkEmail: (email: string) => http.get<Availability>('/auth/availability/email', { email }),
   checkNickname: (nickname: string) =>
@@ -36,16 +37,16 @@ export const authApi = {
 
   async social(provider: SocialProvider, body: SocialLoginRequest) {
     const res = await http.post<TokenResponse>(`/auth/social/${provider}`, body)
-    setTokens(res.accessToken, res.refreshToken)
+    setAccessToken(res.accessToken)
     return res
   },
 
   async guest() {
     const res = await http.post<GuestResponse>('/auth/guest')
-    // 이전 회원 토큰 잔재(특히 14일 refresh)를 메모리·양쪽 스토리지에서 제거한 뒤,
-    // 게스트 토큰은 sessionStorage에만 둔다(탭 종료 시 소멸 — 게스트 세션의 일회성과 일치).
+    // 이전 회원 토큰 잔재를 지운다. 회원 Refresh 쿠키는 이 응답의 Set-Cookie가 함께 지운다 —
+    // 남겨 두면 게스트로 쓰는 동안 옛 회원 세션이 갱신으로 되살아난다.
     clearTokens()
-    setTokens(res.accessToken, undefined, false)
+    setGuestAccessToken(res.accessToken)
     return res
   },
 

@@ -9,13 +9,29 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import FriendsView from '@/features/friends/FriendsView.vue'
+import type { LobbyLiveHandlers } from '@/composables/useLobbyLive'
 import { routes } from '@/router/routes'
 
 // vi.mock 팩토리는 파일 최상단으로 끌어올려지므로 스파이도 hoisted로 만들어야 참조가 닿는다.
-const { cancelRequest, respond, requests } = vi.hoisted(() => ({
+const { cancelRequest, respond, requests, lobbyLive } = vi.hoisted(() => ({
   cancelRequest: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   respond: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   requests: vi.fn<(d?: string) => Promise<unknown[]>>(),
+  /** 재조회 트리거를 손에 쥐기 위한 보관함 — 아래 useLobbyLive 목이 채운다. */
+  lobbyLive: { handlers: null as LobbyLiveHandlers | null },
+}))
+
+/**
+ * 자동 재조회의 트리거를 가로챈다.
+ *
+ * -142로 창 포커스 기반 폴링(<code>useAutoReload</code>)이 제거되고 전역 STOMP의
+ * 알림·프레즌스 델타·재연결이 그 자리를 대신했다. 실제 소켓을 세우지 않고 그 콜백만
+ * 직접 부르면 "무엇이 재조회를 일으키는가"를 트리거와 무관하게 고정할 수 있다.
+ */
+vi.mock('@/composables/useLobbyLive', () => ({
+  useLobbyLive: (handlers: LobbyLiveHandlers) => {
+    lobbyLive.handlers = handlers
+  },
 }))
 
 const RECEIVED = [
@@ -24,6 +40,9 @@ const RECEIVED = [
 const SENT = [
   { requestId: 21, requesterNickname: '나', addresseeNickname: '지훈', status: 'PENDING', createdAt: '2026-07-19T00:00:00Z' },
 ]
+
+/** /user/queue/presence의 FRIEND 델타 한 건(-149) — 화면은 내용이 아니라 "변화가 있었다"만 쓴다. */
+const FRIEND_ONLINE = { userId: 11, presence: 'ONLINE', currentRoomId: null }
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -125,11 +144,22 @@ describe('FriendsView 탭', () => {
     expect(wrapper.get('.requests-list li').text()).toContain('수아')
   })
 
-  it('창 포커스가 돌아오면 다시 불러온다 — 상대가 처리한 결과를 새로고침 없이 반영', async () => {
+  it('친구 프레즌스 변화가 오면 다시 불러온다 — 상대가 처리한 결과를 새로고침 없이 반영', async () => {
     const wrapper = await mountView()
     const before = requests.mock.calls.length
 
-    window.dispatchEvent(new Event('focus'))
+    lobbyLive.handlers?.onFriendPresence?.(FRIEND_ONLINE)
+    await flushPromises()
+
+    expect(requests.mock.calls.length).toBeGreaterThan(before)
+    expect(wrapper.exists()).toBe(true)
+  })
+
+  it('재연결하면 끊긴 동안의 변화를 한 번 맞춘다 — STOMP는 놓친 이벤트를 되돌려주지 않는다', async () => {
+    const wrapper = await mountView()
+    const before = requests.mock.calls.length
+
+    lobbyLive.handlers?.onResync?.()
     await flushPromises()
 
     expect(requests.mock.calls.length).toBeGreaterThan(before)
@@ -147,7 +177,7 @@ describe('FriendsView 탭', () => {
     }
     const before = requests.mock.calls.length
 
-    window.dispatchEvent(new Event('focus'))
+    lobbyLive.handlers?.onFriendPresence?.(FRIEND_ONLINE)
     await flushPromises()
 
     expect(requests.mock.calls.length).toBe(before)

@@ -19,6 +19,8 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import ssafy.a706.backend.auth.jwt.JwtAuthenticationFilter;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
+import ssafy.a706.backend.auth.session.SessionRevocationStore;
+import ssafy.a706.backend.auth.store.AccountBlockStore;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.global.response.ErrorResponse;
 import ssafy.a706.backend.global.security.InternalApiKeyFilter;
@@ -33,6 +35,8 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final SessionRevocationStore sessionRevocationStore;
+    private final AccountBlockStore accountBlockStore;
     private final ObjectMapper objectMapper;
 
     @Value("${app.cors.allowed-origins}")
@@ -83,6 +87,8 @@ public class SecurityConfig {
                                     "/api/auth/token/refresh").permitAll()
                             // 공개 조회 — 게임 카탈로그·상세·리더보드(비로그인·게스트는 myRank만 빠진다)
                             .requestMatchers(HttpMethod.GET, "/api/games", "/api/games/*", "/api/games/*/leaderboard").permitAll()
+                            // 비속어 사전(-152) — 가입 폼(비로그인) 선검사용. 강제는 서버 검증이라 공개해도 무해
+                            .requestMatchers(HttpMethod.GET, "/api/v1/profanity/wordlist").permitAll()
                             // 회원 전용 로비·멀티방 플로우 — 게스트는 1인방만 쓴다(-109).
                             // 목록·생성·빠른시작·초대코드/직접 입장·강퇴는 전부 멀티 플로우라 ROLE_USER로 좁힌다.
                             // (개별 방 조회·나가기·화상 접속은 게스트 1인방에도 필요해 아래 anyRequest 인증으로 통과)
@@ -118,11 +124,18 @@ public class SecurityConfig {
                             .anyRequest().authenticated();
                 })
                 .exceptionHandling(eh -> eh
+                        // 단일 세션 밀어내기로 폐기된 토큰의 401은 전용 코드로 갈라 준다 —
+                        // 클라이언트가 "다른 곳에서 로그인" 안내를 일반 만료와 다르게 띄우는 근거(v0.2.25).
                         .authenticationEntryPoint((req, res, ex) ->
-                                writeError(res, ErrorCode.UNAUTHORIZED, req.getRequestURI()))
+                                writeError(res,
+                                        JwtAuthenticationFilter.wasDisplaced(req)
+                                                ? ErrorCode.SESSION_DISPLACED
+                                                : ErrorCode.UNAUTHORIZED,
+                                        req.getRequestURI()))
                         .accessDeniedHandler((req, res, ex) ->
                                 writeError(res, ErrorCode.FORBIDDEN, req.getRequestURI())))
-                .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider),
+                .addFilterBefore(new JwtAuthenticationFilter(
+                                jwtTokenProvider, sessionRevocationStore, accountBlockStore, objectMapper),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(new InternalApiKeyFilter(internalApiKey, objectMapper),
                         UsernamePasswordAuthenticationFilter.class);

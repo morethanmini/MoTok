@@ -109,8 +109,12 @@ erDiagram
   USER ||--o{ FRIENDSHIP : "수신"
   USER ||--o{ REPORT : "신고자"
   USER ||--o{ REPORT : "피신고자"
+  USER ||--o{ USER_REPORT : "신고자"
+  USER ||--o{ USER_REPORT : "피신고자"
   USER ||--o{ SANCTION : "제재 대상"
   USER ||--o{ SANCTION : "처리 관리자"
+  USER_REPORT ||--o{ SANCTION : "제재 근거(ref_report_type=USER_REPORT, 선택)"
+  REPORT ||--o{ SANCTION : "제재 근거(ref_report_type=CHAT_REPORT, 선택)"
   GAME ||--o{ GAME_SESSION : "플레이 기록"
   GAME_SESSION ||--o{ GAME_SESSION_RESULT : "회원별 결과"
   USER ||--o{ GAME_SESSION_RESULT : "전적"
@@ -206,15 +210,31 @@ erDiagram
     datetime created_at "신고 일시"
     datetime updated_at "처리 갱신 시각"
   }
+  USER_REPORT {
+    bigint id PK "구현: user_reports (-112)"
+    bigint reporter_user_id FK "신고자, ix_user_report_reporter"
+    varchar reporter_nickname "신고 시점 닉네임 스냅샷"
+    bigint reported_user_id FK "피신고자, ix_user_report_reported"
+    varchar reported_nickname "닉네임 스냅샷"
+    varchar reason "ABUSE | HATE | SEXUAL | SPAM | ETC"
+    varchar reason_detail "직접 입력, null 가능"
+    varchar status "RECEIVED | REVIEWING | RESOLVED | REJECTED"
+    datetime created_at "신고 일시"
+    datetime updated_at "처리 갱신 시각"
+  }
   SANCTION {
-    bigint id PK
-    bigint user_id FK "제재 대상"
-    bigint admin_id FK "처리 관리자"
-    varchar type "WARNING | SUSPENSION | PERMANENT_BAN"
-    varchar reason
-    datetime starts_at
-    datetime ends_at "영구 정지는 null"
+    bigint id PK "구현: sanction_history (-112 후속), append-only"
+    bigint user_id FK "제재 대상, ix_sanction_user"
+    varchar user_nickname "대상 닉네임 — 제재 시점 스냅샷"
+    bigint admin_user_id FK "집행 관리자"
+    varchar admin_nickname "집행자 닉네임 스냅샷"
+    varchar type "WARN | SUSPEND | RELEASE | BAN | UNBAN"
+    int days "기간 정지 일수. RELEASE·BAN·UNBAN은 null(BAN은 기간 개념이 없다)"
+    varchar reason "최대 200자"
+    bigint ref_report_id "근거 신고 id, 직권 제재는 null이라 FK 아님"
+    varchar ref_report_type "USER_REPORT | CHAT_REPORT — 위 id가 어느 테이블인지, id와 짝"
     datetime created_at
+    datetime acknowledged_at "WARN을 당사자가 확인한 시각. 그 외 유형은 항상 null"
   }
   GAME {
     bigint id PK
@@ -323,7 +343,7 @@ erDiagram
   <table>
     <tr><th style="width:160px">도메인</th><th>엔티티</th><th>담당 요구사항(지라)</th></tr>
     <tr><td>회원·인증</td><td><code>USER</code> <code>OAUTH_ACCOUNT</code> <code>LOGIN_HISTORY</code></td><td>-21 -22 -23 -108 -111 -122 / role은 -104</td></tr>
-    <tr><td>관리자</td><td><code>REPORT</code> <code>SANCTION</code> <code>ADMIN_AUDIT_LOG</code> + <code>GAME.is_active</code></td><td>-104 -105 -106 -107 -112</td></tr>
+    <tr><td>관리자</td><td><code>REPORT</code>(chat_reports) <code>USER_REPORT</code>(user_reports) <code>SANCTION</code>(sanction_history) <code>ADMIN_AUDIT_LOG</code> + <code>GAME.is_active</code> · 정지 상태는 Redis <code>auth:suspended:{userId}</code></td><td>-104 -105 -106 -107 -112 -132 -133</td></tr>
     <tr><td>포인트·상점·꾸미기</td><td><code>POINT_HISTORY</code> <code>ITEM</code> <code>USER_ITEM</code> <code>DECOR_SETTING</code></td><td>-56 -93 -94 -55 -102 / 가상 배경(-92)은 <code>DECOR_SETTING.config</code>에 선택값 저장</td></tr>
     <tr><td>소셜</td><td><code>FRIENDSHIP</code></td><td>-57 -98 -100</td></tr>
     <tr><td>게임 메타·전적·랭킹</td><td><code>GAME</code> <code>GAME_SESSION</code> <code>GAME_SESSION_RESULT</code> <code>LEADERBOARD</code></td><td>-28 -58 -82~84 -89 -96 -97 -114 -116 -117</td></tr>
@@ -351,7 +371,7 @@ erDiagram
     <li><b>전적 조회(-97)는 <code>LEADERBOARD</code>만으로 충분.</b> 게임별 플레이 횟수·최고 점수·순위가 전부 이 테이블(+Redis ZREVRANK)에서 나온다. <code>GAME_SESSION_RESULT</code>는 개별 판 기록(로그·분쟁 추적·-122)용이며 화면 필수 아님.</li>
     <li><b>정산 트랜잭션(-117)의 쓰기 순서.</b> <code>GAME_SESSION</code> + <code>GAME_SESSION_RESULT</code>(회원만) + <code>POINT_HISTORY</code>/<code>USER.point_balance</code> + <code>LEADERBOARD</code> upsert를 한 트랜잭션으로. 이후 Redis <code>rank:{gameId}</code> ZADD GT. Redis 유실 시 <code>LEADERBOARD</code>에서 warm-up(비기능 -96).</li>
     <li><b>게스트 이관의 범위.</b> 클라 로컬 기록을 가입 시 <code>LEADERBOARD</code>(best_score GT·play_count 가산)와 <code>POINT_HISTORY(GUEST_MIGRATE)</code>로만 반영. 세션이 이미 소멸했으므로 <code>GAME_SESSION_RESULT</code>는 만들지 않는다.</li>
-    <li><b>제재↔계정 상태 동기화.</b> <code>SANCTION</code> 생성 시 <code>USER.status</code>를 SUSPENDED/BANNED로 갱신, 일시정지 해제는 로그인 시점 lazy 체크(ends_at &lt; now → ACTIVE 복구)로 처리하면 배치 불필요.</li>
+    <li><b>제재는 상태와 이력을 나눠 갖는다(구현 시 초안에서 바뀐 지점).</b> 초안은 <code>SANCTION</code> 생성 시 <code>USER.status</code>를 SUSPENDED/BANNED로 갱신하고 로그인 시점 lazy 체크로 되돌리는 방식이었다. 구현은 <b>기간 정지를 status에 담지 않는다</b> — 컬럼에 담으면 만료 때 ACTIVE로 되돌릴 주체가 반드시 필요하고(배치든 lazy 체크든), 그게 밀리거나 특정 경로를 안 타면 이미 풀렸어야 할 계정이 계속 막힌다. 그래서 <b>"지금 정지 중인가"는 Redis <code>auth:suspended:{userId}</code> TTL</b>이 갖는다 — 키가 사라지는 순간이 곧 해제라 복구 작업 자체가 없어지고, 남은 기간 조회도 TTL 한 번이다. <code>sanction_history</code>는 TTL이 증발한 뒤에도 남아야 하는 사실(누가 누구를 언제 왜 몇 일)만 담는 append-only 이력이고, 누적 정지 횟수도 여기서 센다. <b>근거 신고는 (id, 유형) 쌍으로 남긴다</b> — <code>user_reports</code>와 <code>chat_reports</code>는 별개 테이블이고 id가 각각 1부터 증가하므로 <code>ref_report_id=7</code>만으로는 어느 쪽 7번인지 알 수 없다. 두 테이블에 각각 FK를 걸지 않는 이유는 직권 제재(둘 다 null)가 있어 어느 쪽으로도 NOT NULL FK를 세울 수 없기 때문이다. <code>USER.status</code>는 <b>스스로 풀리지 않는 상태</b>(BANNED·DELETED) 전용으로 남긴다 — <b>영구 정지(-105)가 정확히 그 경우다.</b> 밴은 만료가 있으면 오히려 버그이므로 TTL을 쓸 수 없고 <code>status=BANNED</code>가 원천이며, Redis <code>auth:banned:{userId}</code>(TTL 없음)는 요청마다 도는 인증 경로용 캐시다. 두 값의 유일한 전이는 관리자의 명시적 해제이고 그때 함께 지우므로 "되돌릴 주체가 필요하다"는 문제가 생기지 않는다. 밴을 걸 때 기간 정지 키를 지우는 것도 같은 이유다 — 남겨 두면 TTL 만료 시 "풀렸다"는 변화가 생기는데 실제로는 여전히 밴이다. 부과 시 Refresh 토큰·프레즌스를 지우고 방에서 빼고 웹소켓까지 끊어야 하는 이유는 Access 토큰이 서명만으로 유효해서(기본 1시간) 그것들 없이는 정지가 즉시 듣지 않기 때문이다. <b>경고(WARN)만 예외로 아무것도 끊지 않는다</b> — 접근을 막지 않는 제재이므로 <b>당사자에게 전달되는 것이 곧 제재의 실행</b>이고, 그래서 이 테이블에 유일한 갱신 컬럼 <code>acknowledged_at</code>이 있다(제재 사실이 아니라 <i>전달 확인</i>이라 append-only 원칙과 충돌하지 않는다). 푸시는 접속 중이 아니면 폐기되므로 확인 시각을 서버가 들고 있어야 못 본 경고를 다음 접속 때 다시 띄울 수 있다.</li>
     <li><b>탈퇴(-111).</b> <code>status=DELETED</code> + <code>deleted_at</code> 기록, 닉네임·이메일은 <code>deleted_1042</code> 식 치환으로 UK 충돌 방지. <code>LEADERBOARD</code>는 조회 시 status 필터로 랭킹 노출 제외. 탈퇴 시 본인 확인 필수(자체 가입=비밀번호 / 소셜 전용=소셜 재인증)이며, <code>OAUTH_ACCOUNT</code>는 삭제한다.</li>
     <li><b>재가입 1주일 제한(-111)에 <code>WITHDRAWN_ACCOUNT</code>가 필요한 이유.</b> 탈퇴하면 <code>USER.email</code>이 tombstone으로 덮여 "이 이메일이 언제 탈퇴했는지"를 알 방법이 사라지고, <code>OAUTH_ACCOUNT</code>도 지워져 소셜 식별자마저 남지 않는다. 그래서 판정용 식별자를 <b>해시로만</b> 따로 남긴다 — 동일성 비교만 하면 되므로 평문이 필요 없고, 탈퇴로 지운 개인정보를 되살려 두지 않는다. USER와 FK로 잇지 않는 이유도 같다(계정이 지워져도 판정은 남아야 함). 쿨다운이 지난 행은 판정에 걸리지 않으므로 배치로 정리 가능.</li>
     <li><b>소셜 닉네임 미수집(-22).</b> provider 닉네임을 <code>USER.nickname</code>에 넣지 않는다(운영 정책 미검증 + 사용자가 고른 이름이 아님). 최초 소셜 로그인은 <code>nickname=pending_*</code>(28자 — 닉네임 상한 16자를 넘겨 선점 불가) + <code>nickname_pending=true</code>로 만들고, <code>PATCH /users/me</code>로 확정할 때 플래그를 해제한다.</li>

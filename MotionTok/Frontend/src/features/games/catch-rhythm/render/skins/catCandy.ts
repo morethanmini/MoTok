@@ -10,7 +10,7 @@
  */
 
 import type { CatchSkin, HandView, HitFxView, NoteView } from './types'
-import type { NoteHand } from '../../core/types'
+import type { Hand, NoteHand } from '../../core/types'
 
 /**
  * 왼손 = 파랑, 오른손 = 빨강, 아무 손 = 보라. 전부 파스텔.
@@ -20,6 +20,40 @@ const PALETTE: Record<NoteHand, { body: string; edge: string; glow: string }> = 
   left: { body: '#9ec5fe', edge: '#1d4ed8', glow: '#e0edff' },
   right: { body: '#ffa8a8', edge: '#c92a2a', glow: '#ffe8e8' },
   any: { body: '#c3aefc', edge: '#6d28d9', glow: '#efe7ff' },
+}
+const PAW_ASSET: Record<Hand, string> = {
+  left: '/assets/games/catch-rhythm/paw-left-sky.png',
+  right: '/assets/games/catch-rhythm/paw-right-pink.png',
+}
+const NOTE_PAW_ASSET = '/assets/games/catch-rhythm/note-paw-pink.png'
+const BACKGROUND_ASSET = '/assets/games/catch-rhythm/background-peach-weave.png'
+const pawImages: Partial<Record<Hand, HTMLImageElement>> = {}
+let notePawImage: HTMLImageElement | null = null
+let backgroundImage: HTMLImageElement | null = null
+
+function pawImage(side: Hand): HTMLImageElement {
+  const cached = pawImages[side]
+  if (cached) return cached
+  const image = new Image()
+  image.src = PAW_ASSET[side]
+  pawImages[side] = image
+  return image
+}
+
+function rhythmNoteImage(): HTMLImageElement {
+  if (notePawImage) return notePawImage
+  const image = new Image()
+  image.src = NOTE_PAW_ASSET
+  notePawImage = image
+  return image
+}
+
+function rhythmBackgroundImage(): HTMLImageElement {
+  if (backgroundImage) return backgroundImage
+  const image = new Image()
+  image.src = BACKGROUND_ASSET
+  backgroundImage = image
+  return image
 }
 /** 노트 안에 찍는 손 표시 — 색맹·저대비 환경에서도 확실하다 */
 const HAND_MARK: Record<NoteHand, string> = { left: 'L', right: 'R', any: '' }
@@ -98,7 +132,7 @@ function handMark(ctx: CanvasRenderingContext2D, note: NoteView, color: string) 
   ctx.save()
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.font = `900 ${Math.round(note.radius * 1.05)}px system-ui, sans-serif`
+  ctx.font = `${Math.round(note.radius * 0.9)}px "DNF Bit Bit", monospace`
   ctx.lineWidth = Math.max(2, note.radius * 0.16)
   ctx.strokeStyle = 'rgba(255,255,255,0.95)'
   ctx.fillStyle = color
@@ -111,38 +145,69 @@ function handMark(ctx: CanvasRenderingContext2D, note: NoteView, color: string) 
 function bubble(ctx: CanvasRenderingContext2D, note: NoteView) {
   const { x, y, radius } = note
   const c = PALETTE[note.hand]
+  const image = rhythmNoteImage()
+
+  if (image.complete && image.naturalWidth) {
+    const size = radius * 3.05
+    ctx.save()
+    if (note.hand === 'left') ctx.filter = 'hue-rotate(190deg) saturate(0.55) brightness(1.3)'
+    else if (note.hand === 'any') ctx.filter = 'hue-rotate(255deg) saturate(0.86)'
+    ctx.drawImage(image, x - size / 2, y - size / 2, size, size)
+    ctx.restore()
+    return
+  }
+
+  ctx.save()
+  ctx.fillStyle = '#ffffff'
+  ctx.strokeStyle = c.edge
+  ctx.lineWidth = Math.max(2, radius * 0.18)
+  ctx.beginPath()
+  ctx.arc(x, y, radius * 1.08, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
 
   const grad = ctx.createRadialGradient(
-    x - radius * 0.3,
-    y - radius * 0.35,
-    radius * 0.1,
+    x - radius * 0.26,
+    y - radius * 0.32,
+    radius * 0.08,
     x,
     y,
-    radius,
+    radius * 0.88,
   )
   grad.addColorStop(0, c.glow)
   grad.addColorStop(1, c.body)
   ctx.fillStyle = grad
   ctx.beginPath()
-  ctx.arc(x, y, radius, 0, Math.PI * 2)
+  ctx.arc(x, y, radius * 0.88, 0, Math.PI * 2)
   ctx.fill()
 
-  ctx.lineWidth = Math.max(1.5, radius * 0.14)
+  ctx.lineWidth = Math.max(1.5, radius * 0.1)
   ctx.strokeStyle = c.edge
   ctx.stroke()
 
-  ctx.fillStyle = 'rgba(255,255,255,0.7)'
+  // 작은 젤리 발가락 네 개와 중심 패드로 고양이 테마를 노트에도 이어 준다.
+  ctx.fillStyle = 'rgba(255,255,255,0.74)'
+  for (const [px, py] of [
+    [-0.28, -0.25],
+    [0, -0.38],
+    [0.28, -0.25],
+  ] as const) {
+    ctx.beginPath()
+    ctx.arc(x + px * radius, y + py * radius, radius * 0.11, 0, Math.PI * 2)
+    ctx.fill()
+  }
   ctx.beginPath()
   ctx.ellipse(
-    x - radius * 0.34,
-    y - radius * 0.4,
-    radius * 0.18,
-    radius * 0.11,
-    -0.6,
+    x,
+    y + radius * 0.13,
+    radius * 0.3,
+    radius * 0.24,
+    0,
     0,
     Math.PI * 2,
   )
   ctx.fill()
+  ctx.restore()
 
   handMark(ctx, note, c.edge)
 }
@@ -242,10 +307,20 @@ function trailRibbon(ctx: CanvasRenderingContext2D, note: NoteView) {
 
   const end = path[path.length - 1]!
   ctx.globalAlpha = 1
-  ctx.fillStyle = c.edge
-  ctx.beginPath()
-  ctx.arc(end.x, end.y, width * 0.42, 0, Math.PI * 2)
-  ctx.fill()
+  const image = rhythmNoteImage()
+  if (image.complete && image.naturalWidth) {
+    const size = width * 2.25
+    ctx.save()
+    if (note.hand === 'left') ctx.filter = 'hue-rotate(190deg) saturate(0.55) brightness(1.3)'
+    else if (note.hand === 'any') ctx.filter = 'hue-rotate(255deg) saturate(0.86)'
+    ctx.drawImage(image, end.x - size / 2, end.y - size / 2, size, size)
+    ctx.restore()
+  } else {
+    ctx.fillStyle = c.edge
+    ctx.beginPath()
+    ctx.arc(end.x, end.y, width * 0.42, 0, Math.PI * 2)
+    ctx.fill()
+  }
 
   if (note.head) {
     ctx.fillStyle = '#fff'
@@ -268,23 +343,25 @@ function trailRibbon(ctx: CanvasRenderingContext2D, note: NoteView) {
  */
 function paw(ctx: CanvasRenderingContext2D, hand: HandView) {
   const { x, y, radius, isFist, side } = hand
-  const c = PALETTE[side]
-  const squeeze = isFist ? 0.62 : 1
-  const spread = isFist ? 0.72 : 1
+  const image = pawImage(side)
+  if (!image.complete || !image.naturalWidth) return
+  const size = radius * (isFist ? 3.3 : 3.8)
 
   ctx.save()
-  ctx.globalAlpha = 0.92
-  ctx.fillStyle = c.body
-  ctx.strokeStyle = c.edge
-  ctx.lineWidth = Math.max(1.5, radius * 0.14)
+  ctx.globalAlpha = isFist ? 0.84 : 1
+  ctx.drawImage(image, x - size / 2, y - size / 2, size, size)
+  ctx.restore()
+  return
+
+  /*
 
   // 발바닥 젤리
   ctx.beginPath()
   ctx.ellipse(
-    x,
-    y + radius * 0.18,
-    radius * 0.72 * squeeze,
-    radius * 0.6 * squeeze,
+    0,
+    r * 0.1,
+    r * 1.02,
+    r * 1.04,
     0,
     0,
     Math.PI * 2,
@@ -293,26 +370,24 @@ function paw(ctx: CanvasRenderingContext2D, hand: HandView) {
   ctx.stroke()
 
   // 발가락 4개
-  for (const [tx, ty] of [
-    [-0.62, -0.5],
-    [-0.22, -0.78],
-    [0.22, -0.78],
-    [0.62, -0.5],
+  ctx.strokeStyle = c.edge
+  ctx.lineWidth = Math.max(1.6, r * 0.105)
+  for (const [tx, ty, angle] of [
+    [-0.58, -0.43, -0.52],
+    [-0.2, -0.7, -0.18],
+    [0.2, -0.7, 0.18],
+    [0.58, -0.43, 0.52],
   ] as const) {
-    ctx.beginPath()
-    ctx.ellipse(
-      x + tx * radius * spread,
-      y + ty * radius * spread,
-      radius * 0.24 * squeeze,
-      radius * 0.28 * squeeze,
-      tx * 0.5,
-      0,
-      Math.PI * 2,
-    )
-    ctx.fill()
-    ctx.stroke()
+    pad(tx * r, ty * r, r * 0.23, r * 0.32, angle)
   }
+  pad(0, r * 0.28, r * 0.62, r * 0.49)
+
+  ctx.fillStyle = 'rgba(255,255,255,0.54)'
+  ctx.beginPath()
+  ctx.ellipse(-r * 0.22, r * 0.08, r * 0.19, r * 0.1, -0.48, 0, Math.PI * 2)
+  ctx.fill()
   ctx.restore()
+  */
 }
 
 function star(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
@@ -333,24 +408,19 @@ export const catCandySkin: CatchSkin = {
   id: 'cat-candy',
   label: '캣캔디',
 
-  drawBackground(ctx, w, h, tMs) {
+  drawBackground(ctx, w, h) {
     const grad = ctx.createLinearGradient(0, 0, 0, h)
     grad.addColorStop(0, '#fff3ea')
     grad.addColorStop(1, '#ffe6d8')
     ctx.fillStyle = grad
     ctx.fillRect(0, 0, w, h)
 
-    ctx.fillStyle = 'rgba(255,255,255,0.5)'
-    for (let i = 0; i < 3; i++) {
-      const speed = 0.008 + i * 0.004
-      const cx = ((tMs * speed + i * w * 0.4) % (w + 260)) - 130
-      const cy = h * (0.16 + i * 0.26)
-      const r = h * (0.07 + i * 0.015)
-      ctx.beginPath()
-      ctx.arc(cx, cy, r, 0, Math.PI * 2)
-      ctx.arc(cx + r * 0.9, cy + r * 0.15, r * 0.75, 0, Math.PI * 2)
-      ctx.arc(cx - r * 0.85, cy + r * 0.2, r * 0.65, 0, Math.PI * 2)
-      ctx.fill()
+    const image = rhythmBackgroundImage()
+    if (image.complete && image.naturalWidth) {
+      const scale = Math.max(w / image.naturalWidth, h / image.naturalHeight)
+      const drawW = image.naturalWidth * scale
+      const drawH = image.naturalHeight * scale
+      ctx.drawImage(image, (w - drawW) / 2, (h - drawH) / 2, drawW, drawH)
     }
   },
 
@@ -386,6 +456,18 @@ export const catCandySkin: CatchSkin = {
       ctx.arc(fx.x, fx.y, fx.radius * (2.2 - 1.2 * ease), 0, Math.PI * 2)
       ctx.stroke()
       const d = fx.radius * 0.5
+      ctx.lineCap = 'round'
+      // 투박한 직선 X 대신 흰 스티커 외곽선과 컬러 안쪽 선을 겹쳐 부드럽게 보인다.
+      ctx.strokeStyle = 'rgba(255,255,255,0.94)'
+      ctx.lineWidth = Math.max(4, fx.radius * 0.3 * (1 - t))
+      ctx.beginPath()
+      ctx.moveTo(fx.x - d, fx.y - d)
+      ctx.lineTo(fx.x + d, fx.y + d)
+      ctx.moveTo(fx.x + d, fx.y - d)
+      ctx.lineTo(fx.x - d, fx.y + d)
+      ctx.stroke()
+      ctx.strokeStyle = color
+      ctx.lineWidth = Math.max(2, fx.radius * 0.15 * (1 - t))
       ctx.beginPath()
       ctx.moveTo(fx.x - d, fx.y - d)
       ctx.lineTo(fx.x + d, fx.y + d)
@@ -394,7 +476,7 @@ export const catCandySkin: CatchSkin = {
       ctx.stroke()
       ctx.globalAlpha = (1 - t) * 0.9
       ctx.fillStyle = color
-      ctx.font = `bold ${Math.round(fx.radius * 0.78)}px system-ui, sans-serif`
+      ctx.font = `${Math.round(fx.radius * 0.68)}px "DNF Bit Bit", monospace`
       ctx.fillText(JUDGE_TEXT.miss!, fx.x, fx.y - fx.radius * (1.5 + ease * 0.8))
       ctx.restore()
       return true
@@ -435,7 +517,7 @@ export const catCandySkin: CatchSkin = {
     ctx.strokeStyle = 'rgba(255,255,255,0.95)'
     ctx.lineWidth = Math.max(2, fx.radius * 0.14)
     const size = Math.round(fx.radius * (isPerfect ? 1.0 : 0.8))
-    ctx.font = `bold ${size}px system-ui, sans-serif`
+    ctx.font = `${Math.round(size * 0.84)}px "DNF Bit Bit", monospace`
     const ty = fx.y - fx.radius * (1.4 + ease * 1.2)
     ctx.strokeText(JUDGE_TEXT[fx.judgement]!, fx.x, ty)
     ctx.fillText(JUDGE_TEXT[fx.judgement]!, fx.x, ty)

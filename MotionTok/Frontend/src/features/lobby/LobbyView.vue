@@ -18,8 +18,8 @@ import {
 import { useSessionStore } from '@/stores/session'
 import { useAsyncData } from '@/composables/useAsyncData'
 import { useLobbyLive } from '@/composables/useLobbyLive'
+import { motionModelsReady } from '@/composables/motionModels'
 import { useWhisper } from '@/composables/useWhisper'
-import { stompConnected } from '@/composables/useGlobalStomp'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
 import { useUserProfile } from '@/composables/useUserProfile'
@@ -30,7 +30,6 @@ import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import UserProfileModal from '@/components/common/UserProfileModal.vue'
-import WhisperModal from '@/components/common/WhisperModal.vue'
 import RoomCard from './components/RoomCard.vue'
 import FriendItem from './components/FriendItem.vue'
 import InviteCardStack from './components/InviteCardStack.vue'
@@ -57,9 +56,11 @@ const { message: toast, flash } = useToast()
 /** 친구 박스 클릭 → 공개 프로필(-96). 친구·랭킹 화면과 같은 컴포저블. */
 const viewer = useUserProfile()
 
-// 스플래시(로딩)는 세션 첫 진입에만 표시. 이후 로비 재방문 시엔 건너뜀.
-const SPLASH_SEEN_KEY = 'motok.splashSeen'
-const showSplash = ref(sessionStorage.getItem(SPLASH_SEEN_KEY) !== '1')
+// 스플래시(로딩)는 "모델이 실제로 준비됐는가"로 판정한다(-161). 예전엔 sessionStorage
+// 플래그로 세션당 1회만 띄웠는데, 새로고침이면 힙 싱글턴(모델)은 죽고 플래그는 살아남아
+// 재다운로드 경로가 영영 사라졌다 — 8인 테스트에서 3명이 게임을 못 돌린 원인.
+// 모델이 이미 있으면(SPA 재방문) 안 뜨고, 캐시 복원이면 1초 미만으로 스쳐 지나간다.
+const showSplash = ref(!motionModelsReady())
 const query = ref('')
 const showJoin = ref(false)
 const showCreate = ref(false)
@@ -189,7 +190,6 @@ onMounted(() => {
 
 function enterLobby() {
   showSplash.value = false
-  sessionStorage.setItem(SPLASH_SEEN_KEY, '1')
   void bgm.play()
 }
 
@@ -229,8 +229,7 @@ const openJoin = () => guardMember(() => (showJoin.value = true))
 // 초대코드 입장(joinRoom)은 비밀번호를 받지 않는다(확정안 ③).
 function enterRoom(room: Room) {
   guardMember(async () => {
-    if (room.disabled) return
-    if (!room.roomId) return goDevice(room.game, 'MP4X9K') // 목업 폴백
+    if (room.disabled || !room.roomId) return
     if (room.hasPassword) {
       pwTarget.value = room
       pwError.value = ''
@@ -240,8 +239,9 @@ function enterRoom(room: Room) {
       const res = await roomsApi.join(room.roomId)
       goDevice(room.game, res.roomId)
     } catch (e) {
-      if (e instanceof ApiError) return flash(e.message)
-      goDevice(room.game, room.roomId)
+      // 예전에는 네트워크 오류면 그냥 방으로 보냈다(백엔드 미연동 데모 폴백) — 서버가 모르는
+      // 입장이라 "각자 1인방" 같은 유령 상태를 만든다(-164). 실패는 실패로 알린다.
+      flash(e instanceof ApiError ? e.message : '방에 입장하지 못했어요 · 잠시 후 다시 시도해 주세요')
     }
   })
 }
@@ -264,20 +264,12 @@ const pwBusy = ref(false)
  * 수신함은 앱 수명(useWhisper)에 있어서, 로비에 없던 동안 온 말도 안 읽음으로 쌓여 있다.
  */
 const whisper = useWhisper()
-const whisperTarget = ref<{ userId: number; nickname: string } | null>(null)
 function openWhisper(friend: Friend) {
-  whisperTarget.value = { userId: friend.userId, nickname: friend.name }
-  void whisper.open(friend.userId)
-}
-function closeWhisper() {
-  whisperTarget.value = null
-  whisper.close()
-}
-function sendWhisper(text: string) {
-  if (!whisperTarget.value) return
-  if (!whisper.send(whisperTarget.value.userId, text)) {
-    flash('실시간 연결이 끊겨 있어요. 잠시 후 다시 시도해 주세요')
+  if (whisper.openWith.value === friend.userId) {
+    whisper.close()
+    return
   }
+  void whisper.open(friend.userId, friend.name)
 }
 
 /** 상호작용 중에 도착한 변화를 쌓아 뒀다가 모달이 닫히면 반영한다. */
@@ -412,8 +404,8 @@ async function joinRoom(code: string) {
     const res = await roomsApi.joinByInviteCode(code)
     goDevice('친구의 게임', res.roomId)
   } catch (e) {
-    if (e instanceof ApiError) return flash(e.message)
-    goDevice('친구의 게임', code) // 폴백
+    // 초대코드는 roomId가 아니다 — 실패 시 코드로 입장하는 폴백은 없는 방을 그린다(-164)
+    flash(e instanceof ApiError ? e.message : '방에 입장하지 못했어요 · 잠시 후 다시 시도해 주세요')
   }
 }
 
@@ -442,8 +434,9 @@ async function createRoom(payload: NewRoom) {
     showCreate.value = false // 성공했을 때만 닫는다 — 실패 시엔 모달을 남겨 재시도할 수 있게
     goDevice('게임 선택 중', res.roomId)
   } catch (e) {
-    if (e instanceof ApiError) return flash(e.message)
-    goDevice('게임 선택 중', 'MP' + Math.random().toString(36).slice(2, 6).toUpperCase())
+    // 예전에는 실패하면 가짜 roomId로 방에 들어갔다(데모 폴백) — 서버엔 없는 방이라
+    // "오프라인인데 방이 만들어지고 둘 다 방장" 같은 유령 상태의 근원이었다(-164).
+    flash(e instanceof ApiError ? e.message : '방을 만들지 못했어요 · 잠시 후 다시 시도해 주세요')
   } finally {
     creating.value = false
   }
@@ -541,8 +534,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
               :key="f.userId"
               :friend="f"
               :unread="whisper.unreadWith(f.userId)"
-              @open="viewer.open(f.userId, f.name)"
-              @whisper="openWhisper(f)"
+              @open="openWhisper(f)"
             />
             <p v-if="friends.length === 0" class="friends-empty">
               <img class="friends-empty-toys pixel-image" :src="lobbyEmptyCatToys" alt="" aria-hidden="true" />
@@ -605,14 +597,6 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
       @reported="flash"
     />
 
-    <WhisperModal
-      v-if="whisperTarget"
-      :nickname="whisperTarget.nickname"
-      :messages="whisper.messagesWith(whisperTarget.userId)"
-      :connected="stompConnected"
-      @close="closeWhisper"
-      @send="sendWhisper"
-    />
     <PixelToast :message="toast" />
 
     <!-- 스플래시 -->

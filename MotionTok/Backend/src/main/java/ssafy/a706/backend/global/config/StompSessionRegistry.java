@@ -52,8 +52,19 @@ public class StompSessionRegistry {
         });
     }
 
-    /** 로그아웃·자격 폐기 시 그 사용자의 모든 연결을 끊는다. 클라이언트에는 정상 종료로 보인다. */
+    /** 로그아웃 시 그 사용자의 모든 연결을 끊는다. 클라이언트에는 정상 종료로 보인다. */
     public void closeAllOf(Long userId) {
+        closeAllOf(userId, CloseStatus.NORMAL);
+    }
+
+    /**
+     * 종료 사유를 실어 끊는다 — 자격을 <b>빼앗긴</b> 경우(관리자 제재)를 위한 것.
+     *
+     * <p>정상 종료로 끊으면 프론트의 자동 재연결이 그대로 다시 붙는다. 물론 CONNECT 인증에서
+     * 다시 막히지만, 사용자에게는 "왜 끊겼는지 모르는 연결 실패"로만 보인다. 1008에 사유를
+     * 실어 보내면 그 프레임만으로 안내를 띄울 수 있다.</p>
+     */
+    public void closeAllOf(Long userId, CloseStatus status) {
         Set<String> ids = byUser.remove(userId);
         if (ids == null) {
             return;
@@ -64,7 +75,7 @@ public class StompSessionRegistry {
                 continue;
             }
             try {
-                session.close(CloseStatus.NORMAL);
+                session.close(status);
             } catch (IOException e) {
                 // 이미 죽은 소켓 — 어차피 DISCONNECT 경로가 정리한다
                 log.debug("웹소켓 종료 실패 (sessionId={})", sessionId, e);

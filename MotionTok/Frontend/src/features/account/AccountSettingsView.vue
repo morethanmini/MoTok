@@ -16,6 +16,7 @@ import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import { useToast } from '@/composables/useToast'
+import { containsProfanity } from '@/utils/profanity'
 
 const router = useRouter()
 const session = useSessionStore()
@@ -69,6 +70,13 @@ async function checkNickname() {
     nicknameMsg.value = '닉네임은 2~16자여야 해요.'
     return
   }
+  // 서버(중복확인·수정 @NoProfanity)와 같은 검사를 미리 태운다 — 왕복 없이 즉시 안내
+  if (containsProfanity(value)) {
+    nicknameChecked.value = true
+    nicknameAvailable.value = false
+    nicknameMsg.value = '✕ 닉네임에 사용할 수 없는 단어가 있어요'
+    return
+  }
   checkingNickname.value = true
   try {
     const res = await authApi.checkNickname(value)
@@ -117,10 +125,20 @@ async function savePassword() {
   }
   try {
     await usersApi.changePassword(currentPassword.value, newPassword.value)
-    flash('비밀번호가 변경되었어요')
     currentPassword.value = ''
     newPassword.value = ''
     newPasswordConfirm.value = ''
+    // 비밀번호를 바꾸면 서버가 이 세션을 그 자리에서 끝낸다 — Refresh를 지우는 데 그치지 않고
+    // 액세스 토큰의 sid까지 폐기하므로, 화면에 그대로 머물면 다음 요청부터 전부 401이다.
+    // 그걸 방치하면 성공 안내 직후 엉뚱한 "세션이 만료되었어요"가 뜨므로(App.vue), 재로그인이
+    // 정상 절차임을 알리고 우리가 먼저 정리한다. 탈퇴(submitWithdraw)와 같은 패턴이고,
+    // 문구·지연은 같은 일을 하는 재설정 화면(ResetPasswordView)에 맞췄다.
+    // logout()이 아니라 clear() — 이미 폐기된 토큰으로 POST /auth/logout을 부를 이유가 없고,
+    // clear()가 토큰 정리와 전역 STOMP 종료까지 이어 준다(죽은 토큰의 재연결 백오프 방지).
+    session.clear()
+    flash('비밀번호가 변경되었어요. 다시 로그인해 주세요.')
+    // replace — 뒤로가기로 세션이 끊긴 설정 화면에 돌아오지 않게 한다.
+    setTimeout(() => router.replace({ name: RouteName.Auth, query: { mode: 'login' } }), 1200)
   } catch (e) {
     flash(e instanceof ApiError ? e.message : '변경 실패 (백엔드 미연동)')
   }
@@ -191,7 +209,12 @@ onMounted(() => {
 </script>
 
 <template>
-  <AppPage title="설정" max-width="560px" title-style="plain">
+  <AppPage class="settings-page" title="설정" max-width="560px" title-style="none">
+    <section class="settings-titlebar">
+      <p>MY MOTION SPACE</p>
+      <h1>설정</h1>
+      <span>계정 정보를 안전하게 관리해요.</span>
+    </section>
     <div class="stack">
       <PixelCard title="닉네임 변경">
         <label class="field">
@@ -314,11 +337,13 @@ onMounted(() => {
 
 <style scoped>
 .stack { display: grid; gap: 16px; }
+.settings-page { background: #fff8e9; }.settings-page :deep(.app-page) { padding-top: 34px; }.settings-titlebar { margin: 0 auto 18px; padding: 0 6px; }.settings-titlebar p { margin: 0 0 8px; color: #a8704f; font-size: 9px; letter-spacing: 1px; }.settings-titlebar h1 { margin: 0; color: #4b3429; font-family: var(--font-pixel); font-size: 22px; font-weight: 400; }.settings-titlebar span { display: block; margin-top: 9px; color: #856957; font-size: 10px; }.stack :deep(.card) { border: 3px solid #9a6b4f; border-radius: 13px; background: #fffaf0; box-shadow: 5px 5px 0 #d5b28c; }.stack :deep(.card-head) { padding-bottom: 11px; border-bottom: 2px solid #ead5b8; }.stack :deep(.card-head h2) { color: #4b3429; font-size: 17px; }
 .field { display: block; margin-bottom: 14px; font-size: 9px; font-weight: 700; }
 .field input {
   width: 100%; height: 44px; margin-top: 6px; padding: 0 12px;
   border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; outline: 0;
 }
+.field { color: #664737; }.field input { border-color: #c79b77; border-radius: 7px; background: #fffef9; }.stack :deep(.px-btn) { border: 2px solid #9a6b4f; border-radius: 6px; box-shadow: 2px 2px 0 #bd916e; }.inline-btn { border-color: #9a6b4f; border-radius: 6px; background: #f7df9e; color: #51382c; box-shadow: 2px 2px 0 #bd916e; }.check-msg { color: #987b67; }
 .withdraw-title { margin: 0 0 7px; color: var(--c-coral); }
 .withdraw-warn { margin: 0 0 14px; font-size: 11px; color: var(--c-muted); line-height: 1.7; }
 .withdraw-warn b { color: var(--c-coral); }

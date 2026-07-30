@@ -7,6 +7,8 @@
  */
 import { computed, ref, watch } from 'vue'
 import type { ParticipantView } from '@/composables/useLiveKitRoom'
+import StickerOverlay from '@/features/decor/StickerOverlay.vue'
+import type { StickerSprite } from '@/features/decor/sticker'
 
 const props = withDefaults(
   defineProps<{
@@ -26,6 +28,13 @@ const props = withDefaults(
     cover?: string | null
     /** 이 참가자 소리를 내 쪽에서 얼마나 크게 들을지(0~1) — 상대 설정과 무관한 내 전용 값 */
     volume?: number
+    /**
+     * 게임 송출 중에도 카메라를 기본으로 보여줄지(-164). 뷰어가 게임에 참여하지 않을 때
+     * (중간 이탈·라운드 놓침) 남의 게임 화면 대신 캠이 기본이어야 한다 — 토글은 그대로 살아 있다.
+     */
+    preferCam?: boolean
+    /** 이 참가자가 데이터 채널로 알려 준 꾸미기 배치(useDecorSync) — 발행 영상에는 안 들어 있다. */
+    sprites?: StickerSprite[]
   }>(),
   {
     view: null,
@@ -36,6 +45,8 @@ const props = withDefaults(
     canKick: false,
     cover: null,
     volume: 1,
+    preferCam: false,
+    sprites: () => [],
   },
 )
 const emit = defineEmits<{ kick: []; volume: [value: number] }>()
@@ -44,11 +55,14 @@ const occupied = computed(() => !!props.view)
 const hasVideo = computed(() => !!props.view?.cameraOn && !!props.view?.videoTrack)
 const hasGame = computed(() => !!props.view?.gameTrack)
 
-/** 게임 송출 중 이 타일에서 카메라를 보고 싶은지(뷰어별 토글). 기본은 게임 화면. */
-const showCam = ref(false)
-// 게임 송출이 새로 시작되면 기본값(게임 화면)으로 복귀
+/** 게임 송출 중 이 타일에서 카메라를 보고 싶은지(뷰어별 토글). 기본값은 preferCam이 정한다. */
+const showCam = ref(props.preferCam)
+// 게임 송출이 새로 시작되거나 뷰어의 참여 상태가 바뀌면 기본값으로 복귀
 watch(hasGame, (on) => {
-  if (on) showCam.value = false
+  if (on) showCam.value = props.preferCam
+})
+watch(() => props.preferCam, (prefer) => {
+  showCam.value = prefer
 })
 
 const videoEl = ref<HTMLVideoElement>()
@@ -129,6 +143,16 @@ function onVolumeInput(e: Event) {
       <div v-if="!showingVideo" class="cam-off">
         <span class="avatar">{{ initial }}</span>
       </div>
+
+      <!-- 스티커 좌표는 카메라 프레임 기준이라 게임 화면 트랙에는 얹지 않는다.
+           fit은 <video>의 object-fit과 같아야 여백이 아니라 영상 안 같은 자리에 붙는다. -->
+      <StickerOverlay
+        v-if="showingVideo && !showingGame && sprites.length"
+        :sprites="sprites"
+        :mirrored="mirror"
+        fit="contain"
+        :frame-aspect="videoAspect"
+      />
 
       <!-- 가림막 — 영상 위, 라벨·왕관 아래(DOM 순서로 쌓임) -->
       <div v-if="cover" class="cover">{{ cover }}</div>

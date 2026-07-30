@@ -49,6 +49,8 @@ class RhythmSessionServiceTest {
     @Mock RoomMembershipReader membershipReader;
     @Mock LiveRoomRepository liveRoomRepository;
     @Mock RhythmSessionRepository sessionRepository;
+    /** 교차 중복 시작 차단(-164) — 기본 모킹은 "공용 게임 세션 없음"이라 기존 시나리오 불변 */
+    @Mock ssafy.a706.backend.game.GameSessionService gameSessionService;
     @Mock SimpMessagingTemplate messagingTemplate;
     @Mock TaskScheduler rhythmTaskScheduler;
     @Mock ApplicationEventPublisher eventPublisher;

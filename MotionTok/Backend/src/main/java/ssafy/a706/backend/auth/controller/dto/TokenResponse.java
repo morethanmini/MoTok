@@ -2,11 +2,13 @@ package ssafy.a706.backend.auth.controller.dto;
 
 import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
 
-/** API 명세서 TokenResponse 스키마. */
+/**
+ * API 명세서 TokenResponse 스키마.
+ * Refresh 토큰은 이 본문에 담지 않는다 — HttpOnly 쿠키로만 오간다({@code RefreshCookies}).
+ */
 public record TokenResponse(
         String tokenType,
         String accessToken,
-        String refreshToken,
         long expiresIn,
         UserProfileResponse user,
         /**
@@ -15,8 +17,8 @@ public record TokenResponse(
          */
         boolean nicknameSetupRequired
 ) {
-    public static TokenResponse of(String accessToken, String refreshToken, long expiresIn, UserProfileResponse user) {
-        return new TokenResponse("Bearer", accessToken, refreshToken, expiresIn, user,
+    public static TokenResponse of(String accessToken, long expiresIn, UserProfileResponse user) {
+        return new TokenResponse("Bearer", accessToken, expiresIn, user,
                 user != null && user.nicknamePending());
     }
 }

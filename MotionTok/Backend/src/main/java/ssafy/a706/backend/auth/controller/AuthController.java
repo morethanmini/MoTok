@@ -1,25 +1,32 @@
 package ssafy.a706.backend.auth.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import ssafy.a706.backend.auth.cookie.RefreshCookies;
 import ssafy.a706.backend.auth.service.AuthService;
 import ssafy.a706.backend.auth.controller.dto.*;
 import ssafy.a706.backend.auth.email.EmailVerificationService;
 import ssafy.a706.backend.auth.password.PasswordResetService;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
+import ssafy.a706.backend.auth.ratelimit.GuestStartLimiter;
 import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
 
 /**
  * API 명세서 v0.2.1 인증 도메인.
  * 이번 작업 범위: 이메일 회원가입(중복확인 → 인증번호 → 검증 → 가입)과 JWT Access/Refresh 인증.
  * 소셜 로그인·계정 찾기·비밀번호 재설정은 후속 작업.
+ *
+ * <p>Refresh 토큰은 응답 본문에 담지 않고 HttpOnly 쿠키로만 오간다({@link RefreshCookies}).
+ * 클라이언트가 값을 읽을 일이 없으므로 토큰을 다루는 코드도 이 컨트롤러 밖으로 나가지 않는다.</p>
  */
 @RestController
 @RequestMapping("/api/auth")
@@ -30,6 +37,7 @@ public class AuthController {
     private final AuthService authService;
     private final EmailVerificationService emailVerificationService;
     private final PasswordResetService passwordResetService;
+    private final GuestStartLimiter guestStartLimiter;
 
     /** GET /auth/availability/email — 이메일 중복 확인 */
     @GetMapping("/availability/email")
@@ -63,10 +71,10 @@ public class AuthController {
         return authService.signup(req);
     }
 
-    /** POST /auth/login — 일반 로그인 */
+    /** POST /auth/login — 일반 로그인. Refresh 토큰은 Set-Cookie로 나간다(rememberMe면 영구 쿠키). */
     @PostMapping("/login")
-    public TokenResponse login(@Valid @RequestBody LoginRequest req) {
-        return authService.login(req);
+    public ResponseEntity<TokenResponse> login(@Valid @RequestBody LoginRequest req, HttpServletRequest http) {
+        return respond(authService.login(req), http);
     }
 
     /** POST /auth/find-id — 닉네임으로 마스킹된 이메일 찾기 */
@@ -77,8 +85,10 @@ public class AuthController {
 
     /** POST /auth/social/{provider} — 소셜 로그인(google·kakao). 최초 로그인 시 계정 자동 생성·연동 */
     @PostMapping("/social/{provider}")
-    public TokenResponse social(@PathVariable String provider, @Valid @RequestBody SocialLoginRequest req) {
-        return authService.socialLogin(provider, req);
+    public ResponseEntity<TokenResponse> social(@PathVariable String provider,
+                                                @Valid @RequestBody SocialLoginRequest req,
+                                                HttpServletRequest http) {
+        return respond(authService.socialLogin(provider, req), http);
     }
 
     /** POST /auth/password/reset-request — 재설정 링크 메일 발송(존재 여부 무관 202) */
@@ -95,29 +105,53 @@ public class AuthController {
         passwordResetService.resetPassword(req.token(), req.newPassword());
     }
 
-    /** POST /auth/token/refresh — Access 토큰 재발급 */
+    /**
+     * POST /auth/token/refresh — Access 토큰 재발급. 요청 본문은 없고 Refresh 쿠키를 읽는다.
+     * 회전이 일어나면 새 쿠키가 함께 나가고, 동시 요청(grace)이면 쿠키는 건드리지 않는다.
+     */
     @PostMapping("/token/refresh")
-    public TokenResponse refresh(@Valid @RequestBody RefreshRequest req) {
-        return authService.refresh(req);
+    public ResponseEntity<TokenResponse> refresh(
+            @CookieValue(name = RefreshCookies.NAME, required = false) String refreshToken,
+            HttpServletRequest http) {
+        return respond(authService.refresh(refreshToken), http);
     }
 
     /**
-     * POST /auth/logout — 서버측 Refresh 토큰 무효화.
-     * 게스트 토큰(GuestPrincipal)은 서버측 상태가 없으므로 no-op 204 — MemberPrincipal로 좁혀 받으면
+     * POST /auth/logout — 서버측 Refresh 토큰 무효화 + 쿠키 삭제.
+     * 게스트 토큰(GuestPrincipal)은 서버측 상태가 없으므로 Redis는 no-op — MemberPrincipal로 좁혀 받으면
      * 타입 불일치로 principal이 null 주입돼 NPE(500)가 나므로 공통 인터페이스로 받는다.
      */
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout(@AuthenticationPrincipal AuthPrincipal principal) {
+    public ResponseEntity<Void> logout(@AuthenticationPrincipal AuthPrincipal principal, HttpServletRequest http) {
         if (principal instanceof MemberPrincipal member) {
             authService.logout(member.id());
         }
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.noContent()
+                .header(HttpHeaders.SET_COOKIE, RefreshCookies.clear(http))
+                .build();
     }
 
-    /** POST /auth/guest — 게스트 시작. 임시 닉네임 부여 + 1인방 자동 생성(공개방 미노출)(-109) */
+    /**
+     * POST /auth/guest — 게스트 시작. 임시 닉네임 부여 + 1인방 자동 생성(공개방 미노출)(-109).
+     * 회원에서 게스트로 내려오는 경우가 있어 Refresh 쿠키를 지운다 — 안 지우면 게스트로 쓰는 동안
+     * 옛 회원 세션이 쿠키에 남아 다음 갱신에서 되살아난다.
+     */
     @PostMapping("/guest")
-    @ResponseStatus(HttpStatus.CREATED)
-    public GuestResponse guest() {
-        return authService.guestLogin();
+    public ResponseEntity<GuestResponse> guest(HttpServletRequest http) {
+        // 호출마다 24시간짜리 1인방이 생기는 비인증 엔드포인트라 IP 기준으로 빈도를 막는다.
+        guestStartLimiter.ensureAllowed(http);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .header(HttpHeaders.SET_COOKIE, RefreshCookies.clear(http))
+                .body(authService.guestLogin());
+    }
+
+    /** 발급 결과를 응답으로 옮긴다 — 회전된 Refresh 토큰이 있을 때만 쿠키를 새로 심는다. */
+    private ResponseEntity<TokenResponse> respond(IssuedTokens issued, HttpServletRequest http) {
+        ResponseEntity.BodyBuilder builder = ResponseEntity.ok();
+        if (issued.refreshToken() != null) {
+            builder.header(HttpHeaders.SET_COOKIE, RefreshCookies.issue(
+                    http, issued.refreshToken(), issued.refreshTtl(), issued.persistent()));
+        }
+        return builder.body(issued.body());
     }
 }
