@@ -35,11 +35,36 @@ const {
 } = useCamera()
 const game = computed(() => (route.query.game as string) || '게임 선택 중')
 const room = computed(() => (route.query.room as string) || 'MP4X9K')
+/** 게임 목록에서 고른 게임의 서버 gameId — 게임룸이 입장 직후 이 게임을 자동으로 연다. */
+const autostart = computed(() => (route.query.autostart as string) || '')
 const showDecorInventory = ref(false)
 const roomCopied = ref(false)
 const videoEl = ref<HTMLVideoElement>()
 watch(stream, (s) => { if (videoEl.value) videoEl.value.srcObject = s })
 const showVideo = computed(() => isOn.value && camOn.value)
+
+/**
+ * 캠·마이크 초기 상태 요청(쿼리 cam=0·mic=0) — 혼자 플레이 경로가 붙여 준다.
+ * 혼자 놀 방은 발행을 받을 사람이 없어 꺼진 채로 시작하는 게 기본이다(게임 입력은 로컬 캡처를 쓰므로
+ * 꺼도 플레이된다 — GameRoomView가 캡처는 항상 켠다).
+ *
+ * <p>토글로 끄는 이유 — useCamera.start()가 스트림을 잡을 때 트랙 유무로 camOn·micOn을 다시 켜므로,
+ * 값을 미리 넣어 두면 지워진다. 스트림이 선 뒤에 토글해야 트랙의 enabled까지 같이 내려간다.
+ * 한 번만 적용하므로, 여기서 사용자가 다시 켜면 그 선택이 그대로 방까지 간다(enter가 쿼리로 넘긴다).</p>
+ */
+const wantCamOff = route.query.cam === '0'
+const wantMicOff = route.query.mic === '0'
+let initialDeviceStateApplied = false
+watch(
+  isOn,
+  (on) => {
+    if (!on || initialDeviceStateApplied) return
+    initialDeviceStateApplied = true
+    if (wantCamOff && camOn.value) toggleCam()
+    if (wantMicOff && micOn.value) toggleMic()
+  },
+  { immediate: true },
+)
 
 // ── 권한 ────────────────────────────────────────────────
 // allow()의 getUserMedia가 곧 '확인이자 요청'이다 — 앱에서 이미 허용했으면 팝업 없이 바로 열리고,
@@ -157,7 +182,19 @@ async function enter() {
   // 그냥 들어가면 방금 옮긴 자리가 반영되지 않는다(사용자에겐 그냥 사라진 것으로 보인다).
   if (decor.dirty.value) await decor.save()
   proceedingToRoom = true
-  router.push({ name: RouteName.GameRoom, query: { game: game.value, room: room.value, cam: camOn.value ? '1' : '0', mic: micOn.value ? '1' : '0', ...(route.query.solo === '1' ? { solo: '1' } : {}) } })
+  // solo·autostart는 그대로 넘긴다 — 각각 게임룸의 빈 슬롯 숨김과 자동 시작에 쓰이는 값이라
+  // 여기서 떨어지면 멀티 레이아웃으로 열리고 방에서 게임을 다시 골라야 한다(없으면 넣지 않는다).
+  router.push({
+    name: RouteName.GameRoom,
+    query: {
+      game: game.value,
+      room: room.value,
+      cam: camOn.value ? '1' : '0',
+      mic: micOn.value ? '1' : '0',
+      ...(route.query.solo === '1' ? { solo: '1' } : {}),
+      ...(autostart.value ? { autostart: autostart.value } : {}),
+    },
+  })
 }
 useRoomUnloadLeave(() => route.query.room as string | undefined)
 let notified = false
