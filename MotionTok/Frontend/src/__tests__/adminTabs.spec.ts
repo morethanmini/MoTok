@@ -13,13 +13,17 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import AdminView from '@/features/admin/AdminView.vue'
 import { routes } from '@/router/routes'
 
-const { setActive, gamesList, sanctionsList, pointsList, sanctionStatus, searchUsers } = vi.hoisted(() => ({
+const {
+  setActive, gamesList, sanctionsList, pointsList, sanctionStatus, searchUsers, onlineUsers, chatReportsList,
+} = vi.hoisted(() => ({
   setActive: vi.fn<(gameId: number, isActive: boolean) => Promise<unknown>>(),
   gamesList: vi.fn<() => Promise<unknown>>(),
   sanctionsList: vi.fn<(p?: object) => Promise<unknown>>(),
   pointsList: vi.fn<(p?: object) => Promise<unknown>>(),
   sanctionStatus: vi.fn<(userId: number) => Promise<unknown>>(),
   searchUsers: vi.fn<(nickname: string) => Promise<unknown>>(),
+  onlineUsers: vi.fn<() => Promise<unknown>>(),
+  chatReportsList: vi.fn<(p?: object) => Promise<unknown>>(),
 }))
 
 const GAMES = [
@@ -66,11 +70,11 @@ vi.mock('@/api', async () => {
   const empty = { reports: [], page: 0, size: 20, totalElements: 0, totalPages: 0 }
   return {
     ...actual,
-    adminApi: { reports: () => Promise.resolve([]), searchUsers: searchUsers },
+    adminApi: { reports: () => Promise.resolve([]), searchUsers, onlineUsers },
     adminGamesApi: { list: gamesList, setActive },
     adminPointsApi: { list: pointsList },
     adminSanctionApi: { allHistory: sanctionsList, status: sanctionStatus },
-    adminChatReportsApi: { list: () => Promise.resolve(empty), detail: vi.fn<() => void>(), updateStatus: vi.fn<() => void>() },
+    adminChatReportsApi: { list: chatReportsList, detail: vi.fn<() => void>(), updateStatus: vi.fn<() => void>() },
     adminUserReportsApi: { list: () => Promise.resolve(empty), updateStatus: vi.fn<() => void>() },
   }
 })
@@ -109,6 +113,8 @@ beforeEach(() => {
   pointsList.mockResolvedValue(POINTS)
   sanctionStatus.mockResolvedValue(null)
   searchUsers.mockResolvedValue([])
+  onlineUsers.mockResolvedValue({ users: [], capped: false })
+  chatReportsList.mockResolvedValue({ reports: [], page: 0, size: 5, totalElements: 0, totalPages: 0 })
 })
 
 /** 닉네임 검색창에 값을 넣고 조회를 누른다. */
@@ -228,6 +234,41 @@ describe('포인트 내역 탭', () => {
     expect(summary.text()).toContain('+1,500P')
     expect(summary.text()).toContain('-1,200P') // 서버가 양수로 준 값을 사용 방향으로 표기
     expect(summary.text()).toContain('300P')
+  })
+})
+
+describe('사용중인 유저 탭', () => {
+  it('탭을 열 때만 접속자를 부르고, 방 안·로비를 구분해 보여 준다', async () => {
+    onlineUsers.mockResolvedValue({
+      users: [
+        { userId: 3, nickname: '민지', state: 'IN_ROOM', roomId: 'AGFNN8', secondsAgo: 4 },
+        { userId: 7, nickname: 'Alex', state: 'ONLINE', roomId: null, secondsAgo: 41 },
+      ],
+      capped: false,
+    })
+    const wrapper = await mountAdmin()
+    // 안 보는 화면 때문에 서버가 키를 훑게 두지 않는다.
+    expect(onlineUsers).not.toHaveBeenCalled()
+
+    await openTab(wrapper, '사용중인 유저')
+
+    expect(onlineUsers).toHaveBeenCalled()
+    const text = wrapper.text()
+    expect(text).toContain('2명 접속 중')
+    expect(text).toContain('방 안')
+    expect(text).toContain('AGFNN8')
+    expect(text).toContain('로비')
+    expect(text).toContain('41초 전')
+    // 페이지가 아니라 스크롤이다 — 60초면 목록이 바뀌어 쪽수를 세는 게 의미가 없다.
+    expect(wrapper.find('.cr-pager').exists()).toBe(false)
+    expect(wrapper.find('.ou-scroll').exists()).toBe(true)
+  })
+})
+
+describe('신고함 페이지 크기', () => {
+  it('채팅 신고도 한 페이지 5줄로 부른다', async () => {
+    await mountAdmin()
+    expect(chatReportsList).toHaveBeenCalledWith(expect.objectContaining({ size: 5 }))
   })
 })
 
