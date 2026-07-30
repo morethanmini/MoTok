@@ -47,9 +47,12 @@ import { useRhythmAutoJoin } from '@/features/games/catch-rhythm/useRhythmAutoJo
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
+import { useSessionStore } from '@/stores/session'
 
 const route = useRoute()
 const router = useRouter()
+// 퇴장 확인 모달을 띄울지 가리는 데만 쓴다 — 세션이 이미 끝났다면 물을 것이 없다(onBeforeRouteLeave).
+const session = useSessionStore()
 const bgm = useBgm()
 const { message: toast, flash } = useToast(2600)
 
@@ -1322,6 +1325,10 @@ watch(
     // 서버에서만 빠진 상태다. 그대로 두면 STOMP만 살아 있는 유령 멤버(게임 시작은 전파되는데
     // 방 명단엔 없음)가 되므로 즉시 재입장해 명단과 화면을 다시 맞춘다.
     if (e.userId === myParticipantId.value && !leavingIntentionally) {
+      // 세션이 끝나서 서버가 나를 뺀 경우(다른 곳에서 로그인)는 예외다 — 토큰이 없어 재입장은
+      // 401이고, 그 실패로 로비로 보내면 회원 가드가 "로그인이 필요해요"를 안내 위에 겹쳐 띄운다.
+      // 어디로 갈지는 세션 종료 안내(App.vue)가 정한다.
+      if (!session.isAuthenticated) return
       try {
         applyDetail(await roomsApi.join(roomCode.value))
       } catch {
@@ -1352,6 +1359,11 @@ let resolveLeave: ((ok: boolean) => void) | null = null
 let leaveToLobbyAfterConfirm = false
 onBeforeRouteLeave(() => {
   if (leavingIntentionally) return true
+  // 세션이 끝나서 밀려나는 이탈(다른 곳에서 로그인·만료)은 선택이 아니다 — 안내 모달의
+  // "로그인하러 가기"를 눌렀는데 "계속 놀기"를 다시 묻는 꼴이 된다. 이미 App.vue가 토큰을
+  // 지웠으므로 방에 남아도 서버와 아무것도 할 수 없다: 확인 없이 통과시킨다.
+  // (카메라·LiveKit 정리는 언마운트 시 각 컴포저블이 맡는다. 퇴장 통보는 토큰이 없어 불가능하다.)
+  if (!session.isAuthenticated) return true
   showLeaveConfirm.value = true
   return new Promise<boolean>((resolve) => (resolveLeave = resolve))
 })
