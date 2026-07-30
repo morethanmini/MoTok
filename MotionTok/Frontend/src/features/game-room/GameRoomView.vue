@@ -2327,7 +2327,13 @@ const startHint = computed(() =>
 .chat-expand.active { background: var(--c-yellow); color: var(--c-ink-soft); }
 
 /* 채팅 전체보기 패널 — 입장 이후 전체 대화를 반투명하게 보여준다 */
-.chat-full-backdrop { position: fixed; inset: 0; z-index: 45; background: transparent; }
+/*
+ * 백드롭은 헤더(AppHeader z-index:20)보다 아래에 둔다. 45로 두면 화면 전체를 덮는 투명 레이어가
+ * 헤더 위에 깔려서, 전체보기가 열린 동안 헤더 클릭이 이 백드롭에 먹힌다("한 번 눌렀는데 아무 일도
+ * 안 일어남" — 첫 클릭은 패널만 닫고 끝난다). 바깥 클릭 감지에는 19로도 충분하고,
+ * 패널 자신은 z-index:46이라 여전히 백드롭 위에 뜬다.
+ */
+.chat-full-backdrop { position: fixed; inset: 0; z-index: 19; background: transparent; }
 .chat-full {
   position: absolute; z-index: 46; bottom: 62px; left: 0;
   width: 100%; min-width: 260px; max-height: min(65vh, 520px);
