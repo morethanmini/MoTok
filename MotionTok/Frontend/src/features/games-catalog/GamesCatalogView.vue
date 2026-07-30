@@ -11,6 +11,7 @@ import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import RhythmThumbnail from './components/RhythmThumbnail.vue'
+import FingerStarThumbnail from './components/FingerStarThumbnail.vue'
 import heroFishingCat from '@/assets/games-catalog/hero-fishing-cat-transparent.png'
 import lobbyRoomListBoard from '@/assets/lobby/lobby-room-list-board.png'
 import lobbyGardenGrassTile from '@/assets/lobby/lobby-garden-grass-tile.png'
@@ -20,7 +21,6 @@ const session = useSessionStore()
 const { message: toast, flash } = useToast()
 
 const GAME_ART: Record<number, string> = {
-  1: '/assets/intro/constellation.png',
   2: '/assets/intro/fishing-rod.png',
   3: '/assets/intro/tambourine.png',
   5: '/assets/intro/person.png',
@@ -33,6 +33,8 @@ const GAME_TONE = ['sky', 'mint', 'peach', 'lilac', 'butter']
  * 목데이터 전용 항목이 있지만 백엔드엔 존재하지 않는 이름이라 대응하지 않는다(id=3 확인 결과 반영).
  */
 const RHYTHM_GAME_ID = 2
+/** 핑거 스타 — 전용 썸네일(FingerStarThumbnail)을 쓴다. GAME_CATALOG 기준 서버 gameId=1. */
+const FINGER_STAR_GAME_ID = 1
 const MOCK_GAMES: Game[] = [
   { id: 1, name: '핑거 스타', description: '손끝으로 별자리를 완성해요', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '손동작', thumbnailUrl: '', playable: true },
   { id: 2, name: '모션 낚시', description: '온몸으로 즐기는 낚시 게임', mode: 'SOLO', minPlayers: 1, maxPlayers: 4, supportsBot: false, category: '전신', thumbnailUrl: '', playable: true },
@@ -53,6 +55,7 @@ const starting = ref(false)
 function artFor(game: Game) { return game.thumbnailUrl || GAME_ART[game.id] }
 function toneFor(game: Game) { return GAME_TONE[game.id % GAME_TONE.length] }
 function isRhythm(game: Game) { return game.id === RHYTHM_GAME_ID }
+function isFingerStar(game: Game) { return game.id === FINGER_STAR_GAME_ID }
 async function openDetail(game: Game) {
   selected.value = game
   detailOpen.value = true
@@ -125,6 +128,7 @@ function goDevice(game: Game, roomId: string) {
           <article v-for="game in visibleGames" :key="game.id" class="game-card" :class="{ unavailable: !game.playable }" tabindex="0" @click="openDetail(game)" @keydown.enter="openDetail(game)">
             <div class="game-visual" :class="`tone-${toneFor(game)}`">
               <RhythmThumbnail v-if="isRhythm(game)" />
+              <FingerStarThumbnail v-else-if="isFingerStar(game)" />
               <img v-else-if="artFor(game)" :src="artFor(game)" alt="" />
               <button type="button" class="detail-button" :aria-label="`${game.name} 상세 보기`" @click.stop="openDetail(game)"><span>자세히</span><b>›</b></button>
             </div>
