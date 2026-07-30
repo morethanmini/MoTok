@@ -12,6 +12,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
 import ssafy.a706.backend.game.GameSettledEvent;
+import ssafy.a706.backend.game.PointCalculator;
 import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.repository.GameRepository;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
@@ -305,11 +306,27 @@ class RhythmSessionServiceTest {
 
     @Test
     void 포인트는_실력과_순위를_비슷한_무게로_준다() {
-        // HARD 전퍼펙트(~19,000) 8인 1등
-        assertThat(RhythmPointCalculator.calc(1, 19_000, 8)).isEqualTo(48 + 70);
-        // 꼴찌는 순위 보상 없음
+        // HARD 전퍼펙트(~19,000) 8인 1등 — 실력 48 대 순위 42
+        assertThat(RhythmPointCalculator.calc(1, 19_000, 8)).isEqualTo(48 + 42);
+        // 꼴찌는 순위 보상 없음 — 실력분만
         assertThat(RhythmPointCalculator.calc(8, 19_000, 8)).isEqualTo(48);
+        // 중간 순위 — 실력 + 순위
+        assertThat(RhythmPointCalculator.calc(4, 8_000, 8)).isEqualTo(20 + 24);
         // 미제출 0점
         assertThat(RhythmPointCalculator.calc(8, 0, 8)).isZero();
+    }
+
+    @Test
+    void 정상_최고_기록은_상한에_걸리지_않는다() {
+        // 8인 1등 전퍼펙트 90 < 상한 100 — 상한이 정상 플레이를 자르면 계수를 다시 잡아야 한다
+        assertThat(RhythmPointCalculator.calc(1, 19_000, 8))
+                .isLessThan(PointCalculator.MAX_PER_ROUND);
+    }
+
+    @Test
+    void 점수를_위조하면_상한에서_막힌다() {
+        // 클램프 상한(91,200)까지 올리면 실력분이 228이 되지만 지급은 상한까지만
+        assertThat(RhythmPointCalculator.calc(1, 91_200, 8))
+                .isEqualTo(PointCalculator.MAX_PER_ROUND);
     }
 }
