@@ -7,21 +7,26 @@
  * "저장하기"를 눌러 POST /shop/ai-items/{jobId}/save를 호출해야 지급된다.
  */
 import { computed, onUnmounted, onMounted, ref } from 'vue'
-import { shopApi, ApiError, type AiItemJobStatus, type ItemCategory } from '@/api'
+import { shopApi, usersApi, ApiError, type AiItemJobStatus, type ItemCategory } from '@/api'
 import AppPage from '@/components/common/AppPage.vue'
 import PixelCard from '@/components/common/PixelCard.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import { useToast } from '@/composables/useToast'
+import { useSessionStore } from '@/stores/session'
+import aiDrawingCat from '@/assets/ai/ai-drawing-cat.png'
 
 const POLL_INTERVAL_MS = 1500
 const POLL_MAX_ATTEMPTS = 40 // 1.5s * 40 = 60초
 const POLL_MAX_CONSECUTIVE_FAILURES = 3
 /** 총 시도 횟수 = 최초 생성 1회 + 재시도 1회. 재시도는 첫 결과에서만 노출한다. */
 const MAX_ATTEMPTS = 2
+/** AI 아이템 생성 1회 결제 비용(포인트). 서버 app.shop.ai-item-cost와 같은 값이어야 한다. */
+const AI_ITEM_COST = 1500
 
 const { message: toast, flash } = useToast()
+const session = useSessionStore()
 
 const canvas = ref<HTMLCanvasElement>()
 const name = ref('')
@@ -36,6 +41,9 @@ type GeneratedResult = { jobId: number; imageUrl: string }
 const generatedResults = ref<GeneratedResult[]>([])
 const selectedResultJobId = ref<number | null>(null)
 const showClearConfirm = ref(false)
+/** "다시 생성하기"로 모달을 닫은 직후 true — 이미 결제한 세션의 2회차이므로 다음 생성 클릭 때
+ * 포인트 확인 모달을 건너뛴다. */
+const pendingRetry = ref(false)
 type DrawingTool = 'pen' | 'eraser' | 'fill'
 const drawingTool = ref<DrawingTool>('pen')
 const brushSize = ref(4)
@@ -46,6 +54,10 @@ const strokes: { x: number; y: number }[][] = []
 let current: { x: number; y: number }[] | null = null
 const failMessage = ref('')
 const currentJobId = ref<number | null>(null)
+/** 이번 결제 세션에서 최초로 생성된(포인트를 차감한) job의 id. currentJobId는 재생성 때마다
+ * 새 job으로 갱신되어 버리므로, 재생성 요청의 parentJobId로 쓸 값은 따로 보관해야 한다.
+ * 새 결제 세션 시작(generate) 때만 초기화하고, 재생성 중에는 절대 덮어쓰지 않는다. */
+const paidJobId = ref<number | null>(null)
 const attemptCount = ref(0)
 const saving = ref(false)
 
@@ -240,15 +252,25 @@ function canvasToSketchBase64(): string {
 }
 
 /**
- * "AI로 생성하기" — 검증 후 모달을 열고 생성을 시작한다. attemptCount는 "다시 만들기"로
- * 모달을 닫은 뒤 다시 눌렀을 때도 이어서 올라간다(재시도 후 2회차가 되도록) — 페이지를
- * 벗어나기 전까진 초기화하지 않는다.
+ * "AI로 생성하기" — 검증 후 진행한다. attemptCount는 "다시 생성하기"로 모달을 닫은 뒤
+ * 다시 눌렀을 때도 이어서 올라간다(재시도 후 2회차가 되도록) — 페이지를 벗어나기 전까진
+ * 초기화하지 않는다.
+ *
+ * pendingRetry가 서 있으면(방금 "다시 생성하기"로 모달을 닫은 직후) 이미 결제를 마친
+ * 세션의 2회차이므로 포인트 확인 모달 없이 바로 재생성한다. 그 외엔 새 세션이라 먼저
+ * 포인트 확인을 받는다.
  */
 function requestGenerate() {
   if (!hasDrawing()) return flash('먼저 그림을 그려 주세요')
   const trimmedName = name.value.trim()
   if (!trimmedName) return flash('아이템 이름을 입력해 주세요')
   name.value = trimmedName
+
+  if (pendingRetry.value) {
+    pendingRetry.value = false
+    void generateAgain()
+    return
+  }
   showPointConfirm.value = true
 }
 
@@ -257,6 +279,8 @@ async function generate() {
   attemptCount.value = 0
   generatedResults.value = []
   selectedResultJobId.value = null
+  pendingRetry.value = false // 새 결제 세션 시작 — 이 시점엔 항상 false이지만 안전망으로 명시
+  paidJobId.value = null // 새 결제 세션 시작 — 재생성 parentJobId 기준점을 초기화한다
   await generateAgain()
 }
 
@@ -267,12 +291,15 @@ async function generateAgain() {
 }
 
 /**
- * 모달의 "다시 만들기" — 이번 결과는 저장하지 않고 버리고 모달만 닫는다. 캔버스는 그대로
- * 남으므로 유저가 그림을 고친 뒤 "AI로 생성하기"를 다시 누르면 새 job이 만들어진다(2회차).
+ * 모달의 "다시 생성하기" — 모달만 닫는다. 캔버스도, 지금까지의 generatedResults(첫 결과)도
+ * 그대로 둔다 — 유저가 그림을 고친 뒤(또는 그대로) "AI로 생성하기"를 다시 눌러야 2회차가
+ * 시작된다. pendingRetry를 세워 두면 다음 생성 클릭 때 포인트 확인 모달을 건너뛴다
+ * (이미 결제한 세션이므로).
  */
 function retry() {
   if (!canRetry.value) return
-  void generateAgain()
+  pendingRetry.value = true
+  closeModal()
 }
 
 function openGenerating() {
@@ -284,17 +311,37 @@ function openGenerating() {
   currentJobId.value = null
 }
 
+/**
+ * paidJobId가 없으면(이번 세션 첫 요청) parentJobId 없이 보내 새 결제로 처리되고, 응답받은
+ * jobId를 paidJobId에 저장해 이후 재생성의 기준점으로 삼는다. paidJobId가 이미 있으면(재생성)
+ * 그 값을 parentJobId로 실어 보내고 paidJobId 자체는 갱신하지 않는다(최초 결제 job을 계속 가리켜야 함).
+ */
 async function startJob(sketchBase64: string) {
   try {
     const job = await shopApi.createAiItem({
       name: name.value,
       category: category.value,
       sketchBase64,
+      parentJobId: paidJobId.value ?? undefined,
     })
     currentJobId.value = job.jobId
+    if (paidJobId.value === null) paidJobId.value = job.jobId
     jobStatus.value = job.status
+    void syncPointBalance() // 최초 결제면 여기서 차감된다 — 헤더를 바로 맞춘다
     pollTimer = setTimeout(() => pollJob(job.jobId), POLL_INTERVAL_MS)
   } catch (e) {
+    // 포인트 부족·재생성 한도 초과는 "생성 시도" 자체가 아니라 요청이 거부된 것이라, 생성 모달을
+    // 닫고 토스트로 안내한다(그리기 화면에 머물러 있던 것처럼 보이게).
+    if (e instanceof ApiError && e.code === 'AI_ITEM_INSUFFICIENT_POINT') {
+      closeModal()
+      flash('포인트가 부족해요. 화면 상단의 포인트 충전에서 채워보세요.')
+      return
+    }
+    if (e instanceof ApiError && e.code === 'AI_ITEM_RETRY_LIMIT_EXCEEDED') {
+      closeModal()
+      flash('이미 다시 생성을 사용했어요.')
+      return
+    }
     failMessage.value = e instanceof ApiError ? e.message : '생성 요청에 실패했어요'
     phase.value = 'failed'
   }
@@ -308,7 +355,10 @@ async function startJob(sketchBase64: string) {
  */
 async function pollJob(jobId: number, attempt = 0, consecutiveFailures = 0) {
   if (attempt >= POLL_MAX_ATTEMPTS) {
-    failMessage.value = '생성이 오래 걸리고 있어요. 잠시 후 인벤토리를 확인해 주세요'
+    // 서버에 방치된 job 자동 정리 스케줄러(AiItemJobTimeoutSweeper)가 있어 결국 FAILED로
+    // 정리되고 환불된다 — 프론트가 포기하는 지금 시점엔 아직 서버가 처리 중일 수 있으므로
+    // "실패했다"가 아니라 "지연되고 있다"로 안내한다.
+    failMessage.value = '생성이 지연되고 있어요. 실패한 경우 포인트는 자동으로 돌려드리니, 잠시 후 인벤토리를 확인해 주세요.'
     phase.value = 'failed'
     return
   }
@@ -344,8 +394,12 @@ async function pollJob(jobId: number, attempt = 0, consecutiveFailures = 0) {
     return
   }
   if (status.status === 'FAILED') {
-    failMessage.value = status.errorMessage ?? '생성에 실패했어요'
+    // 서버가 FAILED 전환과 환불을 같은 트랜잭션에서 처리하므로(AiItemJobService.fail), 이 시점엔
+    // 이미 환불이 끝나 있다 — 어떤 사유든(워커 오류·타임아웃 정리) 환불 안내를 함께 보여준다.
+    const reason = status.errorMessage ?? '생성에 실패했어요'
+    failMessage.value = `${reason} 사용한 포인트는 자동으로 환불됐어요.`
     phase.value = 'failed'
+    void syncPointBalance() // 서버가 같은 트랜잭션에서 환불을 마친 뒤라 여기서 최신값이 맞다
     return
   }
 
@@ -365,6 +419,20 @@ async function save() {
     flash(e instanceof ApiError ? e.message : '저장에 실패했어요')
   } finally {
     saving.value = false
+  }
+}
+
+/**
+ * 헤더가 보는 세션 프로필 잔액을 서버 값으로 재동기화한다(ShopView.syncBalance와 같은 패턴).
+ * 최초 결제 차감 직후·환불(FAILED) 직후에 불러 새로고침 없이 헤더 포인트가 맞게 보이도록 한다.
+ * 실패해도 조용히 넘어간다 — 표시용이라 치명적이지 않고, 다음 페이지 진입 때 다시 맞춰진다.
+ */
+async function syncPointBalance() {
+  try {
+    const { pointBalance } = await usersApi.getPoints()
+    if (session.profile) session.profile.pointBalance = pointBalance
+  } catch {
+    /* 잔액 조회 실패 — 기존 표시 값 유지 */
   }
 }
 
@@ -442,11 +510,11 @@ function onBackdropClose() {
       </PixelCard>
     </div>
 
-    <PixelModal v-if="modalOpen" @close="onBackdropClose">
+    <PixelModal v-if="modalOpen" variant="lobby" @close="onBackdropClose">
       <div class="ai-modal">
         <template v-if="phase === 'generating'">
           <div class="gen-visual">
-            <span class="gen-spark">✨</span>
+            <img class="gen-cat" :src="aiDrawingCat" alt="그림을 그리고 있는 고양이" />
             <div class="gen-dots"><i /><i /><i /></div>
           </div>
           <b class="gen-title">{{ generatingLabel }}</b>
@@ -478,9 +546,14 @@ function onBackdropClose() {
         </template>
 
         <template v-else>
-          <b class="modal-title">앗, 생성에 실패했어요</b>
-          <p class="gen-desc">{{ failMessage }}</p>
-          <PixelButton block @click="closeModal">닫기</PixelButton>
+          <div class="fail-modal">
+            <div class="fail-visual" aria-hidden="true"><span>!</span></div>
+            <p class="fail-kicker">AI ITEM STUDIO</p>
+            <b class="modal-title">앗, 생성에 실패했어요</b>
+            <p class="gen-desc">{{ failMessage }}</p>
+            <p class="fail-note">잠시 후 다시 시도해 보세요.</p>
+            <PixelButton block @click="closeModal">그리기 화면으로 돌아가기</PixelButton>
+          </div>
         </template>
       </div>
     </PixelModal>
@@ -489,8 +562,9 @@ function onBackdropClose() {
       <section class="point-confirm" role="dialog" aria-modal="true" aria-labelledby="point-confirm-title">
         <span class="point-confirm-coin">●</span>
         <p class="point-confirm-kicker">AI ITEM STUDIO</p>
-        <h2 id="point-confirm-title">1,500 포인트를 사용할까요?</h2>
-        <p>생성을 시작하면 포인트가 즉시 소모돼요.<br />결과는 한 번 더 생성해 비교할 수 있어요.</p>
+        <h2 id="point-confirm-title">AI 제작권을 사용할까요?</h2>
+        <div class="point-ticket"><span>AI ITEM PASS</span><b>{{ AI_ITEM_COST.toLocaleString() }} P</b><small>최대 2회 생성 · 최종 1개 선택</small></div>
+        <p>{{ AI_ITEM_COST.toLocaleString() }} 포인트로 최대 2번까지 생성해 볼 수 있어요.<br />두 결과 중 마음에 드는 아이템 하나만 골라 저장할 수 있어요.</p>
         <div class="clear-confirm-actions">
           <PixelButton @click="showPointConfirm = false">취소</PixelButton>
           <PixelButton variant="primary" @click="generate">생성하기</PixelButton>
@@ -522,12 +596,10 @@ function onBackdropClose() {
 @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
 
 /* AI 생성 결과 모달 */
-.ai-modal { text-align: center; }
-.modal-title { display: block; margin-bottom: 14px; font-size: 14px; }
-.gen-visual { position: relative; height: 74px; margin-bottom: 14px; }
-.gen-spark { position: absolute; left: 50%; top: 0; font-size: 30px; transform: translateX(-50%); animation: px-twinkle 1.4s steps(2) infinite; }
-.gen-dots { position: absolute; left: 50%; bottom: 0; display: flex; gap: 7px; transform: translateX(-50%); }
-.gen-dots i { width: 10px; height: 10px; border: 2px solid var(--c-ink); border-radius: 50%; background: var(--c-mint); animation: ai-dot-bounce 1s infinite ease-in-out; }
+.ai-modal { padding: 3px; text-align: center; }
+.modal-title { display: block; margin-bottom: 8px; color: #4b3429; font-family: var(--font-pixel); font-size: 15px; font-weight: 400; }
+.gen-visual { position: relative; height: 112px; margin-bottom: 11px; }.gen-cat { display: block; width: 126px; height: 112px; margin: 0 auto; object-fit: contain; }
+.gen-dots { position: absolute; left: 50%; bottom: 0; display: flex; gap: 7px; transform: translateX(-50%); }.gen-dots i { width: 9px; height: 9px; border: 2px solid #8e6049; border-radius: 50%; background: #dcecbf; animation: ai-dot-bounce 1s infinite ease-in-out; }
 .gen-dots i:nth-child(2) { animation-delay: 0.15s; }
 .gen-dots i:nth-child(3) { animation-delay: 0.3s; }
 @keyframes ai-dot-bounce {
@@ -537,8 +609,14 @@ function onBackdropClose() {
 @media (prefers-reduced-motion: reduce) {
   .gen-spark, .gen-dots i { animation: none; }
 }
-.gen-title { display: block; margin-bottom: 8px; font-size: 14px; }
-.gen-desc { margin: 0; color: var(--c-muted); font-size: 10px; line-height: 1.7; }
+.gen-title { display: block; margin-bottom: 8px; color: #51382c; font-family: var(--font-pixel); font-size: 13px; font-weight: 400; }.gen-desc { margin: 0; color: #896e5d; font-size: 10px; line-height: 1.7; }
+.fail-modal { padding: 5px 5px 2px; }
+.fail-visual { width: 62px; height: 62px; margin: 0 auto 10px; display: grid; place-items: center; border: 3px solid #8d6048; border-radius: 50%; background: #f7df9e; box-shadow: 4px 4px 0 #c79b77; }
+.fail-visual span { width: 39px; height: 39px; display: grid; place-items: center; border: 2px solid #b86755; border-radius: 50%; background: #fff8e9; color: #b86755; font-family: var(--font-pixel); font-size: 21px; line-height: 1; }
+.fail-kicker { margin: 0 0 7px; color: #9a6045; font-family: var(--font-pixel); font-size: 8px; letter-spacing: .9px; }
+.fail-modal .modal-title { margin-bottom: 9px; }
+.fail-note { margin: 12px 0 14px; padding: 8px; border-top: 2px dashed #dfc29d; border-bottom: 2px dashed #dfc29d; color: #806454; font-size: 9px; }
+.fail-modal :deep(.px-btn) { border: 2px solid #9a6b4f; border-radius: 6px; box-shadow: 3px 3px 0 #bd916e; }
 .result-frame {
   width: 220px;
   height: 220px;
@@ -553,10 +631,10 @@ function onBackdropClose() {
   background-size: 18px 18px;
   overflow: hidden;
 }
-.result-frame img { width: 85%; height: 85%; object-fit: contain; }
+.result-frame img { width: 85%; height: 85%; object-fit: contain; }.result-frame { border: 3px solid #c79b77; border-radius: 9px; background-color: #fffdf4; background-image: linear-gradient(rgba(190,145,101,.12) 1px, transparent 1px), linear-gradient(90deg, rgba(190,145,101,.12) 1px, transparent 1px); }
 .result-options { display: flex; justify-content: center; margin-bottom: 18px; }.result-options.compare { gap: 10px; }.result-options.compare .result-frame { width: 150px; height: 150px; margin: 0; }
 .result-frame { position: relative; padding: 0; cursor: pointer; transition: transform .15s ease, box-shadow .15s ease; }.result-frame.selected { border-color: #9a6b4f; box-shadow: 4px 4px 0 #c99971; transform: translate(-2px, -2px); }.result-badge { position: absolute; top: 7px; left: 7px; padding: 4px 6px; border: 1px solid #8b5c42; border-radius: 4px; background: #fff0b5; color: #604131; font-size: 8px; }.result-guide { margin: -4px 0 12px; color: #896e5d; font-size: 10px; }
-.modal-actions { display: flex; gap: 10px; }.modal-actions small { font-size: 8px; opacity: .75; }
+.modal-actions { display: flex; gap: 10px; }.modal-actions small { font-size: 8px; opacity: .75; }.modal-actions :deep(.px-btn) { border: 2px solid #9a6b4f; border-radius: 6px; box-shadow: 2px 2px 0 #bd916e; }
 .modal-actions :deep(.px-btn) { flex: 1; }
 .pad {
   width: 100%;
@@ -639,7 +717,7 @@ function onBackdropClose() {
 .history-actions { display: flex; align-items: center; gap: 6px; }.history-actions > button { display: grid; width: 30px; height: 30px; place-items: center; padding: 0; border: 2px solid #b98a67; border-radius: 6px; background: #fffdf5; color: #704c38; font-size: 17px; line-height: 1; }.history-actions :deep(.px-btn) { width: auto; min-width: 78px; padding: 0 9px; border-color: #9a6b4f; background: #f7e1ad; box-shadow: 2px 2px 0 #bd916e; color: #51382c; font-size: 9px; }.history-actions > button:disabled { opacity: .38; cursor: not-allowed; }.history-actions > button:not(:disabled):hover { transform: translate(-1px, -1px); box-shadow: 2px 2px 0 #d6b08b; }
 .clear-confirm-backdrop { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(62, 41, 29, .38); }
 .clear-confirm { width: min(100%, 350px); padding: 28px 24px 22px; border: 3px solid #8b5c42; border-radius: 14px; background: #fff8e7; box-shadow: 6px 6px 0 #70452f; text-align: center; }
-.point-confirm { width: min(100%, 370px); padding: 30px 24px 24px; border: 3px solid #8b5c42; border-radius: 14px; background: linear-gradient(145deg, #fff9e8, #f8e3a9); box-shadow: 6px 6px 0 #70452f; text-align: center; }.point-confirm-coin { display: grid; width: 42px; height: 42px; margin: 0 auto 10px; place-items: center; border: 3px solid #9a6b3c; border-radius: 50%; background: #ffd65d; color: #fff1a1; font-size: 20px; box-shadow: inset 0 0 0 3px #f1b83d; }.point-confirm-kicker { margin: 0 0 9px; color: #a8704f; font-size: 8px; letter-spacing: 1px; }.point-confirm h2 { margin: 0; color: #503528; font-family: var(--font-pixel); font-size: 14px; font-weight: 400; }.point-confirm > p:not(.point-confirm-kicker) { margin: 13px 0 21px; color: #7a604c; font-size: 10px; line-height: 1.7; }
+.point-confirm { width: min(100%, 370px); padding: 30px 24px 24px; border: 3px solid #8b5c42; border-radius: 14px; background: #fff8e9; box-shadow: 6px 6px 0 #70452f; text-align: center; }.point-confirm-coin { display: grid; width: 42px; height: 42px; margin: 0 auto 10px; place-items: center; border: 3px solid #9a6b3c; border-radius: 50%; background: #ffd65d; color: #fff1a1; font-size: 20px; box-shadow: inset 0 0 0 3px #f1b83d; }.point-confirm-kicker { margin: 0 0 9px; color: #a8704f; font-size: 8px; letter-spacing: 1px; }.point-confirm h2 { margin: 0; color: #503528; font-family: var(--font-pixel); font-size: 14px; font-weight: 400; }.point-ticket { display: grid; gap: 4px; margin: 15px 0 12px; padding: 10px; border: 2px dashed #b98a67; border-radius: 7px; background: #fffdf4; }.point-ticket span { color: #a8704f; font-size: 8px; letter-spacing: 1px; }.point-ticket b { color: #82533a; font-family: var(--font-pixel); font-size: 17px; font-weight: 400; }.point-ticket small { color: #8d705c; font-size: 9px; }.point-confirm > p:not(.point-confirm-kicker) { margin: 13px 0 21px; color: #7a604c; font-size: 10px; line-height: 1.7; }
 .clear-confirm-icon { display: grid; width: 36px; height: 36px; margin: 0 auto 12px; place-items: center; border: 2px solid #a96a4e; border-radius: 50%; background: #f8cf80; color: #66402e; font-family: var(--font-pixel); font-size: 19px; }
 .clear-confirm h2 { margin: 0; color: #503528; font-family: var(--font-pixel); font-size: 15px; font-weight: 400; }
 .clear-confirm p { margin: 12px 0 20px; color: #896e5d; font-size: 11px; }

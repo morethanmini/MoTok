@@ -39,4 +39,22 @@ final class LivekitTokenSigner {
                 .signWith(Keys.hmacShaKeyFor(apiSecret.getBytes(StandardCharsets.UTF_8)), Jwts.SIG.HS256)
                 .compact();
     }
+
+    /**
+     * RoomService 관리 API(RemoveParticipant 등) 호출용 토큰 — 입장권(roomJoin)이 아니라
+     * roomAdmin 권한이다. 서버가 서버를 부르는 1회성 호출이라 수명을 1분으로 짧게 잡는다.
+     */
+    static String signRoomAdmin(String apiKey, String apiSecret, String roomId) {
+        Instant now = Instant.now();
+        return Jwts.builder()
+                .issuer(apiKey)
+                .subject("motiontok-backend") // 참가자가 아니라 identity는 불필요 — sub 없는 토큰을 거부하는 배포판 대비용
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plus(Duration.ofMinutes(1))))
+                .claim("video", Map.of(
+                        "room", roomId,
+                        "roomAdmin", true))
+                .signWith(Keys.hmacShaKeyFor(apiSecret.getBytes(StandardCharsets.UTF_8)), Jwts.SIG.HS256)
+                .compact();
+    }
 }

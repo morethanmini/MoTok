@@ -3,6 +3,7 @@ package ssafy.a706.backend.game;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.event.EventListener;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
@@ -14,6 +15,7 @@ import ssafy.a706.backend.game.draw.DrawJudgeClient;
 import ssafy.a706.backend.game.dto.GameEventResponse;
 import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameProgressRequest;
+import ssafy.a706.backend.game.dto.GameReadyRequest;
 import ssafy.a706.backend.game.dto.GameResultEntry;
 import ssafy.a706.backend.game.dto.GameStartRequest;
 import ssafy.a706.backend.game.dto.GameTurnSkipRequest;
@@ -24,9 +26,11 @@ import ssafy.a706.backend.game.model.GameSession;
 import ssafy.a706.backend.game.repository.GameRepository;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.liveroom.event.LiveRoomClosedEvent;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
+import ssafy.a706.backend.rhythm.RhythmSessionRepository;
 import ssafy.a706.backend.signal.RoomMembershipReader;
 
 import java.nio.charset.StandardCharsets;
@@ -122,8 +126,16 @@ public class GameSessionService {
     private static final int DRAW_MAX_OPS = 256;
     private static final int DRAW_MAX_GUESSES = 5;
     private static final int DRAW_MAX_GUESS_LEN = 40;
-    /** 도화지 PNG data URL 상한 — 960×540 낙서는 보통 100KB 미만이라 넉넉하다(악의적 대용량 차단용). */
-    private static final int DRAW_MAX_IMAGE_CHARS = 4_000_000;
+    /**
+     * 도화지 data URL 상한(문자 수).
+     *
+     * <p>GMS 릴레이가 요청 본문 65KB 근처부터 <b>모델을 부르지도 않고</b> 400을 던진다
+     * (실측: 65.6KB 성공 / 100KB 실패, 실패는 0.4초 만에 반환). 예전 상한 4MB는 이 경계보다
+     * 60배 커서 아무 역할도 못 하고, 거절이 확실한 페이로드를 GMS까지 보내 쿼터를 태우고
+     * 원인을 오해하게 만드는 502를 만들었다. FE도 같은 값으로 인코딩 크기를 맞춘다
+     * (DrawingRelayGame MAX_IMAGE_CHARS) — 여기는 그보다 살짝 여유를 둔 방어선이다.</p>
+     */
+    private static final int DRAW_MAX_IMAGE_CHARS = 64_000;
     /** 주제어 후보 — FE drawing-relay/words.ts와 동기화 필수(솔로 모드가 같은 목록을 쓴다). */
     private static final List<String> DRAW_TOPICS = List.of(
             "사과", "바나나", "수박", "포도", "딸기",
@@ -139,6 +151,8 @@ public class GameSessionService {
     /** 방 상태 전환은 서비스 경유 — 로비 실시간 갱신(-148) 알림이 그 안에 붙어 있다. */
     private final LiveRoomService liveRoomService;
     private final GameSessionRepository sessionRepository;
+    /** 리듬(전용 채널) 세션 — 교차 중복 시작 차단(-164)에만 읽는다. 도메인 지식은 넘기지 않는다. */
+    private final RhythmSessionRepository rhythmSessionRepository;
     private final GameRepository gameRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final TaskScheduler gameTaskScheduler;
@@ -148,7 +162,29 @@ public class GameSessionService {
     /** 조기 종료 시 취소할 라운드 종료 예약 (roomId → future). 인메모리 — 단일 인스턴스 전제. */
     private final Map<String, ScheduledFuture<?>> endTasks = new ConcurrentHashMap<>();
 
-    /** 방장 게임 시작 → 세션 생성·방 잠금·GAME_START 브로드캐스트·정산 예약. */
+    /**
+     * 시작 준비 확인 대기 시간(-162). 정상 경로에서는 모델이 캐시에 있어 1초 안에 전원이
+     * ready를 회신한다 — 이 값은 "준비 신호를 영영 못 보내는 참가자(크래시·이탈)"가
+     * 방 전체의 시작을 붙잡지 못하게 하는 상한이다. 초과 시 준비된 인원만으로 시작한다.
+     */
+    private static final long PREPARE_TIMEOUT_MILLIS = 15_000;
+
+    /** 시작 준비 확인 상태(-162). roomId당 하나. 인메모리 — endTasks와 동일한 단일 인스턴스 전제. */
+    private record PendingStart(String prepareId, GameStartRequest request,
+                                Set<String> ready, ScheduledFuture<?> timeout) {
+    }
+
+    private final Map<String, PendingStart> pendingStarts = new ConcurrentHashMap<>();
+
+    /**
+     * 방장 게임 시작 — 세션을 바로 만들지 않고 <b>시작 준비 확인(-162)</b>부터 연다.
+     *
+     * <p>예전에는 즉시 GAME_START를 배포하고 3초 뒤 라운드가 시작됐다 — 모델이 없는(또는
+     * 새로고침 중인) 참가자는 그 3초 안에 준비될 수 없어 라운드에 늦게 합류하거나 통째로
+     * 놓쳤다. 이제 GAME_PREPARE를 배포해 각 참가자가 모델 로드를 마치고 ready를 회신하게
+     * 하고, 전원 완료(또는 {@link #PREPARE_TIMEOUT_MILLIS}) 시 {@link #beginSession}이
+     * 실제 세션을 만든다.</p>
+     */
     public void start(String roomId, GameStartRequest request, AuthPrincipal sender) {
         // 1) 인가 — 방 존재·참가·방장 권한을 먼저 본다(비방장에게 카탈로그를 노출하지 않는다).
         Map<Object, Object> roomFields = liveRoomRepository.findRoomFields(roomId)
@@ -165,14 +201,136 @@ public class GameSessionService {
         Game game = gameRepository.findById(gameId)
                 .filter(Game::isActive)
                 .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
-        // 3) 진행 중 세션 재시작 방지
+        // 3) 진행 중 세션·준비 확인 중복 방지 — 리듬(전용 채널) 세션과도 교차 확인한다(-164).
+        //    저장소가 따로라 여기서 안 보면 리듬 진행 중에 공용 게임을 겹쳐 시작할 수 있었다.
         long now = System.currentTimeMillis();
         boolean activeExists = sessionRepository.findSession(roomId)
                 .map(s -> s.isPlaying(now, END_GRACE_MILLIS))
                 .orElse(false);
-        if (activeExists) {
+        boolean rhythmActive = rhythmSessionRepository.findSession(roomId)
+                .map(s -> s.isPlaying(now, END_GRACE_MILLIS))
+                .orElse(false);
+        if (activeExists || rhythmActive || pendingStarts.containsKey(roomId)) {
             throw new BusinessException(ErrorCode.GAME_SESSION_ALREADY_ACTIVE);
         }
+        // 4) 인원 선검증 — beginSession도 다시 확인하지만, 방장에게는 준비 확인을 열기 전에
+        //    바로 거절을 돌려줘야 한다(타임아웃 뒤 조용히 실패하면 원인을 알 수 없다).
+        int memberCount = liveRoomRepository.findMembers(roomId).size();
+        if (gameId == DRAW_GAME_ID && memberCount < game.getMinPlayers()) {
+            throw new BusinessException(ErrorCode.GAME_NEED_MORE_PLAYERS,
+                    String.format("%d명부터 시작할 수 있는 게임입니다. (현재 %d명)",
+                            game.getMinPlayers(), memberCount));
+        }
+        if (gameId == BODY_FIT_GAME_ID && memberCount < 2) {
+            throw new BusinessException(ErrorCode.GAME_NEED_MORE_PLAYERS);
+        }
+
+        // 5) 준비 확인 개시 — 전원 ready 또는 타임아웃에 beginSession이 실행된다.
+        String prepareId = UUID.randomUUID().toString();
+        ScheduledFuture<?> timeout = gameTaskScheduler.schedule(
+                () -> {
+                    PendingStart pending = pendingStarts.remove(roomId);
+                    if (pending == null || !pending.prepareId().equals(prepareId)) {
+                        return; // 이미 전원 ready로 시작됐거나 취소됨
+                    }
+                    try {
+                        beginSession(roomId, pending.request());
+                    } catch (Exception e) {
+                        log.error("game start failed after prepare timeout: room={}", roomId, e);
+                    }
+                },
+                Instant.ofEpochMilli(now + PREPARE_TIMEOUT_MILLIS));
+        pendingStarts.put(roomId, new PendingStart(prepareId, request, ConcurrentHashMap.newKeySet(), timeout));
+        broadcast(roomId, GameEventResponse.gamePrepare(prepareId, gameId, memberCount));
+        log.info("game prepare opened: room={} prepare={} game={} members={}",
+                roomId, prepareId, gameId, memberCount);
+    }
+
+    /**
+     * 참가자 준비 완료 회신(-162). 현재 멤버 전원이 모이면 즉시 세션을 시작한다.
+     * 지난 준비 라운드의 늦은 신호(prepareId 불일치)는 조용히 무시한다.
+     */
+    public void ready(String roomId, GameReadyRequest request, AuthPrincipal sender) {
+        requireMembership(roomId, sender);
+        PendingStart pending = pendingStarts.get(roomId);
+        if (pending == null || !pending.prepareId().equals(request.prepareId())) {
+            return;
+        }
+        pending.ready().add(sender.userId());
+        // 준비 확인 중 멤버가 바뀔 수 있으므로 "전원"은 매번 현재 명단으로 판정한다.
+        List<LiveRoomMemberValue> members = liveRoomRepository.findMembers(roomId);
+        long readyCount = members.stream().filter(m -> pending.ready().contains(m.userId())).count();
+        broadcast(roomId, GameEventResponse.gameReadyProgress(
+                pending.prepareId(), (int) readyCount, members.size()));
+        if (members.isEmpty() || readyCount < members.size()) {
+            return;
+        }
+        // 타임아웃 스레드와 경합해도 remove는 한쪽만 성공한다 — 세션은 정확히 1회 시작된다.
+        PendingStart claimed = pendingStarts.remove(roomId);
+        if (claimed == null || !claimed.prepareId().equals(pending.prepareId())) {
+            return;
+        }
+        claimed.timeout().cancel(false);
+        beginSession(roomId, claimed.request());
+    }
+
+    /**
+     * 방장 게임 강제종료(-164 후속). 정산(GameSettledEvent) 없이 세션을 접는다 —
+     * 중도 종료된 판으로 랭킹·포인트가 적재되면 안 된다. 준비 확인 단계였다면 그것만 취소한다.
+     * FE는 GAME_ABORTED를 받으면 게임 화면을 닫는다.
+     */
+    public void abort(String roomId, AuthPrincipal sender) {
+        Map<Object, Object> roomFields = liveRoomRepository.findRoomFields(roomId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ROOM_NOT_FOUND));
+        requireMembership(roomId, sender);
+        if (!sender.userId().equals(roomFields.get("hostUserId"))) {
+            throw new BusinessException(ErrorCode.NOT_ROOM_HOST);
+        }
+        PendingStart pending = takePendingStart(roomId);
+        if (pending != null) {
+            broadcast(roomId, GameEventResponse.gameAborted(null));
+            log.info("game prepare aborted by host: room={} prepare={}", roomId, pending.prepareId());
+            return;
+        }
+        GameSession session = sessionRepository.findSession(roomId).orElse(null);
+        long now = System.currentTimeMillis();
+        if (session == null || !session.isPlaying(now, END_GRACE_MILLIS)) {
+            return; // 이미 정산됐거나 세션 없음 — 멱등
+        }
+        // 정산 타이머·전원 완주 조기 정산과 경합해도 SETNX 가드를 선점한 한쪽만 실행된다.
+        if (!sessionRepository.tryAcquireEndGuard(roomId, session.sessionId(), session.roundIndex())) {
+            return;
+        }
+        cancelScheduledEnd(roomId);
+        sessionRepository.markEnded(roomId);
+        liveRoomService.changeStatus(roomId, "WAITING");
+        broadcast(roomId, GameEventResponse.gameAborted(session.sessionId()));
+        log.info("game session aborted by host: room={} session={}", roomId, session.sessionId());
+    }
+
+    /** 공용 게임 세션이 진행/준비 중인가 — 리듬(전용 채널)이 교차 중복 시작을 막을 때 묻는다(-164). */
+    public boolean isSessionActiveOrPreparing(String roomId) {
+        long now = System.currentTimeMillis();
+        return pendingStarts.containsKey(roomId) || sessionRepository.findSession(roomId)
+                .map(s -> s.isPlaying(now, END_GRACE_MILLIS))
+                .orElse(false);
+    }
+
+    private PendingStart takePendingStart(String roomId) {
+        PendingStart pending = pendingStarts.remove(roomId);
+        if (pending != null) {
+            pending.timeout().cancel(false);
+        }
+        return pending;
+    }
+
+    /** 준비 확인이 끝난 뒤의 실제 세션 시작 — 세션 생성·방 잠금·GAME_START 브로드캐스트·정산 예약. */
+    private void beginSession(String roomId, GameStartRequest request) {
+        long now = System.currentTimeMillis();
+        Long gameId = request.gameId();
+        Game game = gameRepository.findById(gameId)
+                .filter(Game::isActive)
+                .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
 
         // 그림으로 말해요(게임 10)는 출제자·난이도가 없는 별도 타임라인이라 전용 경로로 빠진다
         if (gameId == DRAW_GAME_ID) {
@@ -386,8 +544,15 @@ public class GameSessionService {
      */
     public void judgeDrawing(String roomId, String imageDataUrl, AuthPrincipal sender) {
         requireMembership(roomId, sender);
-        if (imageDataUrl == null || imageDataUrl.isBlank() || imageDataUrl.length() > DRAW_MAX_IMAGE_CHARS) {
+        if (imageDataUrl == null || imageDataUrl.isBlank()) {
             throw new BusinessException(ErrorCode.GAME_IMAGE_INVALID);
+        }
+        if (imageDataUrl.length() > DRAW_MAX_IMAGE_CHARS) {
+            // GMS가 어차피 거절할 크기다 — 여기서 끊어 쿼터를 아끼고 원인을 분명히 남긴다.
+            log.warn("draw judge rejected oversized image: room={} chars={}", roomId, imageDataUrl.length());
+            throw new BusinessException(ErrorCode.GAME_IMAGE_INVALID,
+                    String.format("그림 데이터가 너무 큽니다. (%dKB / 최대 %dKB)",
+                            imageDataUrl.length() / 1024, DRAW_MAX_IMAGE_CHARS / 1024));
         }
         long now = System.currentTimeMillis();
         GameSession session = sessionRepository.findSession(roomId)
@@ -667,6 +832,17 @@ public class GameSessionService {
         if (prev != null) {
             prev.cancel(false);
         }
+    }
+
+    /**
+     * 방 폐쇄(-164) — 정산 예약과 세션 잔재를 함께 정리한다. 방이 사라졌는데 예약만 남으면
+     * 발화 시 삭제된 방을 조회·부활시키려다 실패하고, 세션 키는 30분간 유령으로 남는다.
+     */
+    @EventListener
+    public void onRoomClosed(LiveRoomClosedEvent event) {
+        takePendingStart(event.roomId());
+        cancelScheduledEnd(event.roomId());
+        sessionRepository.deleteAllForRoom(event.roomId());
     }
 
     private GameSession requireActiveSession(String roomId) {

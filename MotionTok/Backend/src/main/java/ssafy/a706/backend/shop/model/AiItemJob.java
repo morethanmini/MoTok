@@ -14,7 +14,8 @@ import java.time.LocalDateTime;
  * Item/UserItem과 같은 스타일로 연관관계 어노테이션 없이 순수 ID 컬럼만 쓴다.
  */
 @Entity
-@Table(name = "ai_item_job")
+@Table(name = "ai_item_job",
+        uniqueConstraints = @UniqueConstraint(name = "uk_ai_item_job_parent", columnNames = "parent_job_id"))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class AiItemJob {
@@ -52,6 +53,14 @@ public class AiItemJob {
     @Column(name = "error_message", length = 500)
     private String errorMessage;
 
+    /** 이 job에서 실제 차감한 포인트. 재생성 job(parentJobId != null)은 추가 차감이 없으므로 0. */
+    @Column(name = "points_charged")
+    private Integer pointsCharged;
+
+    /** 재생성인 경우 최초 결제 job의 id. UNIQUE 제약으로 한 결제 건당 재생성은 최대 1건만 허용한다. */
+    @Column(name = "parent_job_id")
+    private Long parentJobId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -59,12 +68,15 @@ public class AiItemJob {
     private LocalDateTime updatedAt;
 
     @Builder
-    public AiItemJob(Long userId, String name, ItemCategory category, String sketchBase64, AiJobStatus status) {
+    public AiItemJob(Long userId, String name, ItemCategory category, String sketchBase64, AiJobStatus status,
+                      Integer pointsCharged, Long parentJobId) {
         this.userId = userId;
         this.name = name;
         this.category = category;
         this.sketchBase64 = sketchBase64;
         this.status = status;
+        this.pointsCharged = pointsCharged;
+        this.parentJobId = parentJobId;
         this.createdAt = LocalDateTime.now();
     }
 }

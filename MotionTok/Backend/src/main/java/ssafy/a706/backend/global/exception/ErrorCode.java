@@ -11,6 +11,7 @@ public enum ErrorCode {
 
     // common
     INVALID_INPUT(HttpStatus.BAD_REQUEST, "COMMON_INVALID_INPUT", "잘못된 입력입니다."),
+    PROFANITY_DETECTED(HttpStatus.BAD_REQUEST, "COMMON_PROFANITY_DETECTED", "비속어가 포함되어 있습니다. 표현을 바꿔 주세요."),
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "COMMON_UNAUTHORIZED", "인증이 필요합니다."),
     FORBIDDEN(HttpStatus.FORBIDDEN, "COMMON_FORBIDDEN", "권한이 없습니다."),
     NOT_FOUND(HttpStatus.NOT_FOUND, "COMMON_NOT_FOUND", "리소스를 찾을 수 없습니다."),
@@ -19,7 +20,15 @@ public enum ErrorCode {
     // auth
     INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "AUTH_INVALID_CREDENTIALS", "이메일 또는 비밀번호가 올바르지 않습니다."),
     INVALID_TOKEN(HttpStatus.UNAUTHORIZED, "AUTH_INVALID_TOKEN", "유효하지 않은 토큰입니다."),
+    // 단일 세션(v0.2.25) — 같은 계정의 새 로그인이 이 세션을 밀어냈다. 클라이언트는 이 코드로
+    // "다른 곳에서 로그인" 안내를 띄운다(일반 만료와 문구가 달라야 계정 도용을 알아챌 수 있다).
+    SESSION_DISPLACED(HttpStatus.UNAUTHORIZED, "AUTH_SESSION_DISPLACED", "다른 곳에서 로그인되어 로그아웃되었습니다."),
     ACCOUNT_NOT_ACTIVE(HttpStatus.FORBIDDEN, "AUTH_ACCOUNT_NOT_ACTIVE", "이용이 제한된 계정입니다."),
+    // 기간 정지는 ACCOUNT_NOT_ACTIVE와 분리한다 — 클라이언트가 "언제 풀리는지"를 안내해야 하는데
+    // 영구 제재·탈퇴와 같은 코드로 내려가면 그 구분이 응답에서 사라진다.
+    ACCOUNT_SUSPENDED(HttpStatus.FORBIDDEN, "AUTH_ACCOUNT_SUSPENDED", "정지된 계정입니다."),
+    // 영구 정지도 코드를 나눈다 — 기간 정지 문구("기간이 끝나면 다시 로그인")를 영구 제재에 띄우면 거짓말이 된다.
+    ACCOUNT_BANNED(HttpStatus.FORBIDDEN, "AUTH_ACCOUNT_BANNED", "영구 정지된 계정입니다."),
 
     // 소셜 로그인 (명세서 POST /auth/social/{provider})
     UNSUPPORTED_OAUTH_PROVIDER(HttpStatus.BAD_REQUEST, "AUTH_UNSUPPORTED_OAUTH_PROVIDER", "지원하지 않는 소셜 로그인 제공자입니다."),
@@ -37,6 +46,10 @@ public enum ErrorCode {
     SEND_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_SEND_LIMIT_EXCEEDED", "하루 인증번호 발송 한도를 초과했습니다."),
     VERIFY_ATTEMPT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_VERIFY_ATTEMPT_EXCEEDED", "인증 시도 횟수를 초과했습니다. 인증번호를 다시 요청해 주세요."),
 
+    // 남용 방지 레이트리밋
+    LOGIN_ATTEMPTS_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_LOGIN_ATTEMPTS_EXCEEDED", "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요."),
+    GUEST_START_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_GUEST_START_LIMIT_EXCEEDED", "게스트 시작 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요."),
+
     // 소셜 최초 로그인 닉네임 설정 (명세서 v0.2.15, -22)
     NICKNAME_SETUP_REQUIRED(HttpStatus.FORBIDDEN, "AUTH_NICKNAME_SETUP_REQUIRED", "닉네임 설정을 먼저 완료해 주세요."),
 
@@ -47,6 +60,16 @@ public enum ErrorCode {
 
     // user
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "존재하지 않는 계정입니다."),
+
+    // 계정 제재(관리자) — 정지 상태는 Redis TTL, 이력은 sanction_history가 나눠 갖는다
+    SANCTION_SELF_FORBIDDEN(HttpStatus.BAD_REQUEST, "SANCTION_SELF_FORBIDDEN", "자기 자신은 제재할 수 없습니다."),
+    SANCTION_TARGET_ADMIN(HttpStatus.FORBIDDEN, "SANCTION_TARGET_ADMIN", "관리자는 제재할 수 없습니다."),
+    SANCTION_NOT_SUSPENDED(HttpStatus.CONFLICT, "SANCTION_NOT_SUSPENDED", "정지 중인 계정이 아닙니다."),
+    SANCTION_ALREADY_BANNED(HttpStatus.CONFLICT, "SANCTION_ALREADY_BANNED", "이미 영구 정지된 계정입니다."),
+    // 남의 경고를 확인하려는 요청도 여기로 떨어진다 — 조회 조건에 userId가 들어가 '없음'과 구분되지 않는다.
+    // 존재 여부를 알려 주지 않는 쪽이 안전하다.
+    SANCTION_WARNING_NOT_FOUND(HttpStatus.NOT_FOUND, "SANCTION_WARNING_NOT_FOUND", "존재하지 않는 경고입니다."),
+    SANCTION_NOT_BANNED(HttpStatus.CONFLICT, "SANCTION_NOT_BANNED", "영구 정지된 계정이 아닙니다."),
 
     // room
     ROOM_NOT_FOUND(HttpStatus.NOT_FOUND, "ROOM_NOT_FOUND", "존재하지 않는 방입니다."),
@@ -92,10 +115,13 @@ public enum ErrorCode {
     AI_JOB_NOT_FOUND(HttpStatus.NOT_FOUND, "AI_JOB_NOT_FOUND", "존재하지 않는 AI 아이템 생성 작업입니다."),
     AI_JOB_FORBIDDEN(HttpStatus.FORBIDDEN, "AI_JOB_FORBIDDEN", "본인의 작업만 조회할 수 있습니다."),
     AI_JOB_INVALID_STATE(HttpStatus.CONFLICT, "AI_JOB_INVALID_STATE", "처리 중인 작업이 아닙니다."),
+    AI_ITEM_INSUFFICIENT_POINT(HttpStatus.BAD_REQUEST, "AI_ITEM_INSUFFICIENT_POINT", "포인트가 부족합니다."),
+    AI_ITEM_RETRY_LIMIT_EXCEEDED(HttpStatus.BAD_REQUEST, "AI_ITEM_RETRY_LIMIT_EXCEEDED", "재생성 가능 횟수를 초과했습니다."),
     INTERNAL_UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "INTERNAL_UNAUTHORIZED", "내부 API 인증에 실패했습니다."),
 
     // chat
     CHAT_NOT_IN_ROOM(HttpStatus.FORBIDDEN, "CHAT_NOT_IN_ROOM", "방 참가자만 채팅을 보낼 수 있습니다."),
+    CHAT_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "CHAT_RATE_LIMITED", "채팅을 너무 자주 보냈습니다. 잠시 후 다시 시도해 주세요."),
 
     // chat report
     CHAT_MESSAGE_NOT_FOUND(HttpStatus.NOT_FOUND, "CHAT_MESSAGE_NOT_FOUND", "존재하지 않거나 만료된 채팅입니다."),
@@ -121,8 +147,8 @@ public enum ErrorCode {
     FRIEND_NOT_FOUND(HttpStatus.NOT_FOUND, "FRIEND_NOT_FOUND", "친구가 아닙니다."),
 
     // 친구 귓속말 (-150) — 전역 STOMP 개인큐 기반 1:1 대화
+    // WHISPER_TARGET_OFFLINE은 오프라인 수신함(-160) 도입으로 제거 — 오프라인은 더 이상 실패가 아니다.
     WHISPER_NOT_FRIEND(HttpStatus.FORBIDDEN, "WHISPER_NOT_FRIEND", "친구에게만 귓속말을 보낼 수 있습니다."),
-    WHISPER_TARGET_OFFLINE(HttpStatus.CONFLICT, "WHISPER_TARGET_OFFLINE", "상대가 접속 중이 아니라 귓속말을 전할 수 없습니다."),
 
     // 방 초대 (-100)
     INVITATION_DUPLICATE(HttpStatus.CONFLICT, "INVITATION_DUPLICATE", "이미 보낸 초대가 있습니다."),

@@ -77,6 +77,15 @@ public class ChatLogRepository {
         return entries;
     }
 
+    /** 최근 count건을 시간순으로 — 재입장(새로고침) 시 채팅 이력 복원용(-164). */
+    public List<ChatLogEntry> findRecent(String roomId, int count) {
+        List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream().reverseRange(
+                chatKey(roomId), Range.unbounded(), Limit.limit().count(count));
+        List<ChatLogEntry> entries = toEntries(records);
+        java.util.Collections.reverse(entries);
+        return entries;
+    }
+
     /** chatId 이상(대상 포함) count건을 시간순으로. */
     public List<ChatLogEntry> findFrom(String roomId, String chatId, int count) {
         List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream().range(

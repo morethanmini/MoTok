@@ -35,11 +35,36 @@ const {
 } = useCamera()
 const game = computed(() => (route.query.game as string) || '게임 선택 중')
 const room = computed(() => (route.query.room as string) || 'MP4X9K')
+/** 게임 목록에서 고른 게임의 서버 gameId — 게임룸이 입장 직후 이 게임을 자동으로 연다. */
+const autostart = computed(() => (route.query.autostart as string) || '')
 const showDecorInventory = ref(false)
 const roomCopied = ref(false)
 const videoEl = ref<HTMLVideoElement>()
 watch(stream, (s) => { if (videoEl.value) videoEl.value.srcObject = s })
 const showVideo = computed(() => isOn.value && camOn.value)
+
+/**
+ * 캠·마이크 초기 상태 요청(쿼리 cam=0·mic=0) — 혼자 플레이 경로가 붙여 준다.
+ * 혼자 놀 방은 발행을 받을 사람이 없어 꺼진 채로 시작하는 게 기본이다(게임 입력은 로컬 캡처를 쓰므로
+ * 꺼도 플레이된다 — GameRoomView가 캡처는 항상 켠다).
+ *
+ * <p>토글로 끄는 이유 — useCamera.start()가 스트림을 잡을 때 트랙 유무로 camOn·micOn을 다시 켜므로,
+ * 값을 미리 넣어 두면 지워진다. 스트림이 선 뒤에 토글해야 트랙의 enabled까지 같이 내려간다.
+ * 한 번만 적용하므로, 여기서 사용자가 다시 켜면 그 선택이 그대로 방까지 간다(enter가 쿼리로 넘긴다).</p>
+ */
+const wantCamOff = route.query.cam === '0'
+const wantMicOff = route.query.mic === '0'
+let initialDeviceStateApplied = false
+watch(
+  isOn,
+  (on) => {
+    if (!on || initialDeviceStateApplied) return
+    initialDeviceStateApplied = true
+    if (wantCamOff && camOn.value) toggleCam()
+    if (wantMicOff && micOn.value) toggleMic()
+  },
+  { immediate: true },
+)
 
 // ── 권한 ────────────────────────────────────────────────
 // allow()의 getUserMedia가 곧 '확인이자 요청'이다 — 앱에서 이미 허용했으면 팝업 없이 바로 열리고,
@@ -153,11 +178,22 @@ const micBars = computed(() => {
 let proceedingToRoom = false
 async function enter() {
   if (!isOn.value) return
-  // 저장 안 한 배치가 있으면 먼저 저장한다 — 게임룸은 서버에 저장된 배치를 읽어 합성하므로,
-  // 그냥 들어가면 방금 옮긴 자리가 반영되지 않는다(사용자에겐 그냥 사라진 것으로 보인다).
+  // 게임룸은 서버에 저장된 배치를 읽어 방에 알리므로, 저장 안 하고 들어가면 방금 옮긴 자리가 빠진다.
   if (decor.dirty.value) await decor.save()
   proceedingToRoom = true
-  router.push({ name: RouteName.GameRoom, query: { game: game.value, room: room.value, cam: camOn.value ? '1' : '0', mic: micOn.value ? '1' : '0' } })
+  // solo·autostart는 그대로 넘긴다 — 각각 게임룸의 빈 슬롯 숨김과 자동 시작에 쓰이는 값이라
+  // 여기서 떨어지면 멀티 레이아웃으로 열리고 방에서 게임을 다시 골라야 한다(없으면 넣지 않는다).
+  router.push({
+    name: RouteName.GameRoom,
+    query: {
+      game: game.value,
+      room: room.value,
+      cam: camOn.value ? '1' : '0',
+      mic: micOn.value ? '1' : '0',
+      ...(route.query.solo === '1' ? { solo: '1' } : {}),
+      ...(autostart.value ? { autostart: autostart.value } : {}),
+    },
+  })
 }
 useRoomUnloadLeave(() => route.query.room as string | undefined)
 let notified = false
@@ -179,9 +215,8 @@ async function cancel() { await notifyLeave(); router.push({ name: RouteName.Lob
 <template>
   <main class="waiting-room px-paper-bg">
     <header class="waiting-header">
-      <button type="button" class="logo-btn" aria-label="로비로 돌아가기" @click="cancel"><BrandLogo subtitle="READY ROOM" /></button>
+      <button type="button" class="logo-btn" aria-label="로비로 돌아가기" @click="cancel"><BrandLogo title="" /></button>
       <div class="header-title">
-        <span>GAME ROOM · STEP 01</span>
         <h1>카메라와 마이크를 확인해 주세요</h1>
       </div>
       <div class="room-code"><small>ROOM CODE</small><div><strong>{{ room }}</strong><button type="button" class="copy-room-code" :class="{ copied: roomCopied }" :aria-label="roomCopied ? '룸 코드 복사 완료' : '룸 코드 복사'" @click="copyRoomCode"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="12" rx="1" /><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3" /></svg></button></div></div>
@@ -325,7 +360,7 @@ async function cancel() { await notifyLeave(); router.push({ name: RouteName.Lob
 
 <style scoped>
 .waiting-room { min-height: 100%; box-sizing: border-box; padding: 22px clamp(18px, 4vw, 62px) 34px; color: #402f25; }
-.waiting-header { display: flex; align-items: center; max-width: 1460px; margin: 0 auto 20px; gap: 14px; }.logo-btn { flex: none; border: 0; background: transparent; padding: 0; cursor: pointer; }.header-title span, .setup-intro > span, .panel-heading > span { color: #ad7652; font-size: 10px; font-weight: 700; letter-spacing: .8px; }.header-title h1 { margin: 5px 0 0; font-family: var(--font-pixel); font-size: 25px; font-weight: 400; }.room-code { margin-left: auto; min-width: 96px; text-align: center; transform: translateY(7px); }.room-code small { display: block; color: #a47f60; font-size: 8px; font-weight: 700; }.room-code > div { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 2px; }.room-code strong { color: #60422e; font-family: var(--font-pixel); font-size: 17px; font-weight: 400; }.copy-room-code { display: grid; width: 20px; height: 20px; place-items: center; padding: 0; border: 0; background: transparent; color: #9b765d; }.copy-room-code:hover, .copy-room-code.copied { color: #d67862; }.copy-room-code svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.waiting-header { display: flex; align-items: center; max-width: 1460px; margin: 0 auto 20px; gap: 14px; }.header-title span, .setup-intro > span, .panel-heading > span { color: #ad7652; font-size: 10px; font-weight: 700; letter-spacing: .8px; }.header-title h1 { margin: 0; font-family: var(--font-pixel); font-size: 25px; font-weight: 400; }.room-code { margin-left: auto; min-width: 96px; text-align: center; transform: translateY(7px); }.room-code small { display: block; color: #a47f60; font-size: 8px; font-weight: 700; }.room-code > div { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 2px; }.room-code strong { color: #60422e; font-family: var(--font-pixel); font-size: 17px; font-weight: 400; }.copy-room-code { display: grid; width: 20px; height: 20px; place-items: center; padding: 0; border: 0; background: transparent; color: #9b765d; }.copy-room-code:hover, .copy-room-code.copied { color: #d67862; }.copy-room-code svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .waiting-layout { display: grid; grid-template-columns: minmax(0, 1.48fr) minmax(355px, .72fr); gap: 22px; max-width: 1460px; margin: 0 auto; }.camera-panel, .setup-panel { border: 3px solid #d5b98e; border-radius: 15px; background: #fffdf7; box-shadow: 5px 5px 0 #dfcdb0; }.camera-panel { padding: 18px; }.panel-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }.panel-heading b { padding: 5px 9px; border-radius: 5px; background: #f9dfb0; color: #805b42; font-size: 10px; }.panel-heading b.ready { background: #dcecbf; color: #56743e; }
 .camera-frame { position: relative; display: grid; width: 100%; aspect-ratio: 16 / 9; place-items: center; overflow: hidden; border: 3px solid #8d6a54; border-radius: 10px; background: #53423c; }.camera-frame::before { content: ''; position: absolute; inset: 9px; z-index: 1; border: 1px solid rgba(255,255,255,.34); border-radius: 4px; pointer-events: none; }.cam-video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }.camera-empty { z-index: 2; text-align: center; color: #fff9ef; }.camera-empty h2 { margin: 15px 0 5px; font-size: 17px; }.camera-empty p { margin: 0; color: #ded0c3; font-size: 12px; }.camera-icon, .camera-off-icon { position: relative; width: 54px; height: 38px; margin: auto; border: 3px solid #f5deb7; border-radius: 5px; }.camera-icon::after, .camera-off-icon::after { content: ''; position: absolute; top: 8px; right: -16px; width: 12px; height: 17px; border: 3px solid #f5deb7; border-left: 0; }.camera-off-icon::before { content: ''; position: absolute; top: 16px; left: -10px; width: 69px; height: 3px; background: #e77771; transform: rotate(-34deg); }
 .device-controls { position: absolute; z-index: 3; bottom: 18px; left: 50%; display: flex; gap: 8px; transform: translateX(-50%); }.device-controls button { display: inline-flex; align-items: center; gap: 7px; height: 39px; padding: 0 12px; border: 2px solid #8d6a54; border-radius: 6px; background: #fffdf7; color: #563e2f; box-shadow: 2px 2px 0 rgba(45,28,17,.35); font-size: 11px; font-weight: 700; }.device-controls button.off { background: #f8d9d5; color: #a45a56; }.device-icon { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }.preview-note { margin: 12px 2px 0; color: #998170; font-size: 10px; }
@@ -348,14 +383,15 @@ async function cancel() { await notifyLeave(); router.push({ name: RouteName.Lob
 .decor-save:disabled { opacity: .6; }
 .decor-msg { margin: 0; padding: 8px 10px; border-top: 2px dashed #dec79e; color: #5d7f5e; font-size: 9px; line-height: 1.4; }
 /* 입력 레벨 미터 — 고른 마이크가 소리를 받는지 칸으로 표시(마이크 select 아래) */
-.meter { display: flex; gap: 3px; margin-top: 7px; }
+.meter { display: flex; width: 100%; min-width: 0; gap: 3px; margin-top: 7px; box-sizing: border-box; }
 .meter .seg { flex: 1; height: 11px; border: 2px solid #d5b98e; border-radius: 3px; background: #f4ecdd; }
 .meter .seg.on { background: #8fc16b; }
 .meter .seg.hot.on { background: #e77771; }
 .meter-hint { margin: 5px 0 0; color: #8c7564; font-size: 10px; font-weight: 400; }
 .field-err { margin: 8px 0 0; color: #c0564f; font-size: 10px; font-weight: 700; }
-.setup-panel { display: flex; flex-direction: column; padding: 24px; }.setup-intro h2 { margin: 6px 0 6px; font-family: var(--font-pixel); font-size: 21px; font-weight: 400; }.setup-intro p { margin: 0; color: #8c7564; font-size: 12px; }.permission-card { display: grid; gap: 13px; margin-top: 22px; padding: 15px; border: 2px solid #dfc391; border-radius: 8px; background: #fff2cb; }.permission-card.ok { background: #e2f0d0; border-color: #b6d38d; }.permission-card strong { font-size: 13px; }.permission-card p { margin: 5px 0 0; color: #806c5c; font-size: 11px; line-height: 1.45; }.allow-button { height: 38px; border: 2px solid #9a694d; border-radius: 6px; background: #edc66e; color: #543a29; font-size: 12px; font-weight: 700; }.allow-button:disabled { border-color: #9db47b; background: #cfe5aa; color: #526e3e; }
-.setting-field { display: grid; gap: 7px; margin-top: 17px; color: #584234; font-size: 12px; font-weight: 700; }.setting-field select { height: 40px; padding: 0 10px; border: 2px solid #d5b98e; border-radius: 6px; background: #fffdf7; color: #604a3a; }.actions { display: grid; grid-template-columns: .8fr 1.2fr; gap: 9px; margin-top: auto; padding-top: 24px; }.actions :deep(.px-btn) { border: 2px solid #9a674b; border-radius: 7px; box-shadow: 3px 3px 0 #c6a47d; font-size: 14px; }
+.setup-panel { display: flex; min-width: 0; flex-direction: column; box-sizing: border-box; padding: 24px; }.setup-intro h2 { margin: 6px 0 6px; font-family: var(--font-pixel); font-size: 21px; font-weight: 400; }.setup-intro p { margin: 0; color: #8c7564; font-size: 12px; }.permission-card { display: grid; min-width: 0; gap: 13px; margin-top: 22px; padding: 15px; border: 2px solid #dfc391; border-radius: 8px; background: #fff2cb; }.permission-card.ok { background: #e2f0d0; border-color: #b6d38d; }.permission-card strong { font-size: 13px; }.permission-card p { margin: 5px 0 0; color: #806c5c; font-size: 11px; line-height: 1.45; }.allow-button { height: 38px; border: 2px solid #9a694d; border-radius: 6px; background: #edc66e; color: #543a29; font-size: 12px; font-weight: 700; }.allow-button:disabled { border-color: #9db47b; background: #cfe5aa; color: #526e3e; }
+.setting-field { display: grid; min-width: 0; gap: 7px; margin-top: 17px; color: #584234; font-size: 12px; font-weight: 700; }.setting-field select { width: 100%; min-width: 0; height: 40px; box-sizing: border-box; padding: 0 38px 0 10px; overflow: hidden; appearance: none; border: 2px solid #d5b98e; border-radius: 6px; background: #fffdf7 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%23604a3a' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'/%3E%3C/svg%3E") no-repeat calc(100% - 14px) center / 12px 8px; color: #604a3a; text-overflow: ellipsis; }.actions { display: grid; grid-template-columns: .8fr 1.2fr; gap: 9px; margin-top: auto; padding-top: 24px; }.actions :deep(.px-btn) { min-width: 0; border: 2px solid #9a674b; border-radius: 7px; box-shadow: 3px 3px 0 #c6a47d; font-size: 14px; }
 @media (max-width: 900px) { .waiting-room { min-height: 100vh; }.waiting-layout { grid-template-columns: 1fr; }.setup-panel { order: 2; } }
 @media (max-width: 560px) { .waiting-header { flex-wrap: wrap; gap: 12px; }.header-title { order: 3; width: 100%; }.header-title h1 { font-size: 20px; }.room-code { margin-left: auto; }.camera-panel, .setup-panel { padding: 14px; }.device-controls { width: calc(100% - 22px); justify-content: center; }.device-controls button { padding: 0 9px; font-size: 10px; } }
+.logo-btn { flex: none; border: 0; background: transparent; padding: 0; cursor: pointer; }
 </style>

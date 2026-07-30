@@ -11,6 +11,7 @@
 import { API_BASE, httpEnvelope } from '../http'
 import { getAccessToken } from '../token'
 import type {
+  ChatMessage,
   CreateLiveRoomRequest,
   CreateLiveRoomResponse,
   LiveRoomDetail,
@@ -59,6 +60,12 @@ export const roomsApi = {
   /** POST /v1/live-rooms/quick-start — 빠른 시작(랜덤 매칭, -27). 조건 맞는 방을 서버가 골라 입장시킨다. */
   quickStart: () => httpEnvelope.post<LiveRoomDetail>(`${BASE}/quick-start`),
 
+  /**
+   * GET /v1/live-rooms/{roomId}/chats — 재입장(새로고침) 시 채팅 이력 복원(-164, 멤버 전용).
+   * 원소는 STOMP 브로드캐스트(ChatMessage)와 같은 모양. TALK만 온다(제안 카드는 실시간 전용).
+   */
+  chatHistory: (roomId: string) => httpEnvelope.get<ChatMessage[]>(`${BASE}/${roomId}/chats`),
+
   /** DELETE /v1/live-rooms/{roomId}/members/me — 방 나가기(멱등). 마지막 인원이면 방 즉시 삭제. */
   leave: (roomId: string) => httpEnvelope.delete<void>(`${BASE}/${roomId}/members/me`),
 
@@ -70,10 +77,14 @@ export const roomsApi = {
    * 문서 언로드(탭 닫기·주소창 이탈·새로고침) 전용 퇴장 통보.
    * 문서가 내려가는 중이라 응답을 기다릴 수 없어 keepalive로 쏜다 — sendBeacon은 POST만
    * 가능해서 fetch keepalive를 쓴다. leave가 멱등이라 SPA 경로와 중복 발사돼도 안전하다.
+   *
+   * unload=true(-164): 서버는 즉시 제거하지 않고 유예를 둔다 — 새로고침이면 복귀한 페이지의
+   * join이 유예 안에 도착해 퇴장이 없던 일이 되고(방장·멤버십 유지), 진짜 탭 닫기면 유예 뒤
+   * 일반 퇴장(방장 이양·빈방 삭제)이 실행된다.
    */
   leaveOnUnload: (roomId: string) => {
     const token = getAccessToken()
-    void fetch(`${API_BASE}${BASE}/${roomId}/members/me`, {
+    void fetch(`${API_BASE}${BASE}/${roomId}/members/me?unload=true`, {
       method: 'DELETE',
       keepalive: true,
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,

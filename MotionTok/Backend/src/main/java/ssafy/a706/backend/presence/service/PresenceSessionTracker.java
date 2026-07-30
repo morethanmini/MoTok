@@ -1,5 +1,6 @@
 package ssafy.a706.backend.presence.service;
 
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
@@ -80,6 +81,19 @@ public class PresenceSessionTracker {
             return; // 다른 탭이 살아 있다 — 이 사람은 여전히 접속 중
         }
         reaper.schedule(() -> offline(userId), GRACE_MS, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 종료 시 예약된 유예 작업을 버린다.
+     *
+     * <p>리퍼가 데몬 스레드라 컨텍스트가 닫힌 뒤에도 살아 있어서, 그 사이 예약된 {@link #offline}이
+     * 실행되면 이미 닫힌 빈 팩토리에서 JPA 빈을 새로 만들려 하다 실패한다
+     * ("...ApplicationContext has been closed already" → 아래 catch가 삼키지만 스택트레이스가 길게 남는다).
+     * 버리는 게 맞다 — 서버가 내려가는 중이면 남은 오프라인 처리는 presence TTL과 다음 기동의 스윕이 맡는다.</p>
+     */
+    @PreDestroy
+    void stopReaper() {
+        reaper.shutdownNow();
     }
 
     private void offline(Long userId) {

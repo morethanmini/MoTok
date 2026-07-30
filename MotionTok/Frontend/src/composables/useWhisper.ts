@@ -8,7 +8,8 @@
  *
  * ## 유실을 전제로 만든다
  * 개인 큐 메시지는 받을 사람이 접속 중이 아니면 서버가 조용히 버린다. 그래서
- * ① 서버가 보내기 전에 상대의 접속을 확인하고(오프라인이면 발신자에게 에러),
+ * ① 서버가 오프라인 상대의 메시지를 수신함(whisper:pending)에 적재해 뒀다가
+ *    구독을 시작할 때 REST(pending)로 한 번에 회수하고(-160),
  * ② 대화를 Redis Stream에 남겨 두고, ③ 대화창을 열 때 REST로 이력을 받는다.
  * 실시간 프레임은 "이미 열려 있는 창에 한 줄 더"의 역할만 한다.
  */
@@ -25,6 +26,7 @@ const conversations = reactive(new Map<number, WhisperMessage[]>())
 const unread = reactive(new Map<number, number>())
 /** 지금 열려 있는 대화창의 상대. 열려 있는 대화는 도착 즉시 읽음 처리한다. */
 const openWith = ref<number | null>(null)
+const openNickname = ref('')
 /**
  * 방금 도착한 <b>안 읽은</b> 귓속말 — 앱 전역 알림(토스트)이 이걸 지켜본다.
  *
@@ -46,7 +48,7 @@ function append(message: WhisperMessage) {
   incoming.value = message
 }
 
-/** App 수명 동안 한 번만 구독한다. */
+/** App 수명 동안 한 번만 구독한다. 시작하면서 오프라인 동안 밀린 귓속말도 회수한다(-160). */
 function ensureStarted() {
   if (started || !isMemberSession()) return
   started = true
@@ -57,6 +59,14 @@ function ensureStarted() {
       // 형식 오류 프레임은 무시
     }
   })
+  // 수신함 회수 — 서버가 비우면서 주므로 한 번만 온다. 기존 append 경로에 흘려서
+  // 중복 제거(whisperId)·안 읽음 배지·토스트가 실시간 수신과 똑같이 동작한다.
+  // (동기 루프라 토스트 watch는 마지막 한 건으로 한 번만 뜬다.) 실패는 조용히 넘긴다 —
+  // 내용 자체는 대화 로그에 남아 있어 대화창을 열면 이력으로 보인다.
+  void whispersApi
+    .pending()
+    .then((messages) => messages.forEach(append))
+    .catch(() => {})
 }
 
 export function useWhisper() {
@@ -75,8 +85,9 @@ export function useWhisper() {
   }
 
   /** 대화창을 연다 — 처음 여는 상대면 이력을 한 번 받아 온다. */
-  async function open(userId: number) {
+  async function open(userId: number, nickname = '친구') {
     openWith.value = userId
+    openNickname.value = nickname
     unread.set(userId, 0)
     if (incoming.value?.conversationWith === userId) incoming.value = null
     if (loadedHistory.has(userId)) return
@@ -96,19 +107,22 @@ export function useWhisper() {
 
   function close() {
     openWith.value = null
+    openNickname.value = ''
   }
 
   /** @returns 발행 성공 여부. 실패(미연결)면 호출부가 안내한다. */
   function send(userId: number, text: string): boolean {
     const trimmed = text.trim()
     if (!trimmed) return false
-    // 로컬에 미리 그리지 않는다 — 서버가 거절하면(친구 아님·오프라인) 유령 말풍선이 남는다.
-    // 성공하면 같은 메시지가 에코로 돌아와 그때 그려진다.
+    // 로컬에 미리 그리지 않는다 — 서버가 거절하면(친구 아님) 유령 말풍선이 남는다.
+    // 성공하면 같은 메시지가 에코로 돌아와 그때 그려진다. 상대가 오프라인이어도
+    // 성공이다(-160) — 서버가 수신함에 쌓아 뒀다가 상대 로그인 때 전해 준다.
     return publishGlobal(`/app/friends/${userId}/whisper`, { text: trimmed })
   }
 
   return {
     openWith: readonly(openWith),
+    openNickname: readonly(openNickname),
     /** 전역 알림용 — App.vue가 지켜보고 토스트를 띄운다. 소비 후 clearIncoming()으로 비운다. */
     incoming: readonly(incoming),
     clearIncoming: () => (incoming.value = null),

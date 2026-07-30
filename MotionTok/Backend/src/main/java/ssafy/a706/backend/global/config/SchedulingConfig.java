@@ -22,8 +22,11 @@ import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 @EnableScheduling
 public class SchedulingConfig implements SchedulingConfigurer {
 
-    /** 로비 flush(1초) · 접속시간 스윕(60초) · 만료 방 청소(5분)가 서로를 밀지 않을 만큼. */
-    private static final int POOL_SIZE = 3;
+    /**
+     * 로비 flush(1초) · 접속시간 스윕(60초) · 만료 방 청소(5분) · AI 아이템 생성 타임아웃
+     * 정리(1분, -102)가 서로를 밀지 않을 만큼.
+     */
+    private static final int POOL_SIZE = 4;
 
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
