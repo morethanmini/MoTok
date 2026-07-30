@@ -32,6 +32,7 @@ import { emitAccountBlocked, type AccountBlockKind } from '@/api/authEvents'
 import { API_BASE, refreshAccessTokenIfNeeded } from '@/api/http'
 import { getAccessToken, readAccessClaims } from '@/api/token'
 import { useSessionStore } from '@/stores/session'
+import { recordDisconnect } from './useRum'
 
 /** 재시도 간격의 상한(ms). 죽은 자격이나 죽은 서버를 3초마다 계속 두드리지 않는다. */
 const MAX_RECONNECT_DELAY_MS = 60_000
@@ -66,6 +67,7 @@ const connectedCallbacks = new Set<() => void>()
 
 /** 연결 상태 — 화면에서 "실시간 끊김" 표시에 쓴다. */
 export const stompConnected = readonly(connected)
+
 
 /**
  * 브로커 URL. 운영 빌드는 `VITE_API_BASE_URL=/api`라 상대 경로가 들어온다 —
@@ -213,6 +215,7 @@ function activate() {
       // 하지 않아 간격이 기본값에 머물렀고, 그래서 접속자 전원이 3초마다 함께 몰려들었다.
       reconnectFailures += 1
       c.reconnectDelay = backoffWithJitter(reconnectFailures)
+      recordDisconnect() // RUM — 세션 동안 몇 번 끊겼는지가 재연결 스톰의 직접 증거다
 
       // 제재로 끊긴 연결은 재연결해도 CONNECT에서 다시 거부된다. 그냥 두면 3초마다 실패만 쌓이고
       // 사용자에게는 "실시간이 안 되는" 상태로만 보인다 — 연결을 접고 안내는 App이 맡는다.
