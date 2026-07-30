@@ -43,10 +43,18 @@ export interface CastConfig {
   dropFullSw: number
   /** 스윙을 지켜보는 상한(ms) — 이 시간이 지나면 무조건 판정한다 */
   observeMs: number
-  /** 스윙이 끝났다고 보는 조건 ① 최고 속도의 이 비율 아래 */
-  endRatio: number
-  /** 스윙이 끝났다고 보는 조건 ② 하향 속도가 이 아래 (어깨너비/s) */
-  endVelSw: number
+  /**
+   * 스윙 종료 = 손이 최저점에서 이만큼(어깨너비 배수) 되올라왔다.
+   *
+   * 예전에는 속도로 끝냈다(`vel < peakVel*0.4 || velSw < 0.73`). 그런데 낙하를 종료 순간의
+   * 값으로 재기 때문에, **느린 스윙일수록 일찍 끝나 낙하가 깎였다** — 랩에서 한 던짐이
+   * 낙하 -58px / 최대낙하 42px로 찍혔다(2026-07-30). 약하게 던지려는 시도가 무효로 끝나는
+   * 경로 중 하나였다.
+   *
+   * 위치 기반이면 "팔로스루가 바닥을 찍고 되돌아왔다"는 실제 사건에 맞춰 끝난다. 지터 한
+   * 프레임에 닫히지 않게 문턱을 두되, 어깨너비 배수라 카메라 거리에 안 흔들린다.
+   */
+  endBackSw: number
   /** 속도 계산 창(ms) */
   velWindowMs: number
   /** 조준 x를 몇 ms 전 값으로 쓸지 — 내려꽂는 동안의 흔들림 배제 */
@@ -80,17 +88,25 @@ export const DEFAULT_CAST: CastConfig = {
   // 실측 약한 던짐의 상승 하한이 ×0.34, 팔을 내리는 동작이 ×0.16~0.43이었다.
   // 0.3은 약한 던짐을 살리면서 "던지지 않고 팔만 내리는" 경로 대부분을 자른다.
   riseGateSw: 0.3,
-  // 랩이 기록 문턱으로 쓴 250px/s를 실측 어깨너비(약 165px)로 나눈 값.
-  // 이 값으로 잰 데이터가 아래 dropMinSw·dropFullSw의 근거라 같은 값을 써야 한다.
-  startVelSw: 1.5,
+  /*
+   * 5.0 — 실제 던짐과 중단 동작을 가르는 자리.
+   *
+   * 1.5였을 때 랩 기록 8개 중 3개가 던짐이 아니었다(2026-07-30). 최고 하향 속도로 두 무리가
+   * 완전히 갈린다:
+   *   실제 던짐   ×10.5~13.1/s  → 최대낙하 ×0.86~1.24
+   *   중단·복귀   ×2.0~2.8/s    → 최대낙하 ×0.17~0.25
+   * 1.5는 아래 무리를 통과시키고, 그 던짐들은 낙하 문턱에서 전부 무효로 끝난다 — 유저에게는
+   * "던졌는데 아무 일도 안 일어난다"로 보인다. 5.0은 위 무리에 2배 여유를 두고 아래를 자른다.
+   */
+  startVelSw: 5.0,
   // 약한 던짐 낙하 하한 ×0.52 아래. 문턱을 넘지 못하면 발사되지 않는다
   dropMinSw: 0.45,
   // 강한 던짐 낙하 상한 ×1.28. 이 이상은 전부 파워 1.0
   dropFullSw: 1.3,
-  observeMs: 500,
-  endRatio: 0.4,
-  // 랩의 종료 하한 120px/s ÷ 165px
-  endVelSw: 0.73,
+  // 실측 스윙이 전부 500ms 안에 끝났다. 팔을 내린 채 멈춰 있으면 되올라옴이 안 오므로 상한이 필요하다
+  observeMs: 700,
+  // 어깨너비 192px에서 약 10px — 지터(2~3px)보다 크고 팔로스루 반동(30px+)보다 작다
+  endBackSw: 0.05,
   velWindowMs: 80,
   aimLagMs: 150,
   cooldownMs: 400,
@@ -171,10 +187,17 @@ export function createCast(config: CastConfig = DEFAULT_CAST): Cast {
   let backAt = 0
   /** forward 진입 시각 */
   let releaseAt = 0
-  /** forward 동안의 최고 하향 속도(px/s) — 스윙 종료 판정에만 쓴다 */
+  /** forward 동안의 최고 하향 속도(px/s) — 표시용 */
   let peakVel = 0
   /** 낙하의 기준점 = 백스윙 최고점(y 최솟값) */
   let dropFrom = 0
+  /**
+   * forward 동안 손이 도달한 최저 y — 낙하는 이 값으로 잰다.
+   *
+   * 종료 순간의 y가 아니라 **최저점**이어야 팔로스루의 크기가 된다. 종료 순간을 쓰면 되올라오는
+   * 중의 위치가 섞여 낙하가 작아진다.
+   */
+  let bottomY = 0
   /** forward 진입 시점에 잠근 조준 x */
   let lockedAimX = 0
   let cooldownUntil = 0
@@ -272,6 +295,7 @@ export function createCast(config: CastConfig = DEFAULT_CAST): Cast {
             peakVel = vel
             // 낙하는 백스윙 최고점부터 잰다
             dropFrom = peakY
+            bottomY = midY
             // 조준은 내려꽂기 직전 위치로 잠근다 — 스윙 중 흔들림이 섞이지 않게
             lockedAimX = laggedX(now)
           } else if (midY >= restY) {
@@ -284,11 +308,12 @@ export function createCast(config: CastConfig = DEFAULT_CAST): Cast {
 
         case 'forward': {
           if (vel > peakVel) peakVel = vel
-          dropSw = (midY - dropFrom) / sw
+          if (midY > bottomY) bottomY = midY
+          // 최저점 기준 — 되올라오는 중에도 값이 줄지 않는다
+          dropSw = (bottomY - dropFrom) / sw
           const ended =
             now - releaseAt >= config.observeMs ||
-            vel < peakVel * config.endRatio ||
-            velSw < config.endVelSw
+            (bottomY - midY) / sw >= config.endBackSw
           if (ended) {
             // 낙하가 문턱을 못 넘으면 던진 게 아니다 — 팔을 툭 내린 경로가 여기서 걸린다
             if (dropSw >= config.dropMinSw) {
