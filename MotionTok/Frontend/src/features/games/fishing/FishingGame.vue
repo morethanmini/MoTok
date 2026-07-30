@@ -69,6 +69,19 @@ const reelRate = ref(0)
 let marker: { x: number; y: number } | null = null
 let splashes: Splash[] = []
 let prevPhase = st.value.phase
+/**
+ * 화면 흔들림 0~1 — 매 프레임 감쇠한다.
+ *
+ * 초당 3씩 깎아 최대 세기에서 약 330ms 만에 멎는다. 더 길게 끌면 다음 동작을 조준하는 동안
+ * 화면이 계속 떨려서 방해가 된다.
+ */
+let shake = 0
+const SHAKE_DECAY_PER_SEC = 3
+
+/** 물튀김 — 링 여러 개를 크기 차이를 두고 겹쳐야 "튀었다"로 읽힌다 */
+function splash(x: number, y: number, radii: number[]) {
+  for (const r of radii) splashes.push({ x, y, r, life: 0.6 })
+}
 
 const crank = computed(() => props.crankSide ?? 'right')
 
@@ -164,20 +177,30 @@ function frame(now: number) {
 
     // 페이즈 전환 — 판정기를 초기화해 이전 동작이 새 페이즈로 새지 않게 한다
     if (s.phase !== prevPhase) {
-      if (s.phase === 'waiting') splashes.push({ x: s.bobber.x, y: s.bobber.y, r: 6, life: 0.6 })
-      if (s.phase === 'bite') hook.reset()
+      // 착수 — 찌가 물에 떨어진다
+      if (s.phase === 'waiting') splash(s.bobber.x, s.bobber.y, [4, 10])
+      if (s.phase === 'bite') {
+        hook.reset()
+        // 물고기가 찌를 물어채는 순간. 흔들림이 "지금이다"를 몸으로 알려준다
+        splash(s.bobber.x, s.bobber.y, [3, 8])
+        shake = 0.55
+      }
       if (s.phase === 'fighting') pump.reset()
       if (s.phase === 'idle') {
         cast.reset()
         aim.value = { locked: false, x: aim.value.x }
       }
       if (s.phase === 'result' && s.last?.outcome === 'caught') {
-        splashes.push({ x: s.bobber.x, y: s.bobber.y, r: 6, life: 0.6 })
+        // 포획 — 제일 큰 연출. 링 3겹 + 최대 세기 흔들림
+        splash(s.bobber.x, s.bobber.y, [4, 12, 20])
+        shake = 1
         emit('progress', s.score)
       }
       prevPhase = s.phase
     }
     st.value = s
+
+    if (shake > 0) shake = Math.max(0, shake - dt * SHAKE_DECAY_PER_SEC)
 
     for (const p of splashes) {
       p.life -= dt
@@ -196,6 +219,7 @@ function frame(now: number) {
       video: videoRef.value ?? props.video ?? null,
       tMs: now,
       hud: hud.value,
+      shake,
     })
   }
 }

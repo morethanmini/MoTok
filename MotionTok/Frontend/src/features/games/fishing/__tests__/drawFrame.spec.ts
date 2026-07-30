@@ -112,3 +112,69 @@ describe('drawFrame', () => {
     expect(calls).toContain('hud')
   })
 })
+
+/**
+ * 흔들림은 무대에만 걸려야 한다.
+ *
+ * HUD까지 흔들리면 정작 타격이 온 순간에 문구를 못 읽고, 배경까지 옮기면 이동한 만큼 캔버스
+ * 가장자리에 이전 프레임이 남는다. 둘 다 눈으로는 "뭔가 이상한데" 정도로만 보여서 놓치기 쉽다.
+ */
+describe('drawFrame 흔들림', () => {
+  function tracingCtx() {
+    const calls: string[] = []
+    const stub = {
+      save: () => void calls.push('save'),
+      restore: () => void calls.push('restore'),
+      translate: (x: number, y: number) => void calls.push(`translate(${x !== 0 || y !== 0})`),
+    }
+    return { calls, ctx: stub as unknown as CanvasRenderingContext2D }
+  }
+
+  function skinTracing(calls: string[]) {
+    const rec = (n: string) => () => void calls.push(n)
+    const skin: FishingSkin = {
+      id: 't',
+      label: 't',
+      drawBackground: rec('bg'),
+      drawFish: rec('fish'),
+      drawSplashes: rec('splash'),
+      drawBobber: rec('bobber'),
+      drawAim: rec('aim'),
+      drawGauges: rec('gauge'),
+      drawHud: rec('hud'),
+    }
+    return skin
+  }
+
+  it('shake가 0이면 캔버스를 건드리지 않는다', () => {
+    const { calls, ctx: c } = tracingCtx()
+    drawFrame(c, skinTracing(calls), DEFAULT_LOOP, view(createLoop().state(), { shake: 0 }))
+    expect(calls.filter((x) => x.startsWith('translate'))).toHaveLength(0)
+  })
+
+  it('shake가 있으면 배경 뒤에서 시작하고 게이지 앞에서 끝난다', () => {
+    const { calls, ctx: c } = tracingCtx()
+    drawFrame(c, skinTracing(calls), DEFAULT_LOOP, view(createLoop().state(), { shake: 1, tMs: 40 }))
+
+    const bg = calls.indexOf('bg')
+    const tr = calls.findIndex((x) => x.startsWith('translate'))
+    const fish = calls.indexOf('fish')
+    const restore = calls.lastIndexOf('restore')
+    const gauge = calls.indexOf('gauge')
+    const hud = calls.indexOf('hud')
+
+    // 배경은 흔들리지 않는다 (가장자리에 이전 프레임이 남는다)
+    expect(bg).toBeLessThan(tr)
+    // 무대는 흔들린다
+    expect(tr).toBeLessThan(fish)
+    // UI는 흔들리지 않는다
+    expect(restore).toBeLessThan(gauge)
+    expect(restore).toBeLessThan(hud)
+  })
+
+  it('shake는 실제로 0이 아닌 값으로 이동한다', () => {
+    const { calls, ctx: c } = tracingCtx()
+    drawFrame(c, skinTracing(calls), DEFAULT_LOOP, view(createLoop().state(), { shake: 1, tMs: 40 }))
+    expect(calls).toContain('translate(true)')
+  })
+})
