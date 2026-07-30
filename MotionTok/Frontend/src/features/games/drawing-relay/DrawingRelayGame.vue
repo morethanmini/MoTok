@@ -77,6 +77,16 @@ const PEN_COLOR = '#26262e'
 const PEN_WIDTH = 5
 const PAPER_COLOR = '#fdfdf8'
 const ERASER_WIDTH = 60
+/**
+ * 채점 이미지 data URL 상한(문자 수). GMS 릴레이는 요청 본문이 이 근처를 넘으면 400을 던진다
+ * (실측 경계: 65.6KB 성공 / 100KB 실패). 프롬프트·JSON 오버헤드까지 같은 본문에 실리므로
+ * 마진을 두고 60,000자로 잡았다. BE의 DRAW_MAX_IMAGE_CHARS와 함께 움직여야 한다.
+ */
+const MAX_IMAGE_CHARS = 60_000
+/** 상한을 맞출 때까지 낮춰 볼 JPEG 화질 — 선화라 0.5까지 내려도 형태는 그대로다 */
+const JPEG_QUALITIES = [0.85, 0.7, 0.55, 0.4]
+/** 화질로도 안 되면 줄여 볼 해상도 배율(원본 → 2/3 → 1/2) */
+const SNAPSHOT_SCALES = [1, 2 / 3, 0.5]
 /** 주먹(지우개) 전환에 필요한 연속 프레임 수 — 순간 오인식으로 지워지는 것 방지 */
 const FIST_CONFIRM_FRAMES = 3
 
@@ -145,13 +155,44 @@ function composite(ctx: CanvasRenderingContext2D) {
   for (const layer of orderedLayers()) ctx.drawImage(layer.canvas, 0, 0)
 }
 
-/** 채점용 완성 그림(PNG data URL) */
+/** 채점용 완성 그림(JPEG data URL — 크기 상한에 맞춰 인코딩된다) */
 function snapshot(): string {
-  const flat = document.createElement('canvas')
-  flat.width = W
-  flat.height = H
-  composite(flat.getContext('2d')!)
-  return flat.toDataURL('image/png')
+  return encodeWithinLimit(W, H)
+}
+
+/**
+ * 채점용 이미지를 GMS 게이트웨이가 받아주는 크기 안으로 맞춰 내보낸다.
+ *
+ * <p>무압축 PNG로 내보내면 잉크가 빽빽할수록(8명이 열심히 그릴수록) data URL이 커지는데,
+ * GMS 릴레이는 요청 본문이 65KB를 넘어가는 구간부터 <b>모델을 부르지도 않고</b> 400을 돌려준다
+ * (실측: 65.6KB 성공 / 100KB 실패, 실패는 0.4초 만에 반환). 그래서 크기를 결과로 두지 않고
+ * 목표로 두고 인코딩한다 — 화질을 낮춰 보고, 그래도 넘치면 해상도를 줄여 다시 합성한다.
+ * 오프화이트 배경에 검은 선뿐이라 JPEG로 바꿔도 인식에는 지장이 없다.</p>
+ */
+function encodeWithinLimit(width: number, height: number): string {
+  const draw = (w: number, h: number) => {
+    const flat = document.createElement('canvas')
+    flat.width = w
+    flat.height = h
+    const ctx = flat.getContext('2d')!
+    ctx.imageSmoothingQuality = 'high'
+    ctx.scale(w / W, h / H)
+    composite(ctx)
+    return flat
+  }
+  let canvas = draw(width, height)
+  let smallest = canvas.toDataURL('image/jpeg', JPEG_QUALITIES[0])
+  for (const scale of SNAPSHOT_SCALES) {
+    if (scale !== 1) canvas = draw(Math.round(width * scale), Math.round(height * scale))
+    for (const quality of JPEG_QUALITIES) {
+      const encoded = canvas.toDataURL('image/jpeg', quality)
+      if (encoded.length < smallest.length) smallest = encoded
+      if (encoded.length <= MAX_IMAGE_CHARS) return encoded
+    }
+  }
+  // 여기까지 왔으면 어떤 조합으로도 상한을 못 맞춘 것 — 그래도 가장 작은 걸 보내고
+  // 판정은 서버에 맡긴다(서버가 같은 상한으로 400을 돌려준다).
+  return smallest
 }
 
 function resetPaper() {
