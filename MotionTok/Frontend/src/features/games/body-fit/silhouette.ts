@@ -15,6 +15,7 @@ import {
   LEG_LEN,
   LEG_R_MUL,
   LEG_SPLAY,
+  LEG_TOP_DROP,
   TORSO_RADIUS,
   type Pt,
   type SolvedSkeleton,
@@ -27,9 +28,9 @@ import type { SegmentKey } from './avatarRig'
  * 같은 뷰포트로 배치해야 구멍과 아바타가 픽셀 단위로 정렬된다.
  */
 export const VIEW = {
-  halfWidth: 1.9,
-  top: 1.3,
-  bottom: -2.5,
+  halfWidth: 2,
+  top: 1.2,
+  bottom: -2.8,
 } as const
 export const VIEW_SIZE = VIEW.halfWidth * 2 // = top - bottom = 3.8 (정사각형)
 
@@ -106,12 +107,12 @@ export function drawSilhouette(
     const legW = 2 * (r * LEG_R_MUL + margin * mul.upperArm)
     const hip = solved.hip
     line(
-      { x: hip.x - HIP_HALF_WIDTH, y: hip.y },
+      { x: hip.x - HIP_HALF_WIDTH, y: hip.y - LEG_TOP_DROP },
       { x: hip.x - HIP_HALF_WIDTH - LEG_SPLAY, y: hip.y - legLen },
       legW,
     )
     line(
-      { x: hip.x + HIP_HALF_WIDTH, y: hip.y },
+      { x: hip.x + HIP_HALF_WIDTH, y: hip.y - LEG_TOP_DROP },
       { x: hip.x + HIP_HALF_WIDTH + LEG_SPLAY, y: hip.y - legLen },
       legW,
     )

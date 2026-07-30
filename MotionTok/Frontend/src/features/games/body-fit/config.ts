@@ -93,9 +93,9 @@ export function defaultConfig(): BodyFitConfig {
     avatar: {
       // 1.6이면 팔 길이가 인체 비율(어깨너비 대비 ~1.3배)과 맞아 교차 포즈가 1:1로 매핑된다.
       // 1.3(기획 초안)에서는 팔이 짧아 X자 교차가 몸 중앙까지 닿지 못했다 (2026-07-27 실기)
-      limbScale: 1.6,
-      capsuleRadius: 0.13,
-      headRadius: 0.42,
+      limbScale: 1.55,
+      capsuleRadius: 0.11,
+      headRadius: 0.35,
       leanGain: 1.6,
       headGain: 1.5,
     },

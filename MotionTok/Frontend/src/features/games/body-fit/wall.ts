@@ -18,6 +18,10 @@ const TEX_SIZE = 512
 // 에셋 파일은 남겨둔다 — 입체 룩으로 되돌리면 다시 필요하다.
 const WALL_FILL = '#4a4038'
 const WALL_EDGE = '#7d7059'
+const HOLE_OUTLINE_COLOR = '#ffd45d'
+const HOLE_OUTLINE_GLOW = '#ffbd3e'
+const HOLE_OUTLINE_WIDTH_PX = 1
+const HOLE_OUTLINE_SAMPLES = 20
 
 /**
  * 보이는 벽 크기 ÷ 판정 뷰포트 크기.
@@ -93,6 +97,9 @@ export function createWall(): WallHandle {
   const alphaCanvas = document.createElement('canvas')
   alphaCanvas.width = CW
   alphaCanvas.height = CH
+  const outlineCanvas = document.createElement('canvas')
+  outlineCanvas.width = CW
+  outlineCanvas.height = CH
   const map = new THREE.CanvasTexture(mapCanvas)
   // 캔버스 텍스처는 기본이 선형 색공간이라 sRGB 출력에서 밝게 뜬다 — 예전 주석의
   // "albedo가 밝은 라벤더로 뜬다"가 이 증상이었고 어두운 multiply로 덮고 있었다.
@@ -190,6 +197,21 @@ export function createWall(): WallHandle {
       drawSilhouette(a, setter, cfg, 0)
     })
 
+    // The target shape is a hole, not a semi-transparent person illustration.
+    inViewport(a, () => {
+      a.fillStyle = '#000'
+      a.strokeStyle = '#000'
+      drawSilhouette(a, setter, cfg, 0)
+    })
+
+    const o = outlineCanvas.getContext('2d')!
+    o.clearRect(0, 0, CW, CH)
+    inViewport(o, () => {
+      o.fillStyle = HOLE_OUTLINE_COLOR
+      o.strokeStyle = HOLE_OUTLINE_COLOR
+      drawSilhouette(o, setter, cfg, margin)
+    })
+
     // 단색 석판 — 질감 없이 평면 한 색 + 얇은 테두리 한 줄(GLB 프레임 대체)
     const m = mapCanvas.getContext('2d')!
     m.fillStyle = WALL_FILL
@@ -200,17 +222,21 @@ export function createWall(): WallHandle {
 
     inViewport(m, () => {
       // 림 글로우 — 캔버스 shadowBlur 페인트 발광. alpha가 마진 안쪽을 도려내 링만 남는다
-      m.shadowColor = '#e8b84b'
-      m.shadowBlur = 18
-      m.fillStyle = '#ffe0a0'
-      m.strokeStyle = '#ffe0a0'
-      drawSilhouette(m, setter, cfg, margin + 0.05)
+      m.shadowColor = HOLE_OUTLINE_GLOW
+      m.shadowBlur = 4
+      // outlineCanvas is already in texture-pixel coordinates.
+      m.save()
+      m.setTransform(1, 0, 0, 1, 0, 0)
+      for (let i = 0; i < HOLE_OUTLINE_SAMPLES; i++) {
+        const angle = (Math.PI * 2 * i) / HOLE_OUTLINE_SAMPLES
+        const x = Math.cos(angle) * HOLE_OUTLINE_WIDTH_PX
+        const y = Math.sin(angle) * HOLE_OUTLINE_WIDTH_PX
+        m.drawImage(outlineCanvas, x, y)
+      }
+      m.restore()
       m.shadowBlur = 0
       // 유령(목표) 실루엣은 아바타보다 어둡게 — 같은 사암 톤이면 납작한 화면에서
       // 아바타와 겹쳤을 때 서로 안 갈린다
-      m.fillStyle = '#3a3126'
-      m.strokeStyle = '#3a3126'
-      drawSilhouette(m, setter, cfg, 0)
     })
 
     map.needsUpdate = true
