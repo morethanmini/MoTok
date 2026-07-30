@@ -110,6 +110,34 @@ class GameSessionServiceTest {
                 .isEqualTo(ErrorCode.NOT_ROOM_HOST);
     }
 
+    /**
+     * 관리자가 닫은 게임(-106)은 <b>GAME_NOT_FOUND가 아니다.</b> 닫힌 게임은 카탈로그에 잠긴
+     * 카드로 여전히 보이므로 "존재하지 않는다"고 답하면 화면과 어긋나고, 방장은 자기 방이
+     * 고장 났다고 읽는다. 다시 열리면 플레이되므로 404가 아니라 409다.
+     */
+    @Test
+    void 관리자가_닫은_게임은_GAME_CLOSED로_거부한다() {
+        givenRoomWithHost();
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(Game.builder()
+                .id(1L).name("핑거 스타").roundDurationSec(60).countdownSec(3).active(false).build()));
+
+        assertThatThrownBy(() -> service.start(ROOM_ID, new GameStartRequest(1L, null, null, null, null), host))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.GAME_CLOSED);
+    }
+
+    @Test
+    void 카탈로그에_없는_게임은_GAME_NOT_FOUND로_거부한다() {
+        givenRoomWithHost();
+        when(gameRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.start(ROOM_ID, new GameStartRequest(99L, null, null, null, null), host))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.GAME_NOT_FOUND);
+    }
+
     @Test
     void 시작하면_GAME_START를_배포하고_방을_잠그고_정산을_예약한다() {
         givenRoomWithHost();
