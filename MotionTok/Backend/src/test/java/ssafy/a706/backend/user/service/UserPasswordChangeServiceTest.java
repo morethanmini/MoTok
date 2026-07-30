@@ -2,13 +2,12 @@ package ssafy.a706.backend.user.service;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.InOrder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.oauth.repository.OauthAccountRepository;
 import ssafy.a706.backend.auth.session.SessionRevocationStore;
-import ssafy.a706.backend.auth.store.RefreshTokenStore;
+import ssafy.a706.backend.auth.session.SessionTerminator;
 import ssafy.a706.backend.conntime.service.ConnectTimeService;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
@@ -25,7 +24,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -43,12 +41,10 @@ class UserPasswordChangeServiceTest {
 
     private final UserRepository userRepository = mock(UserRepository.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
-    private final RefreshTokenStore refreshTokenStore = mock(RefreshTokenStore.class);
-    private final SessionRevocationStore sessionRevocationStore = mock(SessionRevocationStore.class);
+    private final SessionTerminator sessionTerminator = mock(SessionTerminator.class);
 
     private final UserService service = new UserService(userRepository,
-            mock(PointHistoryRepository.class), passwordEncoder,
-            refreshTokenStore, sessionRevocationStore,
+            mock(PointHistoryRepository.class), passwordEncoder, sessionTerminator,
             mock(OauthAccountRepository.class), mock(OauthClientResolver.class),
             mock(RejoinPolicy.class), mock(StorageService.class), mock(ConnectTimeService.class));
 
@@ -64,20 +60,16 @@ class UserPasswordChangeServiceTest {
     }
 
     @Test
-    @DisplayName("비밀번호를 바꾸면 Refresh를 지우기 전에 현재 세션을 폐기한다 — 순서가 뒤집히면 조용히 무효가 된다")
-    void revokesSessionBeforeDeletingRefresh() {
+    @DisplayName("비밀번호를 바꾸면 CREDENTIALS_CHANGED 사유로 현재 세션을 끝낸다")
+    void terminatesTheSessionOnChange() {
         localUser();
         given(passwordEncoder.matches("old-pw", "hashed")).willReturn(true);
 
         service.changePassword(USER_ID, "old-pw", "Motok!2345abcd");
 
-        // delete가 먼저 돌면 sid를 담고 있던 Refresh 해시가 사라져 revokeCurrent가 아무 일도 하지 않는다.
-        // 그래서 "불렸는가"가 아니라 "언제 불렸는가"를 못박는다.
-        // 사유도 리터럴로 고정한다 — DISPLACED로 잘못 넘기면 프론트가 "다른 곳에서 로그인" 안내를 띄운다.
-        InOrder order = inOrder(sessionRevocationStore, refreshTokenStore);
-        order.verify(sessionRevocationStore)
-                .revokeCurrent(USER_ID, SessionRevocationStore.Reason.CREDENTIALS_CHANGED);
-        order.verify(refreshTokenStore).delete(USER_ID);
+        // 토큰 폐기·소켓 종료·프레즌스 정리의 순서는 SessionTerminatorTest가 못박는다.
+        // 사유는 여기서 리터럴로 고정한다 — DISPLACED로 잘못 넘기면 프론트가 "다른 곳에서 로그인" 안내를 띄운다.
+        verify(sessionTerminator).terminate(USER_ID, SessionRevocationStore.Reason.CREDENTIALS_CHANGED);
     }
 
     @Test
@@ -90,8 +82,7 @@ class UserPasswordChangeServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.INVALID_CREDENTIALS);
 
-        verify(sessionRevocationStore, never()).revokeCurrent(anyLong(), any());
-        verify(refreshTokenStore, never()).delete(anyLong());
+        verify(sessionTerminator, never()).terminate(anyLong(), any());
     }
 
     @Test
@@ -105,6 +96,6 @@ class UserPasswordChangeServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.INVALID_CREDENTIALS);
 
-        verify(sessionRevocationStore, never()).revokeCurrent(anyLong(), any());
+        verify(sessionTerminator, never()).terminate(anyLong(), any());
     }
 }

@@ -13,7 +13,7 @@ import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.oauth.entity.OauthAccount;
 import ssafy.a706.backend.auth.oauth.repository.OauthAccountRepository;
 import ssafy.a706.backend.auth.session.SessionRevocationStore;
-import ssafy.a706.backend.auth.store.RefreshTokenStore;
+import ssafy.a706.backend.auth.session.SessionTerminator;
 import ssafy.a706.backend.conntime.service.ConnectTimeService;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
@@ -60,8 +60,7 @@ public class UserService {
     private final UserRepository userRepository;
     private final PointHistoryRepository pointHistoryRepository;
     private final PasswordEncoder passwordEncoder;
-    private final RefreshTokenStore refreshTokenStore;
-    private final SessionRevocationStore sessionRevocationStore;
+    private final SessionTerminator sessionTerminator;
     private final OauthAccountRepository oauthAccountRepository;
     private final OauthClientResolver oauthClientResolver;
     private final RejoinPolicy rejoinPolicy;
@@ -207,7 +206,10 @@ public class UserService {
      *
      * <p>단일 세션이라 죽는 세션은 결국 <b>바꾼 본인의 것</b>이다. 이건 부작용이 아니라 의도다 —
      * 프론트는 성공 응답을 받으면 "비밀번호가 변경됐으니 다시 로그인해 주세요"로 안내하고 로그인 화면으로
-     * 보낸다. 종전에도 Refresh가 죽어 결국 튕겼는데, 그게 30분 뒤 엉뚱한 "세션이 만료되었어요"로 왔을 뿐이다.</p>
+     * 보낸다. 종전에도 Refresh가 죽어 결국 튕겼는데, 그게 30분 뒤 엉뚱한 "세션이 만료되었어요"로 왔을 뿐이다.
+     * 실시간 연결도 같은 이유로 함께 끊는다 — 프론트는 이미 성공 직후 스스로 소켓을 닫으므로
+     * (AccountSettingsView.savePassword의 session.clear) 서버가 먼저 끊어도 충돌하지 않고,
+     * 화면을 떠나지 않는 클라이언트만 여기서 막힌다.</p>
      */
     @Transactional
     public void changePassword(Long userId, String currentPassword, String newPassword) {
@@ -218,13 +220,11 @@ public class UserService {
             throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
         }
         user.changePassword(passwordEncoder.encode(newPassword));
-        // 폐기가 먼저 — sid는 아래 delete가 지울 Refresh 해시에 들어 있다.
-        sessionRevocationStore.revokeCurrent(userId, SessionRevocationStore.Reason.CREDENTIALS_CHANGED);
-        refreshTokenStore.delete(userId);
+        sessionTerminator.terminate(userId, SessionRevocationStore.Reason.CREDENTIALS_CHANGED);
     }
 
     /**
-     * DELETE /users/me — 본인 확인 후 soft delete(닉네임·이메일 치환 포함), 그리고 Refresh 토큰 무효화(-111).
+     * DELETE /users/me — 본인 확인 후 soft delete(닉네임·이메일 치환 포함), 그리고 세션 종료(-111).
      *
      * 순서가 중요하다.
      *  ① 본인 확인 — 자체 가입은 비밀번호, 소셜 전용 계정은 소셜 재인증.
@@ -232,6 +232,11 @@ public class UserService {
      *  ③ soft delete + flush로 DB를 확정한 뒤에야 연동 해제·Redis 정리 같은 부수효과를 실행한다(반쪽 탈퇴 방지).
      *
      * 이미 DELETED인 계정의 재호출은 ①에서 걸러진다(비밀번호 해시도 tombstone도 남아 있지 않음).
+     *
+     * <p>정리 범위가 <b>밀어내기보다 약할 이유가 없다</b> — 탈퇴는 계정이 사라지는 일이고
+     * 밀어내기는 기기 하나가 밀리는 일이다. 그런데도 종전 탈퇴는 토큰만 지워, 없어진 계정이
+     * 하트비트로 접속 상태를 되살려 친구 목록에 온라인으로 남고 개인 큐로 귓속말·초대를 계속 받으며
+     * LiveKit 화상에 그대로 붙어 있었다. {@link SessionTerminator}가 그 넷을 함께 끊는다.</p>
      */
     @Transactional
     public void withdraw(Long userId, WithdrawRequest req) {
@@ -251,10 +256,7 @@ public class UserService {
         user.softDelete();
         userRepository.saveAndFlush(user);
         oauthAccountRepository.deleteByUser(user); // 연동 해제 — 쿨다운이 지나면 같은 소셜 계정으로 신규 가입 가능
-        // 탈퇴한 계정의 액세스 토큰이 만료까지 남아 있으면 그 창 동안 없는 사용자로 API를 쓸 수 있다.
-        // 폐기가 먼저 — sid는 아래 delete가 지울 Refresh 해시에 들어 있다.
-        sessionRevocationStore.revokeCurrent(userId, SessionRevocationStore.Reason.WITHDRAWN);
-        refreshTokenStore.delete(userId);
+        sessionTerminator.terminate(userId, SessionRevocationStore.Reason.WITHDRAWN);
     }
 
     /**

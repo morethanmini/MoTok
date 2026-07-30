@@ -6,7 +6,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ssafy.a706.backend.auth.session.SessionRevocationStore;
-import ssafy.a706.backend.auth.store.RefreshTokenStore;
+import ssafy.a706.backend.auth.session.SessionTerminator;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.user.entity.User;
@@ -29,8 +29,7 @@ public class PasswordResetService {
     private final PasswordEncoder passwordEncoder;
     private final PwResetTokenStore tokenStore;
     private final PasswordResetMailSender mailSender;
-    private final RefreshTokenStore refreshTokenStore;
-    private final SessionRevocationStore sessionRevocationStore;
+    private final SessionTerminator sessionTerminator;
     private final PasswordResetProperties props;
 
     /** 재설정 요청. 존재 여부와 무관하게 호출부(컨트롤러)는 202를 반환한다. */
@@ -55,6 +54,9 @@ public class PasswordResetService {
      * 요청자의 것이 아니라 <b>그 계정에 지금 로그인해 있는 기기</b>의 것이다 — 비밀번호를 잃은 진짜 주인이
      * 되찾는 경로이자, 계정을 빼앗은 쪽을 밀어내는 경로다. Refresh만 지우면 상대의 액세스 토큰이
      * 만료(30분)까지 살아 그 창 동안 계정을 계속 쓸 수 있어, sid까지 폐기해 즉시 끊는다(v0.2.25 정책 확장).</p>
+     *
+     * <p>상대를 밀어내는 것이 목적인 경로라 실시간 연결까지 함께 끊는다({@link SessionTerminator})
+     * — 웹소켓이 살아 있으면 상대는 REST가 막힌 뒤에도 귓속말·초대를 받고 화상에 붙어 있을 수 있다.</p>
      */
     @Transactional
     public void resetPassword(String token, String newPassword) {
@@ -65,8 +67,6 @@ public class PasswordResetService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PASSWORD_RESET_TOKEN_INVALID));
         user.changePassword(passwordEncoder.encode(newPassword));
-        // 폐기가 먼저 — sid는 아래 delete가 지울 Refresh 해시에 들어 있다.
-        sessionRevocationStore.revokeCurrent(userId, SessionRevocationStore.Reason.CREDENTIALS_CHANGED);
-        refreshTokenStore.delete(userId);
+        sessionTerminator.terminate(userId, SessionRevocationStore.Reason.CREDENTIALS_CHANGED);
     }
 }
