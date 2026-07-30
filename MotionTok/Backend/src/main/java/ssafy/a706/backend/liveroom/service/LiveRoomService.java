@@ -237,6 +237,22 @@ public class LiveRoomService {
     public void leave(AuthPrincipal principal, String roomId) {
         String key = playerKey(principal);
         cancelPendingUnloadLeave(roomId, key); // 명시적 퇴장이 유예 예약보다 우선한다(-164)
+        processLeave(roomId, principal.userId(), principal.displayName(), key);
+    }
+
+    /**
+     * 유령 멤버 강제 퇴장(-164 후속) — 스위퍼가 "프레즌스가 완전히 끊긴 회원"을 내보낼 때 쓴다.
+     * 본인 요청(leave)과 동일한 후처리(브로드캐스트·방장 이양·빈방 삭제)를 태우므로,
+     * 남은 참가자·로비 화면 어디에서도 일반 퇴장과 구별되지 않는다.
+     */
+    public void evictGhostMember(String roomId, LiveRoomMemberValue member) {
+        String key = playerKey(member.userId(), member.guest());
+        cancelPendingUnloadLeave(roomId, key);
+        processLeave(roomId, member.userId(), member.displayName(), key);
+    }
+
+    /** 퇴장 공통 처리 — 멤버 제거·MEMBER_LEFT 방송·빈방 삭제·방장 이양. */
+    private void processLeave(String roomId, String userId, String displayName, String key) {
         LiveRoom room = loadRoom(roomId); // 방 존재 검증(없으면 ROOM_NOT_FOUND)
         if (!repository.hasMember(roomId, key)) {
             return; // 이미 나간 상태 — 멱등 처리, 유령 브로드캐스트 방지
@@ -245,7 +261,7 @@ public class LiveRoomService {
         List<LiveRoomMemberValue> remaining = repository.findMembers(roomId);
         messagingTemplate.convertAndSend(
                 String.format(MEMBERS_TOPIC, roomId),
-                new LiveRoomMemberLeftEvent(principal.userId(), principal.displayName(), remaining.size()));
+                new LiveRoomMemberLeftEvent(userId, displayName, remaining.size()));
 
         if (remaining.isEmpty()) {
             boolean wasListed = repository.isIndexed(roomId);
@@ -258,7 +274,7 @@ public class LiveRoomService {
             return;
         }
         lobbyBroadcaster.roomUpdated(LiveRoomSummaryResponse.from(loadRoom(roomId)));
-        if (room.hostUserId().equals(principal.userId())) {
+        if (room.hostUserId().equals(userId)) {
             LiveRoomMemberValue newHost = remaining.stream()
                     .min(Comparator.comparingLong(LiveRoomMemberValue::joinedAt))
                     .orElseThrow();
