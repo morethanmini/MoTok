@@ -198,9 +198,7 @@ public class GameSessionService {
         if (gameId == null) {
             throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
         }
-        Game game = gameRepository.findById(gameId)
-                .filter(Game::isActive)
-                .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
+        Game game = requirePlayableGame(gameId);
         // 3) 진행 중 세션·준비 확인 중복 방지 — 리듬(전용 채널) 세션과도 교차 확인한다(-164).
         //    저장소가 따로라 여기서 안 보면 리듬 진행 중에 공용 게임을 겹쳐 시작할 수 있었다.
         long now = System.currentTimeMillis();
@@ -324,13 +322,27 @@ public class GameSessionService {
         return pending;
     }
 
+    /**
+     * 카탈로그에서 지금 시작할 수 있는 게임을 읽는다.
+     *
+     * <p>없는 게임과 관리자가 닫은 게임을 다른 코드로 구분한다 — 닫힌 게임은 목록에 여전히
+     * 보이므로 "존재하지 않는다"고 답하면 화면과 어긋나고, 방장은 자기 방이 고장 났다고 읽는다.</p>
+     */
+    private Game requirePlayableGame(Long gameId) {
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
+        if (!game.isActive()) {
+            throw new BusinessException(ErrorCode.GAME_CLOSED);
+        }
+        return game;
+    }
+
     /** 준비 확인이 끝난 뒤의 실제 세션 시작 — 세션 생성·방 잠금·GAME_START 브로드캐스트·정산 예약. */
     private void beginSession(String roomId, GameStartRequest request) {
         long now = System.currentTimeMillis();
         Long gameId = request.gameId();
-        Game game = gameRepository.findById(gameId)
-                .filter(Game::isActive)
-                .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
+        // 준비 확인 중에 관리자가 게임을 닫았을 수 있어 시작 직전에 한 번 더 본다.
+        Game game = requirePlayableGame(gameId);
 
         // 그림으로 말해요(게임 10)는 출제자·난이도가 없는 별도 타임라인이라 전용 경로로 빠진다
         if (gameId == DRAW_GAME_ID) {
