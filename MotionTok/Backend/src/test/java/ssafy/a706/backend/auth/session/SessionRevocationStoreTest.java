@@ -13,6 +13,7 @@ import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
@@ -65,6 +66,28 @@ class SessionRevocationStoreTest {
         verify(valueOps, never()).set(anyString(), anyString(), any(Duration.class));
     }
 
+    // ── sid를 직접 받는 폐기 — Refresh 해시에서 sid를 더 읽을 수 없을 때 ────────────────
+    // 재사용 탐지가 그렇다: 회전 스크립트가 유출 판정과 동시에 해시를 DEL 하므로, 그 뒤의
+    // revokeCurrent는 읽을 sid가 없어 조용히 no-op이 된다.
+
+    @Test
+    @DisplayName("sid를 직접 받으면 Refresh 해시를 읽지 않고 그대로 폐기한다")
+    void revokesGivenSidWithoutTouchingTheRefreshHash() {
+        store.revoke(SID, SessionRevocationStore.Reason.TOKEN_REUSED);
+
+        verify(valueOps).set(KEY, "TOKEN_REUSED", Duration.ofMillis(ACCESS_MS).plusMinutes(1));
+        // 해시는 이미 지워진 뒤라 물어볼 것도 없다 — 물어보면 null이 돌아와 폐기를 건너뛴다.
+        verify(refreshTokenStore, never()).sessionId(anyLong());
+    }
+
+    @Test
+    @DisplayName("sid가 null이면 아무것도 쓰지 않는다 — 호출자마다 검사를 두지 않으려고 여기서 접는다")
+    void skipsWhenGivenSidIsNull() {
+        store.revoke(null, SessionRevocationStore.Reason.TOKEN_REUSED);
+
+        verify(valueOps, never()).set(anyString(), anyString(), any(Duration.class));
+    }
+
     @Test
     @DisplayName("폐기 여부 조회 — 목록에 있으면 사유, 없으면 null")
     void mapsStoredValueToReason() {
@@ -79,6 +102,9 @@ class SessionRevocationStoreTest {
 
         given(valueOps.get(KEY)).willReturn("WITHDRAWN");
         assertThat(store.reasonOf(SID)).isEqualTo(SessionRevocationStore.Reason.WITHDRAWN);
+
+        given(valueOps.get(KEY)).willReturn("TOKEN_REUSED");
+        assertThat(store.reasonOf(SID)).isEqualTo(SessionRevocationStore.Reason.TOKEN_REUSED);
 
         given(valueOps.get(KEY)).willReturn(null);
         assertThat(store.reasonOf(SID)).isNull();
