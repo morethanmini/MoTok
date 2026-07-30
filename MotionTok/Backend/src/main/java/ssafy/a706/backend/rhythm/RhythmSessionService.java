@@ -8,6 +8,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
+import ssafy.a706.backend.game.GameSessionService;
 import ssafy.a706.backend.game.GameSettledEvent;
 import ssafy.a706.backend.game.dto.GameResultEntry;
 import ssafy.a706.backend.liveroom.event.LiveRoomClosedEvent;
@@ -79,6 +80,8 @@ public class RhythmSessionService {
     /** 방 상태 전환은 서비스 경유 — 로비 실시간 갱신(-148) 알림이 그 안에 붙어 있다. */
     private final LiveRoomService liveRoomService;
     private final RhythmSessionRepository sessionRepository;
+    /** 공용 게임 세션 상태 조회 — 교차 중복 시작 차단(-164) 전용. 도메인 지식은 넘기지 않는다. */
+    private final GameSessionService gameSessionService;
     private final SimpMessagingTemplate messagingTemplate;
     private final TaskScheduler rhythmTaskScheduler;
     private final ApplicationEventPublisher eventPublisher;
@@ -100,6 +103,12 @@ public class RhythmSessionService {
                 .map(s -> s.isPlaying(now, END_GRACE_MILLIS))
                 .orElse(false);
         if (activeExists) {
+            throw RhythmException.alreadyActive();
+        }
+        // 공용 게임 세션(핑거스타 등)이 진행/준비 중이면 리듬을 겹쳐 시작할 수 없다(-164).
+        // 저장소가 따로라 여기서 교차 확인하지 않으면 게임 위에 게임을 얹을 수 있었다
+        // (반대 방향은 GameSessionService.start가 확인한다).
+        if (gameSessionService.isSessionActiveOrPreparing(roomId)) {
             throw RhythmException.alreadyActive();
         }
 

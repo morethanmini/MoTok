@@ -67,7 +67,8 @@ class BodyFitRotationFlowTest {
     private final LiveRoomService liveRoomService = mock(LiveRoomService.class);
 
     private final GameSessionService service = new GameSessionService(
-            membershipReader, liveRoomRepository, liveRoomService, sessions, gameRepository,
+            membershipReader, liveRoomRepository, liveRoomService, sessions,
+            mock(ssafy.a706.backend.rhythm.RhythmSessionRepository.class), gameRepository,
             messagingTemplate, taskScheduler, eventPublisher, judgeClient);
 
     private void givenRoom(int playerCount) {
