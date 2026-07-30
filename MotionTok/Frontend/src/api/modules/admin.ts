@@ -2,6 +2,7 @@
 import { httpEnvelope } from '../http'
 import type {
   AdminGame,
+  AdminOnlineUserListResponse,
   AdminPointHistoryListResponse,
   AdminUserSummary,
   BanUserRequest,
@@ -41,6 +42,14 @@ export const adminApi = {
     httpEnvelope
       .get<{ users: AdminUserSummary[] }>('/v1/admin/users', { nickname })
       .then((r) => r.users),
+
+  /**
+   * GET /v1/admin/online-users — 지금 접속 중인 사람 전부(최대 500명).
+   *
+   * 페이지가 없다. 목록의 수명이 60초(프레즌스 TTL)라 페이지를 넘기는 사이에 앞 페이지가
+   * 이미 다른 사람들이 된다 — 끊어서 받으면 오히려 앞뒤가 맞지 않는 화면이 된다.
+   */
+  onlineUsers: () => httpEnvelope.get<AdminOnlineUserListResponse>('/v1/admin/online-users'),
 }
 
 /**

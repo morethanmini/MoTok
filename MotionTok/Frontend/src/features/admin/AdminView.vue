@@ -3,7 +3,7 @@
  * 관리자 대시보드 (API §10) — 신고 유저·제재 이력·게임 노출·감사 로그.
  * 접근 제어(role=ADMIN)는 라우터 가드/서버에서 검증. 여기서는 화면 초안만.
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   adminApi,
   adminChatReportsApi,
@@ -13,6 +13,7 @@ import {
   adminUserReportsApi,
   ApiError,
   type AdminGame,
+  type AdminOnlineUserListResponse,
   type AdminPointHistoryListResponse,
   type AdminUserSummary,
   type ChatReportDetail,
@@ -57,10 +58,10 @@ import { POINT_DIRECTION_LABEL, POINT_TYPE_LABEL, formatPoint } from './points'
 const { message: toast, flash } = useToast()
 
 // 목 데이터 없음 — 없는 걸 있는 것처럼 보여 주면 "백엔드가 붙었는데 왜 안 뜨지"를 판단할 수 없다.
-const tab = ref<'chat-reports' | 'reports' | 'reported-users' | 'sanctions' | 'points' | 'games'>(
-  'chat-reports',
-)
-/** 한 페이지에 담는 줄 수 — 제재·포인트·신고 유저는 한 화면에서 훑고 넘기는 목록이다. */
+const tab = ref<
+  'chat-reports' | 'reports' | 'reported-users' | 'sanctions' | 'points' | 'games' | 'online-users'
+>('chat-reports')
+/** 한 페이지에 담는 줄 수 — 관리자 목록은 한 화면에서 훑고 넘긴다. */
 const PAGE_SIZE = 5
 
 // 신고 유저 목록(-105) — 사람 단위. 신고함이 '들어온 것을 처리하는 자리'라면 여기는 '누구를 볼지 고르는 자리'다.
@@ -102,7 +103,7 @@ async function loadChatReports() {
     const list = await adminChatReportsApi.list({
       status: chatReportStatusFilter.value || undefined,
       page: chatReportPage.value,
-      size: 20,
+      size: PAGE_SIZE,
     })
     chatReports.value = list
     // 배지는 부가 정보다 — 실패해도 목록은 보여 준다(빈 집합이면 배지만 안 뜬다).
@@ -166,7 +167,7 @@ async function loadUserReports() {
     const list = await adminUserReportsApi.list({
       status: userReportStatusFilter.value || undefined,
       page: userReportPage.value,
-      size: 20,
+      size: PAGE_SIZE,
     })
     userReports.value = list
     userSanctioned.value = await adminSanctionApi
@@ -683,6 +684,47 @@ function openPointsOf(userId: number, nickname: string) {
   tab.value = 'points'
 }
 
+// ── 사용중인 유저 ─────────────────────────────────────
+// 지금 붙어 있는 사람들. 페이지가 없다 — 목록의 수명이 60초(프레즌스 TTL)라 2페이지를 넘기는 사이에
+// 1페이지가 이미 다른 사람들이 된다. 한 번에 받아 스크롤로 훑는다.
+const ONLINE_REFRESH_MS = 15_000
+
+const onlineUsers = ref<AdminOnlineUserListResponse | null>(null)
+const onlineError = ref('')
+const onlineBusy = ref(false)
+let onlineTimer: ReturnType<typeof setInterval> | null = null
+
+async function loadOnlineUsers() {
+  if (onlineBusy.value) return
+  onlineBusy.value = true
+  onlineError.value = ''
+  try {
+    onlineUsers.value = await adminApi.onlineUsers()
+  } catch (e) {
+    onlineUsers.value = null
+    onlineError.value = e instanceof ApiError ? e.message : '접속자 목록을 불러오지 못했어요'
+  } finally {
+    onlineBusy.value = false
+  }
+}
+
+/**
+ * 탭이 열려 있는 동안에만 주기 갱신한다. 멈춰 있으면 60초 뒤엔 거짓말이 된 목록을 보게 되고,
+ * 닫은 뒤에도 계속 물으면 아무도 안 보는 화면 때문에 서버가 키 스캔을 반복한다.
+ */
+watch(tab, (now, before) => {
+  if (now === 'online-users') {
+    void loadOnlineUsers()
+    onlineTimer = setInterval(loadOnlineUsers, ONLINE_REFRESH_MS)
+  } else if (before === 'online-users' && onlineTimer !== null) {
+    clearInterval(onlineTimer)
+    onlineTimer = null
+  }
+})
+onUnmounted(() => {
+  if (onlineTimer !== null) clearInterval(onlineTimer)
+})
+
 const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
 const num = (n: number) => n.toLocaleString('ko-KR')
 /** 버튼 라벨용 축약 — 게스트 닉네임(pending_… 28자)이 그대로 들어가면 버튼이 모달 밖으로 나간다. */
@@ -698,6 +740,7 @@ const short = (s: string, max = 12) => (s.length > max ? `${s.slice(0, max)}…`
       <button :class="{ on: tab === 'sanctions' }" @click="tab = 'sanctions'">제재 내역</button>
       <button :class="{ on: tab === 'points' }" @click="tab = 'points'">포인트 내역</button>
       <button :class="{ on: tab === 'games' }" @click="tab = 'games'">게임 관리</button>
+      <button :class="{ on: tab === 'online-users' }" @click="tab = 'online-users'">사용중인 유저</button>
     </div>
 
     <!-- 채팅 신고 (v0.2.17, -133) -->
@@ -1074,6 +1117,41 @@ const short = (s: string, max = 12) => (s.length > max ? `${s.slice(0, max)}…`
       </table>
     </PixelCard>
 
+    <!-- 사용중인 유저 — 지금 붙어 있는 사람들. 페이지 없이 스크롤로 훑는다(목록이 60초면 바뀐다) -->
+    <PixelCard v-else-if="tab === 'online-users'" title="사용중인 유저">
+      <div class="cr-filter">
+        <PixelButton :disabled="onlineBusy" @click="loadOnlineUsers">새로고침</PixelButton>
+        <span class="sx-hint">15초마다 자동으로 다시 불러옵니다 · 신호가 60초 끊기면 목록에서 사라져요</span>
+        <span v-if="onlineUsers" class="cr-total">총 <b>{{ onlineUsers.users.length }}</b>명 접속 중</span>
+      </div>
+      <p v-if="onlineError" class="cr-empty">{{ onlineError }}</p>
+      <p v-else-if="onlineUsers && !onlineUsers.users.length" class="cr-empty">지금 접속 중인 유저가 없어요</p>
+      <template v-else-if="onlineUsers">
+        <p v-if="onlineUsers.capped" class="sx-hint ru-hint">
+          접속자가 많아 <b>500명까지만</b> 보여 주고 있어요.
+        </p>
+        <!-- 페이저 대신 스크롤. 접속자는 늘었다 줄었다 하는 값이라 쪽수를 세는 게 의미가 없다 -->
+        <div class="ou-scroll">
+          <table class="tbl">
+            <thead><tr><th>#</th><th>닉네임</th><th>위치</th><th>방</th><th>마지막 신호</th></tr></thead>
+            <tbody>
+              <tr v-for="u in onlineUsers.users" :key="u.userId">
+                <td>{{ u.userId }}</td>
+                <td><button class="link" @click="openSanctionsOf(u.userId, u.nickname)">{{ u.nickname }}</button></td>
+                <td>
+                  <span class="cr-status" :class="u.state === 'IN_ROOM' ? 'reviewing' : 'resolved'">
+                    {{ u.state === 'IN_ROOM' ? '방 안' : '로비' }}
+                  </span>
+                </td>
+                <td>{{ u.roomId ?? '—' }}</td>
+                <td>{{ u.secondsAgo }}초 전</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
+    </PixelCard>
+
     <!-- 채팅 신고 상세 — 스냅샷을 시간순으로 렌더링해 채팅창을 복원하고, 신고 대상을 하이라이트한다 -->
     <PixelModal v-if="chatReportDetail" class="admin-modal" @close="chatReportDetail = null">
       <h3 class="cr-detail-title">
@@ -1280,7 +1358,7 @@ const short = (s: string, max = 12) => (s.length > max ? `${s.slice(0, max)}…`
 .tbl { display: block; width: 100%; overflow-x: auto; border-collapse: collapse; font-size: 12px; }.tbl th, .tbl td { padding: 12px 10px; text-align: left; border-bottom: 2px dashed #ead5b8; vertical-align: middle; }.tbl th { color: #8d7059; font-size: 10px; }.tbl tbody tr:hover { background: #fff3cf; }
 .warn { color: var(--c-coral); font-weight: 700; }.acts { display: flex; gap: 6px; align-items: center; }.acts :deep(.px-btn), .cr-pager :deep(.px-btn), .cr-actions :deep(.px-btn) { height: 33px; padding: 0 10px; border-color: #9a6b4f; border-radius: 6px; box-shadow: 2px 2px 0 #bd916e; font-size: 10px; }.state { font-size: 11px; font-weight: 700; color: #4f8e64; }.state.off { color: var(--c-muted); }
 
-.cr-filter { display: flex; align-items: center; gap: 12px; margin-bottom: 15px; color: #80674f; font-size: 11px; font-weight: 700; }.cr-filter select { height: 34px; margin-left: 6px; padding: 0 9px; border: 2px solid #b78d5d; border-radius: 6px; background: #fffdf7; color: #5a4131; font-size: 11px; }.cr-total { margin-left: auto; }.cr-empty { padding: 38px 0; color: #8c7966; font-size: 12px; text-align: center; }.cr-text { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.cr-status { display: inline-block; padding: 4px 8px; border: 1.5px solid #aa805c; border-radius: 6px; background: #fffdf7; color: #624833; font-size: 10px; font-weight: 700; }.cr-status.received { background: #ffe29a; }.cr-status.reviewing { background: #cfe8ff; }.cr-status.resolved { background: #cde9b8; }.cr-status.rejected { background: #eee5d9; color: #89786a; }.cr-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px; color: #715945; font-size: 11px; }.cr-detail-title { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: #493629; font-family: var(--font-pixel); font-size: 15px; font-weight: 400; }.cr-meta { display: grid; gap: 5px; margin-bottom: 14px; color: #655141; font-size: 11px; }.cr-context-label { margin-bottom: 7px; color: #8d7059; font-size: 10px; font-weight: 700; }.cr-context { display: grid; gap: 4px; max-height: 260px; overflow-y: auto; margin-bottom: 15px; padding: 10px; border: 2px dashed #dfc9a6; border-radius: 8px; background: #fffdf7; }.cr-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; padding: 5px 7px; border-radius: 6px; font-size: 11px; }.cr-line.target { border: 1.5px solid #b78d5d; background: #fff0b6; font-weight: 700; }.cr-line.suggest { color: #6b5ab0; }.cr-line-name { min-width: 0; overflow-wrap: anywhere; font-weight: 700; }.cr-line-text { flex: 1; min-width: 0; word-break: break-all; }.cr-line-time { flex-shrink: 0; margin-left: auto; color: var(--c-muted); font-size: 9px; }.cr-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.cr-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 15px; color: #80674f; font-size: 11px; font-weight: 700; }.cr-filter select { height: 34px; margin-left: 6px; padding: 0 9px; border: 2px solid #b78d5d; border-radius: 6px; background: #fffdf7; color: #5a4131; font-size: 11px; }.cr-total { margin-left: auto; }.cr-empty { padding: 38px 0; color: #8c7966; font-size: 12px; text-align: center; }.cr-text { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.cr-status { display: inline-block; padding: 4px 8px; border: 1.5px solid #aa805c; border-radius: 6px; background: #fffdf7; color: #624833; font-size: 10px; font-weight: 700; }.cr-status.received { background: #ffe29a; }.cr-status.reviewing { background: #cfe8ff; }.cr-status.resolved { background: #cde9b8; }.cr-status.rejected { background: #eee5d9; color: #89786a; }.cr-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px; color: #715945; font-size: 11px; }.cr-detail-title { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: #493629; font-family: var(--font-pixel); font-size: 15px; font-weight: 400; }.cr-meta { display: grid; gap: 5px; margin-bottom: 14px; color: #655141; font-size: 11px; }.cr-context-label { margin-bottom: 7px; color: #8d7059; font-size: 10px; font-weight: 700; }.cr-context { display: grid; gap: 4px; max-height: 260px; overflow-y: auto; margin-bottom: 15px; padding: 10px; border: 2px dashed #dfc9a6; border-radius: 8px; background: #fffdf7; }.cr-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; padding: 5px 7px; border-radius: 6px; font-size: 11px; }.cr-line.target { border: 1.5px solid #b78d5d; background: #fff0b6; font-weight: 700; }.cr-line.suggest { color: #6b5ab0; }.cr-line-name { min-width: 0; overflow-wrap: anywhere; font-weight: 700; }.cr-line-text { flex: 1; min-width: 0; word-break: break-all; }.cr-line-time { flex-shrink: 0; margin-left: auto; color: var(--c-muted); font-size: 9px; }.cr-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 @media (max-width: 760px) { .admin-page :deep(.app-page) { padding: 18px 14px 32px; }.tabs { margin-inline: 0; }.tabs button { flex: 1 1 105px; min-width: 0; }.tbl { white-space: nowrap; }.acts { min-width: max-content; } }
 
@@ -1293,6 +1371,10 @@ const short = (s: string, max = 12) => (s.length > max ? `${s.slice(0, max)}…`
 .ux-picker > .sx-hint { flex: 1 1 100%; }
 .ux-picker :deep(.px-btn) { height: 32px; padding: 0 12px; font-size: 10px; }
 .ux-nouser { padding: 14px 0 20px; }
+
+/* 사용중인 유저 — 쪽 나누기 대신 스크롤. 머리글은 붙여 둬야 길게 내려도 무슨 칸인지 안다 */
+.ou-scroll { max-height: 460px; overflow-y: auto; border: 2px dashed #dfc9a6; border-radius: 8px; padding: 0 10px; background: #fffdf7; }
+.ou-scroll thead th { position: sticky; top: 0; z-index: 1; background: #fffdf7; }
 
 /* 신고 상세 모달 — 기본 폭(390px)엔 제재 버튼 셋도 대화 맥락도 들어가지 않아 버튼이 창 밖으로 나갔다.
    넓히고, 내용이 길면 창 안에서 스크롤한다(뷰포트를 넘기면 위쪽 처리 버튼이 화면 밖에 남는다) */
