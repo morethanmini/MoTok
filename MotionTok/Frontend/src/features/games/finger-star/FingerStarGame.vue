@@ -18,10 +18,11 @@
  *   전원이 같은 별자리 순서를 뽑는다. 진행 상황은 progress 이벤트로(스로틀 300ms),
  *   최종 집계는 finished 이벤트로 부모가 STOMP 발신한다. 순위는 results prop(GAME_END)으로 표시.
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { GameResultEntry } from '@/api/types'
 import { useHandLandmarker, type HandLandmarkerResult } from '@/composables/useHandLandmarker'
 import type { ActiveGameSession } from '../session'
+import { GameBgm } from '../gameBgm'
 import { CONSTELLATIONS, constellationByKey } from './constellations'
 import {
   StarSequence,
@@ -223,8 +224,11 @@ watch(
     phase.value = 'result'
   },
 )
+const bgm = new GameBgm('/assets/sfx/finger-star/ingame-loop.mp3')
+onMounted(() => bgm.start())
 onBeforeUnmount(() => {
   hand.stop()
+  bgm.dispose()
   clearInterval(mpTicker)
   clearTimeout(flashTimer)
 })
