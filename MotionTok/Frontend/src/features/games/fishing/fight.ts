@@ -175,7 +175,21 @@ export const FISH: FishSpec[] = [
   { name: '농어', score: 35, requiredRate: 1.1, gain: 0.114, drain: 0.171, targetSec: 9 },
   { name: '연어', score: 45, requiredRate: 1.25, gain: 0.091, drain: 0.137, targetSec: 11 },
   { name: '참치', score: 70, requiredRate: 1.4, gain: 0.07, drain: 0.105, targetSec: 14 },
-  { name: '상어', score: 120, requiredRate: 1.55, gain: 0.048, drain: 0.072, targetSec: 20 },
+  /*
+   * 상어만 20초 → 15초로 줄였다.
+   *
+   * 실기에서 26.7초 걸렸다(2026-07-30, 지속 2.41/s로 요구 1.55를 1.55배 넘겼는데도). 26초
+   * 연속으로 릴을 돌리면 팔이 아파서 재미가 아니라 노동이 된다.
+   *
+   * 같은 세션에서 실측 배율을 역산하면 멸치 1.04 / 광어 1.13 / 상어 1.76이다. 평균 1.31이라
+   * `MEASURED_FACTOR = 1.3`은 전역으로 잘 맞고 **상어만 이탈**한다 — 요구 속도가 높아 순간
+   * 속도가 문턱 아래로 떨어지는 시간이 길기 때문이다.
+   *
+   * 배율을 어종별로 쪼개지 않고 gain만 올렸다. 어종별 배율은 종당 표본이 1건뿐이라 과적합이다.
+   * 예상 결과는 약 20초(실측 배율 1.76 기준)로, 모델상 15초와는 차이가 남는다. 다시 재고 그때도
+   * 이탈이 남으면 배율을 쪼갠다.
+   */
+  { name: '상어', score: 120, requiredRate: 1.55, gain: 0.065, drain: 0.0975, targetSec: 15 },
 ]
 
 /** 어종표의 불변식 — drain은 gain에 비례한다. 이 비율이 깨지면 못 잡는 물고기가 생긴다 */
