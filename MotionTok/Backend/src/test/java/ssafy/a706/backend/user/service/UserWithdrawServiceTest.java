@@ -12,7 +12,7 @@ import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.oauth.entity.OauthAccount;
 import ssafy.a706.backend.auth.oauth.repository.OauthAccountRepository;
 import ssafy.a706.backend.auth.session.SessionRevocationStore;
-import ssafy.a706.backend.auth.store.RefreshTokenStore;
+import ssafy.a706.backend.auth.session.SessionTerminator;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.shop.repository.PointHistoryRepository;
@@ -47,16 +47,14 @@ class UserWithdrawServiceTest {
 
     private final UserRepository userRepository = mock(UserRepository.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
-    private final RefreshTokenStore refreshTokenStore = mock(RefreshTokenStore.class);
-    private final SessionRevocationStore sessionRevocationStore = mock(SessionRevocationStore.class);
+    private final SessionTerminator sessionTerminator = mock(SessionTerminator.class);
     private final OauthAccountRepository oauthAccountRepository = mock(OauthAccountRepository.class);
     private final OauthClientResolver oauthClientResolver = mock(OauthClientResolver.class);
     private final RejoinPolicy rejoinPolicy = mock(RejoinPolicy.class);
     private final StorageService storageService = mock(StorageService.class);
 
     private final UserService service = new UserService(userRepository,
-            mock(PointHistoryRepository.class), passwordEncoder,
-            refreshTokenStore, sessionRevocationStore,
+            mock(PointHistoryRepository.class), passwordEncoder, sessionTerminator,
             oauthAccountRepository, oauthClientResolver, rejoinPolicy, storageService,
             mock(ssafy.a706.backend.conntime.service.ConnectTimeService.class));
 
@@ -93,29 +91,29 @@ class UserWithdrawServiceTest {
 
         assertThat(user.getStatus()).isEqualTo(UserStatus.DELETED);
         verify(rejoinPolicy).record("me@motok.com", WithdrawnIdentifierType.EMAIL);
-        verify(refreshTokenStore).delete(USER_ID);
+        verify(sessionTerminator).terminate(USER_ID, SessionRevocationStore.Reason.WITHDRAWN);
     }
 
-    // ── 탈퇴 시 세션 폐기(v0.2.26) — 탈퇴한 계정의 액세스 토큰이 만료까지 살아 있으면 안 된다 ──────
+    // ── 탈퇴 시 세션 종료 — 없어진 계정이 토큰·소켓·화상으로 남아 있으면 안 된다 ──────────────
 
     @Test
-    @DisplayName("탈퇴하면 액세스 토큰까지 폐기한다 — Refresh를 지우기 전에 폐기해야 sid를 읽을 수 있다")
-    void revokesSessionBeforeDeletingRefresh() {
+    @DisplayName("탈퇴하면 DB 반영을 확정한 뒤에 세션을 끝낸다 — 반쪽 탈퇴로 연결만 끊기면 안 된다")
+    void terminatesTheSessionAfterTheAccountIsGone() {
         User user = localUser();
         given(passwordEncoder.matches("pw", "hashed")).willReturn(true);
         given(oauthAccountRepository.findAllByUser(user)).willReturn(List.of());
 
         service.withdraw(USER_ID, new WithdrawRequest("pw", null, null, null));
 
-        // 순서가 곧 동작이다 — delete가 먼저 돌면 sid가 사라져 폐기가 조용히 no-op이 된다.
-        InOrder order = inOrder(sessionRevocationStore, refreshTokenStore);
-        order.verify(sessionRevocationStore)
-                .revokeCurrent(USER_ID, SessionRevocationStore.Reason.WITHDRAWN);
-        order.verify(refreshTokenStore).delete(USER_ID);
+        // 토큰 폐기·방 퇴장·소켓 종료·프레즌스 정리·SFU 퇴장의 순서는 SessionTerminatorTest가 못박는다.
+        // 여기서 고정하는 것은 소프트 딜리트가 확정된 뒤에 사유 WITHDRAWN으로 불린다는 것이다.
+        InOrder order = inOrder(userRepository, sessionTerminator);
+        order.verify(userRepository).saveAndFlush(user);
+        order.verify(sessionTerminator).terminate(USER_ID, SessionRevocationStore.Reason.WITHDRAWN);
     }
 
     @Test
-    @DisplayName("본인 확인에 실패하면 세션을 폐기하지 않는다 — 남의 세션을 끊는 수단이 되면 안 된다")
+    @DisplayName("본인 확인에 실패하면 세션을 끊지 않는다 — 남의 세션을 끊는 수단이 되면 안 된다")
     void keepsSessionWhenOwnershipCheckFails() {
         localUser();
         given(passwordEncoder.matches("wrong", "hashed")).willReturn(false);
@@ -123,7 +121,7 @@ class UserWithdrawServiceTest {
         assertThatThrownBy(() -> service.withdraw(USER_ID, new WithdrawRequest("wrong", null, null, null)))
                 .isInstanceOf(BusinessException.class);
 
-        verify(sessionRevocationStore, never()).revokeCurrent(any(), any());
+        verify(sessionTerminator, never()).terminate(any(), any());
     }
 
     @Test

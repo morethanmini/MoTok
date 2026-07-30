@@ -149,7 +149,7 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
     }
 
     /**
-     * 폐기된 세션(sid)의 토큰으로는 CONNECT도 못 한다 — 밀어내기가 소켓을 닫아도(SingleSessionPolicy)
+     * 폐기된 세션(sid)의 토큰으로는 CONNECT도 못 한다 — 밀어내기가 소켓을 닫아도(SessionTerminator)
      * 옛 액세스 토큰이 살아 있으면 재연결로 실시간을 되살릴 수 있기 때문이다. HTTP 필터와 같은 경계이며,
      * 레디스 장애 시의 fail-open은 스토어가 책임진다({@link SessionRevocationStore#reasonOf}).
      */

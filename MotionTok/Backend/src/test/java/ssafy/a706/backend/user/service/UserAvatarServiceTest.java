@@ -7,7 +7,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.oauth.repository.OauthAccountRepository;
-import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.shop.repository.PointHistoryRepository;
@@ -52,8 +51,7 @@ class UserAvatarServiceTest {
             userRepository,
             mock(PointHistoryRepository.class),
             mock(PasswordEncoder.class),
-            mock(RefreshTokenStore.class),
-            mock(ssafy.a706.backend.auth.session.SessionRevocationStore.class),
+            mock(ssafy.a706.backend.auth.session.SessionTerminator.class),
             mock(OauthAccountRepository.class),
             mock(OauthClientResolver.class),
             mock(RejoinPolicy.class),

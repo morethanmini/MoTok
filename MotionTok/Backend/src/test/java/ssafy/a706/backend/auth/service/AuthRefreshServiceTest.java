@@ -12,16 +12,14 @@ import ssafy.a706.backend.auth.oauth.OauthLinkService;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.ratelimit.LoginAttemptLimiter;
 import ssafy.a706.backend.auth.session.SessionRevocationStore;
-import ssafy.a706.backend.auth.session.SingleSessionPolicy;
+import ssafy.a706.backend.auth.session.SessionTerminator;
 import ssafy.a706.backend.auth.store.AccountBlock;
 import ssafy.a706.backend.auth.store.AccountBlockStore;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
-import ssafy.a706.backend.global.config.StompSessionRegistry;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.global.text.ProfanityFilter;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
-import ssafy.a706.backend.presence.service.PresenceService;
 import ssafy.a706.backend.user.entity.User;
 import ssafy.a706.backend.user.repository.UserRepository;
 import ssafy.a706.backend.user.withdrawal.RejoinPolicy;
@@ -77,9 +75,7 @@ class AuthRefreshServiceTest {
             mock(OauthClientResolver.class),
             mock(OauthLinkService.class),
             mock(LiveRoomService.class),
-            mock(PresenceService.class),
-            mock(StompSessionRegistry.class),
-            mock(SingleSessionPolicy.class),
+            mock(SessionTerminator.class),
             sessionRevocationStore,
             mock(LoginAttemptLimiter.class),
             mock(RejoinPolicy.class),

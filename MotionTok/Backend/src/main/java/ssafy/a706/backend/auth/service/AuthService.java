@@ -22,13 +22,11 @@ import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.principal.GuestPrincipal;
 import ssafy.a706.backend.auth.ratelimit.LoginAttemptLimiter;
 import ssafy.a706.backend.auth.session.SessionRevocationStore;
-import ssafy.a706.backend.auth.session.SingleSessionPolicy;
+import ssafy.a706.backend.auth.session.SessionTerminator;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.global.text.ProfanityFilter;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
-import ssafy.a706.backend.global.config.StompSessionRegistry;
-import ssafy.a706.backend.presence.service.PresenceService;
 import ssafy.a706.backend.user.entity.User;
 import ssafy.a706.backend.user.repository.UserRepository;
 import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
@@ -54,9 +52,7 @@ public class AuthService {
     private final OauthClientResolver oauthClientResolver;
     private final OauthLinkService oauthLinkService;
     private final LiveRoomService liveRoomService;
-    private final PresenceService presenceService;
-    private final StompSessionRegistry stompSessionRegistry;
-    private final SingleSessionPolicy singleSessionPolicy;
+    private final SessionTerminator sessionTerminator;
     private final SessionRevocationStore sessionRevocationStore;
     private final LoginAttemptLimiter loginAttemptLimiter;
     private final RejoinPolicy rejoinPolicy;
@@ -278,27 +274,19 @@ public class AuthService {
     }
 
     /**
-     * 로그아웃 — Redis에서 Refresh 토큰을 지우는 것이 곧 서버측 무효화다.
-     * 접속 상태도 함께 지운다: TTL(60s)을 기다리면 이미 나간 사용자가 친구 목록에 온라인으로 남는다.
+     * 로그아웃 — 토큰·소켓·접속 상태·방·미디어를 한꺼번에 끝낸다({@link SessionTerminator#terminate}).
      *
-     * <p>쓰기 트랜잭션을 명시하는 이유 — 클래스 기본값이 readOnly라 그대로 두면 이 안에서 도는
+     * <p>로그아웃한 본인은 토큰을 이미 버렸으므로, 여기서 폐기되는 sid에 걸리는 요청은
+     * 남아 있던 다른 탭이거나 유출분이다.</p>
+     *
+     * <p>쓰기 트랜잭션을 명시하는 이유 — 클래스 기본값이 readOnly라 그대로 두면 정리 중에 도는
      * 접속시간 정산(ConnectTimeService.flush)이 그 트랜잭션에 <b>참여</b>해 FlushMode가 MANUAL로 남는다.
      * 그러면 save가 커밋 시 플러시되지 않아 사라지는데, Redis 버퍼는 GETDEL로 이미 비운 뒤라
      * 복원 경로도 타지 않는다 — 로그아웃할 때마다 미정산 접속시간(-141)이 조용히 유실된다.</p>
- *
- * <p>웹소켓까지 끊는 이유(-142) — STOMP 인증은 CONNECT 때 한 번뿐이라, 전역 연결로 바뀐 뒤로는
-     * 로그아웃해도 소켓이 살아 있으면 다음 하트비트가 방금 지운 프레즌스를 <b>되살린다</b>.
-     * 클라이언트가 연결을 닫아 주기를 믿지 않고 서버가 먼저 끊는다. 순서도 중요하다 —
-     * 소켓을 먼저 닫아야 그 사이에 들어오는 비트가 없다.</p>
      */
     @Transactional
     public void logout(Long userId) {
-        // Access 토큰도 함께 죽인다 — 지우기 전에 불러야 sid를 읽을 수 있다(SessionRevocationStore).
-        // 로그아웃한 본인은 토큰을 이미 버렸으므로, 이 폐기에 걸리는 요청은 남아 있던 다른 탭이거나 유출분이다.
-        sessionRevocationStore.revokeCurrent(userId, SessionRevocationStore.Reason.LOGGED_OUT);
-        refreshTokenStore.delete(userId);
-        stompSessionRegistry.closeAllOf(userId);
-        presenceService.clear(userId);
+        sessionTerminator.terminate(userId, SessionRevocationStore.Reason.LOGGED_OUT);
     }
 
     /** 게스트 시작 (명세 POST /auth/guest) — 임시 닉네임 부여 + 게스트 1인방 자동 생성(공개 목록 미노출). */
@@ -313,7 +301,7 @@ public class AuthService {
     private IssuedTokens issueTokens(User user, boolean persistent) {
         // 새 로그인이 기존 세션을 밀어낸다(단일 세션) — 옛 sid 폐기·알림·연결 종료가 모두 이 안에서 일어난다.
         // 반드시 save()보다 먼저 — 옛 sid는 Refresh 해시에 있어서, 덮어쓰고 나면 폐기할 대상을 잃는다.
-        singleSessionPolicy.displacePrevious(user.getId());
+        sessionTerminator.displacePrevious(user.getId());
 
         String sessionId = UUID.randomUUID().toString();
         String accessToken = tokenProvider.createAccessToken(

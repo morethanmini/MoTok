@@ -2,11 +2,10 @@ package ssafy.a706.backend.auth.password;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.InOrder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 import ssafy.a706.backend.auth.session.SessionRevocationStore;
-import ssafy.a706.backend.auth.store.RefreshTokenStore;
+import ssafy.a706.backend.auth.session.SessionTerminator;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.user.entity.User;
@@ -19,7 +18,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -39,13 +37,12 @@ class PasswordResetServiceTest {
     private final UserRepository userRepository = mock(UserRepository.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
     private final PwResetTokenStore tokenStore = mock(PwResetTokenStore.class);
-    private final RefreshTokenStore refreshTokenStore = mock(RefreshTokenStore.class);
-    private final SessionRevocationStore sessionRevocationStore = mock(SessionRevocationStore.class);
+    private final SessionTerminator sessionTerminator = mock(SessionTerminator.class);
 
     // props는 record(final)라 mock 대신 실제 인스턴스를 넘긴다 — 재설정 확정 경로에서는 쓰이지 않는다.
     private final PasswordResetService service = new PasswordResetService(
             userRepository, passwordEncoder, tokenStore,
-            mock(PasswordResetMailSender.class), refreshTokenStore, sessionRevocationStore,
+            mock(PasswordResetMailSender.class), sessionTerminator,
             new PasswordResetProperties(Duration.ofMinutes(30), "https://motok/auth/reset-password"));
 
     private void userExists() {
@@ -59,22 +56,20 @@ class PasswordResetServiceTest {
     }
 
     @Test
-    @DisplayName("재설정이 끝나면 Refresh를 지우기 전에 그 계정의 세션을 폐기한다")
-    void revokesSessionBeforeDeletingRefresh() {
+    @DisplayName("재설정이 끝나면 그 계정의 세션을 CREDENTIALS_CHANGED 사유로 끝낸다")
+    void terminatesTheSessionOnTheAccount() {
         given(tokenStore.consume(TOKEN)).willReturn(USER_ID);
         userExists();
 
         service.resetPassword(TOKEN, "Motok!2345abcd");
 
-        // delete가 먼저 돌면 sid가 사라져 폐기가 조용히 no-op이 된다 — 순서가 곧 동작이다.
-        InOrder order = inOrder(sessionRevocationStore, refreshTokenStore);
-        order.verify(sessionRevocationStore)
-                .revokeCurrent(USER_ID, SessionRevocationStore.Reason.CREDENTIALS_CHANGED);
-        order.verify(refreshTokenStore).delete(USER_ID);
+        // 토큰 폐기·소켓 종료·프레즌스 정리의 순서는 SessionTerminatorTest가 못박는다.
+        // 여기서 고정하는 것은 "부르는가"와 "어떤 사유로"다 — DISPLACED로 새면 안내 문구가 갈린다.
+        verify(sessionTerminator).terminate(USER_ID, SessionRevocationStore.Reason.CREDENTIALS_CHANGED);
     }
 
     @Test
-    @DisplayName("토큰이 유효하지 않으면 아무 세션도 폐기하지 않는다 — 남의 세션을 끊는 수단이 되면 안 된다")
+    @DisplayName("토큰이 유효하지 않으면 아무 세션도 끊지 않는다 — 남의 세션을 끊는 수단이 되면 안 된다")
     void keepsSessionWhenTokenIsInvalid() {
         given(tokenStore.consume(TOKEN)).willReturn(null);
 
@@ -82,12 +77,11 @@ class PasswordResetServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.PASSWORD_RESET_TOKEN_INVALID);
 
-        verify(sessionRevocationStore, never()).revokeCurrent(anyLong(), any());
-        verify(refreshTokenStore, never()).delete(anyLong());
+        verify(sessionTerminator, never()).terminate(anyLong(), any());
     }
 
     @Test
-    @DisplayName("토큰이 가리키는 계정이 없으면 폐기하지 않는다 — userId가 null인 채로 불려 NPE가 나도 안 된다")
+    @DisplayName("토큰이 가리키는 계정이 없으면 끊지 않는다 — userId가 null인 채로 불려 NPE가 나도 안 된다")
     void keepsSessionWhenUserIsGone() {
         given(tokenStore.consume(TOKEN)).willReturn(USER_ID);
         given(userRepository.findById(USER_ID)).willReturn(Optional.empty());
@@ -96,6 +90,6 @@ class PasswordResetServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.PASSWORD_RESET_TOKEN_INVALID);
 
-        verify(sessionRevocationStore, never()).revokeCurrent(anyLong(), any());
+        verify(sessionTerminator, never()).terminate(anyLong(), any());
     }
 }
