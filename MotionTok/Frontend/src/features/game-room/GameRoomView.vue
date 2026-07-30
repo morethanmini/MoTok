@@ -5,7 +5,7 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch 
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason } from '@/api'
+import { roomsApi, friendsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason } from '@/api'
 import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { preferredAudioDeviceId, useCamera } from '@/composables/useCamera'
@@ -125,7 +125,8 @@ function applyDetail(d: LiveRoomDetail) {
   roomVisibility.value = d.visibility
   participantCount.value = d.participantCount
   memberIds.value = d.members.map((m) => m.userId)
-  memberNames.value = Object.fromEntries(d.members.map((m) => [m.userId, m.displayName]))
+  // 신고 대상은 퇴장 뒤에도 남겨야 하므로, 이번 상세 조회에 없는 기존 이름을 지우지 않는다.
+  memberNames.value = { ...memberNames.value, ...Object.fromEntries(d.members.map((m) => [m.userId, m.displayName])) }
 }
 
 /** userId → 닉네임 — 상세 조회 멤버를 기본으로 LiveKit 참가자 이름으로 보강(뒤늦게 들어온 참가자 대응). */
@@ -136,6 +137,13 @@ const participantNames = computed<Record<string, string>>(() => {
   }
   return names
 })
+
+/** 이 방 화면에서 확인한 모든 참가자. 퇴장한 유저도 신고 목록에 남긴다. */
+const reportTargets = computed(() =>
+  Object.entries(participantNames.value)
+    .filter(([userId]) => userId !== myParticipantId.value)
+    .map(([userId, name]) => ({ userId, name })),
+)
 
 // ── 실시간 참가자 → 슬롯 매핑 ────────────────
 const connected = computed(() => lk.state.value === ConnectionState.Connected)
@@ -494,11 +502,11 @@ function closeUserReport() {
 async function submitUserReport() {
   if (!canSubmitUserReport.value || reportSubmitting.value) return
   const content = userReportText.value.trim()
-  const target = remotes.value.find((p) => p.identity === userReportSelection.value)
+  const target = reportTargets.value.find((p) => p.userId === userReportSelection.value)
   // 목록의 참가자는 identity(userId)를 알지만, 직접 입력한 닉네임은 신고 대상 ID를 알 수 없어(닉네임→ID 조회 API 미제공)
   // reasonText에 닉네임을 함께 담아 보낸다.
   const nickname = target ? target.name : userReportNickname.value.trim()
-  const reportedUserId = target ? Number(target.identity) : 0
+  const reportedUserId = target ? Number(target.userId) : 0
   reportSubmitting.value = true
   try {
     await reportsApi.report({
@@ -1192,6 +1200,16 @@ async function openInvite() {
   inviteOpen.value = true
 }
 
+async function addFriend(target: ParticipantView | null) {
+  if (!target?.name) return
+  try {
+    await friendsApi.sendRequest(target.name)
+    flash(`${target.name}님에게 친구 요청을 보냈어요`)
+  } catch (e) {
+    flash(e instanceof ApiError ? e.message : '친구 요청을 보내지 못했어요')
+  }
+}
+
 const startLabel = computed(() => (amRoomHost.value ? 'START' : '제안'))
 /**
  * 게임 선택 버튼 잠금 — 서버 연결 중에는 방장 여부를 알기 전까지 잠근다(제안 오발신 방지).
@@ -1232,7 +1250,7 @@ const startHint = computed(() =>
 
       <!-- 방 설정 (-130) — 방장만, 대기실에서만. 게임 중엔 서버도 거부하므로 버튼을 숨긴다. -->
       <button
-        v-if="amRoomHost && !activeGame"
+        v-if="selfIsHost && !activeGame"
         class="ribbon-settings"
         title="방 설정"
         @click="openSettings"
@@ -1283,7 +1301,9 @@ const startHint = computed(() =>
             play-audio
             compact
             :can-kick="amRoomHost && !!slot.view"
+            :can-invite="!activeGame"
             @kick="openKick(slot.view)"
+            @friend="addFriend(slot.view)"
             @volume="changeVolume(slot, $event)"
           />
         </div>
@@ -1397,7 +1417,9 @@ const startHint = computed(() =>
             play-audio
             compact
             :can-kick="amRoomHost && !!slot.view"
+            :can-invite="!activeGame"
             @kick="openKick(slot.view)"
+            @friend="addFriend(slot.view)"
             @volume="changeVolume(slot, $event)"
           />
         </div>
@@ -1412,7 +1434,9 @@ const startHint = computed(() =>
             :sprites="spritesFor(slot)"
             play-audio
             :can-kick="amRoomHost && !!slot.view"
+            :can-invite="!activeGame"
             @kick="openKick(slot.view)"
+            @friend="addFriend(slot.view)"
             @volume="changeVolume(slot, $event)"
           />
         </div>
@@ -1527,17 +1551,13 @@ const startHint = computed(() =>
         />
         <span class="chat-count" :class="{ over: draft.length > 500 }">{{ draft.length }}/500</span>
         <button class="chat-send" @click="send">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
+          <svg class="send-icon" viewBox="0 0 24 24" aria-label="전송"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
         </button>
 
         <!-- 채팅 전체보기: 반투명 패널로 입장 이후 전체 대화 표시 -->
         <template v-if="chatExpanded">
           <div class="chat-full-backdrop" @click="chatExpanded = false" />
           <div class="chat-full">
-            <div class="chat-full-head">
-              <span>채팅 전체보기</span>
-              <button class="chat-full-close" @click="chatExpanded = false">✕</button>
-            </div>
             <div class="chat-full-body">
               <p v-if="!allBubbles.length" class="chat-full-empty">아직 대화가 없어요</p>
               <div
@@ -1640,7 +1660,7 @@ const startHint = computed(() =>
 
 
     <!-- 채팅 메시지 신고 -->
-    <PixelModal v-if="reportTarget" @close="closeReport">
+    <PixelModal v-if="reportTarget" variant="lobby" @close="closeReport">
       <h3 class="report-title">🚩 메시지 신고</h3>
       <div class="report-target">
         <span class="report-target-name">{{ reportTarget.nickname }}</span>
@@ -1683,17 +1703,17 @@ const startHint = computed(() =>
     </PixelModal>
 
     <!-- 유저 신고 (방 코드 왼쪽 버튼) -->
-    <PixelModal v-if="userReportOpen" @close="closeUserReport">
+    <PixelModal v-if="userReportOpen" variant="lobby" @close="closeUserReport">
       <h3 class="report-title">🚩 유저 신고</h3>
       <p class="report-field-label">신고할 유저를 선택해 주세요</p>
       <ul class="report-reasons">
-        <li v-for="p in remotes" :key="p.identity">
+        <li v-for="p in reportTargets" :key="p.userId">
           <label class="report-option">
-            <input type="radio" name="user-report-target" :value="p.identity" v-model="userReportSelection" />
+            <input type="radio" name="user-report-target" :value="p.userId" v-model="userReportSelection" />
             {{ p.name }}
           </label>
         </li>
-        <li v-if="!remotes.length" class="report-user-empty">현재 접속한 다른 참가자가 없어요</li>
+        <li v-if="!reportTargets.length" class="report-user-empty">신고할 다른 참가자가 없어요</li>
         <li>
           <label class="report-option">
             <input type="radio" name="user-report-target" :value="USER_REPORT_OTHER" v-model="userReportSelection" />
@@ -1974,12 +1994,12 @@ const startHint = computed(() =>
   overflow: visible;
 }
 .chat-log-list { display: flex; flex-direction: column; gap: 8px; }
-.bubble { position: relative; max-width: 100%; padding: 9px 22px 9px 12px; font-size: 9px; line-height: 1.7; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); word-break: break-word; overflow-wrap: anywhere; transition: opacity 0.4s ease; }
+.bubble { position: relative; max-width: 100%; padding: 10px 24px 10px 13px; font-size: 12px; line-height: 1.65; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); word-break: break-word; overflow-wrap: anywhere; transition: opacity 0.4s ease; }
 /* 6개 초과로 밀려날 땐 그대로 바로 사라지고, 시간이 지나 사라질 때만(.fading) 흐려지며 사라진다 */
 .bubble.fading { opacity: 0; }
 .bubble.me { background: #fff4cc; }
 .bubble.suggest { background: var(--c-mint-soft); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
-.bubble-name { display: block; margin-bottom: 3px; font-size: 10px; font-weight: 800; color: #2f9e3d; }
+.bubble-name { display: block; margin-bottom: 4px; font-size: 11px; font-weight: 800; color: #2f9e3d; }
 .bubble-name.me { color: #c97e00; }
 .suggest-pick { align-self: flex-end; border: 2px solid var(--c-ink-soft); border-radius: 8px; background: var(--c-yellow); padding: 5px 8px; font-size: 8px; font-weight: 700; }
 
@@ -1993,10 +2013,10 @@ const startHint = computed(() =>
 .bubble-report:hover { opacity: 0.75; }
 
 /* 신고 모달 */
-.report-title { margin: 0 0 12px; font-size: 15px; }
-.report-target { margin-bottom: 14px; padding: 10px 12px; border: 2px solid #eaddea; border-radius: 11px; background: #fdfaf3; }
-.report-target-name { font-size: 10px; font-weight: 800; color: #2f9e3d; }
-.report-target-text { margin: 5px 0 0; font-size: 11px; color: var(--c-ink-soft); line-height: 1.6; word-break: break-word; overflow-wrap: anywhere; }
+.report-title { margin: 0 0 14px; color: #3d2c22; font-family: var(--font-pixel); font-size: 20px; font-weight: 400; }.report-title::before { display: block; margin-bottom: 5px; color: #b17b51; content: 'REPORT'; font-family: inherit; font-size: 9px; letter-spacing: 1px; }
+.report-target { margin-bottom: 14px; padding: 12px; border: 2px solid #dec59e; border-radius: 7px; background: #fff7e8; }
+.report-target-name { font-size: 11px; font-weight: 800; color: #8c5a42; }
+.report-target-text { display: -webkit-box; margin: 5px 0 0; overflow: hidden; color: var(--c-ink-soft); font-size: 11px; line-height: 1.45; word-break: break-word; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .report-label { margin: 0 0 8px; font-size: 10px; color: var(--c-muted); }
 .report-reasons { list-style: none; margin: 0 0 18px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .report-option { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--c-ink-soft); cursor: pointer; }
@@ -2014,8 +2034,9 @@ const startHint = computed(() =>
   font-size: 11px; color: var(--c-ink-soft);
   font-family: inherit; resize: vertical;
 }
-.chat-dock input { position: relative; z-index: 47; flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 13px; }
-.chat-count { flex: none; font-size: 7px; color: #a99f86; }
+.report-title ~ .leave-actions { margin-top: 20px; }.report-title ~ .leave-actions :deep(.px-btn) { border: 2px solid #9a674b; border-radius: 7px; box-shadow: 3px 3px 0 #c6a47d; font-size: 14px; }.report-title ~ .leave-actions :deep(.v-secondary) { background: #fffaf0; color: #6e5646; }.report-title ~ .leave-actions :deep(.v-primary) { background: #e97872; color: #fff; }
+.chat-dock input { position: relative; z-index: 47; flex: 1; min-width: 0; margin-left: -5px; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 15px; }
+.chat-count { flex: none; font-size: 9px; color: #a99f86; }
 .chat-count.over { color: var(--c-coral); }
 .chat-send { position: relative; z-index: 47; flex: none; width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
 
@@ -2046,7 +2067,7 @@ const startHint = computed(() =>
   -ms-overflow-style: none;
 }
 .chat-full-body::-webkit-scrollbar { display: none; }
-.chat-full-empty { align-self: center; margin: 20px 0; font-size: 9px; color: #a99f86; }
+.chat-full-empty { align-self: center; margin: 20px 0; font-size: 13px; color: #a99f86; }
 .bubble.full { max-width: none; background: rgba(255, 255, 255, 0.9); }
 .bubble.full.me { background: rgba(255, 244, 204, 0.9); }
 .bubble.full.suggest { background: rgba(214, 244, 233, 0.9); }
@@ -2103,16 +2124,21 @@ const startHint = computed(() =>
   background: transparent;
   box-shadow: none;
 }
-.ribbon-report:hover { background: #ffe2e3; }
-.ribbon-invite:hover, .ribbon-settings:hover { background: #d8f4ec; }
+.ribbon-report:hover { background: transparent; color: #c15d5a; }
+.ribbon-invite:hover, .ribbon-settings:hover { background: transparent; color: #5b8d45; }
 .code-box {
+  display: grid;
+  gap: 2px;
+  height: auto;
+  padding: 0 6px;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
-.code-cap { color: var(--room-muted); }
-.code-val { color: #bd6d45; }
+.code-cap { color: var(--room-muted); font-size: 8px; }
+.code-val { color: #bd6d45; font-size: 14px; }
+.code-line { gap: 4px; }
 .copy { border: 0; border-radius: 0; background: transparent; color: var(--room-ink); }
 .room-ribbon .px-kicker { order: 0; }
 .code-box { position: relative; order: 1; }
@@ -2144,7 +2170,7 @@ const startHint = computed(() =>
   white-space: nowrap;
 }
 
-.room-main { gap: 18px; padding: 26px 46px; }
+.room-main { gap: 18px; padding: clamp(20px, 2vw, 26px) clamp(28px, 3.6vw, 46px); }
 .cam-stage {
   padding: 12px;
   gap: 16px;
@@ -2287,7 +2313,7 @@ const startHint = computed(() =>
   align-self: center;
   place-self: center;
 }
-.self-video { object-fit: contain; background: var(--c-letterbox); }
+.self-video { object-fit: cover; background: var(--c-letterbox); }
 .cam-off { background: linear-gradient(135deg, #bfe9ff, #d7e7ad); color: var(--room-muted); }
 .cam-on-btn { border-color: #925c47; border-radius: 7px; background: #4078cf; box-shadow: 3px 3px 0 #a66b50; }
 .self-label {
@@ -2323,12 +2349,12 @@ const startHint = computed(() =>
 .ctrl.off { background: #ffe2e3; color: #d45c63; }
 .chat-dock { background: #fffdf7; }
 .chat-dock input { color: var(--room-ink); }
-.chat-send { border-color: #925c47; border-radius: 6px; background: #e7c996; color: var(--room-ink); }
-.chat-expand { border-color: #b78d5d; border-radius: 6px; background: #fff7e5; color: var(--room-muted); }
-.chat-expand.active { background: #d7e7ad; color: var(--room-ink); }
-.bubble { border-color: #dfc9a6; border-radius: 9px; background: #fffdf7; box-shadow: 2px 2px 0 #e2d0b5; }
-.bubble.me { background: #fff0b9; }
-.bubble.suggest { background: #d8f4ec; }
+.chat-send { margin-left: -5px; border: 0; border-radius: 0; background: transparent; color: #bd6d45; box-shadow: none; }.send-icon { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-linecap: square; stroke-linejoin: round; stroke-width: 2.4; transform: translate(1px, 1px); }.chat-send:hover { background: transparent; color: #8e4d32; transform: translateY(-1px); }
+.chat-expand { border: 0; border-radius: 0; background: transparent; color: #a9836c; box-shadow: none; }
+.chat-expand.active { background: transparent; color: #6c9b54; }
+.bubble { border-color: #dfc9a6; border-radius: 9px; background: rgba(255, 253, 247, .78); box-shadow: 2px 2px 0 rgba(226, 208, 181, .65); }
+.bubble.me { background: rgba(255, 240, 185, .78); }
+.bubble.suggest { background: rgba(216, 244, 236, .78); }
 .bubble-name { color: #5b8d45; }
 .bubble-name.me { color: #bd6d45; }
 .suggest-pick { border-color: #925c47; border-radius: 6px; background: #e7c996; color: var(--room-ink); }
@@ -2339,7 +2365,6 @@ const startHint = computed(() =>
 
 @media (max-width: 1280px) {
   .room-ribbon { padding: 0 28px; }
-  .room-main { padding: 20px 28px; }
   .room-footer { padding: 14px 26px; }
 }
 </style>
