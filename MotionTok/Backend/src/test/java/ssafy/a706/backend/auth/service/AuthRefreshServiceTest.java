@@ -130,7 +130,7 @@ class AuthRefreshServiceTest {
     }
 
     @Test
-    @DisplayName("재사용으로 판정되면 401 — 세션 무효화는 store가 이미 했다")
+    @DisplayName("재사용으로 판정되면 401 — refresh 세션 무효화는 store가 이미 했다")
     void rejectsReusedToken() {
         String token = activeUserRefreshToken();
         verdict(RefreshTokenStore.Verdict.REUSED);
@@ -138,6 +138,34 @@ class AuthRefreshServiceTest {
         assertThatThrownBy(() -> service.refresh(token))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.INVALID_TOKEN);
+    }
+
+    @Test
+    @DisplayName("재사용으로 판정되면 그 sid도 폐기한다 — 훔친 쪽의 액세스 토큰이 30분 더 살면 안 된다")
+    void revokesTheSessionOnReuseDetection() {
+        String token = activeUserRefreshToken();
+        verdict(RefreshTokenStore.Verdict.REUSED);
+
+        assertThatThrownBy(() -> service.refresh(token)).isInstanceOf(BusinessException.class);
+
+        // revokeCurrent가 아니라 revoke인 것이 핵심이다 — store가 유출 판정과 동시에 Refresh 해시를
+        // 지워서 sid를 더 읽을 수 없다. 토큰에서 파싱해 둔 값을 직접 넘겨야 폐기가 실제로 일어난다.
+        // 사유도 리터럴로 고정한다 — DISPLACED로 쓰면 프론트가 "다른 곳에서 로그인" 오안내를 띄운다.
+        verify(sessionRevocationStore).revoke(SESSION_ID, SessionRevocationStore.Reason.TOKEN_REUSED);
+    }
+
+    @Test
+    @DisplayName("정상 회전·grace에서는 아무 세션도 폐기하지 않는다 — 유출이 아닌데 끊으면 안 된다")
+    void keepsSessionWhenRotationSucceeds() {
+        String token = activeUserRefreshToken();
+        verdict(RefreshTokenStore.Verdict.ROTATED);
+        service.refresh(token);
+
+        verdict(RefreshTokenStore.Verdict.GRACE);
+        service.refresh(token);
+
+        verify(sessionRevocationStore, never()).revoke(anyString(), any());
+        verify(sessionRevocationStore, never()).revokeCurrent(anyLong(), any());
     }
 
     @Test

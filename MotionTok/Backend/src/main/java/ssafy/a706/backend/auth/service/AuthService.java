@@ -197,7 +197,8 @@ public class AuthService {
      *
      * <p>회전 직후 겹쳐 들어온 요청(grace)은 <b>회전 없이</b> 액세스 토큰만 새로 준다 —
      * 브라우저가 이미 받아 둔 새 쿠키를 옛 값으로 덮어쓰지 않기 위해서다.
-     * grace마저 지난 옛 토큰은 유출로 보고 세션을 지운다(RefreshTokenStore.rotate).</p>
+     * grace마저 지난 옛 토큰은 유출로 보고 세션을 지운다(RefreshTokenStore.rotate) —
+     * refresh만이 아니라 이미 발급된 액세스 토큰까지 함께 죽인다(아래 REUSED 분기).</p>
      */
     @Transactional
     public IssuedTokens refresh(String refreshToken) {
@@ -227,8 +228,15 @@ public class AuthService {
         RefreshTokenStore.Verdict verdict = refreshTokenStore.rotate(userId, refreshToken, rotated, refreshTtl, sessionId);
 
         if (verdict == RefreshTokenStore.Verdict.REUSED) {
-            // 이미 회전된 토큰이 grace를 한참 넘겨 돌아왔다 — 세션은 store가 지웠고, 여기서는 흔적만 남긴다.
-            log.warn("Refresh 토큰 재사용 감지 — userId={} 의 refresh 세션을 무효화했다", userId);
+            // 이미 회전된 토큰이 grace를 한참 넘겨 돌아왔다 — store가 refresh 세션을 지웠지만
+            // 그것만으로는 훔친 쪽이 들고 있는 액세스 토큰이 만료(30분)까지 그대로 산다.
+            // 유출 판정은 우리가 내리는 가장 심각한 결론인데, 정작 정리는 로그아웃보다 약했다.
+            //
+            // 여기서 revokeCurrent를 부를 수는 없다 — sid는 방금 store가 DEL 한 해시 안에 있어
+            // 읽을 수 없고, 그러면 폐기가 조용히 no-op이 된다. 토큰에서 파싱해 둔 sid로 직접 올린다.
+            // sid 없는 도입 이전 토큰은 폐기할 대상이 없어 종전처럼 만료를 기다린다(revoke가 접는다).
+            sessionRevocationStore.revoke(sessionId, SessionRevocationStore.Reason.TOKEN_REUSED);
+            log.warn("Refresh 토큰 재사용 감지 — userId={} 의 세션을 무효화했다(액세스 토큰 폐기 포함)", userId);
             throw new BusinessException(ErrorCode.INVALID_TOKEN);
         }
         if (verdict == RefreshTokenStore.Verdict.NONE) {

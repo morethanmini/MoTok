@@ -53,7 +53,13 @@ public class SessionRevocationStore {
         /** 비밀번호가 바뀌었다(변경·재설정) — 옛 비밀번호로 열린 세션은 더 이상 유효하지 않다. */
         CREDENTIALS_CHANGED,
         /** 계정이 탈퇴했다 — 남은 토큰이 가리키는 사용자가 이제 없다. */
-        WITHDRAWN
+        WITHDRAWN,
+        /**
+         * 회전된 Refresh 토큰이 grace를 넘겨 다시 왔다 — 유출로 본다(RefreshTokenStore의 재사용 탐지).
+         * 우리가 세션을 죽이는 사유 중 <b>유일하게 사용자의 행동이 아닌</b> 것이라, 사후에
+         * "이 세션이 왜 죽었나"를 되짚을 때 나머지와 반드시 구분돼야 한다.
+         */
+        TOKEN_REUSED
     }
 
     private final StringRedisTemplate redis;
@@ -66,7 +72,20 @@ public class SessionRevocationStore {
      * sid 도입 이전 세션(필드 없음)은 올릴 수 없다 — 종전처럼 Access 만료를 기다린다.
      */
     public void revokeCurrent(Long userId, Reason reason) {
-        String sid = refreshTokenStore.sessionId(userId);
+        revoke(refreshTokenStore.sessionId(userId), reason);
+    }
+
+    /**
+     * sid를 직접 받아 폐기한다 — Refresh 해시에서 더 이상 읽을 수 없을 때를 위한 문이다.
+     *
+     * <p>재사용 탐지가 그렇다. {@code RefreshTokenStore}의 회전 스크립트는 유출로 판정한 순간
+     * 해시를 통째로 DEL 하므로, 그 뒤에 {@link #revokeCurrent}를 부르면 읽을 sid가 없어 조용히
+     * 아무 일도 하지 않는다. 호출자가 제시된 토큰에서 이미 파싱해 둔 sid를 그대로 넘긴다.</p>
+     *
+     * <p>{@code sid}가 null이면 아무것도 하지 않는다 — sid 도입 이전 토큰에는 폐기할 대상이 없다.
+     * 호출자마다 null 검사를 두는 대신 여기서 한 번 접는다.</p>
+     */
+    public void revoke(String sid, Reason reason) {
         if (sid == null) {
             return;
         }
