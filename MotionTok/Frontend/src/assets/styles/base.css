@@ -9,7 +9,7 @@
 
 @font-face {
   font-family: 'DNF Bit Bit';
-  src: url('/fonts/DNFBitBitv2.ttf') format('truetype');
+  src: url('/fonts/DNFBitBitv2.woff2') format('woff2');
   font-display: swap;
 }
 

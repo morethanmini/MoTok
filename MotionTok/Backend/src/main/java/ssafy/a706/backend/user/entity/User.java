@@ -109,6 +109,25 @@ public class User extends BaseTimeEntity {
     }
 
     /**
+     * 영구 정지 — 스스로 풀리지 않는 상태라 컬럼이 원천이다(기간 정지는 Redis TTL이 갖는다).
+     * 탈퇴와 달리 닉네임·이메일을 치환하지 않는다: 계정은 그대로 남고 접근만 막는 제재이고,
+     * 해제되면 원래 신원으로 돌아와야 한다.
+     */
+    public void ban() {
+        this.status = UserStatus.BANNED;
+    }
+
+    /**
+     * 영구 정지 해제(오판 정정). BANNED에서만 되돌린다 — 탈퇴(DELETED) 계정을 여기로 살려 내면
+     * 치환된 tombstone 닉네임·이메일 그대로 로그인 가능한 계정이 된다.
+     */
+    public void unban() {
+        if (this.status == UserStatus.BANNED) {
+            this.status = UserStatus.ACTIVE;
+        }
+    }
+
+    /**
      * 비밀번호가 없는 소셜 전용 계정인지.
      * 이런 계정은 '비밀번호 확인'으로 본인 확인을 할 수 없어 탈퇴 시 소셜 재인증을 요구한다(-111).
      */

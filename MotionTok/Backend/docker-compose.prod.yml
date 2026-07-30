@@ -85,6 +85,11 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - certbot-conf:/etc/letsencrypt:ro

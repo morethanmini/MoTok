@@ -13,12 +13,37 @@ export type SessionEndReason = 'member' | 'guest' | 'displaced'
 
 type Handler = (reason: SessionEndReason) => void
 
+/** 계정이 막힌 이유. 기간 정지와 영구 정지는 안내 문구가 달라야 해서 함께 전달한다. */
+export type AccountBlockKind = 'SUSPENDED' | 'BANNED'
+type BlockHandler = (kind: AccountBlockKind) => void
+
 const sessionExpiredHandlers = new Set<Handler>()
+const accountBlockedHandlers = new Set<BlockHandler>()
 
 /** 구독 해제 함수를 돌려준다. */
 export function onSessionExpired(handler: Handler): () => void {
   sessionExpiredHandlers.add(handler)
   return () => sessionExpiredHandlers.delete(handler)
+}
+
+/**
+ * 계정이 제재돼 세션을 이어갈 수 없을 때(-105).
+ *
+ * <p><b>{@link onSessionExpired}와 합치지 않는 이유.</b> `SessionEndReason`은 "세션이 왜 끝났나"의
+ * 값들이고 셋 다 <b>다시 로그인하면 이어진다</b> — 만료·게스트 종료·다른 곳 로그인. 제재는 축이
+ * 다르다: 계정 자체가 막혀 로그인이 성립하지 않는다. 같은 열거형에 넣으면 "다시 로그인" 안내를
+ * 공유하는 값들 사이에 그럴 수 없는 값이 섞인다.</p>
+ *
+ * <p>두 경로에서 들어온다: REST 403(AUTH_ACCOUNT_SUSPENDED·AUTH_ACCOUNT_BANNED, http.ts)와
+ * 웹소켓 1008 종료 프레임(useGlobalStomp). 어느 쪽이 먼저 도착할지는 사용자가 뭘 하던 중이었는지에 달렸다.</p>
+ */
+export function onAccountBlocked(handler: BlockHandler): () => void {
+  accountBlockedHandlers.add(handler)
+  return () => accountBlockedHandlers.delete(handler)
+}
+
+export function emitAccountBlocked(kind: AccountBlockKind) {
+  for (const handler of accountBlockedHandlers) handler(kind)
 }
 
 /**

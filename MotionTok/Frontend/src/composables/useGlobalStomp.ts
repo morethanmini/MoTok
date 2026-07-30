@@ -28,6 +28,7 @@
  */
 import { readonly, ref, watch } from 'vue'
 import { Client, type StompSubscription } from '@stomp/stompjs'
+import { emitAccountBlocked, type AccountBlockKind } from '@/api/authEvents'
 import { API_BASE, refreshAccessTokenIfNeeded } from '@/api/http'
 import { getAccessToken, readAccessClaims } from '@/api/token'
 import { useSessionStore } from '@/stores/session'
@@ -35,6 +36,16 @@ import { useSessionStore } from '@/stores/session'
 /** 인증 실패로 CONNECT가 거부됐을 때 재시도 간격의 상한(ms). 같은 토큰으로 3초마다 두드리지 않는다. */
 const MAX_RECONNECT_DELAY_MS = 60_000
 const BASE_RECONNECT_DELAY_MS = 3_000
+
+/**
+ * 서버가 제재로 연결을 끊을 때 실어 보내는 종료 코드·사유(UserSanctionService).
+ * 1008 = 정책 위반. 정상 종료(1000)로 오면 재연결이 그대로 다시 붙어 버리므로 사유로 구분한다.
+ */
+const CLOSE_POLICY_VIOLATION = 1008
+const CLOSE_REASONS: Record<string, AccountBlockKind> = {
+  ACCOUNT_SUSPENDED: 'SUSPENDED',
+  ACCOUNT_BANNED: 'BANNED',
+}
 
 type FrameHandler = (body: string) => void
 
@@ -180,10 +191,18 @@ function activate() {
         MAX_RECONNECT_DELAY_MS,
       )
     },
-    onWebSocketClose: () => {
+    onWebSocketClose: (event?: CloseEvent) => {
       connected.value = false
       // 끊긴 동안의 구독은 무효다 — 재연결 시 레지스트리에서 다시 건다.
       subscriptions.clear()
+
+      // 제재로 끊긴 연결은 재연결해도 CONNECT에서 다시 거부된다. 그냥 두면 3초마다 실패만 쌓이고
+      // 사용자에게는 "실시간이 안 되는" 상태로만 보인다 — 연결을 접고 안내는 App이 맡는다.
+      const blockKind = event?.code === CLOSE_POLICY_VIOLATION ? CLOSE_REASONS[event.reason] : undefined
+      if (blockKind) {
+        deactivate()
+        emitAccountBlocked(blockKind)
+      }
     },
   })
   client = c

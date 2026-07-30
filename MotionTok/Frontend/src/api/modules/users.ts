@@ -7,11 +7,25 @@ import type {
   PointHistoryPage,
   PublicUserProfile,
   UserProfile,
+  WarningNotice,
   WithdrawRequest,
 } from '../types'
 
 export const usersApi = {
   getMe: () => http.get<UserProfile>('/users/me'),
+
+  /**
+   * GET /users/me/warnings — 아직 확인하지 않은 관리자 경고(오래된 것부터).
+   *
+   * 제재 도메인에서 당사자가 부르는 유일한 조회다 — 정지·영구정지는 접근 자체가 막혀 여기 닿지
+   * 못하고 403·소켓 종료가 안내를 대신한다. 경고만 접근을 허용한 채 전달해야 해서 창구가 있다.
+   * 개인 큐 푸시는 접속 중이 아니면 폐기되므로 로그인·재연결마다 이걸로 놓친 것을 메운다.
+   */
+  warnings: () => http.get<WarningNotice[]>('/users/me/warnings'),
+
+  /** POST /users/me/warnings/{id}/ack — 확인 처리. 멱등이라 여러 탭에서 눌러도 안전하다. */
+  acknowledgeWarning: (warningId: number) =>
+    http.post<void>(`/users/me/warnings/${warningId}/ack`),
   /** 랭킹 등에서 다른 사용자의 공개 프로필 조회. 탈퇴·정지 계정은 404 (-96) */
   getProfile: (userId: number) => http.get<PublicUserProfile>(`/users/${userId}`),
   updateProfile: (nickname: string) => http.patch<UserProfile>('/users/me', { nickname }),
