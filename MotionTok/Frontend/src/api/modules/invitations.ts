@@ -18,8 +18,8 @@ export const invitationsApi = {
 
   /**
    * DELETE /invitations/{invitationId} — 초대를 치운다.
-   * 거절은 곧 이 호출이고, 수락은 joinByInviteCode로 입장한 **뒤에** 부른다 —
-   * 먼저 지우면 정원이 찼을 때 다시 눌러 볼 초대가 사라진다.
+   * 카드는 일회용이라 참가·거절 어느 쪽을 눌러도 이 호출이 함께 나간다(입장 성공 여부와 무관).
+   * 입장이 막혔으면 초대를 다시 받는다 — 살아 있는 초대와 못 들어가는 방을 함께 들고 있지 않는다.
    */
   dismiss: (invitationId: string) => http.delete<void>(`/invitations/${invitationId}`),
 }
