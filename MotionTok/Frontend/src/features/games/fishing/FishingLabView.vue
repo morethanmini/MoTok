@@ -60,6 +60,13 @@ const THROW_START_VEL = 250
 const THROW_END_RATIO = 0.4
 /** 기록 후 재검출 금지(ms) — 손이 되돌아오는 반동을 두 번 세지 않게 */
 const THROW_COOLDOWN = 400
+/**
+ * 던짐 기록을 강제로 닫는 상한(ms).
+ *
+ * 낙하 최댓값을 재려면 손이 바닥을 찍을 때까지 기다려야 하는데, 팔을 내린 채 가만히 있으면
+ * 되올라오지 않아 기록이 안 닫힌다. 실측 스윙이 전부 500ms 안에 끝났으니 900ms는 충분한 여유다.
+ */
+const THROW_OBSERVE_MAX = 900
 /** 정지 기준선(노이즈 플로어) 측정 시간(ms) */
 const FLOOR_MS = 2000
 /** 크랭크 손 교체 히스테리시스 — 반대 손이 이 배수 이상 커야 바꾼다 */
@@ -200,8 +207,21 @@ interface ThrowRec {
   tag: '강' | '약'
   /** 백스윙 상승 거리(px) — 최저점에서 최고점까지 */
   rise: number
-  /** 포워드 스윙 낙하 거리(px) */
+  /**
+   * 포워드 스윙 낙하 거리(px) — **스윙 종료 순간의 값**.
+   *
+   * 종료 조건이 전부 속도 기반이라(`vel < recVel*0.4 || vel < 120`) 느린 스윙에서 일찍 걸린다.
+   * 손이 아직 내려가는 중인데 스윙이 끝났다고 보고 그 시점 값을 쓴다 — 약한 던짐일수록 더
+   * 깎인다. `cast.ts`도 같은 방식이라 편향을 공유한다.
+   */
   drop: number
+  /**
+   * 손이 실제로 도달한 최저점까지의 낙하(px) — 팔로스루의 진짜 크기.
+   *
+   * `drop`과 나란히 기록해서 위 편향이 얼마나 큰지 직접 재려는 값이다. 둘이 크게 다르면
+   * 판정을 이 값으로 옮겨야 한다.
+   */
+  dropMax: number
   /** 포워드 스윙 최고 하향 속도(px/s) — 거리 매핑의 입력 */
   vel: number
   /** 같은 속도를 어깨너비/s로 — 카메라 거리에 무관한 값 */
@@ -234,6 +254,12 @@ let recVel = 0
 let recRise = 0
 let recTop = 0
 let recLost = false
+/** 기존 방식(속도 종료 시점)의 낙하 — 처음 종료 조건이 걸린 순간에 잠근다 */
+let recDropCut: number | null = null
+/** 손이 도달한 최저 y — 낙하 최댓값의 원본 */
+let recBottomY = 0
+/** 기록 시작 시각 — 관찰 상한을 재는 기준 */
+let recStartT = 0
 let cooldownUntil = 0
 let throwSeq = 0
 /** 마지막 던짐이 끝난 시각(ms) — 상승 거리를 재는 구간의 시작점 */
@@ -528,11 +554,28 @@ function onPose(result: PoseLandmarkerResult, inferenceMs: number) {
       recRise = restY - topY
       recTop = topY
       recLost = false
+      recDropCut = null
+      recBottomY = midY
+      recStartT = now
     }
   } else {
     if (vel > recVel) recVel = vel
-    const ended = vel < recVel * THROW_END_RATIO || vel < 120
-    if (ended) {
+    if (midY > recBottomY) recBottomY = midY
+
+    // 기존 방식의 종료 시점 — 판정을 닫지 않고 값만 잠근다
+    if (recDropCut === null && (vel < recVel * THROW_END_RATIO || vel < 120)) {
+      recDropCut = midY - recTop
+    }
+
+    /*
+     * 기록을 닫는 조건은 **위치 기반**이다 — 손이 최저점에서 되올라왔거나, 관찰 상한이 지났거나.
+     *
+     * 속도로 닫으면 지터 한 프레임에 닫혀서 최댓값을 못 본다. "되올라왔다"는 낙하가 실제로
+     * 바닥을 찍었다는 뜻이라 팔로스루가 끝난 시점과 일치한다. 되올라옴 문턱은 어깨너비 배수다.
+     */
+    const back = Math.max(6, sw.avg * 0.05)
+    const closed = midY < recBottomY - back || now - recStartT >= THROW_OBSERVE_MAX
+    if (closed) {
       throwSeq++
       throws.value = [
         ...throws.value,
@@ -540,7 +583,8 @@ function onPose(result: PoseLandmarkerResult, inferenceMs: number) {
           n: throwSeq,
           tag: throwTag.value,
           rise: Math.round(recRise),
-          drop: Math.round(midY - recTop),
+          drop: Math.round(recDropCut ?? recBottomY - recTop),
+          dropMax: Math.round(recBottomY - recTop),
           vel: Math.round(recVel),
           velSw: sw.avg > 0 ? +(recVel / sw.avg).toFixed(2) : 0,
           lost: recLost,
@@ -624,7 +668,7 @@ function snapshotText(): string {
   const rows = throws.value
     .map(
       (t) =>
-        `  #${t.n} ${t.tag} 상승=${t.rise}px 낙하=${t.drop}px 최고속도=${t.vel}px/s (${t.velSw}sw/s)${t.lost ? ' ⚠손실' : ''}`,
+        `  #${t.n} ${t.tag} 상승=${t.rise}px(×${sw.avg > 0 ? (t.rise / sw.avg).toFixed(2) : '–'}) 낙하=${t.drop}px 최대낙하=${t.dropMax}px(×${sw.avg > 0 ? (t.dropMax / sw.avg).toFixed(2) : '–'}) 최고속도=${t.vel}px/s (${t.velSw}sw/s)${t.lost ? ' ⚠손실' : ''}`,
     )
     .join('\n')
   return [
@@ -1043,6 +1087,7 @@ onBeforeUnmount(() => {
                 <th>세기</th>
                 <th>상승</th>
                 <th>낙하</th>
+                <th title="손이 도달한 최저점까지 — 팔로스루의 진짜 크기">최대낙하</th>
                 <th>최고속도</th>
                 <th>sw/s</th>
               </tr>
@@ -1053,6 +1098,7 @@ onBeforeUnmount(() => {
                 <td>{{ t.tag }}</td>
                 <td>{{ t.rise }}</td>
                 <td>{{ t.drop }}</td>
+                <td :class="{ gap: t.dropMax - t.drop > 20 }">{{ t.dropMax }}</td>
                 <td>{{ t.vel }}</td>
                 <td>{{ t.velSw }}</td>
               </tr>
@@ -1510,6 +1556,11 @@ table.rec td {
 table.rec tr.lost td {
   color: #ff5d73;
   text-decoration: line-through;
+}
+/* 최대낙하가 종료 시점 낙하보다 20px 이상 크면 = 속도 종료가 팔로스루를 잘라먹은 던짐 */
+table.rec td.gap {
+  color: #ffd23f;
+  font-weight: 700;
 }
 
 .strip {

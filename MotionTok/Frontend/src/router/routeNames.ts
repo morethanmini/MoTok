@@ -35,6 +35,8 @@ export const RouteName = {
   DevFishingGame: 'dev-fishing-game',
   /** 게임⑤ 낚시 정식 화면(서비스 톤)을 방 없이 단독 확인 — 개발 전용 (-49) */
   DevFishingPlay: 'dev-fishing-play',
+  /** 게임⑤ 낚시 좌우 조준 도달 범위 실측 — 개발 전용 (-49) */
+  DevFishingAimLab: 'dev-fishing-aim-lab',
 } as const
 
 export type RouteName = (typeof RouteName)[keyof typeof RouteName]
