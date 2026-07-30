@@ -11,7 +11,7 @@ import type { ActiveGameSession } from '@/features/games/session'
 import { preferredAudioDeviceId, useCamera } from '@/composables/useCamera'
 import { useDecoration } from '@/composables/useDecoration'
 import { warmUpMotionModels } from '@/composables/motionModels'
-import { useStickerCompositor } from '@/composables/useStickerCompositor'
+import { useDecorSync } from '@/composables/useDecorSync'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
 import { useRoomChat } from '@/composables/useRoomChat'
@@ -59,19 +59,20 @@ const lk = useLiveKitRoom()
 const camera = useCamera()
 const CAMERA_CONSTRAINTS = { video: { width: 640, height: 400 }, audio: false } as const
 
-// 장착 스티커는 발행 트랙에 합성해서 내보낸다 — 원본 캡처에 그리면 모션 인식 입력이 오염되고,
-// 화면에만 얹으면 나만 보인다. 합성이 안 되는 환경에서는 원본 트랙으로 조용히 되돌아간다.
+// 장착 스티커는 영상에 굽지 않고 좌표만 데이터 채널로 알린다 — 받은 쪽이 그 사람 타일에 얹는다.
+// 캔버스 합성으로 발행하던 예전 방식은 다른 오리진(S3)에 있는 AI 아이템 이미지를 읽지 못해
+// (버킷 CORS 없음) 내 화면에만 보였다.
 const decor = useDecoration()
-const compositor = useStickerCompositor()
+const decorSync = useDecorSync(lk, () => decor.sprites.value)
 
-/** 발행에 쓸 트랙 — 스티커가 있으면 합성 트랙, 없거나 합성 실패면 원본 트랙. */
-async function publishableTrack(stream: MediaStream | null): Promise<MediaStreamTrack | null> {
-  const source = stream?.getVideoTracks()[0] ?? null
-  if (!stream || !source) return null
-  if (decor.sprites.value.length === 0) return source
-  // 이미 합성 중이면 그대로 쓴다 — 다시 시작하면 지금 발행돼 있는 복제본에 프레임이 끊긴다.
-  if (compositor.track.value) return compositor.track.value
-  return (await compositor.start(stream, () => decor.sprites.value)) ?? source
+/** 발행에 쓸 카메라 트랙 — 원본 캡처 그대로(발행 시점에 복제된다). */
+function publishableTrack(stream: MediaStream | null): MediaStreamTrack | null {
+  return stream?.getVideoTracks()[0] ?? null
+}
+
+/** 그 참가자 타일에 얹을 스티커 — 타일이 세 레이아웃에서 렌더되므로 조회를 여기 한 곳에 둔다. */
+function spritesFor(slot: Slot) {
+  return slot.view ? decorSync.spritesOf(slot.view.identity) : []
 }
 // 대기실 채팅 + 게임 제안 (STOMP, 명세 §7)
 const roomChat = useRoomChat()
@@ -302,15 +303,17 @@ onMounted(async () => {
   // 내 타일과 다른 사람 화면 모두 꺼져 보이고, 방 안에서 카메라를 켜면 그때 발행한다.
   const stream = await camera.start(CAMERA_CONSTRAINTS)
   if (!stream) flash('카메라를 켤 수 없어요(권한/장치 확인)')
-  // 장착 스티커를 먼저 읽어 두고 합성 트랙을 만든다(실패하면 원본 트랙으로 발행).
+  // 접속 직후 방 전체에 알려야 하므로(아래 broadcast) 먼저 읽어 둔다.
   await decor.load()
   const ok = await lk.connect(roomCode.value, {
-    cameraTrack: initialCamOn.value ? await publishableTrack(stream) : null,
+    cameraTrack: initialCamOn.value ? publishableTrack(stream) : null,
     microphone: initialMicOn.value,
     // 카메라는 로컬 캡처(camera.start)가 이미 고른 장치를 쓰지만, 마이크는 LiveKit이 직접 잡는다.
     microphoneDeviceId: preferredAudioDeviceId(),
   })
   if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
+  // 이미 있던 사람들에게 내 꾸미기를 알린다(늦게 들어오는 사람은 useDecorSync가 따로 챙긴다).
+  if (ok) decorSync.broadcast()
 
   // 채팅은 이력이 없어서(비영속) 구독이 늦은 만큼 그대로 유실 — 입장 직후 바로 연결.
   void roomChat.connect(roomCode.value)
@@ -530,14 +533,14 @@ async function toggleCam() {
       flash('카메라 권한을 허용해 주세요')
       return
     }
-    const track = await publishableTrack(s)
+    const track = publishableTrack(s)
     if (connected.value && track) await lk.publishCameraTrack(track)
     return
   }
   if (connected.value) {
     // 발행된 카메라가 없으면(입장 시 발행 실패) 지금 발행한다
     if (!(await lk.toggleCamera())) {
-      const track = await publishableTrack(camera.stream.value)
+      const track = publishableTrack(camera.stream.value)
       if (track) await lk.publishCameraTrack(track)
     }
     return
@@ -1278,6 +1281,7 @@ const startHint = computed(() =>
             :host="slot.host"
             :cover="coverFor(slot)"
             :volume="volumeFor(slot)"
+            :sprites="spritesFor(slot)"
             play-audio
             compact
             :can-kick="amRoomHost && !!slot.view"
@@ -1296,11 +1300,8 @@ const startHint = computed(() =>
             class="self-video"
             @loadedmetadata="syncSelfVideoAspect"
           />
-          <!-- 내 <video>는 원본 캡처(게임 입력용)라 스티커가 없다. 발행 트랙에는 합성돼 나가므로
-               내 화면에도 같은 스티커를 얹어 준다. self-video는 좌우 반전이라 mirrored,
-               object-fit:contain으로 회색 여백이 생기므로 fit도 contain — 그래야 스티커가
-               여백이 아니라 영상 사각형 안 같은 자리에 얹힌다.
-               영상 비율은 타일 레이아웃이 이미 재고 있는 selfVideoAspect를 그대로 쓴다. -->
+          <!-- 상대 타일(ParticipantTile)과 같은 오버레이 — self-video는 좌우 반전이라 mirrored,
+               fit은 <video>의 object-fit과 같아야 영상 안 같은 자리에 얹힌다. -->
           <StickerOverlay
             v-if="selfCamOn"
             :sprites="decor.sprites.value"
@@ -1394,6 +1395,7 @@ const startHint = computed(() =>
             :host="slot.host"
             :cover="coverFor(slot)"
             :volume="volumeFor(slot)"
+            :sprites="spritesFor(slot)"
             play-audio
             compact
             :can-kick="amRoomHost && !!slot.view"
@@ -1409,6 +1411,7 @@ const startHint = computed(() =>
             :host="slot.host"
             :cover="coverFor(slot)"
             :volume="volumeFor(slot)"
+            :sprites="spritesFor(slot)"
             play-audio
             :can-kick="amRoomHost && !!slot.view"
             @kick="openKick(slot.view)"

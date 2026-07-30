@@ -44,6 +44,11 @@ export interface ParticipantView {
   gameTrack: LkTrack | null
 }
 
+/** 데이터 채널 수신 콜백 — from은 보낸 참가자 identity(userId). */
+export type DataListener = (payload: string, from: string, topic?: string) => void
+/** 참가자 입·퇴장 콜백 */
+export type PresenceListener = (identity: string) => void
+
 export function useLiveKitRoom() {
   let room: Room | null = null
 
@@ -57,6 +62,11 @@ export function useLiveKitRoom() {
    * 상대의 마이크 설정과 무관하고, 상대나 다른 참가자에게는 아무 영향이 없다.
    */
   const participantVolumes = ref<Record<string, number>>({})
+
+  // 데이터 채널 — 문자열을 나르는 것까지만 하고, 내용의 뜻은 쓰는 쪽(useDecorSync)이 정한다.
+  const dataListeners = new Set<DataListener>()
+  const joinListeners = new Set<PresenceListener>()
+  const leaveListeners = new Set<PresenceListener>()
 
   function toView(p: Participant, isLocal: boolean): ParticipantView {
     // 게임 화면(화면공유 소스) 트랙이 추가되면서 kind만으로는 카메라를 못 가리므로 source로 찾는다.
@@ -113,8 +123,19 @@ export function useLiveKitRoom() {
         const volume = participantVolumes.value[p.identity]
         if (volume !== undefined) p.setVolume(volume)
         refresh()
+        joinListeners.forEach((cb) => cb(p.identity))
       })
-      .on(RoomEvent.ParticipantDisconnected, refresh)
+      .on(RoomEvent.ParticipantDisconnected, (p) => {
+        refresh()
+        leaveListeners.forEach((cb) => cb(p.identity))
+      })
+      // 보낸 사람을 모르는 데이터는 버린다 — 누구 타일에 반영할지 정할 수 없다(서버 발신도 여기로 온다).
+      .on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
+        const from = participant?.identity
+        if (!from) return
+        const text = new TextDecoder().decode(payload)
+        dataListeners.forEach((cb) => cb(text, from, topic))
+      })
       .on(RoomEvent.ActiveSpeakersChanged, refresh)
       .on(RoomEvent.Disconnected, () => {
         participants.value = []
@@ -329,6 +350,34 @@ export function useLiveKitRoom() {
     room?.remoteParticipants.get(identity)?.setVolume(volume)
   }
 
+  // ── 데이터 채널 송·수신 ─────────────────────
+  /** identities를 주면 그 사람들에게만, 없으면 방 전체. 각 구독 함수는 해지 함수를 돌려준다. */
+  async function sendData(payload: string, identities?: string[], topic?: string) {
+    if (!room) return
+    try {
+      await room.localParticipant.publishData(new TextEncoder().encode(payload), {
+        reliable: true,
+        topic,
+        destinationIdentities: identities,
+      })
+    } catch {
+      // 채널이 아직 안 열렸거나 방을 나가는 중 — 상태 알림이라 다음 알림이 같은 내용을 다시 보낸다
+    }
+  }
+
+  function onData(cb: DataListener): () => void {
+    dataListeners.add(cb)
+    return () => dataListeners.delete(cb)
+  }
+  function onParticipantJoin(cb: PresenceListener): () => void {
+    joinListeners.add(cb)
+    return () => joinListeners.delete(cb)
+  }
+  function onParticipantLeave(cb: PresenceListener): () => void {
+    leaveListeners.add(cb)
+    return () => leaveListeners.delete(cb)
+  }
+
   onScopeDispose(() => void disconnect())
 
   return {
@@ -347,5 +396,9 @@ export function useLiveKitRoom() {
     publishGameScreen,
     setGameScreenMuted,
     unpublishGameScreen,
+    sendData,
+    onData,
+    onParticipantJoin,
+    onParticipantLeave,
   }
 }
