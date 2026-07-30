@@ -7,20 +7,24 @@ import { computed, onMounted, ref, watch } from 'vue'
 import {
   adminApi,
   adminChatReportsApi,
+  adminGamesApi,
+  adminPointsApi,
   adminSanctionApi,
   adminUserReportsApi,
-  gamesApi,
   ApiError,
+  type AdminGame,
+  type AdminPointHistoryListResponse,
   type AuditLog,
   type ChatReportDetail,
   type ChatReportListResponse,
   type ChatReportReason,
   type ChatReportStatus,
-  type Game,
+  type PointDirection,
   type ReportedUser,
   type SanctionHistoryListResponse,
   type SanctionRefType,
   type SanctionStatus,
+  type SanctionType,
   type UserReportListResponse,
   type UserReportSummary,
 } from '@/api'
@@ -41,19 +45,28 @@ import {
   sanctionRefLabel,
   suspensionErrorMessage,
 } from './suspension'
+import {
+  GAME_MODE_LABEL,
+  GAME_SCOPE_LABEL,
+  filterByScope,
+  scopeBadges,
+  type GameScope,
+} from './games'
+import { POINT_DIRECTION_LABEL, POINT_TYPE_LABEL, formatPoint } from './points'
 
 const { message: toast, flash } = useToast()
 
 // 목 데이터 없음 — 없는 걸 있는 것처럼 보여 주면 "백엔드가 붙었는데 왜 안 뜨지"를 판단할 수 없다.
 // 아직 서버가 없는 구역(감사 로그·곡 등록)은 화면에서 그렇다고 밝힌다.
-const tab = ref<'chat-reports' | 'reports' | 'reported-users' | 'sanctions' | 'audit' | 'games'>('chat-reports')
+const tab = ref<
+  'chat-reports' | 'reports' | 'reported-users' | 'sanctions' | 'points' | 'audit' | 'games'
+>('chat-reports')
 // 신고 유저 목록(-105) — 사람 단위. 신고함이 '들어온 것을 처리하는 자리'라면 여기는 '누구를 볼지 고르는 자리'다.
 const { data: reportedUsers, error: reportedUsersError } = useAsyncData<ReportedUser[]>(
   () => adminApi.reports(),
   [],
 )
 const { data: audit, error: auditError } = useAsyncData<AuditLog[]>(() => adminApi.auditLogs(), [])
-const { data: games, error: gamesError } = useAsyncData<Game[]>(() => gamesApi.list(), [])
 
 // ── 채팅 신고 (v0.2.17, S15P11A706-133 — 백엔드 구현 완료, mock 없음) ──
 const REASON_LABEL: Record<ChatReportReason, string> = {
@@ -388,9 +401,16 @@ async function submitSuspend() {
   }
 }
 
-// ── 제재 이력 · 정지 해제 ──────────────────────────────
-// 서버에 "전체 제재 목록"은 없다 — 이력이 사용자 단위로만 인덱싱돼 있어 대상을 먼저 정해야 한다.
+// ── 제재 내역 · 정지 해제 ──────────────────────────────
+// 두 축이 한 탭에 있다:
+//   1) 회원을 지정하지 않은 전체 내역 — "요즘 무슨 제재가 나갔나". 오판·과잉 제재를 사후에 찾는 자리.
+//   2) 회원을 지정한 상태 카드 — "이 사람 지금 어떤 상태인가" + 해제 버튼.
+// 상태(Redis TTL)는 대상이 정해져야만 의미가 있어서 2)에서만 뜬다. 목록은 항상 보인다 —
+// 회원 id를 알아야만 아무것도 안 보이던 게 이 화면의 원래 문제였다.
+const SANCTION_TYPES: SanctionType[] = ['WARN', 'SUSPEND', 'BAN', 'RELEASE', 'UNBAN']
+
 const sanctionUserId = ref<number | null>(null)
+const sanctionTypeFilter = ref<SanctionType | ''>('')
 const sanctionPage = ref(0)
 const sanctionStatus = ref<SanctionStatus | null>(null)
 const sanctionHistory = ref<SanctionHistoryListResponse | null>(null)
@@ -407,27 +427,43 @@ function openRelease(kind: 'SUSPENSION' | 'BAN') {
   releaseReason.value = ''
 }
 
+/**
+ * 제재 내역 조회. 회원 id는 선택이다 — 없으면 전체 목록, 있으면 그 회원으로 좁히고
+ * 현재 제재 상태 카드까지 함께 띄운다.
+ *
+ * 상태 조회 실패가 목록을 가리지 않게 따로 처리한다(다른 저장소 — Redis TTL과 RDB).
+ * 없는 회원 id를 넣었을 때 "이력 없음"과 "조회 실패"가 같은 화면이 되면 관리자가 오타를 눈치채지 못한다.
+ */
 async function loadSanctions() {
   const userId = sanctionUserId.value
-  if (userId === null || Number.isNaN(userId)) return
+  const targeted = userId !== null && !Number.isNaN(userId)
   sanctionError.value = ''
   try {
-    // 상태와 이력은 서로를 기다릴 이유가 없다(다른 저장소 — Redis TTL과 RDB).
-    const [status, history] = await Promise.all([
-      adminSanctionApi.status(userId),
-      adminSanctionApi.history(userId, { page: sanctionPage.value, size: 20 }),
-    ])
-    sanctionStatus.value = status
-    sanctionHistory.value = history
+    sanctionHistory.value = await adminSanctionApi.allHistory({
+      userId: targeted ? userId : undefined,
+      type: sanctionTypeFilter.value || undefined,
+      page: sanctionPage.value,
+      size: 20,
+    })
   } catch (e) {
-    sanctionStatus.value = null
     sanctionHistory.value = null
     sanctionError.value = e instanceof ApiError
       ? suspensionErrorMessage(e.code, e.message)
       : '조회에 실패했어요'
   }
+  if (!targeted) {
+    sanctionStatus.value = null
+    return
+  }
+  try {
+    sanctionStatus.value = await adminSanctionApi.status(userId)
+  } catch {
+    // 상태는 부가 정보다 — 목록은 이미 그려 놓고 카드만 접는다.
+    sanctionStatus.value = null
+  }
 }
-watch(sanctionPage, loadSanctions)
+onMounted(loadSanctions)
+watch([sanctionPage, sanctionTypeFilter], loadSanctions)
 
 /** 신고에서 이 사용자의 제재 내역으로 건너간다 — 정지 전에 전력을 보는 흐름이 자연스럽다. */
 function openSanctionsOf(userId: number) {
@@ -437,6 +473,14 @@ function openSanctionsOf(userId: number) {
   // 탭을 옮기면서 신고 상세를 띄워 두면 다른 탭 위에 남는다.
   userReportDetail.value = null
   chatReportDetail.value = null
+  void loadSanctions()
+}
+
+/** 회원 지정을 풀고 전체 목록으로 — 필터를 지우려면 입력칸을 비우는 것보다 버튼이 확실하다. */
+function clearSanctionUser() {
+  sanctionUserId.value = null
+  sanctionStatus.value = null
+  sanctionPage.value = 0
   void loadSanctions()
 }
 
@@ -463,21 +507,97 @@ async function submitRelease() {
   }
 }
 
-// 게임 노출 토글 (PATCH /admin/games/{gameId})
-// 서버가 받아들였을 때만 화면을 바꾼다 — 실패했는데 토글이 넘어가면 숨긴 줄 알았던 게임이 그대로 노출된다.
-async function toggleGame(g: Game) {
-  const next = !g.playable
+// ── 게임 관리 (-106) ──────────────────────────────────
+// 공개 카탈로그(GET /games)가 아니라 전용 경로를 쓴다. 저쪽은 인원 조건이 섞인 playable을 주고,
+// 그 값으로 토글을 그리면 인원 때문에 false인 게임이 "차단"으로 보인다.
+const GAME_SCOPES: GameScope[] = ['all', 'solo', 'multi']
+
+const games = ref<AdminGame[]>([])
+const gamesError = ref('')
+const gameScope = ref<GameScope>('all')
+/** 처리 중인 게임 id — 같은 행을 연타해 요청이 겹치는 걸 막는다. */
+const gameBusy = ref<number | null>(null)
+
+const scopedGames = computed(() => filterByScope(games.value, gameScope.value))
+const closedCount = computed(() => games.value.filter((g) => !g.active).length)
+
+async function loadGames() {
+  gamesError.value = ''
   try {
-    await adminApi.toggleGame(g.id, next)
+    games.value = await adminGamesApi.list()
   } catch (e) {
-    flash(e instanceof ApiError ? e.message : '게임 노출을 바꾸지 못했어요')
-    return
+    games.value = []
+    gamesError.value = e instanceof ApiError ? e.message : '게임 목록을 불러오지 못했어요'
   }
-  g.playable = next
-  flash(`${g.name} — ${next ? '노출' : '숨김'} 처리`)
+}
+onMounted(loadGames)
+
+/**
+ * 플레이 허용 토글.
+ *
+ * 낙관적으로 먼저 바꾸지 않는다 — 실패했는데 화면이 넘어가면 닫은 줄 알았던 게임이 그대로
+ * 열려 있다. 서버가 갱신된 항목을 돌려주므로 그 값으로 덮어써 두 쪽 상태를 맞춘다.
+ */
+async function toggleGame(g: AdminGame) {
+  if (gameBusy.value !== null) return
+  gameBusy.value = g.id
+  try {
+    const updated = await adminGamesApi.setActive(g.id, !g.active)
+    games.value = games.value.map((game) => (game.id === updated.id ? updated : game))
+    flash(`${updated.name} — ${updated.active ? '플레이 허용' : '플레이 차단'}`)
+  } catch (e) {
+    flash(e instanceof ApiError ? e.message : '게임 상태를 바꾸지 못했어요')
+  } finally {
+    gameBusy.value = null
+  }
+}
+
+// ── 포인트 내역 (-106 후속) ───────────────────────────
+// 읽기 전용이다. 지급·회수 버튼이 없는 건 서버에 그 엔드포인트가 없어서이기도 하고,
+// 있으면 point_history가 게임·상점 결과의 기록이 아니라 편집 가능한 장부가 되기 때문이다.
+const POINT_DIRECTIONS: PointDirection[] = ['EARN', 'SPEND']
+
+const pointUserId = ref<number | null>(null)
+const pointDirection = ref<PointDirection | ''>('')
+const pointPage = ref(0)
+const points = ref<AdminPointHistoryListResponse | null>(null)
+const pointsError = ref('')
+
+async function loadPoints() {
+  pointsError.value = ''
+  const userId = pointUserId.value
+  try {
+    points.value = await adminPointsApi.list({
+      userId: userId !== null && !Number.isNaN(userId) ? userId : undefined,
+      direction: pointDirection.value || undefined,
+      page: pointPage.value,
+      size: 20,
+    })
+  } catch (e) {
+    points.value = null
+    pointsError.value = e instanceof ApiError ? e.message : '포인트 내역을 불러오지 못했어요'
+  }
+}
+onMounted(loadPoints)
+watch([pointDirection, pointPage], loadPoints)
+
+/** 신고·제재에서 이 사용자의 포인트 흐름으로 — 부정 정산 의심을 확인하는 흐름이다. */
+function openPointsOf(userId: number) {
+  pointUserId.value = userId
+  pointDirection.value = ''
+  pointPage.value = 0
+  tab.value = 'points'
+  void loadPoints()
+}
+
+function clearPointUser() {
+  pointUserId.value = null
+  pointPage.value = 0
+  void loadPoints()
 }
 
 const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
+const num = (n: number) => n.toLocaleString('ko-KR')
 </script>
 
 <template>
@@ -486,9 +606,10 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
       <button :class="{ on: tab === 'chat-reports' }" @click="tab = 'chat-reports'">채팅 신고</button>
       <button :class="{ on: tab === 'reports' }" @click="tab = 'reports'">사용자 신고</button>
       <button :class="{ on: tab === 'reported-users' }" @click="tab = 'reported-users'">신고 유저</button>
-      <button :class="{ on: tab === 'sanctions' }" @click="tab = 'sanctions'">제재 이력</button>
+      <button :class="{ on: tab === 'sanctions' }" @click="tab = 'sanctions'">제재 내역</button>
+      <button :class="{ on: tab === 'points' }" @click="tab = 'points'">포인트 내역</button>
+      <button :class="{ on: tab === 'games' }" @click="tab = 'games'">게임 관리</button>
       <button :class="{ on: tab === 'audit' }" @click="tab = 'audit'">감사 로그</button>
-      <button :class="{ on: tab === 'games' }" @click="tab = 'games'">게임 노출</button>
     </div>
 
     <!-- 채팅 신고 (v0.2.17, -133) -->
@@ -627,23 +748,36 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
       </template>
     </PixelCard>
 
-    <!-- 제재 이력 · 정지 상태 (회원 단위 조회 — 전체 목록은 서버에 없다) -->
-    <PixelCard v-else-if="tab === 'sanctions'" title="계정 제재">
+    <!-- 제재 내역 — 회원 지정 없이 전체가 기본. 지정하면 현재 상태 카드와 해제 버튼이 붙는다 -->
+    <PixelCard v-else-if="tab === 'sanctions'" title="계정 제재 내역">
       <form class="cr-filter" @submit.prevent="(sanctionPage = 0, loadSanctions())">
         <label>
           회원 ID
-          <input v-model.number="sanctionUserId" type="number" min="1" placeholder="예) 42" />
+          <input v-model.number="sanctionUserId" type="number" min="1" placeholder="전체" />
         </label>
-        <PixelButton type="submit" :disabled="sanctionUserId === null">조회</PixelButton>
+        <label>
+          유형
+          <select v-model="sanctionTypeFilter">
+            <option value="">전체</option>
+            <option v-for="t in SANCTION_TYPES" :key="t" :value="t">{{ SANCTION_TYPE_LABEL[t] }}</option>
+          </select>
+        </label>
+        <PixelButton type="submit">조회</PixelButton>
+        <PixelButton v-if="sanctionUserId !== null" variant="secondary" @click="clearSanctionUser">
+          회원 해제
+        </PixelButton>
+        <span v-if="sanctionHistory" class="cr-total">총 {{ num(sanctionHistory.totalElements) }}건</span>
       </form>
 
       <p v-if="sanctionError" class="cr-empty">{{ sanctionError }}</p>
-      <p v-else-if="sanctionUserId === null" class="cr-empty">
-        회원 ID로 조회해요 — 신고 목록의 피신고자 이름을 눌러도 여기로 옵니다
-      </p>
-      <template v-else-if="sanctionStatus">
-        <!-- 상태는 Redis TTL, 이력은 RDB. 만료가 곧 해제라 되돌릴 배치가 없다 -->
-        <div class="sx-status" :class="{ on: sanctionStatus.suspended || sanctionStatus.banned }">
+      <template v-else>
+        <!-- 상태는 Redis TTL, 이력은 RDB. 만료가 곧 해제라 되돌릴 배치가 없다.
+             대상이 정해져야만 의미가 있는 값이라 회원을 지정했을 때만 뜬다 -->
+        <div
+          v-if="sanctionStatus"
+          class="sx-status"
+          :class="{ on: sanctionStatus.suspended || sanctionStatus.banned }"
+        >
           <div class="sx-head">
             <b>#{{ sanctionUserId }}</b>
             <!-- 영구가 기간보다 강하다 — 둘이 동시에 서는 일은 없지만 표시 우선순위는 정해 둔다 -->
@@ -678,16 +812,22 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
               :disabled="sanctionBusy"
               @click="openRelease('BAN')"
             >영구 정지 해제</PixelButton>
+            <PixelButton variant="secondary" @click="openPointsOf(sanctionUserId!)">포인트 내역</PixelButton>
           </div>
         </div>
+        <p v-else class="sx-hint sx-scope-hint">
+          전체 제재 내역이에요 — 회원 ID를 넣으면 그 사람의 현재 상태와 해제 버튼이 함께 뜹니다.
+        </p>
 
         <p v-if="!sanctionHistory || !sanctionHistory.sanctions.length" class="cr-empty">제재 이력이 없어요</p>
         <table v-else class="tbl">
-          <thead><tr><th>#</th><th>유형</th><th>기간</th><th>사유</th><th>근거 신고</th><th>집행자</th><th>일시</th></tr></thead>
+          <thead><tr><th>#</th><th>대상</th><th>유형</th><th>기간</th><th>사유</th><th>근거 신고</th><th>집행자</th><th>일시</th></tr></thead>
           <tbody>
             <tr v-for="s in sanctionHistory.sanctions" :key="s.id">
               <td>{{ s.id }}</td>
-              <td><span class="cr-status" :class="s.type === 'SUSPEND' ? 'received' : 'resolved'">{{ SANCTION_TYPE_LABEL[s.type] }}</span></td>
+              <!-- 닉네임은 제재 시점 스냅샷이다. 눌러 그 회원으로 좁힐 수 있게 둔다 -->
+              <td><button class="link" @click="(sanctionUserId = s.userId, sanctionPage = 0, loadSanctions())">{{ s.userNickname }}</button></td>
+              <td><span class="cr-status" :class="s.type === 'SUSPEND' ? 'received' : s.type === 'BAN' ? 'rejected' : s.type === 'WARN' ? 'reviewing' : 'resolved'">{{ SANCTION_TYPE_LABEL[s.type] }}</span></td>
               <td>{{ s.days !== null ? `${s.days}일` : '—' }}</td>
               <td class="cr-text">{{ s.reason }}</td>
               <!-- 두 신고 테이블의 id가 각각 1부터라 유형까지 찍어야 되짚을 수 있다 -->
@@ -701,6 +841,72 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
           <PixelButton :disabled="sanctionPage === 0" @click="sanctionPage--">이전</PixelButton>
           <span>{{ sanctionPage + 1 }} / {{ sanctionHistory.totalPages }}</span>
           <PixelButton :disabled="sanctionPage >= sanctionHistory.totalPages - 1" @click="sanctionPage++">다음</PixelButton>
+        </div>
+      </template>
+    </PixelCard>
+
+    <!-- 포인트 내역 — 읽기 전용. 지급·회수 버튼은 없다(장부를 고칠 수 있으면 부정 정산을 판별할 수 없다) -->
+    <PixelCard v-else-if="tab === 'points'" title="포인트 내역">
+      <form class="cr-filter" @submit.prevent="(pointPage = 0, loadPoints())">
+        <label>
+          회원 ID
+          <input v-model.number="pointUserId" type="number" min="1" placeholder="전체" />
+        </label>
+        <label>
+          방향
+          <select v-model="pointDirection">
+            <option value="">전체</option>
+            <option v-for="d in POINT_DIRECTIONS" :key="d" :value="d">{{ POINT_DIRECTION_LABEL[d] }}</option>
+          </select>
+        </label>
+        <PixelButton type="submit">조회</PixelButton>
+        <PixelButton v-if="pointUserId !== null" variant="secondary" @click="clearPointUser">회원 해제</PixelButton>
+        <span v-if="points" class="cr-total">총 {{ num(points.totalElements) }}건</span>
+      </form>
+
+      <p v-if="pointsError" class="cr-empty">{{ pointsError }}</p>
+      <template v-else>
+        <!-- 요약은 필터와 무관한 전체 합계다 — '적립만' 필터에 요약까지 좁혀지면 두 숫자를 비교할 수 없다 -->
+        <div v-if="points?.summary" class="px-summary">
+          <div><span>받아 간 포인트</span><b class="earn">{{ formatPoint(points.summary.earned) }}</b></div>
+          <div><span>쓴 포인트</span><b class="spend">{{ formatPoint(-points.summary.spent) }}</b></div>
+          <div>
+            <span>현재 잔액</span>
+            <b>{{ points.summary.currentBalance === null ? '—' : `${num(points.summary.currentBalance)}P` }}</b>
+          </div>
+          <p class="sx-hint">
+            합계는 필터와 무관한 <b>전체</b> 기준입니다. 잔액이 적립−사용과 어긋나면
+            게스트 이관 등 다른 경로가 섞인 계정이에요.
+          </p>
+        </div>
+        <p v-else class="sx-hint sx-scope-hint">
+          전체 회원의 최근 포인트 흐름이에요 — 회원 ID를 넣으면 그 사람의 적립·사용 합계가 함께 뜹니다.
+        </p>
+
+        <p v-if="!points || !points.histories.length" class="cr-empty">포인트 내역이 없어요</p>
+        <table v-else class="tbl">
+          <thead><tr><th>#</th><th>회원</th><th>금액</th><th>유형</th><th>처리 후 잔액</th><th>참조</th><th>일시</th></tr></thead>
+          <tbody>
+            <tr v-for="h in points.histories" :key="h.id">
+              <td>{{ h.id }}</td>
+              <td>
+                <button class="link" @click="(pointUserId = h.userId, pointPage = 0, loadPoints())">
+                  {{ h.nickname ?? `#${h.userId}` }}
+                </button>
+              </td>
+              <!-- 부호를 원장 그대로 — 옆 칸의 처리 후 잔액과 맞아떨어져야 눈으로 검산이 된다 -->
+              <td><b :class="h.amount < 0 ? 'spend' : 'earn'">{{ formatPoint(h.amount) }}</b></td>
+              <td>{{ POINT_TYPE_LABEL[h.type] ?? h.type }}</td>
+              <td>{{ num(h.balanceAfter) }}P</td>
+              <td>{{ h.refId === null ? '—' : `#${h.refId}` }}</td>
+              <td>{{ fmt(h.createdAt) }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="points && points.totalPages > 1" class="cr-pager">
+          <PixelButton :disabled="pointPage === 0" @click="pointPage--">이전</PixelButton>
+          <span>{{ pointPage + 1 }} / {{ points.totalPages }}</span>
+          <PixelButton :disabled="pointPage >= points.totalPages - 1" @click="pointPage++">다음</PixelButton>
         </div>
       </template>
     </PixelCard>
@@ -722,21 +928,50 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
       </table>
     </PixelCard>
 
-    <!-- 게임 노출 -->
-    <PixelCard v-else-if="tab === 'games'" title="게임 노출 관리">
+    <!-- 게임 관리 — 닫으면 목록엔 남고 선택만 막힌다. 조용히 사라지면 "어제 하던 게임이 왜 없지"에 답할 수 없다 -->
+    <PixelCard v-else-if="tab === 'games'" title="게임 관리">
+      <div class="cr-filter">
+        <div class="gm-scope">
+          <PixelButton
+            v-for="s in GAME_SCOPES"
+            :key="s"
+            :variant="gameScope === s ? 'yellow' : 'secondary'"
+            @click="gameScope = s"
+          >{{ GAME_SCOPE_LABEL[s] }}</PixelButton>
+        </div>
+        <span class="cr-total">
+          {{ games.length }}개 중 <b>{{ closedCount }}개 차단</b>
+        </span>
+      </div>
+      <p class="sx-hint ru-hint">
+        차단하면 싱글 카탈로그와 방 안 게임 선택창에 <b>잠긴 카드로 남고 시작만 막힙니다</b> —
+        진행 중인 판은 끊지 않아요(하던 판을 날리는 건 방장 강제 종료의 몫).
+        게임 하나가 싱글·멀티 양쪽에 뜰 수 있어 두 탭에 함께 나옵니다.
+      </p>
       <p v-if="gamesError" class="cr-empty">{{ gamesError }}</p>
-      <p v-else-if="!games.length" class="cr-empty">등록된 게임이 없어요</p>
+      <p v-else-if="!scopedGames.length" class="cr-empty">
+        {{ games.length ? '이 범위에 해당하는 게임이 없어요' : '등록된 게임이 없어요' }}
+      </p>
       <table v-else class="tbl">
-        <thead><tr><th>게임</th><th>분류</th><th>인원</th><th>노출</th></tr></thead>
+        <thead><tr><th>#</th><th>게임</th><th>모드</th><th>분류</th><th>인원</th><th>범위</th><th>플레이 가능</th></tr></thead>
         <tbody>
-          <tr v-for="g in games" :key="g.id">
-            <td>{{ g.name }}</td>
-            <td>{{ g.category }}</td>
+          <tr v-for="g in scopedGames" :key="g.id" :class="{ 'gm-closed': !g.active }">
+            <td>{{ g.id }}</td>
+            <td><b>{{ g.name }}</b></td>
+            <td>{{ GAME_MODE_LABEL[g.mode] ?? g.mode }}</td>
+            <td>{{ g.category ?? '—' }}</td>
             <td>{{ g.minPlayers }}~{{ g.maxPlayers }}인</td>
+            <td class="cr-text">
+              <span v-for="b in scopeBadges(g)" :key="b" class="ru-reason">{{ b }}</span>
+            </td>
             <td class="acts">
-              <span class="state" :class="{ off: !g.playable }">{{ g.playable ? '노출 중' : '숨김' }}</span>
-              <PixelButton :variant="g.playable ? 'secondary' : 'mint'" @click="toggleGame(g)">
-                {{ g.playable ? '숨기기' : '노출' }}
+              <span class="state" :class="{ off: !g.active }">{{ g.active ? '가능' : '차단' }}</span>
+              <PixelButton
+                :variant="g.active ? 'secondary' : 'mint'"
+                :disabled="gameBusy !== null"
+                @click="toggleGame(g)"
+              >
+                {{ g.active ? '차단' : '허용' }}
               </PixelButton>
             </td>
           </tr>
@@ -814,7 +1049,8 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
         <span class="sx-hint">제재하면 이 신고도 종결로 넘어갑니다</span>
       </div>
       <div class="leave-actions cr-actions">
-        <PixelButton variant="secondary" @click="openSanctionsOf(userReportDetail.reportedUserId)">제재 이력 보기</PixelButton>
+        <PixelButton variant="secondary" @click="openSanctionsOf(userReportDetail.reportedUserId)">제재 내역 보기</PixelButton>
+        <PixelButton variant="secondary" @click="openPointsOf(userReportDetail.reportedUserId)">포인트 내역</PixelButton>
         <PixelButton @click="userReportDetail = null">닫기</PixelButton>
       </div>
     </PixelModal>
@@ -979,5 +1215,22 @@ const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
 .ru-reason { display: inline-block; margin-right: 4px; font-size: 9px; font-weight: 700; padding: 3px 6px; border-radius: 7px; border: 1.5px solid var(--c-ink); background: #fff; }
 /* 상태(종결/기각)와 나란히 붙는 제재 배지 — 상태만으로는 실제 처벌 여부를 알 수 없다 */
 .sx-badge { display: inline-block; margin-left: 4px; font-size: 9px; font-weight: 700; padding: 3px 6px; border-radius: 7px; border: 1.5px solid var(--c-coral); background: #fff0f0; color: var(--c-coral); white-space: nowrap; }
+/* 회원을 지정하지 않은 상태의 안내 — 빈 자리로 두면 "조회가 안 됐나"로 읽힌다 */
+.sx-scope-hint { display: block; margin-bottom: 14px; line-height: 1.6; }
+
+/* 포인트 내역 요약 — 적립·사용·잔액을 나란히 두고 색으로 방향을 구분한다 */
+.px-summary { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: baseline; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 14px; background: #fff; }
+.px-summary > div { display: flex; flex-direction: column; gap: 4px; }
+.px-summary span { font-size: 10px; font-weight: 700; color: var(--c-muted); }
+.px-summary b { font-size: 15px; }
+.px-summary > .sx-hint { flex: 1 1 100%; line-height: 1.6; }
+.earn { color: #3f7f56; }
+.spend { color: var(--c-coral); }
+
+/* 게임 관리 — 차단된 행은 흐리게 두되 읽을 수는 있게(목록에 남는다는 게 이 화면의 요점이다) */
+.gm-scope { display: flex; flex-wrap: wrap; gap: 6px; }
+.gm-scope :deep(.px-btn) { height: 32px; padding: 0 12px; font-size: 10px; }
+.tbl tbody tr.gm-closed { background: #f6f1e8; color: #8d7d6c; }
+.tbl tbody tr.gm-closed:hover { background: #f0e7d8; }
 
 </style>

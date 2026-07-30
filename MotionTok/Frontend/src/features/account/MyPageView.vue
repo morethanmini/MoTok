@@ -33,6 +33,7 @@ const POINT_TYPE_LABEL: Record<PointType, string> = {
   GAME_REWARD: '게임 보상',
   SHOP_PURCHASE: '상점 구매',
   AI_GENERATE: 'AI 생성',
+  AI_GENERATE_REFUND: 'AI 생성 환급',
   GUEST_MIGRATE: '게스트 이전',
 }
 
