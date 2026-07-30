@@ -362,7 +362,9 @@ const visibleBubbles = computed(() => bubbles.value.slice(-CHAT_LOG_MAX))
 // key는 뒤집기 전 인덱스(i) — 메시지가 추가돼도 기존 항목의 key가 밀리지 않는다.
 const chatExpanded = ref(false)
 const allBubbles = computed<ChatBubble[]>(() =>
-  roomChat.messages.value
+  // 이력(-164, 새로고침 전 대화) + 실시간 수신을 합쳐 보여준다. 이력은 말풍선을 띄우지 않고
+  // 전체보기에만 나타난다(useRoomChat.history 주석 참고).
+  [...roomChat.history.value, ...roomChat.messages.value]
     .map((m, i) => ({
       id: i,
       chatId: m.chatId,
