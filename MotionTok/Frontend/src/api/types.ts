@@ -950,6 +950,15 @@ export interface AdminPointHistoryListResponse {
   summary: AdminPointSummary | null
 }
 
+/**
+ * GET /v1/admin/users?nickname= 의 한 줄. 관리자 화면이 아는 값은 닉네임인데
+ * 제재·포인트 조회 필터는 userId라, 그 사이를 옮겨 주는 최소한만 담는다.
+ */
+export interface AdminUserSummary {
+  userId: number
+  nickname: string
+}
+
 // ── 관리자 게임 관리 (-106) ───────────────────────
 /**
  * 관리자 카탈로그 항목. 공개 목록의 `Game`과 나눠 두는 이유 — `Game.playable`은
