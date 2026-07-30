@@ -7,6 +7,8 @@
  */
 import { computed, ref, watch } from 'vue'
 import type { ParticipantView } from '@/composables/useLiveKitRoom'
+import StickerOverlay from '@/features/decor/StickerOverlay.vue'
+import type { StickerSprite } from '@/features/decor/sticker'
 
 const props = withDefaults(
   defineProps<{
@@ -31,6 +33,8 @@ const props = withDefaults(
      * (중간 이탈·라운드 놓침) 남의 게임 화면 대신 캠이 기본이어야 한다 — 토글은 그대로 살아 있다.
      */
     preferCam?: boolean
+    /** 이 참가자가 데이터 채널로 알려 준 꾸미기 배치(useDecorSync) — 발행 영상에는 안 들어 있다. */
+    sprites?: StickerSprite[]
   }>(),
   {
     view: null,
@@ -42,6 +46,7 @@ const props = withDefaults(
     cover: null,
     volume: 1,
     preferCam: false,
+    sprites: () => [],
   },
 )
 const emit = defineEmits<{ kick: []; volume: [value: number] }>()
@@ -138,6 +143,16 @@ function onVolumeInput(e: Event) {
       <div v-if="!showingVideo" class="cam-off">
         <span class="avatar">{{ initial }}</span>
       </div>
+
+      <!-- 스티커 좌표는 카메라 프레임 기준이라 게임 화면 트랙에는 얹지 않는다.
+           fit은 <video>의 object-fit과 같아야 여백이 아니라 영상 안 같은 자리에 붙는다. -->
+      <StickerOverlay
+        v-if="showingVideo && !showingGame && sprites.length"
+        :sprites="sprites"
+        :mirrored="mirror"
+        fit="contain"
+        :frame-aspect="videoAspect"
+      />
 
       <!-- 가림막 — 영상 위, 라벨·왕관 아래(DOM 순서로 쌓임) -->
       <div v-if="cover" class="cover">{{ cover }}</div>

@@ -1,7 +1,7 @@
 /**
  * 스티커 배치 공용 규칙.
  *
- * 편집기(DOM 미리보기)와 실제 송출(canvas 합성)이 같은 좌표 계산을 써야 "편집할 때 놓은 자리"와
+ * 편집기와 내 타일·상대 타일이 모두 같은 좌표 계산을 써야 "편집할 때 놓은 자리"와
  * "상대가 보는 자리"가 일치한다. 그래서 크기·위치 계산을 이 파일 하나에 둔다.
  *
  * 좌표 규약
@@ -67,10 +67,10 @@ export function scaleLimits(
 }
 
 // ── 이미지 로더 ────────────────────────────────────────────────
-// 합성 루프는 매 프레임 도는데 그때마다 Image를 만들 수 없으니 주소별로 한 번만 로드해 캐시한다.
+// 원본 크기(naturalWidth)로 확대 상한을 걸어야 해서, 주소별로 한 번만 로드해 캐시한다.
 const cache = new Map<string, HTMLImageElement>()
 
-/** 로드가 끝난 이미지만 돌려준다(로딩 중이면 undefined — 그 프레임은 건너뛴다). */
+/** 로드가 끝난 이미지만 돌려준다(로딩 중이면 undefined). */
 export function getLoadedImage(url: string): HTMLImageElement | undefined {
   const img = cache.get(url)
   return img?.complete && img.naturalWidth > 0 ? img : undefined
@@ -80,35 +80,10 @@ export function getLoadedImage(url: string): HTMLImageElement | undefined {
 export function preloadImage(url: string): void {
   if (!url || cache.has(url)) return
   const img = new Image()
-  // 같은 오리진 정적 자산이지만, 나중에 S3 등 외부 주소가 와도 캔버스가 오염되지 않도록 미리 붙여 둔다.
-  img.crossOrigin = 'anonymous'
   img.src = url
   cache.set(url, img)
 }
 
 export function preloadSprites(sprites: StickerSprite[]): void {
   sprites.forEach((s) => preloadImage(s.imageUrl))
-}
-
-/**
- * 캔버스에 스티커를 그린다. 프레임(영상)은 호출 측이 이미 그려 둔 상태여야 한다.
- * mirrored=true면 좌우 반전된 화면 위에 그리는 것이므로 x를 뒤집는다(자기 미리보기용).
- */
-export function drawSprites(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  sprites: StickerSprite[],
-  mirrored = false,
-): void {
-  for (const sprite of sprites) {
-    const img = getLoadedImage(sprite.imageUrl)
-    if (!img) continue
-
-    const w = spriteWidth(width, height, sprite.scale, img.naturalWidth)
-    const h = w * (img.naturalHeight / img.naturalWidth)
-    const cx = (mirrored ? 1 - clamp01(sprite.x) : clamp01(sprite.x)) * width
-    const cy = clamp01(sprite.y) * height
-    ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h)
-  }
 }

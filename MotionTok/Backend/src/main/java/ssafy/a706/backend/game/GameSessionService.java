@@ -126,8 +126,16 @@ public class GameSessionService {
     private static final int DRAW_MAX_OPS = 256;
     private static final int DRAW_MAX_GUESSES = 5;
     private static final int DRAW_MAX_GUESS_LEN = 40;
-    /** 도화지 PNG data URL 상한 — 960×540 낙서는 보통 100KB 미만이라 넉넉하다(악의적 대용량 차단용). */
-    private static final int DRAW_MAX_IMAGE_CHARS = 4_000_000;
+    /**
+     * 도화지 data URL 상한(문자 수).
+     *
+     * <p>GMS 릴레이가 요청 본문 65KB 근처부터 <b>모델을 부르지도 않고</b> 400을 던진다
+     * (실측: 65.6KB 성공 / 100KB 실패, 실패는 0.4초 만에 반환). 예전 상한 4MB는 이 경계보다
+     * 60배 커서 아무 역할도 못 하고, 거절이 확실한 페이로드를 GMS까지 보내 쿼터를 태우고
+     * 원인을 오해하게 만드는 502를 만들었다. FE도 같은 값으로 인코딩 크기를 맞춘다
+     * (DrawingRelayGame MAX_IMAGE_CHARS) — 여기는 그보다 살짝 여유를 둔 방어선이다.</p>
+     */
+    private static final int DRAW_MAX_IMAGE_CHARS = 64_000;
     /** 주제어 후보 — FE drawing-relay/words.ts와 동기화 필수(솔로 모드가 같은 목록을 쓴다). */
     private static final List<String> DRAW_TOPICS = List.of(
             "사과", "바나나", "수박", "포도", "딸기",
@@ -536,8 +544,15 @@ public class GameSessionService {
      */
     public void judgeDrawing(String roomId, String imageDataUrl, AuthPrincipal sender) {
         requireMembership(roomId, sender);
-        if (imageDataUrl == null || imageDataUrl.isBlank() || imageDataUrl.length() > DRAW_MAX_IMAGE_CHARS) {
+        if (imageDataUrl == null || imageDataUrl.isBlank()) {
             throw new BusinessException(ErrorCode.GAME_IMAGE_INVALID);
+        }
+        if (imageDataUrl.length() > DRAW_MAX_IMAGE_CHARS) {
+            // GMS가 어차피 거절할 크기다 — 여기서 끊어 쿼터를 아끼고 원인을 분명히 남긴다.
+            log.warn("draw judge rejected oversized image: room={} chars={}", roomId, imageDataUrl.length());
+            throw new BusinessException(ErrorCode.GAME_IMAGE_INVALID,
+                    String.format("그림 데이터가 너무 큽니다. (%dKB / 최대 %dKB)",
+                            imageDataUrl.length() / 1024, DRAW_MAX_IMAGE_CHARS / 1024));
         }
         long now = System.currentTimeMillis();
         GameSession session = sessionRepository.findSession(roomId)
