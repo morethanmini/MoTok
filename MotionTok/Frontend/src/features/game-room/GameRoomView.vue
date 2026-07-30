@@ -189,16 +189,8 @@ const hostInRoom = computed(
   () => !!hostId.value && lk.participants.value.some((p) => p.identity === hostId.value),
 )
 
-/**
- * 방장 입장 대기 오버레이 노출 여부.
- *
- * connected를 조건에 넣는 이유 — 접속 중에는 참가자 목록이 비어 있어서 방장이 이미 있는 방에서도
- * 잠깐 "대기 중"이 뜬다. 접속이 끝난 뒤에 판단해야 깜빡이지 않는다.
- * 방장 자신에게는 띄우지 않는다(자기를 기다릴 수 없다).
- */
-const showHostWaiting = computed(
-  () => detailLoaded.value && connected.value && !amRoomHost.value && !hostInRoom.value,
-)
+// 방장 입장 대기 오버레이 — 판정에 activeGame 등 뒤에 선언되는 상태가 필요해서
+// 본체는 게임 세션 상태 선언 아래(hostAway watch)에 있다(-164).
 
 const selfVideoEl = ref<HTMLVideoElement>()
 const kickTarget = ref<ParticipantView | null>(null)
@@ -593,6 +585,7 @@ const gamePrep = ref<{
 
 /** 모델이 준비됐으면 즉시, 아니면 오버레이를 걸고 받아진 뒤 게임을 마운트한다. */
 function mountWhenReady(entry: GameEntry, key: string) {
+  sessionEntry.value = entry // 비방장 중간 이탈 후 "게임 복귀"의 재마운트 대상(-164)
   if (motionModelsReady()) {
     gamePrep.value = null
     activeGame.value = entry
@@ -619,6 +612,35 @@ function retryGamePrep() {
 function cancelGamePrep() {
   gamePrep.value = null
 }
+
+/**
+ * 방장 입장 대기 오버레이(-164 개정).
+ *
+ * 원래는 "LiveKit 참가자 중 방장 부재"를 즉시 전면 오버레이로 띄웠다 — 방장이 기기 점검
+ * 중인 최초 입장 시나리오에는 맞지만, 방장이 <b>새로고침하는 몇 초</b>에도 참가자 전원의
+ * 화면이 잠겨 버렸다(게임 중 포함). 부재가 유예 이상 지속될 때만 띄우고, 게임·준비 중에는
+ * 띄우지 않는다 — 방장이 잠깐 빠져도 게임은 서버 시계로 계속 돈다.
+ *
+ * connected 조건 — 접속 중에는 참가자 목록이 비어 방장이 있는 방에서도 잠깐 부재로 보인다.
+ */
+const hostAway = computed(
+  () => detailLoaded.value && connected.value && !amRoomHost.value && !hostInRoom.value
+    && !activeGame.value && !gamePrep.value,
+)
+const showHostWaiting = ref(false)
+/** 방장 부재가 이 시간 이상 지속될 때만 오버레이 — 새로고침 왕복(보통 3~6초)은 조용히 넘어간다. */
+const HOST_WAIT_GRACE_MS = 10_000
+let hostWaitTimer = 0
+watch(hostAway, (away) => {
+  clearTimeout(hostWaitTimer)
+  if (!away) {
+    showHostWaiting.value = false
+    return
+  }
+  hostWaitTimer = window.setTimeout(() => {
+    showHostWaiting.value = hostAway.value
+  }, HOST_WAIT_GRACE_MS)
+}, { immediate: true })
 
 /**
  * 게임④는 자체 사운드(S15P11A706-138)를 가지므로 로비 BGM을 내린다.
@@ -865,6 +887,11 @@ function applyGameEvent(e: GameEvent) {
   }
   if (e.type === 'GAME_END') {
     gameResults.value = e.results
+    // 라운드가 끝났으니 게임 화면 송출을 즉시 내린다(-164) — 결과 화면까지 송출하면 각자
+    // 결과를 닫을 때까지 다른 참가자 타일이 멈춘 게임 화면(검은 화면)으로 남는다.
+    void lk.unpublishGameScreen()
+    // 중간에 나가서(비방장 ✕) 게임이 안 떠 있는 사람은 결과 화면을 볼 곳이 없다 — 세션만 정리
+    if (!activeGame.value) closeGame()
   }
 }
 
@@ -1013,6 +1040,41 @@ function onBodyFitFinished(r: { score: number; grade: string; iou: number }) {
   flash(`🧱 ${r.grade} · 일치율 ${Math.round(r.iou)}%`)
 }
 
+/**
+ * 게임 ✕(닫기) 요청(-164 개정) — 진행 중 세션이면 바로 닫지 않고 확인 모달을 거친다.
+ * 방장의 닫기는 전체 세션 종료(abort)라 실수로 누르면 방 전체가 날아가고,
+ * 비방장의 닫기는 이번 판 이탈이라 의사를 한 번 확인한다. 정산 후(결과 화면)·
+ * 로컬 솔로·리듬(activeSession 없음)은 기존대로 즉시 닫는다.
+ */
+function requestCloseGame() {
+  if (!activeSession.value || gameResults.value) {
+    closeGame()
+    return
+  }
+  closeGameConfirm.value = true
+}
+const closeGameConfirm = ref(false)
+function confirmCloseGame() {
+  closeGameConfirm.value = false
+  if (amRoomHost.value) {
+    closeGame() // 방장 — 전체 세션 종료(abort 발신 포함)
+    return
+  }
+  // 비방장 — 서버 세션은 그대로 두고 내 화면만 나간다. 라운드가 살아 있는 동안
+  // "게임 복귀"로 되돌아올 수 있다(게임은 서버 시계 기준이라 재마운트로 동기화된다).
+  void lk.unpublishGameScreen()
+  activeGame.value = null
+}
+/** 비방장 중간 이탈 후 복귀 — 같은 세션으로 재마운트(모델 게이트 재사용). */
+function rejoinGame() {
+  const entry = sessionEntry.value
+  if (entry && activeSession.value && !gameResults.value) {
+    mountWhenReady(entry, activeSession.value.sessionId)
+  }
+}
+/** 진행 중 세션의 게임 항목 — 비방장 중간 이탈 후 복귀 버튼이 쓴다(-164). */
+const sessionEntry = ref<GameEntry | null>(null)
+
 function closeGame() {
   // 방장이 게임 도중 닫으면 방 전체 세션을 종료한다(-164) — 예전에는 본인 화면만 닫혀
   // 남은 사람끼리 라운드가 돌고 방은 endAt까지 잠겨 있었다. 정산 후(gameResults 존재)나
@@ -1021,6 +1083,7 @@ function closeGame() {
   if (amRoomHost.value && activeSession.value && !gameResults.value) roomChat.sendGameAbort()
   void lk.unpublishGameScreen()
   gamePrep.value = null
+  sessionEntry.value = null
   activeGame.value = null
   activeSession.value = null
   gameResults.value = null
@@ -1317,6 +1380,7 @@ const startHint = computed(() =>
             :key="`left-${i}`"
             :view="slot.view"
             :host="slot.host"
+            :prefer-cam="!activeGame"
             :cover="coverFor(slot)"
             :volume="volumeFor(slot)"
             play-audio
@@ -1364,7 +1428,7 @@ const startHint = computed(() =>
             :session="activeSession"
             :results="gameResults"
             :my-user-id="myParticipantId"
-            @close="closeGame"
+            @close="requestCloseGame"
             @progress="onGameProgress"
             @finished="onGameFinished"
           />
@@ -1380,7 +1444,7 @@ const startHint = computed(() =>
             :scores="scoreboardRows"
             :setter-name="setterName"
             embedded
-            @close="closeGame"
+            @close="requestCloseGame"
             @pose-submit="onPoseSubmit"
             @progress="onGameProgress"
             @finished="onBodyFitFinished"
@@ -1396,7 +1460,7 @@ const startHint = computed(() =>
             :draw-events="drawFeed"
             :names="participantNames"
             :room-id="roomCode"
-            @close="closeGame"
+            @close="requestCloseGame"
             @draw="(seq: number, ops: DrawOp[]) => roomChat.sendGameDraw(seq, ops)"
             @turn-skip="(turnIdx: number, remainingMs: number) => roomChat.sendGameTurnSkip(turnIdx, remainingMs)"
           />
@@ -1410,10 +1474,16 @@ const startHint = computed(() =>
             :is-host="selfIsHost"
             :my-user-id="myParticipantId"
             :room-chat="roomChat"
-            @close="closeGame"
+            @close="requestCloseGame"
             @started="rhythmEnded = false"
             @ended="rhythmEnded = true"
           />
+          <!-- 비방장 중간 이탈 후 복귀(-164) — 라운드가 살아 있는 동안만 노출 -->
+          <button
+            v-if="!activeGame && !gamePrep && activeSession && !gameResults"
+            class="game-rejoin"
+            @click="rejoinGame"
+          >▶ 게임 복귀</button>
           <!-- 게임 시작 준비 게이트(-161) — GAME_START는 왔지만 모션 모델이 아직 없을 때.
                게임이 마운트될 자리(셀프 타일)를 그대로 덮어 "여기서 곧 시작된다"가 보이게 한다 -->
           <div v-if="gamePrep" class="game-prep">
@@ -1455,6 +1525,7 @@ const startHint = computed(() =>
             :key="`right-${i}`"
             :view="slot.view"
             :host="slot.host"
+            :prefer-cam="!activeGame"
             :cover="coverFor(slot)"
             :volume="volumeFor(slot)"
             play-audio
@@ -1470,6 +1541,7 @@ const startHint = computed(() =>
             :key="i"
             :view="slot.view"
             :host="slot.host"
+            :prefer-cam="!activeGame"
             :cover="coverFor(slot)"
             :volume="volumeFor(slot)"
             play-audio
@@ -1667,6 +1739,23 @@ const startHint = computed(() =>
       @close="settingsOpen = false"
       @create="submitSettings"
     />
+
+    <!-- 게임 ✕ 확인(-164) — 방장은 전체 종료, 비방장은 이번 판 이탈(복귀 가능) -->
+    <PixelModal v-if="closeGameConfirm" variant="lobby" @close="closeGameConfirm = false">
+      <div class="leave-confirm">
+        <span class="leave-icon" aria-hidden="true">🎮</span>
+        <p class="leave-kicker">GAME EXIT</p>
+        <h3 class="leave-title">{{ amRoomHost ? '전체 게임을 종료할까요?' : '게임에서 나갈까요?' }}</h3>
+        <p class="leave-desc">
+          <template v-if="amRoomHost">방장이 종료하면 모든 참가자의 게임이 함께 끝나요.<br />이번 판 점수는 기록되지 않습니다.</template>
+          <template v-else>게임은 계속 진행돼요.<br />라운드가 끝나기 전이라면 ‘게임 복귀’로 다시 들어올 수 있어요.</template>
+        </p>
+        <div class="leave-confirm-actions">
+          <PixelButton class="leave-cancel" block @click="closeGameConfirm = false">계속 하기</PixelButton>
+          <PixelButton class="leave-submit" block @click="confirmCloseGame">{{ amRoomHost ? '전체 종료' : '나가기' }}</PixelButton>
+        </div>
+      </div>
+    </PixelModal>
 
     <PixelModal v-if="showLeaveConfirm" variant="lobby" @close="answerLeave(false)">
       <div class="leave-confirm">
@@ -2380,6 +2469,23 @@ const startHint = computed(() =>
 .chat-full-head { color: var(--room-ink); border-bottom-color: #ead9bd; }
 .chat-full-close { border-color: #b78d5d; border-radius: 5px; background: #fff7e5; color: var(--room-ink); }
 .leave { border-color: #925c47; border-radius: 7px; background: #ef7775; box-shadow: 3px 3px 0 #a66b50; }
+
+/* 비방장 중간 이탈 후 게임 복귀 버튼(-164) — 셀프 타일 우상단 */
+.game-rejoin {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 6;
+  padding: 8px 14px;
+  border: 2px solid #925c47;
+  border-radius: 7px;
+  background: #e7c996;
+  color: var(--room-ink);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 rgba(43, 34, 28, 0.35);
+}
 
 /* ── 게임 시작 준비 게이트(-161) — 셀프 타일을 덮는 로딩/실패 패널 ── */
 .game-prep {
