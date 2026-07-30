@@ -36,8 +36,13 @@
 
   <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
     <encoder>
-      <!-- traceId 를 앞에 둔다 — 콘솔에서도 nginx 로그와 대조할 수 있어야 한다 -->
-      <pattern>%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] %logger{36} - %msg%n</pattern>
+      <!--
+        traceId 를 앞에 둔다 — 콘솔에서도 nginx 로그와 대조할 수 있어야 한다.
+        스레드명(%t)도 반드시 남긴다. 스프링 기본 패턴에는 있는데 빠뜨리면 docker logs 로
+        동시성 문제(어느 요청 스레드가 물렸나, 스케줄러인가 요청인가)를 볼 수 없다.
+        JSON 쪽은 ECS 가 process.thread.name 으로 이미 담고 있어 콘솔만 맞추면 된다.
+      -->
+      <pattern>%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] [%15.15t] %logger{36} - %msg%n</pattern>
     </encoder>
   </appender>
 
@@ -73,8 +78,13 @@
   </root>
 
   <!--
-    운영에서 SQL 로그는 끈다(DB-03). show-sql:true 는 쿼리마다 문자열 포매팅 + 동기 stdout 이라
-    초당 수천 쿼리에서 CPU 와 디스크를 함께 먹는다. 필요하면 임시로 DEBUG 로 올린다.
+    하이버네이트가 SQL 을 <b>로거로</b> 내보내는 경로를 막는다(DB-03). 초당 수천 쿼리에서
+    쿼리마다 문자열 포매팅 + 디스크 쓰기가 붙으면 그 자체로 부하가 된다. 필요하면 임시로 DEBUG.
+
+    ⚠ 이 두 줄로 spring.jpa.show-sql 이 꺼지지는 않는다. show-sql 은 로거가 아니라
+      System.out 으로 직접 찍는 별개 경로라 로그 레벨로 통제되지 않는다.
+      (application.yaml 에서 `show-sql: ${JPA_SHOW_SQL:false}` 로 이미 기본 꺼짐 —
+       운영에서 JPA_SHOW_SQL 환경변수를 켜지 않는 것이 실제 방어선이다)
   -->
   <logger name="org.hibernate.SQL" level="WARN"/>
   <logger name="org.hibernate.orm.jdbc.bind" level="WARN"/>
