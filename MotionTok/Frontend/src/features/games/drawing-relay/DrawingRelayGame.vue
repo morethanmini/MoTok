@@ -45,6 +45,7 @@ import {
   type StrokePoint,
 } from './logic'
 import { GameBgm } from '../gameBgm'
+import EarnedPoints from '../EarnedPoints.vue'
 import { requestJudge } from './scoring'
 
 const props = defineProps<{
@@ -943,6 +944,7 @@ function beep(freq = 660, dur = 0.08) {
         </ol>
       </div>
       <!-- 새 판은 방장이 게임 선택으로 다시 시작한다 -->
+      <EarnedPoints :results="results" :my-user-id="myUserId" />
       <div class="dr-actions">
         <button class="dr-quit" @click="emit('close')">대기실로 돌아가기</button>
       </div>

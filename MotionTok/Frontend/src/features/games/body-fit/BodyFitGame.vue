@@ -38,6 +38,7 @@ import {
 import { createPoseThumb, createStage, type PoseThumb, type Stage } from './stage'
 import { createWall, type WallHandle } from './wall'
 import { BodyFitAudio } from './audio'
+import EarnedPoints from '../EarnedPoints.vue'
 
 const props = defineProps<{
   /** 게임룸 셀프 타일의 <video> — 있으면 카메라를 새로 열지 않고 재사용한다 (게임① 패턴) */
@@ -1455,6 +1456,7 @@ onBeforeUnmount(() => {
             </li>
           </ul>
           <p v-else-if="!chainMode" class="rank-empty">참가자 점수를 기다리는 중입니다.</p>
+          <EarnedPoints :results="results" :my-user-id="myUserId" />
         </div>
 
         <!--

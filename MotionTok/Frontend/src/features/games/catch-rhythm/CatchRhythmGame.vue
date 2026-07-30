@@ -15,6 +15,7 @@ import { DIFFICULTIES, type Difficulty } from './generator/presets'
 import { useRhythmSession } from './useRhythmSession'
 import type { Judgement } from './core/types'
 import type { RhythmLiveRow } from './rhythmTypes'
+import EarnedPoints from '../EarnedPoints.vue'
 import type { GameMode } from './core/types'
 
 const props = defineProps<{
@@ -33,7 +34,7 @@ const props = defineProps<{
   }
 }>()
 
-const emit = defineEmits<{ close: []; started: []; ended: [] }>()
+const emit = defineEmits<{ close: []; started: []; ended: [pointsEarned: number] }>()
 
 /** 솔로 폴백 전용 — 대전은 서버가 라운드 길이를 정한다 */
 const SOLO_ROUND_MS = 60_000
@@ -146,10 +147,15 @@ watch(
 
 // 라운드 정산(RHYTHM_END) → 부모에게 알린다. 별자리의 GAME_END와 같은 계약 —
 // 부모가 전원의 게임 화면 송출을 내려서, 결과 화면을 닫지 않아도 모든 타일이 카메라로 복귀한다.
+//
+// 내 획득 포인트를 함께 넘긴다 — 이 게임은 전용 채널이라 부모의 GAME_END 핸들러를 타지 않아서,
+// 안 넘기면 서버는 지급하는데 헤더 잔액만 그대로 남는다.
 watch(
   () => session.results.value,
   (r) => {
-    if (r) emit('ended')
+    if (!r) return
+    const mine = props.myUserId ? r.find((row) => row.userId === props.myUserId) : undefined
+    emit('ended', mine?.pointsEarned ?? 0)
   },
 )
 </script>
@@ -188,6 +194,7 @@ watch(
             <span v-if="!r.finished" class="dnf">미완주</span>
           </p>
         </div>
+        <EarnedPoints :results="session.results.value" :my-user-id="myUserId" />
         <button type="button" class="px btn" @click="backToLobby">대기실로</button>
       </template>
     </CatchRhythmStage>

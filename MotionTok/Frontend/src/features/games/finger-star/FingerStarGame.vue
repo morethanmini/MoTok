@@ -23,6 +23,7 @@ import type { GameResultEntry } from '@/api/types'
 import { useHandLandmarker, type HandLandmarkerResult } from '@/composables/useHandLandmarker'
 import type { ActiveGameSession } from '../session'
 import { GameBgm } from '../gameBgm'
+import EarnedPoints from '../EarnedPoints.vue'
 import { CONSTELLATIONS, constellationByKey } from './constellations'
 import {
   StarSequence,
@@ -664,6 +665,7 @@ function entryAvg(r: GameResultEntry): number {
               }}</span>
             </li>
           </ol>
+          <EarnedPoints :results="results" :my-user-id="myUserId" />
           <button class="fs-quit" @click="emit('close')">대기실로 돌아가기</button>
         </template>
         <template v-else>
