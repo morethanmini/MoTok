@@ -13,6 +13,7 @@ import ssafy.a706.backend.global.text.ProfanityFilter;
 import ssafy.a706.backend.signal.RoomMembershipReader;
 
 import java.time.Instant;
+import java.util.List;
 
 /**
  * 대기실 텍스트 채팅 — 검증 후 Redis Stream에 저장하고 방 전체 토픽으로 브로드캐스트한다.
@@ -31,6 +32,9 @@ public class ChatService {
 
     /** 메시지 최대 길이 — 브로드캐스트 채널 남용(대용량 프레임) 방지용 서버측 상한. */
     private static final int MAX_TEXT_LENGTH = 500;
+
+    /** 이력 복원(-164) 상한 — 전체보기가 "입장 이후"만 보여주던 것을 최근 대화까지 넓힌다. */
+    private static final int HISTORY_COUNT = 100;
 
     /** 게임 표시명 상한 — 카탈로그 게임명 길이를 넉넉히 커버하는 수준. */
     private static final int MAX_GAME_NAME_LENGTH = 50;
@@ -89,6 +93,21 @@ public class ChatService {
                 roomId, sender.userId(), sender.displayName(), text, gameId, gameName, sentAt);
         broadcast(roomId, ChatMessageResponse.gameSuggest(
                 chatId, sender.userId(), sender.displayName(), text, gameId, gameName, sentAt));
+    }
+
+    /**
+     * 재입장(새로고침) 시 채팅 이력 복원(-164 후속) — 멤버 전용, 최근 {@value #HISTORY_COUNT}건.
+     * TALK만 돌려준다: 게임 제안 카드는 실시간 맥락(수락 버튼)이 생명이라 이력으로 되살릴 가치가
+     * 없고, ChatLogEntry가 gameId·gameName을 들고 있지 않아 온전히 복원할 수도 없다.
+     * 저장본이 이미 마스킹본(-152)이라 그대로 내보내도 안전하다.
+     */
+    public List<ChatMessageResponse> history(String roomId, AuthPrincipal requester) {
+        requireMembership(roomId, requester);
+        return chatLogRepository.findRecent(roomId, HISTORY_COUNT).stream()
+                .filter(entry -> "TALK".equals(entry.type()))
+                .map(entry -> ChatMessageResponse.talk(
+                        entry.chatId(), entry.userId(), entry.nickname(), entry.text(), entry.sentAt()))
+                .toList();
     }
 
     private void requireMembership(String roomId, AuthPrincipal sender) {
