@@ -54,6 +54,13 @@ server:
       # 그게 이번 베타에서 커넥션 풀 다음으로 중요한 포화 신호다.
       # 비용은 기동 시 MBean 등록뿐이고 요청 경로에는 관여하지 않는다.
       enabled: true
+    # ★ nginx 의 upstream keepalive 와 짝을 이루는 값이다(-153).
+    #   nginx 는 app 으로 가는 커넥션을 재사용하려고 열어 두는데, <b>톰캣이 먼저 끊으면</b>
+    #   nginx 가 이미 닫힌 커넥션에 요청을 실어 보내 502 가 산발적으로 뜬다.
+    #   톰캣 기본값은 connectionTimeout(20초)을 따라가 nginx(upstream keepalive_timeout 30초)보다
+    #   짧다 — 그대로 두면 재현이 안 되는 간헐 502 가 된다.
+    #   톰캣을 확실히 더 길게 잡아 <b>항상 nginx 가 먼저 닫도록</b> 순서를 고정한다.
+    keep-alive-timeout: 120s
 
 # ── 관측(-153) ────────────────────────────────────────────────
 # 베타(2000명·1회성)에서 "언제 무엇이 포화됐나"를 재기 위한 지표 노출.
@@ -78,6 +85,18 @@ management:
     health:
       # 이 포트는 외부에 열지 않는다(SSH 터널로만 접근). DB·Redis 상태까지 보이는 편이 진단에 낫다.
       show-details: always
+      probes:
+        # /actuator/health/liveness 와 /readiness 를 만든다.
+        # compose 의 healthcheck 가 liveness 를 보기 때문에 <b>반드시</b> 있어야 한다 —
+        # 없으면 그 경로가 404 라서 컨테이너가 앱이 멀쩡한데도 영원히 unhealthy 가 된다.
+        # (기본값은 쿠버네티스 등에서 감지될 때만 켜진다. 여기선 명시해서 환경에 의존하지 않게 한다)
+        #
+        # 왜 종합(/actuator/health)이 아니라 liveness 인가 —
+        #   종합은 DB·Redis·메일 등 <b>모든</b> 의존성을 합산해서 하나라도 DOWN 이면 503 이다.
+        #   메일 서버가 잠깐 흔들려도 503 이 되는데, 그건 "앱을 재시작해야 한다"와 전혀 다른 상태다.
+        #   liveness = "JVM 이 살아 있고 스스로 회복 불가한 상태가 아니다" 뿐이라
+        #   재시작으로 고쳐지는 문제에만 반응한다. 헬스체크가 걸어야 할 기준은 이쪽이다.
+        enabled: true
   metrics:
     tags:
       application: motiontok
