@@ -4,7 +4,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import ssafy.a706.backend.game.GameSessionRepository;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
+import ssafy.a706.backend.rhythm.RhythmSessionRepository;
+
+import java.util.Map;
 
 /**
  * 만료된 방을 인덱스에서 걷어낸다(-148 부속).
@@ -32,23 +36,52 @@ public class ExpiredRoomSweeper {
 
     private static final long SWEEP_INTERVAL_MS = 5 * 60_000;
 
+    /**
+     * PLAYING 복구 유예(-164) — 정산 타이머는 endAt+1.5s(그림은 +60s 채점 유예)에 발화하므로,
+     * endAt에서 이 시간이 지나도록 PLAYING이면 타이머가 죽은 것이다(서버 재시작으로 인메모리
+     * 예약 유실 등). 방치하면 아무도 입장 못 하는 방이 24h TTL까지 남는다.
+     */
+    private static final long PLAYING_RECOVERY_GRACE_MS = 120_000;
+
     private final LiveRoomRepository repository;
     private final LobbyBroadcaster lobbyBroadcaster;
+    private final GameSessionRepository gameSessionRepository;
+    private final RhythmSessionRepository rhythmSessionRepository;
+    private final LiveRoomService liveRoomService;
 
     @Scheduled(fixedDelay = SWEEP_INTERVAL_MS)
     public void sweep() {
         int removed = 0;
+        long now = System.currentTimeMillis();
         for (String roomId : repository.listRoomIdsNewestFirst(SCAN_LIMIT)) {
-            if (repository.findRoomFields(roomId).isEmpty()) {
+            Map<Object, Object> fields = repository.findRoomFields(roomId).orElse(null);
+            if (fields == null) {
                 repository.removeFromIndex(roomId);
                 // 로비 화면에 남아 있을 카드도 함께 치운다 — push만 보는 클라이언트는
                 // 목록을 다시 받지 않으므로 여기서 알려 주지 않으면 유령 카드가 그대로 남는다.
                 lobbyBroadcaster.roomClosed(roomId);
                 removed++;
+                continue;
+            }
+            // 정산 타이머가 유실된 PLAYING 방 복구(-164) — 게임·리듬 어느 세션도 살아 있지 않으면
+            // 상태를 되돌려 입장을 다시 연다(changeStatus가 로비 갱신까지 함께 쏜다).
+            if ("PLAYING".equals(fields.get("status")) && !hasLiveSession(roomId, now)) {
+                liveRoomService.changeStatus(roomId, "WAITING");
+                log.warn("정산 타이머 유실 방 복구(PLAYING→WAITING): room={}", roomId);
             }
         }
         if (removed > 0) {
             log.info("만료된 방 인덱스 정리: {}건", removed);
         }
+    }
+
+    private boolean hasLiveSession(String roomId, long now) {
+        boolean gamePlaying = gameSessionRepository.findSession(roomId)
+                .map(s -> s.isPlaying(now, PLAYING_RECOVERY_GRACE_MS))
+                .orElse(false);
+        boolean rhythmPlaying = rhythmSessionRepository.findSession(roomId)
+                .map(s -> s.isPlaying(now, PLAYING_RECOVERY_GRACE_MS))
+                .orElse(false);
+        return gamePlaying || rhythmPlaying;
     }
 }
