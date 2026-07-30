@@ -23,6 +23,14 @@
  */
 const RUM_ENDPOINT = '/rum'
 const BEAT_INTERVAL_MS = 60_000
+/**
+ * 비트 주기에 곱하는 지터 폭(±20%).
+ *
+ * <p>RUM도 주기가 고정이고 시작 시점이 페이지 로드다 — 공지를 보고 2000명이 몇 분 안에
+ * 들어오면 그 무리가 60초마다 함께 비콘을 쏜다. nginx가 `return 204`로 끝내므로 앱에는
+ * 영향이 없지만 backlog는 공유한다. <b>관측 도구가 스스로 스파이크를 만들 이유는 없다.</b></p>
+ */
+const BEAT_JITTER = 0.2
 /** 첫 화면이 자리를 잡고 보낸다 — 로드 직후엔 navigation timing이 아직 확정되지 않는다. */
 const BOOT_DELAY_MS = 3_000
 /** 배치당 보관하는 API 표본 상한. 넘으면 오래된 것부터 버린다(메모리 상한). */
@@ -38,7 +46,7 @@ const ERR_MAX_PER_SESSION = 5
 
 let rid = ''
 let started = false
-let beatTimer: ReturnType<typeof setInterval> | undefined
+let beatTimer: ReturnType<typeof setTimeout> | undefined
 let apiTimings: number[] = []
 let disconnects = 0
 let errCount = 0
@@ -166,6 +174,15 @@ function onRejection(e: PromiseRejectionEvent): void {
   sendError(message, 'promise')
 }
 
+/** 다음 비트를 예약한다. 매번 지터를 다시 뽑아 뭉친 무리가 점진적으로 흩어지게 한다. */
+function scheduleBeat(): void {
+  const jitter = 1 + (Math.random() * 2 - 1) * BEAT_JITTER
+  beatTimer = setTimeout(() => {
+    sendBeat()
+    scheduleBeat()
+  }, Math.round(BEAT_INTERVAL_MS * jitter))
+}
+
 /** API 체감 소요시간을 모은다(http.ts에서 호출). 전송은 60초 배치에서 한 번에 한다. */
 export function recordApiTiming(ms: number): void {
   if (!started) return
@@ -180,7 +197,7 @@ export function startRum(): void {
   try {
     rid = Math.random().toString(36).slice(2, 8)
     setTimeout(sendBoot, BOOT_DELAY_MS)
-    beatTimer = setInterval(sendBeat, BEAT_INTERVAL_MS)
+    scheduleBeat()
     // addEventListener 로 붙인다 — window.onerror 에 '할당'하면 기존 핸들러를 덮어쓴다.
     // capture 단계여야 리소스 로드 실패(버블링하지 않는다)까지 잡힌다.
     window.addEventListener('error', onWindowError, true)
@@ -191,7 +208,7 @@ export function startRum(): void {
 }
 
 export function stopRum(): void {
-  clearInterval(beatTimer)
+  clearTimeout(beatTimer)
   beatTimer = undefined
   window.removeEventListener('error', onWindowError, true)
   window.removeEventListener('unhandledrejection', onRejection)
