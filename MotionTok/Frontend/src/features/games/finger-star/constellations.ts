@@ -175,6 +175,107 @@ export const CONSTELLATIONS: Constellation[] = [
       [1.0, 0.553], // Zeta Tau (ζ) — 남쪽 뿔 끝
     ],
   },
+  {
+    key: 'aquila',
+    name: '독수리자리',
+    difficulty: 'NORMAL',
+    pts: [
+      [0.0, 0.05], // Zeta Aql (ζ) — 서쪽 날개
+      [0.62, 0.249], // Tarazed (γ Aql)
+      [0.689, 0.356], // Altair (α Aql) — 견우성
+      [0.758, 0.507], // Alshain (β Aql)
+      [1.0, 0.95], // Theta Aql (θ) — 동쪽 날개
+    ],
+  },
+  {
+    key: 'delphinus',
+    name: '돌고래자리',
+    difficulty: 'EASY',
+    pts: [
+      [0.163, 1.0], // Epsilon Del (ε) — 꼬리
+      [0.38, 0.317], // Rotanev (β Del) — 마름모 아래
+      [0.485, 0.044], // Sualocin (α Del) — 마름모 왼쪽
+      [0.837, 0.0], // Gamma Del (γ) — 마름모 위
+      [0.675, 0.218], // Delta Del (δ) — 마름모 오른쪽
+    ],
+  },
+  {
+    key: 'corvus',
+    name: '까마귀자리',
+    difficulty: 'EASY',
+    pts: [
+      [0.131, 1.0], // Alchiba (α Crv) — 부리
+      [0.18, 0.743], // Epsilon Crv (ε) — 돛 왼쪽 아래
+      [0.341, 0.125], // Gienah (γ Crv) — 돛 왼쪽 위
+      [0.741, 0.0], // Algorab (δ Crv) — 돛 오른쪽 위
+      [0.869, 0.838], // Kraz (β Crv) — 돛 오른쪽 아래
+    ],
+  },
+  {
+    key: 'canis-major',
+    name: '큰개자리',
+    difficulty: 'NORMAL',
+    pts: [
+      [0.669, 0.018], // Muliphein (γ CMa) — 목
+      [0.366, 0.095], // Sirius (α CMa) — 밤하늘 최고 밝은 별
+      [0.0, 0.182], // Mirzam (β CMa) — 앞발
+      [0.585, 0.958], // Adhara (ε CMa) — 뒷다리
+      [0.744, 0.777], // Wezen (δ CMa) — 몸통
+      [1.0, 0.982], // Aludra (η CMa) — 꼬리
+    ],
+  },
+  {
+    key: 'pegasus',
+    name: '페가수스자리',
+    difficulty: 'NORMAL',
+    pts: [
+      [0.0, 0.771], // Enif (ε Peg) — 코
+      [0.384, 0.744], // Homam (ζ Peg) — 목
+      [0.54, 0.621], // Markab (α Peg) — 사각형 남서
+      [0.534, 0.257], // Scheat (β Peg) — 사각형 북서
+      [0.967, 0.229], // Alpheratz (α And, 공유 별) — 사각형 북동
+      [1.0, 0.621], // Algenib (γ Peg) — 사각형 남동
+    ],
+  },
+  {
+    key: 'perseus',
+    name: '페르세우스자리',
+    difficulty: 'NORMAL',
+    pts: [
+      [0.69, 1.0], // Zeta Per (ζ) — 남쪽 끝
+      [0.721, 0.624], // Epsilon Per (ε)
+      [0.596, 0.264], // Delta Per (δ)
+      [0.442, 0.169], // Mirfak (α Per) — 가장 밝은 별
+      [0.307, 0.58], // Algol (β Per) — 악마의 별
+      [0.279, 0.0], // Gamma Per (γ)
+    ],
+  },
+  {
+    key: 'virgo',
+    name: '처녀자리',
+    difficulty: 'EASY',
+    pts: [
+      [0.0, 0.428], // Zavijava (β Vir)
+      [0.49, 0.552], // Porrima (γ Vir)
+      [0.624, 0.365], // Auva (δ Vir)
+      [0.687, 0.075], // Vindemiatrix (ε Vir)
+      [1.0, 0.519], // Heze (ζ Vir)
+      [0.909, 0.925], // Spica (α Vir) — 가장 밝은 별
+    ],
+  },
+  {
+    key: 'southern-dipper',
+    name: '남두육성',
+    difficulty: 'NORMAL',
+    pts: [
+      [0.0, 0.13], // Mu Sgr (μ) — 손잡이 끝
+      [0.267, 0.496], // Lambda Sgr (λ) — 손잡이
+      [0.6, 0.627], // Phi Sgr (φ) — 국자 입구
+      [0.78, 0.569], // Nunki (σ Sgr) — 국자 위
+      [1.0, 0.684], // Tau Sgr (τ) — 국자 아래
+      [0.919, 0.87], // Ascella (ζ Sgr) — 국자 바닥
+    ],
+  },
 ]
 
 export function constellationByKey(key: string): Constellation {

@@ -138,6 +138,109 @@ const CATALOG = [
       { n: 'Zeta Tau (ζ) — 남쪽 뿔 끝', ra: 5.628, dec: 21.14 },
     ],
   },
+  {
+    key: 'aquila',
+    name: '독수리자리',
+    difficulty: 'NORMAL',
+    stars: [
+      { n: 'Zeta Aql (ζ) — 서쪽 날개', ra: 19.09, dec: 13.863 },
+      { n: 'Tarazed (γ Aql)', ra: 19.771, dec: 10.613 },
+      { n: 'Altair (α Aql) — 견우성', ra: 19.846, dec: 8.868 },
+      { n: 'Alshain (β Aql)', ra: 19.922, dec: 6.407 },
+      { n: 'Theta Aql (θ) — 동쪽 날개', ra: 20.188, dec: -0.821 },
+    ],
+  },
+  {
+    key: 'delphinus',
+    name: '돌고래자리',
+    difficulty: 'EASY',
+    stars: [
+      { n: 'Epsilon Del (ε) — 꼬리', ra: 20.554, dec: 11.303 },
+      { n: 'Rotanev (β Del) — 마름모 아래', ra: 20.626, dec: 14.595 },
+      { n: 'Sualocin (α Del) — 마름모 왼쪽', ra: 20.661, dec: 15.912 },
+      { n: 'Gamma Del (γ) — 마름모 위', ra: 20.778, dec: 16.124 },
+      { n: 'Delta Del (δ) — 마름모 오른쪽', ra: 20.724, dec: 15.075 },
+    ],
+  },
+  {
+    key: 'corvus',
+    name: '까마귀자리',
+    difficulty: 'EASY',
+    stars: [
+      { n: 'Alchiba (α Crv) — 부리', ra: 12.14, dec: -24.729 },
+      { n: 'Epsilon Crv (ε) — 돛 왼쪽 아래', ra: 12.169, dec: -22.62 },
+      { n: 'Gienah (γ Crv) — 돛 왼쪽 위', ra: 12.263, dec: -17.542 },
+      { n: 'Algorab (δ Crv) — 돛 오른쪽 위', ra: 12.498, dec: -16.516 },
+      { n: 'Kraz (β Crv) — 돛 오른쪽 아래', ra: 12.573, dec: -23.397 },
+    ],
+  },
+  {
+    key: 'canis-major',
+    name: '큰개자리',
+    difficulty: 'NORMAL',
+    stars: [
+      { n: 'Muliphein (γ CMa) — 목', ra: 7.063, dec: -15.633 },
+      { n: 'Sirius (α CMa) — 밤하늘 최고 밝은 별', ra: 6.753, dec: -16.716 },
+      { n: 'Mirzam (β CMa) — 앞발', ra: 6.378, dec: -17.956 },
+      { n: 'Adhara (ε CMa) — 뒷다리', ra: 6.977, dec: -28.972 },
+      { n: 'Wezen (δ CMa) — 몸통', ra: 7.14, dec: -26.393 },
+      { n: 'Aludra (η CMa) — 꼬리', ra: 7.402, dec: -29.303 },
+    ],
+  },
+  {
+    // 가을 대사각형은 0h를 걸쳐 있다 — project()의 선형 투영이 RA 0h에서 끊기지 않도록
+    // 0h대 두 별(Alpheratz·Algenib)에 +24h를 더해 언랩한 값을 넣는다.
+    key: 'pegasus',
+    name: '페가수스자리',
+    difficulty: 'NORMAL',
+    stars: [
+      { n: 'Enif (ε Peg) — 코', ra: 21.736, dec: 9.875 },
+      { n: 'Homam (ζ Peg) — 목', ra: 22.691, dec: 10.831 },
+      { n: 'Markab (α Peg) — 사각형 남서', ra: 23.079, dec: 15.205 },
+      { n: 'Scheat (β Peg) — 사각형 북서', ra: 23.063, dec: 28.083 },
+      { n: 'Alpheratz (α And, 공유 별) — 사각형 북동', ra: 24.14, dec: 29.091 },
+      { n: 'Algenib (γ Peg) — 사각형 남동', ra: 24.221, dec: 15.184 },
+    ],
+  },
+  {
+    key: 'perseus',
+    name: '페르세우스자리',
+    difficulty: 'NORMAL',
+    stars: [
+      { n: 'Zeta Per (ζ) — 남쪽 끝', ra: 3.902, dec: 31.883 },
+      { n: 'Epsilon Per (ε)', ra: 3.964, dec: 40.01 },
+      { n: 'Delta Per (δ)', ra: 3.715, dec: 47.788 },
+      { n: 'Mirfak (α Per) — 가장 밝은 별', ra: 3.405, dec: 49.861 },
+      { n: 'Algol (β Per) — 악마의 별', ra: 3.136, dec: 40.956 },
+      { n: 'Gamma Per (γ)', ra: 3.08, dec: 53.506 },
+    ],
+  },
+  {
+    key: 'virgo',
+    name: '처녀자리',
+    difficulty: 'EASY',
+    stars: [
+      { n: 'Zavijava (β Vir)', ra: 11.845, dec: 1.765 },
+      { n: 'Porrima (γ Vir)', ra: 12.694, dec: -1.449 },
+      { n: 'Auva (δ Vir)', ra: 12.927, dec: 3.398 },
+      { n: 'Vindemiatrix (ε Vir)', ra: 13.036, dec: 10.959 },
+      { n: 'Heze (ζ Vir)', ra: 13.578, dec: -0.596 },
+      { n: 'Spica (α Vir) — 가장 밝은 별', ra: 13.42, dec: -11.161 },
+    ],
+  },
+  {
+    key: 'southern-dipper',
+    name: '남두육성',
+    difficulty: 'NORMAL',
+    stars: [
+      { n: 'Mu Sgr (μ) — 손잡이 끝', ra: 18.229, dec: -21.059 },
+      { n: 'Lambda Sgr (λ) — 손잡이', ra: 18.466, dec: -25.422 },
+      { n: 'Phi Sgr (φ) — 국자 입구', ra: 18.761, dec: -26.991 },
+      { n: 'Nunki (σ Sgr) — 국자 위', ra: 18.921, dec: -26.297 },
+      { n: 'Tau Sgr (τ) — 국자 아래', ra: 19.116, dec: -27.67 },
+      { n: 'Ascella (ζ Sgr) — 국자 바닥', ra: 19.044, dec: -29.881 },
+    ],
+  },
 ]
 
 const MIN_STARS = 5
