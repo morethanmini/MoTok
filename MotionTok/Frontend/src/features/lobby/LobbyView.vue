@@ -229,8 +229,7 @@ const openJoin = () => guardMember(() => (showJoin.value = true))
 // 초대코드 입장(joinRoom)은 비밀번호를 받지 않는다(확정안 ③).
 function enterRoom(room: Room) {
   guardMember(async () => {
-    if (room.disabled) return
-    if (!room.roomId) return goDevice(room.game, 'MP4X9K') // 목업 폴백
+    if (room.disabled || !room.roomId) return
     if (room.hasPassword) {
       pwTarget.value = room
       pwError.value = ''
@@ -240,8 +239,9 @@ function enterRoom(room: Room) {
       const res = await roomsApi.join(room.roomId)
       goDevice(room.game, res.roomId)
     } catch (e) {
-      if (e instanceof ApiError) return flash(e.message)
-      goDevice(room.game, room.roomId)
+      // 예전에는 네트워크 오류면 그냥 방으로 보냈다(백엔드 미연동 데모 폴백) — 서버가 모르는
+      // 입장이라 "각자 1인방" 같은 유령 상태를 만든다(-164). 실패는 실패로 알린다.
+      flash(e instanceof ApiError ? e.message : '방에 입장하지 못했어요 · 잠시 후 다시 시도해 주세요')
     }
   })
 }
@@ -404,8 +404,8 @@ async function joinRoom(code: string) {
     const res = await roomsApi.joinByInviteCode(code)
     goDevice('친구의 게임', res.roomId)
   } catch (e) {
-    if (e instanceof ApiError) return flash(e.message)
-    goDevice('친구의 게임', code) // 폴백
+    // 초대코드는 roomId가 아니다 — 실패 시 코드로 입장하는 폴백은 없는 방을 그린다(-164)
+    flash(e instanceof ApiError ? e.message : '방에 입장하지 못했어요 · 잠시 후 다시 시도해 주세요')
   }
 }
 
@@ -434,8 +434,9 @@ async function createRoom(payload: NewRoom) {
     showCreate.value = false // 성공했을 때만 닫는다 — 실패 시엔 모달을 남겨 재시도할 수 있게
     goDevice('게임 선택 중', res.roomId)
   } catch (e) {
-    if (e instanceof ApiError) return flash(e.message)
-    goDevice('게임 선택 중', 'MP' + Math.random().toString(36).slice(2, 6).toUpperCase())
+    // 예전에는 실패하면 가짜 roomId로 방에 들어갔다(데모 폴백) — 서버엔 없는 방이라
+    // "오프라인인데 방이 만들어지고 둘 다 방장" 같은 유령 상태의 근원이었다(-164).
+    flash(e instanceof ApiError ? e.message : '방을 만들지 못했어요 · 잠시 후 다시 시도해 주세요')
   } finally {
     creating.value = false
   }
