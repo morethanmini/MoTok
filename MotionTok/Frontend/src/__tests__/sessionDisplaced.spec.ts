@@ -21,10 +21,10 @@ vi.mock('@/composables/useGlobalStomp', () => ({
 let memberSession = true
 
 const { useSessionDisplaced } = await import('../composables/useSessionDisplaced')
-const { onSessionExpired } = await import('../api/authEvents')
+const { onSessionExpired, markOwnLoginStarted } = await import('../api/authEvents')
 const { clearTokens, setAccessToken } = await import('../api/token')
 
-/** iat을 원하는 시점으로 둔 가짜 회원 토큰 — "방금 로그인했는가" 판정이 여기서 갈린다. */
+/** 가짜 회원 토큰. 밀림 판정은 이제 토큰이 아니라 "내가 로그인을 시작했는가"로 갈린다. */
 function memberJwt(issuedSecondsAgo: number) {
   const now = Math.floor(Date.now() / 1000)
   const payload = { sub: '1', type: 'member', iat: now - issuedSecondsAgo, exp: now + 3600 }
@@ -42,6 +42,13 @@ describe('세션 밀림 알림', () => {
   let unsubscribeQueue: () => void
 
   beforeEach(() => {
+    // "방금 로그인했는가" 표시는 모듈 전역이라 테스트 사이에 남는다.
+    // 시계를 고정한 뒤 표시를 창 밖으로 밀어내 매번 같은 출발점에서 시작한다.
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    markOwnLoginStarted()
+    vi.advanceTimersByTime(60_000)
+
     memberSession = true
     handlers.clear()
     clearTokens()
@@ -53,6 +60,7 @@ describe('세션 밀림 알림', () => {
   afterEach(() => {
     unsubscribeEvent()
     unsubscribeQueue()
+    vi.useRealTimers()
   })
 
   it('SESSION_DISPLACED를 받으면 세션 종료를 알린다', () => {
@@ -74,11 +82,34 @@ describe('세션 밀림 알림', () => {
   })
 
   it('방금 내가 한 로그인 때문이라면 무시한다 — 같은 탭 재로그인에 스스로 튕기지 않는다', () => {
-    setAccessToken(memberJwt(1)) // 1초 전 발급 = 이 알림을 부른 로그인이 곧 나
+    setAccessToken(memberJwt(600))
+    markOwnLoginStarted() // 로그인 요청을 막 보냈다
 
     push({ type: 'SESSION_DISPLACED', payload: null })
 
     expect(ended).not.toHaveBeenCalled()
+  })
+
+  // 이 버그로 로그인이 한 번씩 튕겼다: 서버는 로그인 처리 중에 알림을 보내므로, 그 프레임이
+  // 로그인 응답보다 먼저 도착할 수 있다. 그 순간 내 토큰은 아직 '옛 것'이라 발급 시각으로
+  // 판정하면 "내 로그인이 아니다"가 되어 스스로 튕겼다. 판정 근거를 요청 시작 시점으로 옮겼다.
+  it('알림이 로그인 응답보다 먼저 도착해도 무시한다 — 토큰이 아직 옛 것이어도', () => {
+    setAccessToken(memberJwt(600)) // 아직 교체 전인 옛 세션의 토큰
+    markOwnLoginStarted() // 요청은 보냈고 응답은 아직 안 왔다
+
+    push({ type: 'SESSION_DISPLACED', payload: null })
+
+    expect(ended).not.toHaveBeenCalled()
+  })
+
+  it('로그인한 지 오래됐으면 정상적으로 밀린다 — 진짜 다른 곳 로그인은 막지 않는다', () => {
+    setAccessToken(memberJwt(600))
+    markOwnLoginStarted()
+    vi.advanceTimersByTime(60_000) // 창을 한참 넘겼다
+
+    push({ type: 'SESSION_DISPLACED', payload: null })
+
+    expect(ended).toHaveBeenCalledWith('displaced')
   })
 
   it('게스트에게는 해당 없다', () => {
