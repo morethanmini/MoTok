@@ -11,11 +11,11 @@
  * background.png는 알파 채널이 없는(RGB) 이미지라 애초에 투명 여백이 존재할 수 없다 —
  * 핑거스타 때의 교훈대로 확대 없이 100%로 둔다(확대는 cover의 크롭 폭만 늘린다).
  */
-import background from '@/assets/games/rhythm-thumbnail/background.png'
-import cat from '@/assets/games/rhythm-thumbnail/cat.png'
-import music1 from '@/assets/games/rhythm-thumbnail/music1.png'
-import music2 from '@/assets/games/rhythm-thumbnail/music2.png'
-import music3 from '@/assets/games/rhythm-thumbnail/music3.png'
+import background from '@/assets/games/rhythm-thumbnail/background.webp'
+import cat from '@/assets/games/rhythm-thumbnail/newcat.webp'
+import music1 from '@/assets/games/rhythm-thumbnail/music1.webp'
+import music2 from '@/assets/games/rhythm-thumbnail/music2.webp'
+import music3 from '@/assets/games/rhythm-thumbnail/music3.webp'
 </script>
 
 <template>
