@@ -714,6 +714,27 @@ export type GameEvent =
       answerRank: number
       score: number
     }
+  | {
+      /** 시작 준비 확인(-162) — 세션은 아직 없다. 각자 모델을 채우고 ready를 회신하면
+       *  전원 완료(또는 서버 타임아웃 15초) 시 GAME_START가 온다 */
+      type: 'GAME_PREPARE'
+      prepareId: string
+      gameId: number
+      readyCount: number
+      totalCount: number
+    }
+  | {
+      /** 준비 인원 중계(-162) — ready 수리 때마다 n/m이 온다 */
+      type: 'GAME_READY_PROGRESS'
+      prepareId: string
+      readyCount: number
+      totalCount: number
+    }
+  | {
+      /** 방장 강제종료(-164) — 정산 없이 세션 종료. 준비 확인 단계 취소면 sessionId가 null */
+      type: 'GAME_ABORTED'
+      sessionId: string | null
+    }
 
 // ── 관리자 ────────────────────────────────
 export interface ReportedUser {

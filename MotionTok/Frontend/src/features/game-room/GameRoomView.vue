@@ -15,6 +15,7 @@ import { useStickerCompositor } from '@/composables/useStickerCompositor'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
 import { useRoomChat } from '@/composables/useRoomChat'
+import { onStompConnected } from '@/composables/useGlobalStomp'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
@@ -326,7 +327,15 @@ onMounted(async () => {
     if (!ready) flash('모션 인식 모델을 준비하지 못했어요 · 게임 시작이 늦어질 수 있어요')
   })
 })
+// STOMP 재연결(절전 복귀·네트워크 블립) — 끊긴 동안 방장 이양·강퇴·유령 정리를 놓쳤을 수
+// 있다(-164). 재입장(join)이 언로드 유예 철회와 최신 스냅샷 반영을 겸한다.
+const offStompReconnect = onStompConnected(() => {
+  if (!route.query.room) return
+  void roomsApi.join(roomCode.value).then(applyDetail).catch(() => {})
+})
+
 onBeforeUnmount(() => {
+  offStompReconnect()
   roomChat.disconnect()
   // BGM은 모듈 싱글턴이라 suspend된 채로 방을 뜨면 로비에서도 영영 안 나온다
   bgm.resumeAfterGame()
@@ -573,7 +582,14 @@ const drawFeed = ref<GameEvent[]>([])
 // 바로 마운트하지 않는다 — 그대로 마운트하면 화면은 도는데 손·자세만 안 잡히는, 사용자
 // 눈에는 "게임 실행 실패"인 상태가 된다(8인 테스트에서 3명 재현). 준비 오버레이를 띄우고
 // 모델이 채워진 뒤 마운트한다. Cache Storage 히트(modelCache)면 이 구간은 1초 미만이다.
-const gamePrep = ref<{ entry: GameEntry; key: string; progress: number; failed: boolean } | null>(null)
+const gamePrep = ref<{
+  entry: GameEntry
+  key: string
+  progress: number
+  failed: boolean
+  /** 시작 준비 확인(-162) — 서버가 전원 ready를 기다리는 동안의 n/m. 게이트 단독 사용이면 null */
+  waiting: { ready: number; total: number } | null
+} | null>(null)
 
 /** 모델이 준비됐으면 즉시, 아니면 오버레이를 걸고 받아진 뒤 게임을 마운트한다. */
 function mountWhenReady(entry: GameEntry, key: string) {
@@ -582,7 +598,7 @@ function mountWhenReady(entry: GameEntry, key: string) {
     activeGame.value = entry
     return
   }
-  gamePrep.value = { entry, key, progress: 0, failed: false }
+  gamePrep.value = { entry, key, progress: 0, failed: false, waiting: null }
   void warmUpMotionModels((f) => {
     if (gamePrep.value?.key === key) gamePrep.value.progress = f
   }).then((ok) => {
@@ -740,6 +756,46 @@ watch(roomChat.gameEvents, (all, prev) => {
   }
 })
 function applyGameEvent(e: GameEvent) {
+  // ── 시작 준비 확인(-162) — 세션이 만들어지기 전 단계라 sessionId 필터보다 앞에서 처리 ──
+  if (e.type === 'GAME_PREPARE') {
+    const entry = GAME_CATALOG.find((g) => g.gameId === e.gameId)
+    if (!entry) return
+    picker.value = false
+    // 모델을 먼저 채우고 ready를 회신한다 — 서버는 전원 완료(또는 15초) 후 GAME_START를 쏜다.
+    // 모델 로드에 실패해도 ready는 보낸다: 나 하나 때문에 방 전체를 타임아웃까지 붙잡는 것보다,
+    // 시작 후 내 화면의 게이트(mountWhenReady)가 실패·재시도를 처리하는 쪽이 낫다.
+    gamePrep.value = {
+      entry, key: e.prepareId, progress: 0, failed: false,
+      waiting: { ready: e.readyCount, total: e.totalCount },
+    }
+    void warmUpMotionModels((f) => {
+      if (gamePrep.value?.key === e.prepareId) gamePrep.value.progress = f
+    }).then(() => {
+      if (gamePrep.value?.key === e.prepareId) roomChat.sendGameReady(e.prepareId)
+    })
+    // 서버 타임아웃(15초)이 지나도 GAME_START가 안 오면(서버 장애 등) 오버레이에 갇히지 않게 자체 해제
+    window.setTimeout(() => {
+      if (gamePrep.value?.key === e.prepareId) {
+        gamePrep.value = null
+        flash('게임 시작이 취소됐어요')
+      }
+    }, 25_000)
+    return
+  }
+  if (e.type === 'GAME_READY_PROGRESS') {
+    if (gamePrep.value?.key === e.prepareId && gamePrep.value.waiting) {
+      gamePrep.value.waiting = { ready: e.readyCount, total: e.totalCount }
+    }
+    return
+  }
+  if (e.type === 'GAME_ABORTED') {
+    const wasOpen = !!activeGame.value || !!gamePrep.value
+    // closeGame이 방장 abort를 재발신하지 않도록 세션부터 비운다(에코 루프 방지)
+    activeSession.value = null
+    closeGame()
+    if (wasOpen) flash('방장이 게임을 종료했어요')
+    return
+  }
   if (e.type === 'GAME_START') {
     const entry = GAME_CATALOG.find((g) => g.gameId === e.gameId)
     if (!entry) return
@@ -958,6 +1014,11 @@ function onBodyFitFinished(r: { score: number; grade: string; iou: number }) {
 }
 
 function closeGame() {
+  // 방장이 게임 도중 닫으면 방 전체 세션을 종료한다(-164) — 예전에는 본인 화면만 닫혀
+  // 남은 사람끼리 라운드가 돌고 방은 endAt까지 잠겨 있었다. 정산 후(gameResults 존재)나
+  // 리듬(전용 채널, activeSession 없음)은 해당 없음. GAME_ABORTED 에코는 세션을 먼저
+  // 비우고 이 함수를 부르므로 재발신되지 않는다.
+  if (amRoomHost.value && activeSession.value && !gameResults.value) roomChat.sendGameAbort()
   void lk.unpublishGameScreen()
   gamePrep.value = null
   activeGame.value = null
@@ -1361,7 +1422,10 @@ const startHint = computed(() =>
               <div class="game-prep-track">
                 <div class="game-prep-fill" :style="{ width: `${Math.max(Math.round(gamePrep.progress * 100), 4)}%` }" />
               </div>
-              <small>모션 인식 모델을 받고 있어요… {{ Math.round(gamePrep.progress * 100) }}%</small>
+              <small v-if="gamePrep.waiting && gamePrep.progress >= 1">
+                참가자 준비를 기다리고 있어요… {{ gamePrep.waiting.ready }}/{{ gamePrep.waiting.total }}
+              </small>
+              <small v-else>모션 인식 모델을 받고 있어요… {{ Math.round(gamePrep.progress * 100) }}%</small>
             </template>
             <template v-else>
               <div class="game-prep-title fail">모션 인식 모델을 준비하지 못했어요</div>
