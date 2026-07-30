@@ -27,12 +27,22 @@ const BEAT_INTERVAL_MS = 60_000
 const BOOT_DELAY_MS = 3_000
 /** 배치당 보관하는 API 표본 상한. 넘으면 오래된 것부터 버린다(메모리 상한). */
 const API_SAMPLE_MAX = 300
+/**
+ * 세션당 보낼 에러 개수 상한.
+ *
+ * <p>에러는 보통 <b>루프로 터진다</b> — 렌더 루프나 프레임 콜백 안에서 나면 초당 수십 번이다.
+ * 상한이 없으면 에러 보고가 그대로 비콘 폭주가 되어, 관측이 부하를 만드는 바로 그 상황이 된다.
+ * 같은 메시지는 한 번만 보내는 것과 합쳐 두 겹으로 막는다.</p>
+ */
+const ERR_MAX_PER_SESSION = 5
 
 let rid = ''
 let started = false
 let beatTimer: ReturnType<typeof setInterval> | undefined
 let apiTimings: number[] = []
 let disconnects = 0
+let errCount = 0
+const seenErrors = new Set<string>()
 
 /**
  * 카운터를 이 모듈이 들고, 바깥에서 <b>밀어 넣게</b> 한다.
@@ -116,6 +126,46 @@ function sendBeat(): void {
   })
 }
 
+/**
+ * 에러 1건 보고. 상한·중복제거를 통과한 것만 나간다.
+ *
+ * <p>여기서 던지면 에러 핸들러가 또 에러를 내는 무한루프가 된다 — 전부 삼킨다.</p>
+ */
+function sendError(message: string, where: string): void {
+  try {
+    if (!started || errCount >= ERR_MAX_PER_SESSION) return
+    const key = (message || 'unknown').slice(0, 120)
+    if (seenErrors.has(key)) return // 같은 에러의 반복은 한 번만 — 루프로 터지는 게 보통이다
+    seenErrors.add(key)
+    errCount += 1
+    send({ t: 'err', m: key, at: where.slice(0, 80), scr: location.pathname })
+  } catch {
+    /* 에러 보고가 에러를 내면 안 된다 */
+  }
+}
+
+function onWindowError(e: ErrorEvent): void {
+  // 리소스 로드 실패(script·img·wasm)는 message가 비어 있고 target이 엘리먼트다.
+  // MediaPipe 다운로드 실패가 정확히 여기로 오므로 버리지 않고 종류를 구분해 남긴다.
+  if (!e.message && e.target && e.target !== window) {
+    const el = e.target as Partial<HTMLImageElement & HTMLScriptElement & HTMLLinkElement> & {
+      tagName?: string
+    }
+    sendError(`resource: ${el.src || el.href || el.tagName || '?'}`, 'res')
+    return
+  }
+  sendError(e.message, e.filename ? `${e.filename}:${e.lineno}` : '')
+}
+
+function onRejection(e: PromiseRejectionEvent): void {
+  const reason: unknown = e.reason
+  const message =
+    typeof reason === 'string'
+      ? reason
+      : ((reason as { message?: string } | null)?.message ?? String(reason))
+  sendError(message, 'promise')
+}
+
 /** API 체감 소요시간을 모은다(http.ts에서 호출). 전송은 60초 배치에서 한 번에 한다. */
 export function recordApiTiming(ms: number): void {
   if (!started) return
@@ -131,6 +181,10 @@ export function startRum(): void {
     rid = Math.random().toString(36).slice(2, 8)
     setTimeout(sendBoot, BOOT_DELAY_MS)
     beatTimer = setInterval(sendBeat, BEAT_INTERVAL_MS)
+    // addEventListener 로 붙인다 — window.onerror 에 '할당'하면 기존 핸들러를 덮어쓴다.
+    // capture 단계여야 리소스 로드 실패(버블링하지 않는다)까지 잡힌다.
+    window.addEventListener('error', onWindowError, true)
+    window.addEventListener('unhandledrejection', onRejection)
   } catch {
     started = false
   }
@@ -139,5 +193,7 @@ export function startRum(): void {
 export function stopRum(): void {
   clearInterval(beatTimer)
   beatTimer = undefined
+  window.removeEventListener('error', onWindowError, true)
+  window.removeEventListener('unhandledrejection', onRejection)
   started = false
 }
