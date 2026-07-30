@@ -178,8 +178,7 @@ const micBars = computed(() => {
 let proceedingToRoom = false
 async function enter() {
   if (!isOn.value) return
-  // 저장 안 한 배치가 있으면 먼저 저장한다 — 게임룸은 서버에 저장된 배치를 읽어 합성하므로,
-  // 그냥 들어가면 방금 옮긴 자리가 반영되지 않는다(사용자에겐 그냥 사라진 것으로 보인다).
+  // 게임룸은 서버에 저장된 배치를 읽어 방에 알리므로, 저장 안 하고 들어가면 방금 옮긴 자리가 빠진다.
   if (decor.dirty.value) await decor.save()
   proceedingToRoom = true
   // solo·autostart는 그대로 넘긴다 — 각각 게임룸의 빈 슬롯 숨김과 자동 시작에 쓰이는 값이라
