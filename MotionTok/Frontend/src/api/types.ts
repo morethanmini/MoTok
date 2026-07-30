@@ -959,6 +959,27 @@ export interface AdminUserSummary {
   nickname: string
 }
 
+/** GET /v1/admin/online-users 의 한 줄 — 지금 붙어 있는 사람. */
+export interface AdminOnlineUser {
+  userId: number
+  nickname: string
+  /** OFFLINE은 오지 않는다 — 접속 중인 사람만 담기는 목록이다. */
+  state: Presence
+  /** 방 안(IN_ROOM)일 때만 값이 있다. */
+  roomId: string | null
+  /**
+   * 마지막 하트비트로부터 지난 시간(초). 시각 대신 경과를 주는 이유 — 시간대와 무관하게 읽히고,
+   * 60초(프레즌스 TTL)를 넘기면 곧 목록에서 사라질 항목이라는 뜻이 된다.
+   */
+  secondsAgo: number
+}
+
+export interface AdminOnlineUserListResponse {
+  users: AdminOnlineUser[]
+  /** 상한(500명)에 걸려 잘렸는가 — 화면은 "지금 이만큼만 보여 주는 중"이라고 밝혀야 한다. */
+  capped: boolean
+}
+
 // ── 관리자 게임 관리 (-106) ───────────────────────
 /**
  * 관리자 카탈로그 항목. 공개 목록의 `Game`과 나눠 두는 이유 — `Game.playable`은
