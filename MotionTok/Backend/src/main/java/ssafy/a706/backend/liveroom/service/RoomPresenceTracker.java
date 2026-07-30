@@ -1,5 +1,6 @@
 package ssafy.a706.backend.liveroom.service;
 
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
@@ -10,6 +11,7 @@ import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 import org.springframework.web.socket.messaging.SessionSubscribeEvent;
 import org.springframework.web.socket.messaging.SessionUnsubscribeEvent;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
+import ssafy.a706.backend.global.config.StompSessionRegistry;
 import ssafy.a706.backend.global.exception.BusinessException;
 
 import java.security.Principal;
@@ -71,6 +73,16 @@ public class RoomPresenceTracker {
         thread.setDaemon(true);
         return thread;
     });
+
+    /**
+     * 종료 시 예약된 유예 작업을 버린다 — PresenceSessionTracker.stopReaper와 같은 이유.
+     * 리퍼가 데몬이라 컨텍스트가 닫힌 뒤에도 살아 있어서, 그 사이 예약분이 실행되면
+     * 이미 닫힌 빈 팩토리를 건드리다 실패하고 스택트레이스만 길게 남는다.
+     */
+    @PreDestroy
+    void stopReaper() {
+        reaper.shutdownNow();
+    }
 
     /**
      * 이 회원이 지금 재실 중인 방 목록 — 단일 세션 밀어내기가 SFU 강제 퇴장 대상을 찾을 때 쓴다.
@@ -139,6 +151,41 @@ public class RoomPresenceTracker {
             live.remove(sessionId);
         }
         reaper.schedule(() -> reap(occupancy), GRACE_MS, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 정지된 회원을 지금 있는 방에서 즉시 뺀다(관리자 제재).
+     *
+     * <p><b>방에서 빼는 것과 연결을 끊는 것은 다른 일이라 여기서는 방만 처리한다.</b>
+     * 소켓 종료는 {@link StompSessionRegistry#closeAllOf}가 맡는다 — 사용자→세션 색인을 그쪽이
+     * 갖고 있어 어느 방에도 없는 연결(로비에만 붙어 있는 탭)까지 함께 끊을 수 있다. 방에서만
+     * 빼고 연결을 두면 이미 구독한 {@code /topic}으로 채팅·게임 이벤트를 계속 받으므로
+     * 둘을 함께 해야 실제로 나가며, 순서는 <b>방이 먼저다</b> — 소켓을 먼저 끊으면 UNSUBSCRIBE
+     * 없이 DISCONNECT만 나서 유예({@value #GRACE_MS}ms) 동안 유령 멤버로 남는다.</p>
+     *
+     * <p>{@link LiveRoomService#leave}를 그대로 쓰는 이유 — 방장 위임과 빈 방 정리가 이미 거기 있고,
+     * 멱등이라 뒤따르는 소켓 종료로 도는 reaper와 겹쳐도 안전하다. 다른 참가자에게는 평소의
+     * 퇴장 이벤트로 보이므로 프론트에 새 계약이 생기지 않는다.</p>
+     *
+     * @return 방에서 뺀 세션 수(0이면 어느 방에도 없었다)
+     */
+    public int evictFromRooms(Long userId) {
+        String target = String.valueOf(userId);
+        List<Map.Entry<String, Occupancy>> victims = sessions.entrySet().stream()
+                .filter(e -> !e.getValue().principal().isGuest()
+                        && e.getValue().principal().userId().equals(target))
+                .toList();
+
+        for (Map.Entry<String, Occupancy> victim : victims) {
+            Occupancy occupancy = victim.getValue();
+            try {
+                liveRoomService.leave(occupancy.principal(), occupancy.roomId());
+                log.info("제재 퇴장: room={} user={}", occupancy.roomId(), target);
+            } catch (BusinessException e) {
+                // 방이 이미 사라졌거나 본인이 이미 나간 상태 — 소켓 종료는 호출자가 그대로 진행한다.
+            }
+        }
+        return victims.size();
     }
 
     /** 유예 경과 시점 재확인 — 그 사이 재연결(재구독)했으면 재실 유지, 아니면 퇴장 처리. */
