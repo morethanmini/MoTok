@@ -265,27 +265,27 @@ useRoomUnloadLeave(() => route.query.room as string | undefined)
 onMounted(async () => {
   bgm.setVolume(0.2)
 
-  // 정원/방장 조회(실패해도 진행) → LiveKit 접속(방 멤버만 토큰 발급됨)
+  // room 쿼리 없이 들어온 경로(북마크·직접 URL)는 방을 특정할 수 없다 — 예전 폴백 코드
+  // ('MP-4X9K')로 존재하지 않는 방 화면("LIVE PARTY ROOM")을 그리는 대신 로비로 보낸다(-164).
+  if (!route.query.room) {
+    leavingIntentionally = true
+    void router.replace({ name: RouteName.Lobby })
+    return
+  }
+
+  // 입장/재입장 → 정원·방장 상태 반영. detail이 아니라 join을 부른다(-164):
+  // 새로고침이면 pagehide로 언로드 퇴장 통보가 이미 나갔고, 서버는 유예(10초) 안에 이 join이
+  // 오면 퇴장을 없던 일로 한다. 이미 멤버면 멱등이고 재입장은 비밀번호를 다시 묻지 않는다.
   try {
-    const d = await roomsApi.detail(roomCode.value)
-    // 문서 이탈(탭 닫기·주소창 이동)로 이미 퇴장한 뒤 뒤로가기·직접 URL로 돌아온 경우 —
-    // 방 멤버가 아니므로 게임룸을 그리지 않고 로비로 보낸다.
-    const myId = myParticipantId.value
-    if (myId && !d.members.some((m) => m.userId === myId)) {
-      leavingIntentionally = true
-      void router.replace({ name: RouteName.Lobby })
-      return
-    }
-    applyDetail(d)
+    applyDetail(await roomsApi.join(roomCode.value))
   } catch (e) {
-    // 예전에는 조용히 넘겼지만(백엔드 미연동 시절), 이제 이 응답이 방장 판별의 유일한 근거다.
-    // 실패하면 아무도 방장로 보이지 않으므로 반드시 드러내야 한다.
-    console.error('[game-room] 방 상세 조회 실패 — 방장 판별 불가', e)
-    flash(
-      e instanceof ApiError
-        ? `방 정보를 불러오지 못했어요 (${e.code})`
-        : '방 정보를 불러오지 못했어요',
-    )
+    // 방이 사라졌거나(ROOM_NOT_FOUND) 게임 중·정원 초과·강퇴 등 — 들어갈 수 없는 방 화면에
+    // 유령으로 머무느니 이유를 알리고 로비로 보낸다.
+    console.error('[game-room] 방 입장 실패', e)
+    flash(e instanceof ApiError ? e.message : '방에 입장하지 못했어요')
+    leavingIntentionally = true
+    void router.replace({ name: RouteName.Lobby })
+    return
   }
   // 로컬 캡처는 항상 켠다 — 모션 인식 게임의 입력원이라 카메라를 "꺼도" 게임 시작·참여가
   // 가능해야 한다. "카메라 끄기"는 발행·표시만 끈다: 입장 전 화면에서 껐다면 발행하지 않아
@@ -294,13 +294,26 @@ onMounted(async () => {
   if (!stream) flash('카메라를 켤 수 없어요(권한/장치 확인)')
   // 장착 스티커를 먼저 읽어 두고 합성 트랙을 만든다(실패하면 원본 트랙으로 발행).
   await decor.load()
-  const ok = await lk.connect(roomCode.value, {
-    cameraTrack: initialCamOn.value ? await publishableTrack(stream) : null,
-    microphone: initialMicOn.value,
-    // 카메라는 로컬 캡처(camera.start)가 이미 고른 장치를 쓰지만, 마이크는 LiveKit이 직접 잡는다.
-    microphoneDeviceId: preferredAudioDeviceId(),
-  })
-  if (!ok) flash('실시간 서버에 연결하지 못했어요 · 카메라 미리보기만 가능해요')
+  // LiveKit 접속 — 일시 장애는 재시도로 흡수하고, 그래도 안 되면 서로 안 보이는 반쪽 방에
+  // 머무느니 퇴장 처리 후 로비로 보낸다(-164).
+  const cameraTrack = initialCamOn.value ? await publishableTrack(stream) : null
+  let ok = false
+  for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, attempt * 1500))
+    ok = await lk.connect(roomCode.value, {
+      cameraTrack,
+      microphone: initialMicOn.value,
+      // 카메라는 로컬 캡처(camera.start)가 이미 고른 장치를 쓰지만, 마이크는 LiveKit이 직접 잡는다.
+      microphoneDeviceId: preferredAudioDeviceId(),
+    })
+  }
+  if (!ok) {
+    flash('실시간 서버에 연결하지 못했어요 · 로비로 돌아가요')
+    await notifyLeave()
+    leavingIntentionally = true
+    void router.replace({ name: RouteName.Lobby })
+    return
+  }
 
   // 채팅은 이력이 없어서(비영속) 구독이 늦은 만큼 그대로 유실 — 입장 직후 바로 연결.
   void roomChat.connect(roomCode.value)
@@ -1069,6 +1082,17 @@ watch(
     if (!e) return
     participantCount.value = e.participantCount
     memberIds.value = memberIds.value.filter((id) => id !== e.userId)
+    // 내 퇴장 이벤트인데 나는 나간 적이 없다(-164) — 언로드 유예가 끝나 버렸거나 레이스로
+    // 서버에서만 빠진 상태다. 그대로 두면 STOMP만 살아 있는 유령 멤버(게임 시작은 전파되는데
+    // 방 명단엔 없음)가 되므로 즉시 재입장해 명단과 화면을 다시 맞춘다.
+    if (e.userId === myParticipantId.value && !leavingIntentionally) {
+      try {
+        applyDetail(await roomsApi.join(roomCode.value))
+      } catch {
+        leavingIntentionally = true
+        void router.replace({ name: RouteName.Lobby })
+      }
+    }
   },
 )
 watch(
@@ -1113,6 +1137,9 @@ async function answerLeave(ok: boolean) {
 
 // 백엔드 퇴장 통보 + LiveKit 연결 정리. "LEAVE" 버튼과 확인 모달("나가기") 양쪽 경로에서 공유.
 async function notifyLeave() {
+  // 의도된 퇴장 표시를 먼저 — 서버 MEMBER_LEFT 에코가 라우팅보다 빨리 오면
+  // 자기치유 재입장(-164)이 방금 나간 방에 도로 들어가 버린다.
+  leavingIntentionally = true
   const id = route.query.room as string | undefined
   if (id) {
     try {
