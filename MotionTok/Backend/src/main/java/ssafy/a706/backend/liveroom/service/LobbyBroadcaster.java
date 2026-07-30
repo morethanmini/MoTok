@@ -13,7 +13,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 로비 방 목록 실시간 갱신의 발신부(-148) — 변화를 모았다가 초당 한 번만 내보낸다.
+ * 로비 방 목록 실시간 갱신의 발신부(-148) — 변화를 모았다가 창({@link #FLUSH_INTERVAL_MS})당 한 번만 내보낸다.
  *
  * <h4>왜 모아서 보내나</h4>
  * 방 하나가 바뀔 때마다 즉시 브로드캐스트하면, 로비에 1,000명이 앉아 있을 때 입퇴장 한 번이
@@ -34,8 +34,13 @@ public class LobbyBroadcaster {
 
     static final String LOBBY_TOPIC = "/topic/lobby/rooms";
 
-    /** 모으는 창의 길이. 사람이 목록에서 체감하는 지연의 상한이기도 하다. */
-    private static final long FLUSH_INTERVAL_MS = 1_000;
+    /**
+     * 모으는 창의 길이. 사람이 목록에서 체감하는 지연의 상한이기도 하다.
+     * 1초 → 10초(-164 실기 피드백): 로비 목록은 "몇 초 늦어도 되는" 정보인데 방 상태가
+     * 자주 바뀌는 테스트 상황에서 초당 프레임이 계속 흘러 소음이 컸다. 입장 직후 최신
+     * 상태는 어차피 REST 목록 조회가 채우므로 델타 지연 상한을 늘려도 UX 손해가 작다.
+     */
+    private static final long FLUSH_INTERVAL_MS = 10_000;
 
     private final SimpMessagingTemplate messagingTemplate;
 
