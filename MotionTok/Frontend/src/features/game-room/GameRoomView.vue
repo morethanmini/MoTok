@@ -911,6 +911,7 @@ function applyGameEvent(e: GameEvent) {
   }
   if (e.type === 'GAME_END') {
     gameResults.value = e.results
+    applyEarnedPoints(e.results)
     // 라운드가 끝났으니 게임 화면 송출을 즉시 내린다(-164) — 결과 화면까지 송출하면 각자
     // 결과를 닫을 때까지 다른 참가자 타일이 멈춘 게임 화면(검은 화면)으로 남는다.
     void lk.unpublishGameScreen()
@@ -1203,6 +1204,33 @@ function rejoinGame() {
 /** 진행 중 세션의 게임 항목 — 비방장 중간 이탈 후 복귀 버튼이 쓴다(-164). */
 const sessionEntry = ref<GameEntry | null>(null)
 
+/**
+ * 방송받은 내 획득 포인트를 헤더 잔액에 즉시 얹는다.
+ *
+ * <p>지갑 반영은 서버가 비동기로 한다(GameRewardListener) — 기다리면 게임이 끝나도 잔액이
+ * 그대로여서 "보상을 못 받았다"로 보인다. 그래서 낙관적으로 올려 두고, 결과 화면을 닫을 때
+ * {@code refreshProfile}이 서버 값으로 정정한다.</p>
+ *
+ * <p>results의 userId는 문자열(LiveKit identity와 같은 값)이고 프로필 id는 숫자라 변환해 맞춘다.
+ * 게스트는 프로필이 없어 아무 일도 하지 않는다.</p>
+ */
+function applyEarnedPoints(results: GameResultEntry[]) {
+  const myId = session.profile?.id
+  if (myId === undefined) return
+  const mine = results.find((r) => r.userId === String(myId))
+  if (mine?.pointsEarned) session.addPoints(mine.pointsEarned)
+}
+
+/**
+ * 캐치캐치리듬 정산 — 전용 채널(RHYTHM_END)이라 위 GAME_END 경로를 타지 않는다.
+ * 컴포넌트가 내 획득분을 계산해 넘겨 주므로 여기서는 잔액에만 얹는다.
+ * 서버는 같은 GameSettledEvent 경로로 지급하므로 정정은 closeGame의 refreshProfile이 맡는다.
+ */
+function onRhythmEnded(pointsEarned: number) {
+  rhythmEnded.value = true
+  if (pointsEarned > 0) session.addPoints(pointsEarned)
+}
+
 function closeGame() {
   // 방장이 게임 도중 닫으면 방 전체 세션을 종료한다(-164) — 예전에는 본인 화면만 닫혀
   // 남은 사람끼리 라운드가 돌고 방은 endAt까지 잠겨 있었다. 정산 후(gameResults 존재)나
@@ -1219,6 +1247,8 @@ function closeGame() {
   poseChallenge.value = null
   rhythmEnded.value = false
   drawFeed.value = []
+  // 낙관적으로 얹은 획득 포인트를 서버 값으로 정정한다(비동기 지급이 끝났을 시점).
+  void session.refreshProfile()
 }
 
 function copyCode() {
@@ -1625,7 +1655,7 @@ const startHint = computed(() =>
             :room-chat="roomChat"
             @close="requestCloseGame"
             @started="rhythmEnded = false"
-            @ended="rhythmEnded = true"
+            @ended="onRhythmEnded"
           />
           <!-- 비방장 중간 이탈 후 복귀(-164) — 라운드가 살아 있는 동안만 노출 -->
           <button
