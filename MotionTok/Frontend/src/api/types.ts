@@ -648,6 +648,12 @@ export interface GameResultEntry {
   completedCount?: number | null
   /** false = 미제출(중도 이탈·타임아웃) — 0점 처리 */
   finished: boolean
+  /**
+   * 순위·점수로 계산된 획득 포인트. 서버가 GAME_END에 실어 보내고(PointCalculator),
+   * 지갑 반영도 서버가 비동기로 한다(GameRewardListener → users.point_balance).
+   * 즉 이 값은 표시용이자 낙관적 갱신용이고, 최종값은 프로필 재조회가 정한다.
+   */
+  pointsEarned: number
 }
 /** 그림으로 말해요 획 연산(명세 v0.2.20) — trim은 x=남길 점 수(펜 놓기 꼬리 삭제 동기화) */
 export interface DrawOp {

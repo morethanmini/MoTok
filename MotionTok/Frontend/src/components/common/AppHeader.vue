@@ -70,7 +70,7 @@ function toLogin() {
 const balance = computed(() => session.profile?.pointBalance ?? 0)
 const showCharge = ref(false)
 function onCharged(amount: number) {
-  if (session.profile) session.profile.pointBalance = balance.value + amount
+  session.addPoints(amount)
 }
 
 // 로그아웃 — 게스트/회원 공통(세션 정리 후 시작 화면으로)
