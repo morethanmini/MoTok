@@ -7,13 +7,14 @@
  * "저장하기"를 눌러 POST /shop/ai-items/{jobId}/save를 호출해야 지급된다.
  */
 import { computed, onUnmounted, onMounted, ref } from 'vue'
-import { shopApi, ApiError, type AiItemJobStatus, type ItemCategory } from '@/api'
+import { shopApi, usersApi, ApiError, type AiItemJobStatus, type ItemCategory } from '@/api'
 import AppPage from '@/components/common/AppPage.vue'
 import PixelCard from '@/components/common/PixelCard.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import { useToast } from '@/composables/useToast'
+import { useSessionStore } from '@/stores/session'
 import aiDrawingCat from '@/assets/ai/ai-drawing-cat.png'
 
 const POLL_INTERVAL_MS = 1500
@@ -21,8 +22,11 @@ const POLL_MAX_ATTEMPTS = 40 // 1.5s * 40 = 60초
 const POLL_MAX_CONSECUTIVE_FAILURES = 3
 /** 총 시도 횟수 = 최초 생성 1회 + 재시도 1회. 재시도는 첫 결과에서만 노출한다. */
 const MAX_ATTEMPTS = 2
+/** AI 아이템 생성 1회 결제 비용(포인트). 서버 app.shop.ai-item-cost와 같은 값이어야 한다. */
+const AI_ITEM_COST = 1500
 
 const { message: toast, flash } = useToast()
+const session = useSessionStore()
 
 const canvas = ref<HTMLCanvasElement>()
 const name = ref('')
@@ -50,6 +54,10 @@ const strokes: { x: number; y: number }[][] = []
 let current: { x: number; y: number }[] | null = null
 const failMessage = ref('')
 const currentJobId = ref<number | null>(null)
+/** 이번 결제 세션에서 최초로 생성된(포인트를 차감한) job의 id. currentJobId는 재생성 때마다
+ * 새 job으로 갱신되어 버리므로, 재생성 요청의 parentJobId로 쓸 값은 따로 보관해야 한다.
+ * 새 결제 세션 시작(generate) 때만 초기화하고, 재생성 중에는 절대 덮어쓰지 않는다. */
+const paidJobId = ref<number | null>(null)
 const attemptCount = ref(0)
 const saving = ref(false)
 
@@ -272,6 +280,7 @@ async function generate() {
   generatedResults.value = []
   selectedResultJobId.value = null
   pendingRetry.value = false // 새 결제 세션 시작 — 이 시점엔 항상 false이지만 안전망으로 명시
+  paidJobId.value = null // 새 결제 세션 시작 — 재생성 parentJobId 기준점을 초기화한다
   await generateAgain()
 }
 
@@ -302,17 +311,37 @@ function openGenerating() {
   currentJobId.value = null
 }
 
+/**
+ * paidJobId가 없으면(이번 세션 첫 요청) parentJobId 없이 보내 새 결제로 처리되고, 응답받은
+ * jobId를 paidJobId에 저장해 이후 재생성의 기준점으로 삼는다. paidJobId가 이미 있으면(재생성)
+ * 그 값을 parentJobId로 실어 보내고 paidJobId 자체는 갱신하지 않는다(최초 결제 job을 계속 가리켜야 함).
+ */
 async function startJob(sketchBase64: string) {
   try {
     const job = await shopApi.createAiItem({
       name: name.value,
       category: category.value,
       sketchBase64,
+      parentJobId: paidJobId.value ?? undefined,
     })
     currentJobId.value = job.jobId
+    if (paidJobId.value === null) paidJobId.value = job.jobId
     jobStatus.value = job.status
+    void syncPointBalance() // 최초 결제면 여기서 차감된다 — 헤더를 바로 맞춘다
     pollTimer = setTimeout(() => pollJob(job.jobId), POLL_INTERVAL_MS)
   } catch (e) {
+    // 포인트 부족·재생성 한도 초과는 "생성 시도" 자체가 아니라 요청이 거부된 것이라, 생성 모달을
+    // 닫고 토스트로 안내한다(그리기 화면에 머물러 있던 것처럼 보이게).
+    if (e instanceof ApiError && e.code === 'AI_ITEM_INSUFFICIENT_POINT') {
+      closeModal()
+      flash('포인트가 부족해요. 화면 상단의 포인트 충전에서 채워보세요.')
+      return
+    }
+    if (e instanceof ApiError && e.code === 'AI_ITEM_RETRY_LIMIT_EXCEEDED') {
+      closeModal()
+      flash('이미 다시 생성을 사용했어요.')
+      return
+    }
     failMessage.value = e instanceof ApiError ? e.message : '생성 요청에 실패했어요'
     phase.value = 'failed'
   }
@@ -326,7 +355,10 @@ async function startJob(sketchBase64: string) {
  */
 async function pollJob(jobId: number, attempt = 0, consecutiveFailures = 0) {
   if (attempt >= POLL_MAX_ATTEMPTS) {
-    failMessage.value = '생성이 오래 걸리고 있어요. 잠시 후 인벤토리를 확인해 주세요'
+    // 서버에 방치된 job 자동 정리 스케줄러(AiItemJobTimeoutSweeper)가 있어 결국 FAILED로
+    // 정리되고 환불된다 — 프론트가 포기하는 지금 시점엔 아직 서버가 처리 중일 수 있으므로
+    // "실패했다"가 아니라 "지연되고 있다"로 안내한다.
+    failMessage.value = '생성이 지연되고 있어요. 실패한 경우 포인트는 자동으로 돌려드리니, 잠시 후 인벤토리를 확인해 주세요.'
     phase.value = 'failed'
     return
   }
@@ -362,8 +394,12 @@ async function pollJob(jobId: number, attempt = 0, consecutiveFailures = 0) {
     return
   }
   if (status.status === 'FAILED') {
-    failMessage.value = status.errorMessage ?? '생성에 실패했어요'
+    // 서버가 FAILED 전환과 환불을 같은 트랜잭션에서 처리하므로(AiItemJobService.fail), 이 시점엔
+    // 이미 환불이 끝나 있다 — 어떤 사유든(워커 오류·타임아웃 정리) 환불 안내를 함께 보여준다.
+    const reason = status.errorMessage ?? '생성에 실패했어요'
+    failMessage.value = `${reason} 사용한 포인트는 자동으로 환불됐어요.`
     phase.value = 'failed'
+    void syncPointBalance() // 서버가 같은 트랜잭션에서 환불을 마친 뒤라 여기서 최신값이 맞다
     return
   }
 
@@ -383,6 +419,20 @@ async function save() {
     flash(e instanceof ApiError ? e.message : '저장에 실패했어요')
   } finally {
     saving.value = false
+  }
+}
+
+/**
+ * 헤더가 보는 세션 프로필 잔액을 서버 값으로 재동기화한다(ShopView.syncBalance와 같은 패턴).
+ * 최초 결제 차감 직후·환불(FAILED) 직후에 불러 새로고침 없이 헤더 포인트가 맞게 보이도록 한다.
+ * 실패해도 조용히 넘어간다 — 표시용이라 치명적이지 않고, 다음 페이지 진입 때 다시 맞춰진다.
+ */
+async function syncPointBalance() {
+  try {
+    const { pointBalance } = await usersApi.getPoints()
+    if (session.profile) session.profile.pointBalance = pointBalance
+  } catch {
+    /* 잔액 조회 실패 — 기존 표시 값 유지 */
   }
 }
 
@@ -513,8 +563,8 @@ function onBackdropClose() {
         <span class="point-confirm-coin">●</span>
         <p class="point-confirm-kicker">AI ITEM STUDIO</p>
         <h2 id="point-confirm-title">AI 제작권을 사용할까요?</h2>
-        <div class="point-ticket"><span>AI ITEM PASS</span><b>1,500 P</b><small>최대 2회 생성 · 최종 1개 선택</small></div>
-        <p>두 결과 중 마음에 드는 아이템 하나만 골라<br />인벤토리에 저장할 수 있어요.</p>
+        <div class="point-ticket"><span>AI ITEM PASS</span><b>{{ AI_ITEM_COST.toLocaleString() }} P</b><small>최대 2회 생성 · 최종 1개 선택</small></div>
+        <p>{{ AI_ITEM_COST.toLocaleString() }} 포인트로 최대 2번까지 생성해 볼 수 있어요.<br />두 결과 중 마음에 드는 아이템 하나만 골라 저장할 수 있어요.</p>
         <div class="clear-confirm-actions">
           <PixelButton @click="showPointConfirm = false">취소</PixelButton>
           <PixelButton variant="primary" @click="generate">생성하기</PixelButton>
