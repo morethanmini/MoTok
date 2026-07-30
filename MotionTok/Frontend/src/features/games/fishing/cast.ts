@@ -3,120 +3,183 @@
  *
  * 기획: "낚싯대를 뒤로 젖혔다가 앞으로 던지는 모션."
  *
- * ── 왜 이 형태인가 ──
- * "앞으로 던지기"는 카메라 축(z) 방향이라 2D에 거의 안 찍힌다. 릴 감기에서 겪은 투영 문제와
- * 같은 함정이다. 그래서 z를 쓰지 않고 화면에서 크게 움직이는 성분만으로 2단을 구성한다:
+ * ── 신호: 양손 손목의 중점 ──
+ * 양손으로 대를 쥐고 던지는 동작이므로 두 손이 함께 움직인다. 중점을 쓰면 노이즈가 단일
+ * 손목의 절반이고, "양손으로 쥐었는지"가 자동으로 검증된다(한 손을 놓치면 판정이 멈춘다).
  *
- *   1단 젖힘  — 손목이 어깨보다 위로 올라가 잠시 머문다
- *   2단 릴리즈 — 손목이 빠르게, 그리고 **충분한 거리를** 아래로 내려간다
+ * ── 파워: 최고 속도가 아니라 **낙하 거리** ──
+ * 이게 이 파일의 핵심 결정이고, 실측이 이전 설계를 뒤집었다(2026-07-30, 강 12회 / 약 9회).
  *
- * ── 2026-07-29 실기에서 고친 것 3개 ──
- * ① **최소 낙하 거리**: 속도 문턱(700px/s)만 걸었더니 80ms 창에서 56px만 움직여도 발사됐다.
- *    손을 어깨 근처에 두고 있으면 저절로 던져졌다. 거리 조건을 AND로 추가한다.
- * ② **조준이 손을 따라간다**: 조준을 젖힌 순간에 고정했더니, 손 드는 위치가 늘 몸 앞이라
- *    값이 거의 안 변해 "던지는 대로 안 던져지는 느낌"이 됐다. armed 동안 계속 갱신하되,
- *    내려꽂는 동안의 흔들림이 섞이지 않게 살짝 지연된 값을 쓴다(데모는 발사 순간 x를 그대로
- *    써서 조준이 아예 작동하지 않았다).
- * ③ **거리는 스윙 최고 속도로 정한다**: 젖힌 높이(파워 낮추려면 손을 내려야 하고 그게 발사
- *    동작이라 가까이 못 던짐)와 젖힌 시간(게이지를 읽어야 해서 체감 나쁨)을 거쳤다.
+ *   신호          강              약              겹침
+ *   최고 속도     ×6.49~12.13/s   ×3.68~7.53/s    있음  ← 이전 설계
+ *   상승 거리     ×0.70~1.34      ×0.34~0.77      있음
+ *   낙하 거리     ×0.97~1.28      ×0.52~0.73      없음(갭 33%)  ← 채택
  *
- *    처음에 속도 방식을 접은 이유는 "범위가 512~848(1.7배)뿐"이었는데, **그건 측정 오류였다.**
- *    문턱을 넘는 순간 발사하니 스윙의 **상승 구간**을 재고 있었고, 그래서 세게 던져도 약하게
- *    던져도 측정값이 문턱 근처로 눌렸다. 최고 속도는 그 뒤에 온다.
+ * 속도는 유저 의도를 **뒤집어 읽은 사례가 실제로 나왔다**: 강하게 던진 스윙이 ×6.49/s,
+ * 약하게 던진 스윙이 ×7.53/s로 찍혔다. 같은 두 스윙을 낙하 거리로 재면 ×0.97 / ×0.72로
+ * 정확히 갈린다.
  *
- *    그래서 문턱을 넘으면 곧바로 쏘지 않고 releasePeakMs 동안 스윙을 지켜본 뒤 **그 구간의
- *    최고 속도**로 거리를 정한다. 지연은 스윙 중이라 체감되지 않고, "손이 다 내려간 뒤 찌가
- *    날아간다"는 그림과도 맞는다. 미리보기 게이지는 없다 — 실제 던지기처럼 손끝으로 익힌다.
+ * 물리적으로 당연하다 — 속도는 미분값이라 지터를 증폭하고, "세게"를 스냅으로 내는지 스트로크
+ * 길이로 내는지가 사람마다·회차마다 다르다. 반면 낙하 거리는 팔로스루의 크기, 곧 던지는
+ * 커밋먼트를 직접 인코딩한다.
+ *
+ * ── 삭제한 것: 조준 잠금 단계 ──
+ * 이전 설계는 "손목을 어깨보다 위로 올려 180ms 유지(armed) → 어깨 아래로 내려꽂기"였다.
+ * 실제 캐스팅에는 유지 구간이 없고, 어깨선을 기준으로 삼으면 낮게 젖히는 사람이 던질 수
+ * 없다. 백스윙은 이제 "상승 거리가 문턱을 넘었다"는 조건 하나이고, 정점에서 멈출 필요가 없다.
+ *
+ * ── 문턱은 전부 어깨 너비 배수다 ──
+ * px 문턱은 카메라 거리에 흔들린다. `normalize.ts` 참고.
  */
 
 export interface CastConfig {
-  /** 손목이 어깨보다 이만큼(px) 위로 올라가야 젖힘으로 인정 */
-  raiseMarginPx: number
-  /**
-   * 젖힘을 푸는 문턱 — 어깨보다 이만큼 위까지 내려와야 idle로 돌아간다.
-   * raiseMarginPx와 같게 두면 경계에서 idle↔raising이 떨린다.
-   */
-  releaseMarginPx: number
-  /** 젖힘 자세를 이 시간(ms) 이상 유지해야 조준이 잠긴다 */
-  holdMs: number
-  /** 이 하향 속도(px/s)를 넘어야 릴리즈 — 거리 조건과 AND다 */
-  releaseVelPxS: number
-  /**
-   * 젖힘 최고점에서 이만큼(px) 내려와야 릴리즈. 속도만 보면 작은 흔들림에 발사된다
-   * (2026-07-29: 어깨 근처에 손을 두면 저절로 던져졌다).
-   */
-  minDropPx: number
-  /** 젖힘 후 이 시간(ms) 안에 던지지 않으면 조준을 다시 잠근다(갱신) */
-  timeoutMs: number
+  /** 백스윙으로 인정하는 최소 상승 (어깨너비 배수) */
+  riseGateSw: number
+  /** 포워드 스윙 시작으로 보는 하향 속도 (어깨너비/s) */
+  startVelSw: number
+  /** 발사로 인정하는 최소 낙하 (어깨너비 배수) — 이 값이 파워 0이다 */
+  dropMinSw: number
+  /** 파워 1.0에 해당하는 낙하 (어깨너비 배수) */
+  dropFullSw: number
+  /** 스윙을 지켜보는 상한(ms) — 이 시간이 지나면 무조건 판정한다 */
+  observeMs: number
+  /** 스윙이 끝났다고 보는 조건 ① 최고 속도의 이 비율 아래 */
+  endRatio: number
+  /** 스윙이 끝났다고 보는 조건 ② 하향 속도가 이 아래 (어깨너비/s) */
+  endVelSw: number
   /** 속도 계산 창(ms) */
   velWindowMs: number
   /** 조준 x를 몇 ms 전 값으로 쓸지 — 내려꽂는 동안의 흔들림 배제 */
   aimLagMs: number
+  /** 발사 후 재발사 금지(ms) — 손이 되돌아오는 반동을 두 번 세지 않게 */
+  cooldownMs: number
+  /** 상승·낙하를 재는 창(ms) */
+  spanWindowMs: number
   /**
-   * 문턱을 넘은 뒤 스윙 최고 속도를 찾는 관찰 시간(ms).
-   * 이 시간이 지나거나 속도가 최고치의 절반 아래로 떨어지면 발사한다.
+   * reset 직후 판정을 쉬는 시간(ms). 기준점 추적은 계속하되 발사·조준만 막는다.
+   *
+   * 페이즈가 바뀌는 순간 남아 있던 빠른 하향 동작이 곧바로 던짐으로 읽히는 걸 막는 용도다.
+   * RESULT 페이즈가 이미 1.8초라 체감 지연은 없다.
    */
-  releasePeakMs: number
-  /** 거리 1.0(가장 멀리)에 해당하는 최고 하향 속도(px/s) */
-  fullPowerVelPxS: number
+  settleMs: number
+  /**
+   * 백스윙이 최소한 이만큼(ms) 지속돼야 포워드 스윙으로 넘어간다.
+   *
+   * 조준과 스윙이 거의 동시에 일어나는 건 던짐이 아니라 문턱 경계의 잡음이다
+   * (실기 무효 1건이 이 경로였다: 상승 ×0.30 = 문턱 정확히 걸침, 낙하 ×0.05).
+   * 실측 성공 던짐 6회는 조준→스윙 간격이 전부 **1000ms 이상**이었으니 200ms는 5배 여유다.
+   * 100ms로 잡았다가 스펙에서 되돌렸다 — 3프레임짜리 잡음이 그대로 통과했다.
+   *
+   * 이전 설계의 `holdMs`(어깨 위에서 180ms 자세 유지)와 다르다 — 자세를 잡고 기다리라는
+   * 게 아니라, 백스윙이 존재했는지만 본다.
+   */
+  minBackMs: number
 }
 
 export const DEFAULT_CAST: CastConfig = {
-  raiseMarginPx: 30,
-  releaseMarginPx: 8,
-  holdMs: 180,
-  releaseVelPxS: 700,
-  // 화면 높이 480 기준 약 1/4. 이보다 작으면 "손을 툭 내리는" 동작과 구분되지 않는다
-  minDropPx: 110,
-  timeoutMs: 2500,
+  // 실측 약한 던짐의 상승 하한이 ×0.34, 팔을 내리는 동작이 ×0.16~0.43이었다.
+  // 0.3은 약한 던짐을 살리면서 "던지지 않고 팔만 내리는" 경로 대부분을 자른다.
+  riseGateSw: 0.3,
+  // 랩이 기록 문턱으로 쓴 250px/s를 실측 어깨너비(약 165px)로 나눈 값.
+  // 이 값으로 잰 데이터가 아래 dropMinSw·dropFullSw의 근거라 같은 값을 써야 한다.
+  startVelSw: 1.5,
+  // 약한 던짐 낙하 하한 ×0.52 아래. 문턱을 넘지 못하면 발사되지 않는다
+  dropMinSw: 0.45,
+  // 강한 던짐 낙하 상한 ×1.28. 이 이상은 전부 파워 1.0
+  dropFullSw: 1.3,
+  observeMs: 500,
+  endRatio: 0.4,
+  // 랩의 종료 하한 120px/s ÷ 165px
+  endVelSw: 0.73,
   velWindowMs: 80,
   aimLagMs: 150,
-  // 30fps에서 약 4프레임 — 스윙의 피크를 담기에 충분하고 체감 지연은 없다
-  releasePeakMs: 130,
-  // 문턱 700에서 시작해 1900이면 최대. 실측 캐주얼 스윙이 848이었으니 세게 던지면 닿는다
-  fullPowerVelPxS: 1900,
+  cooldownMs: 400,
+  spanWindowMs: 1500,
+  settleMs: 700,
+  minBackMs: 200,
 }
 
-export type CastPhase = 'idle' | 'raising' | 'armed' | 'releasing'
+/** idle: 대기 / back: 백스윙 인정(조준 중) / forward: 스윙 관찰 중 */
+export type CastPhase = 'idle' | 'back' | 'forward'
 
 export interface CastSample {
   phase: CastPhase
-  /** armed 동안의 조준 x(캔버스 px, 손을 따라 움직인다). 그 외 null */
+  /** back 동안의 조준 x(캔버스 px, 손을 따라간다). 그 외 null */
   aimX: number | null
-  /** 이 프레임에 발사됐으면 거리 0~1(가까이~멀리), 아니면 null */
+  /** 이 프레임에 발사됐으면 파워 0~1(가까이~멀리), 아니면 null */
   fired: number | null
   /** 발사 시 쓰인 조준 x — fired가 null이 아닐 때만 유효 */
   firedAimX: number
-  /** 현재 하향 속도(px/s) — 랩 표시용 */
-  downVelPxS: number
-  /** 젖힘 최고점에서 내려온 거리(px) — 랩 표시용 */
-  dropPx: number
+  /** 상승 거리(어깨너비 배수) — 랩·연출 표시용 */
+  riseSw: number
+  /** 낙하 거리(어깨너비 배수) — 파워의 원본값 */
+  dropSw: number
+  /** 하향 속도(어깨너비/s) — 표시용. 판정에는 스윙 시작·종료에만 쓴다 */
+  velSw: number
 }
 
 export interface Cast {
   /**
-   * @param wristY 손목 y (캔버스 px, 아래로 갈수록 증가)
-   * @param wristX 손목 x (캔버스 px)
-   * @param shoulderY 같은 쪽 어깨 y (캔버스 px)
+   * @param midX 양손 손목 중점 x (캔버스 px)
+   * @param midY 양손 손목 중점 y (캔버스 px, 아래로 갈수록 증가)
+   * @param sw   어깨 너비(px) — 0이면 판정하지 않는다
    */
-  feed(wristX: number, wristY: number, shoulderY: number, now: number): CastSample
+  feed(midX: number, midY: number, sw: number, now: number): CastSample
   reset(): void
+}
+
+const IDLE_SAMPLE: CastSample = {
+  phase: 'idle',
+  aimX: null,
+  fired: null,
+  firedAimX: 0,
+  riseSw: 0,
+  dropSw: 0,
+  velSw: 0,
 }
 
 export function createCast(config: CastConfig = DEFAULT_CAST): Cast {
   let phase: CastPhase = 'idle'
-  let raisedAt = 0
-  let armedAt = 0
-  /** 젖힘 구간의 최고점(y 최솟값) — 낙하 거리의 기준 */
-  let peakY = Infinity
-  /** releasing 진입 시각 */
-  let releaseAt = 0
-  /** releasing 동안 관측한 최고 하향 속도 — 거리의 근거 */
-  let peakVel = 0
-  /** releasing 진입 시점에 잠근 조준 x — 스윙 중 흔들림이 섞이지 않게 미리 확정한다 */
-  let lockedAimX = 0
   let hist: { x: number; y: number; t: number }[] = []
+  /*
+   * 백스윙 기준점 두 개. **창 안의 min/max로 계산하면 안 된다** — 내려가는 동안 최저점이
+   * 함께 갱신돼서 "순수 하강"이 상승으로 읽히고, 팔을 내릴 때마다 발사된다(스펙이 잡은 버그).
+   * 순서를 가진 상태로 들고 있어야 "올렸다가 내렸다"와 "그냥 내렸다"가 구분된다.
+   */
+  /**
+   * 백스윙 시작 높이 = 가장 최근에 손이 도달한 최저 위치(y 최댓값).
+   *
+   * **reset이 이 값을 버리면 안 된다.** 물고기를 잡은 직후 손은 릴을 감던 높이(어깨 라인)에
+   * 있는데, 거기서 기준점을 새로 잡으면 또 riseGateSw만큼 더 올려야 조준이 걸린다 —
+   * 실기에서 "잡은 뒤 다시 던질 때 어깨 아래로 내렸다 올려야 작동한다"로 나타났다(2026-07-30).
+   *
+   * 기준점은 "손이 쉬는 높이"라는 자세 값이라 페이즈가 바뀌어도 유지되는 게 맞다. 그러면
+   * 잡은 직후 손이 어깨 라인에 있는 것 자체가 이미 충분한 상승으로 읽혀 곧바로 조준된다.
+   */
+  let restY = 0
+  /** 백스윙 최고점(y 최솟값) — 낙하의 기준점 */
+  let peakY = 0
+  let primed = false
+  /** 정착 구간 종료 시각 — reset 후 첫 프레임에 정해진다 */
+  let settleUntil = 0
+  /**
+   * reset 직후인지 — 다음 feed에서 정착 구간을 시작한다.
+   * 처음 만들었을 때도 true다. 생성 직후와 reset 직후가 다르게 동작할 이유가 없다.
+   */
+  let settlePending = true
+  /** back 진입 시각 — minBackMs를 재는 기준 */
+  let backAt = 0
+  /** forward 진입 시각 */
+  let releaseAt = 0
+  /** forward 동안의 최고 하향 속도(px/s) — 스윙 종료 판정에만 쓴다 */
+  let peakVel = 0
+  /** 낙하의 기준점 = 백스윙 최고점(y 최솟값) */
+  let dropFrom = 0
+  /** forward 진입 시점에 잠근 조준 x */
+  let lockedAimX = 0
+  let cooldownUntil = 0
 
+  /** 창 양 끝의 기울기로 낸 하향 속도(px/s). 양수 = 아래로 */
   function downVel(now: number): number {
     const w = hist.filter((s) => now - s.t <= config.velWindowMs)
     if (w.length < 2) return 0
@@ -137,83 +200,107 @@ export function createCast(config: CastConfig = DEFAULT_CAST): Cast {
     return best?.x ?? 0
   }
 
-  function toIdle() {
-    phase = 'idle'
-    peakY = Infinity
-  }
-
   return {
     reset() {
-      toIdle()
+      phase = 'idle'
       hist = []
+      peakVel = 0
+      cooldownUntil = 0
+      settlePending = true
+      /*
+       * restY는 유지하고 peakY만 되돌린다.
+       *
+       * peakY까지 남기면 이전 백스윙의 최고점에서 낙하를 재게 되어 파워가 항상 1.0이 된다.
+       * restY로 되돌리면 "아직 백스윙 없음" 상태가 되고, 손이 이미 올라가 있으면 첫 프레임에
+       * peakY가 그 위치로 내려가면서 정상적인 상승 거리가 잡힌다.
+       */
+      peakY = restY
     },
 
-    feed(wristX, wristY, shoulderY, now) {
-      hist.push({ x: wristX, y: wristY, t: now })
-      while (hist.length && now - hist[0]!.t > Math.max(config.velWindowMs * 3, config.aimLagMs * 2))
-        hist.shift()
+    feed(midX, midY, sw, now) {
+      hist.push({ x: midX, y: midY, t: now })
+      while (hist.length && now - hist[0]!.t > config.spanWindowMs) hist.shift()
 
-      const rise = shoulderY - wristY
+      if (!primed) {
+        restY = midY
+        peakY = midY
+        primed = true
+      }
+      if (settlePending) {
+        settleUntil = now + config.settleMs
+        settlePending = false
+      }
+
+      // 어깨를 못 봤으면 문턱을 계산할 수 없다 — 신호만 쌓고 판정은 건너뛴다
+      if (!(sw > 0)) return { ...IDLE_SAMPLE, phase }
+
+      const settling = now < settleUntil
       const vel = downVel(now)
+      const velSw = vel / sw
+
       let fired: number | null = null
       let firedAimX = 0
-
-      // 히스테리시스 — 올라갈 때와 내려올 때 문턱을 다르게 둬 경계 떨림을 막는다
-      const raisedEnough = rise >= config.raiseMarginPx
-      const stillUp = rise >= config.releaseMarginPx
-
-      if (phase !== 'idle' && wristY < peakY) peakY = wristY
-      const drop = phase === 'idle' ? 0 : wristY - peakY
+      let dropSw = 0
 
       switch (phase) {
         case 'idle':
-          if (raisedEnough) {
-            phase = 'raising'
-            raisedAt = now
-            peakY = wristY
+          if (midY >= restY) {
+            // 새 최저점 — 백스윙 기준을 여기로 옮긴다. 순수 하강은 여기만 반복하므로
+            // rise가 0에 머물고 절대 게이트를 넘지 못한다
+            restY = midY
+            peakY = midY
+          } else if (midY < peakY) {
+            peakY = midY
+          }
+          // 백스윙 게이트 — 어깨선 기준은 없다. 올린 거리 하나만 본다
+          if (
+            !settling &&
+            (restY - peakY) / sw >= config.riseGateSw &&
+            now >= cooldownUntil
+          ) {
+            phase = 'back'
+            backAt = now
           }
           break
 
-        case 'raising':
-          if (!stillUp) toIdle()
-          else if (now - raisedAt >= config.holdMs) {
-            phase = 'armed'
-            armedAt = now
-          }
-          break
-
-        case 'armed':
-          // 속도 AND 거리 — 둘 다 넘으면 스윙 관찰(releasing)로 넘어간다.
-          // 여기서 바로 쏘면 스윙의 상승 구간 속도를 재게 되어 세기 구분이 사라진다.
-          if (vel >= config.releaseVelPxS && drop >= config.minDropPx) {
-            phase = 'releasing'
+        case 'back':
+          if (midY < peakY) peakY = midY
+          // 백스윙이 존재했어야 한다 — 조준과 스윙이 같은 프레임이면 잡음이다
+          if (velSw >= config.startVelSw && now - backAt >= config.minBackMs) {
+            phase = 'forward'
             releaseAt = now
             peakVel = vel
+            // 낙하는 백스윙 최고점부터 잰다
+            dropFrom = peakY
+            // 조준은 내려꽂기 직전 위치로 잠근다 — 스윙 중 흔들림이 섞이지 않게
             lockedAimX = laggedX(now)
-          } else if (!stillUp && vel < config.releaseVelPxS * 0.5) {
-            // 손을 **천천히** 내려 어깨 아래로 갔다 — 던진 게 아니라 그만둔 것.
-            //
-            // 속도 조건이 붙는 이유: 낮게 젖히면(어깨 위 35px) 필요 낙하 거리(110px)를 채우기
-            // 전에 손이 어깨선을 지나므로, 속도를 안 보면 스윙 도중에 취소가 먼저 발동해
-            // 영원히 발사되지 않는다. 스윙이 끝나 속도가 떨어지면 여기서 정리된다.
-            toIdle()
-          } else if (now - armedAt > config.timeoutMs) {
-            // 낙하 기준점만 현재 위치로 당긴다 — 손을 든 채 오래 조준해도 이전 최고점 때문에
-            // 낙하 거리가 미리 채워져 있어 오발하는 걸 막는다. 파워(차징)는 유지한다.
-            armedAt = now
-            peakY = wristY
+          } else if (midY >= restY) {
+            // 던지지 않고 천천히 내렸다 — 취소. 기준을 여기로 옮긴다
+            phase = 'idle'
+            restY = midY
+            peakY = midY
           }
           break
 
-        case 'releasing': {
-          // 스윙이 끝날 때까지 최고 속도를 갱신한다 — 이게 던지는 세기다
+        case 'forward': {
           if (vel > peakVel) peakVel = vel
-          const decayed = vel < peakVel * 0.5
-          if (now - releaseAt >= config.releasePeakMs || decayed) {
-            const span = config.fullPowerVelPxS - config.releaseVelPxS
-            fired = Math.min(1, Math.max(0, (peakVel - config.releaseVelPxS) / span))
-            firedAimX = lockedAimX
-            toIdle()
+          dropSw = (midY - dropFrom) / sw
+          const ended =
+            now - releaseAt >= config.observeMs ||
+            vel < peakVel * config.endRatio ||
+            velSw < config.endVelSw
+          if (ended) {
+            // 낙하가 문턱을 못 넘으면 던진 게 아니다 — 팔을 툭 내린 경로가 여기서 걸린다
+            if (dropSw >= config.dropMinSw) {
+              const denom = config.dropFullSw - config.dropMinSw
+              fired = Math.min(1, Math.max(0, (dropSw - config.dropMinSw) / denom))
+              firedAimX = lockedAimX
+            }
+            phase = 'idle'
+            // 다음 백스윙은 지금 위치에서 새로 잰다 — 이번 낙하가 상승으로 새지 않게
+            restY = midY
+            peakY = midY
+            cooldownUntil = now + config.cooldownMs
           }
           break
         }
@@ -221,11 +308,12 @@ export function createCast(config: CastConfig = DEFAULT_CAST): Cast {
 
       return {
         phase,
-        aimX: phase === 'armed' ? laggedX(now) : null,
+        aimX: phase === 'back' ? laggedX(now) : null,
         fired,
         firedAimX,
-        downVelPxS: vel,
-        dropPx: drop,
+        riseSw: (restY - peakY) / sw,
+        dropSw,
+        velSw,
       }
     },
   }

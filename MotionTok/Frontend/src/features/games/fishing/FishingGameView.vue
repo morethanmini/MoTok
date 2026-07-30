@@ -7,9 +7,14 @@
  * 없어서였다(2026-07-29 실기 지적) — 그 사슬을 붙인다.
  *
  * 페이즈별로 활성 판정이 하나뿐이라 서로 오발하지 않는다:
- *   IDLE  → 캐스팅(cast.ts)
- *   BITE  → 훅킹(hook.ts)
- *   FIGHT → 펌핑(pump.ts) → 힘겨루기(fight.ts)
+ *   IDLE  → 캐스팅(cast.ts)   — 양손 중점
+ *   BITE  → 훅킹(hook.ts)     — 양손 중점
+ *   FIGHT → 펌핑(pump.ts)     — 오른손 손목 y → 힘겨루기(fight.ts)
+ *
+ * 신호가 두 종류인 이유는 자세가 다르기 때문이다. 던지고 챔질할 때는 양손으로 대를 쥐고 있고,
+ * 물고기가 걸린 뒤에는 한 손으로 대를 잡고 다른 손으로 릴을 돌린다.
+ *
+ * 모든 문턱은 어깨 너비 배수다(`normalize.ts`) — px 문턱은 카메라 거리에 흔들린다.
  */
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import {
@@ -21,42 +26,47 @@ import { createCast, DEFAULT_CAST } from './cast'
 import { createHook, DEFAULT_HOOK } from './hook'
 import { createPump, DEFAULT_PUMP } from './pump'
 import { createLoop, DEFAULT_LOOP, type LoopState } from './loop'
-
-const WRIST = { left: 15, right: 16 } as const
-const SHOULDER = { left: 11, right: 12 } as const
-const VIS_MIN = 0.5
+import { createNormalizer, SHOULDER, VIS_MIN, WRIST } from './normalize'
 
 const W = DEFAULT_LOOP.width
 const H = DEFAULT_LOOP.height
 const WATER_Y = DEFAULT_LOOP.waterY
 
-const handSide = ref<'right' | 'left'>('right')
+/**
+ * 크랭크 손 — 고정이다.
+ *
+ * "움직임이 큰 쪽을 자동 선택"은 실측에서 3/3 실패했다(2026-07-30): 대를 잡은 손도 함께
+ * 움직이고(197~212px), 왼손으로 돌린 세션에서는 반대 손이 오히려 더 움직였다. 게다가
+ * 오른손 크랭크가 지속 속도 1.24~1.49/s인데 왼손은 0.55~0.88/s로 절반 이하였다.
+ */
+const crankSide = ref<'right' | 'left'>('right')
 const pose = usePoseLandmarker()
 const videoRef = ref<HTMLVideoElement>()
 const canvasRef = ref<HTMLCanvasElement>()
 const camError = ref<string | null>(null)
 const loadProgress = ref(0)
 
+// 문턱은 전부 실측으로 확정한 값이다(2026-07-30) — 화면에서 덮어쓸 이유가 없다
 const castCfg = reactive({ ...DEFAULT_CAST })
 const hookCfg = reactive({ ...DEFAULT_HOOK })
-/**
- * 진폭 문턱을 90 → 30으로 낮춘다. DEFAULT_PUMP의 90은 **손목 y** 진폭(실측 191~358px)에
- * 맞춘 값이고, 여기서 먹이는 건 양손 사이 거리다. 원을 그리면 거리 변화가 그보다 작다.
- * 랩은 y 기반 비교를 계속하므로 DEFAULT_PUMP 자체는 그대로 둔다.
- */
-const pumpCfg = reactive({ ...DEFAULT_PUMP, minAmpPx: 30 })
+const pumpCfg = reactive({ ...DEFAULT_PUMP })
 const cast = createCast(castCfg)
 const hook = createHook(hookCfg)
 const pump = createPump(pumpCfg)
 const loop = createLoop(DEFAULT_LOOP, 1)
+/** 어깨 너비 런닝 중앙값 — 모든 문턱의 분모 */
+const norm = createNormalizer()
 
 /** 렌더·표시용 스냅샷 — tick 후 매 프레임 갱신 */
 const st = ref<LoopState>(loop.state())
 /** 조준 상태 — IDLE에서 조준선에 쓴다. 조준은 좌우만(거리 제어 없음) */
 const aim = reactive({ locked: false, x: 0 })
 const reelRate = ref(0)
-/** 손목 화면 좌표 — 캠 오버레이 마커 */
-let wrist: { x: number; y: number } | null = null
+/**
+ * 지금 판정에 쓰이는 점의 화면 좌표 — 캠 오버레이 마커.
+ * IDLE·BITE는 양손 중점, FIGHTING은 크랭크 손 손목이다.
+ */
+let marker: { x: number; y: number } | null = null
 /** 물보라·이펙트 */
 let splashes: { x: number; y: number; r: number; life: number }[] = []
 /** 마지막 페이즈 — 전환 시점에 판정기를 리셋하기 위한 비교값 */
@@ -67,8 +77,8 @@ const hud = computed(() => {
   switch (s.phase) {
     case 'idle':
       return aim.locked
-        ? '조준 잠김 — 손을 빠르게 내려꽂아 던지세요'
-        : '손목을 어깨보다 위로 올려 조준하세요'
+        ? '조준 중 — 그대로 앞으로 던지세요'
+        : '양손으로 낚싯대를 쥐고 뒤로 젖히세요'
     case 'casting':
       return '찌가 날아갑니다…'
     case 'waiting':
@@ -94,60 +104,249 @@ let stream: MediaStream | null = null
 let rafId = 0
 let lastT = 0
 
+/* ────────────────────────── 실기 로그 ──────────────────────────
+ *
+ * 문턱을 랩에서 확정했어도 **게임 루프에 붙인 뒤가 다르다** — 페이즈 전환, 판정기 리셋,
+ * 실제 자세가 섞이기 때문이다. 그래서 판정에 쓰인 숫자를 그대로 남긴다.
+ *
+ * 특히 두 종류를 놓치지 않는 게 목적이다:
+ *  ① **발사되지 않은 던짐** — 낙하가 문턱에 얼마나 못 미쳤는지. "안 던져진다"의 원인은
+ *     이것 말고는 알 방법이 없다.
+ *  ② **챔질 실패 시 관측된 최대값** — 훅킹 문턱은 미실측이라, 실패한 시도의 상향 속도와
+ *     상승 거리를 봐야 문턱을 어느 쪽으로 옮길지 정할 수 있다.
+ */
+type LogTag = 'cast' | 'void' | 'aim' | 'land' | 'bite' | 'hook' | 'fight' | 'sys'
+interface LogEntry {
+  sec: string
+  tag: LogTag
+  text: string
+}
+const LOG_MAX = 300
+const logs = ref<LogEntry[]>([])
+let t0 = performance.now()
+
+function log(tag: LogTag, text: string) {
+  const sec = ((performance.now() - t0) / 1000).toFixed(1)
+  // 최신이 위 — 테스트 중에는 방금 한 동작을 봐야 한다
+  logs.value = [{ sec, tag, text }, ...logs.value].slice(0, LOG_MAX)
+}
+
+const stats = reactive({
+  /** 발사된 파워들 */
+  powers: [] as number[],
+  /** 스윙은 했지만 낙하 부족으로 무효가 된 횟수 */
+  voids: 0,
+  /** 조준했다가 던지지 않고 내린 횟수 */
+  cancels: 0,
+  hookTry: 0,
+  hookOk: 0,
+  poseFrames: 0,
+  /** 양손(또는 크랭크 손)을 놓친 프레임 */
+  lostFrames: 0,
+  swMin: 0,
+  swMax: 0,
+})
+/** 힘겨루기 결과 — 어종표 재보정의 입력이다 */
+const results: {
+  name: string
+  outcome: string
+  sec: number
+  req: number
+  maxRate: number
+  sustained: number
+}[] = []
+
+/** 캐스팅 판정 추적 — 무효 던짐을 잡기 위해 직전 페이즈와 마지막 낙하를 들고 있는다 */
+let prevCastPhase: 'idle' | 'back' | 'forward' = 'idle'
+let lastDropSw = 0
+let lastRiseSw = 0
+/** 마지막 발사 파워 — 착수 y와 함께 찍어 거리 매핑을 확인한다 */
+let lastPower = 0
+/** BITE 동안 관측한 최대 상향 속도·상승 거리 */
+const hookPeak = { vel: 0, rise: 0 }
+/**
+ * 힘겨루기 진행 중 누적.
+ *
+ * `firstRateT`는 rate가 처음 0을 벗어난 시각이다 — **pump 워밍업 + 사람 반응 시간**이
+ * 여기서 직접 측정된다. 이 값이 유예(2초)를 넘으면 손쓸 수 없이 도망가는 구간이 있다는 뜻이고,
+ * 2026-07-30 실기에서 멸치 3마리를 그렇게 잃었다(`관측최대=0.00`).
+ */
+const fightRun = { startT: 0, name: '', req: 0, maxRate: 0, firstRateT: 0 }
+
+function clearLog() {
+  logs.value = []
+  stats.powers = []
+  Object.assign(stats, {
+    voids: 0,
+    cancels: 0,
+    hookTry: 0,
+    hookOk: 0,
+    poseFrames: 0,
+    lostFrames: 0,
+    swMin: 0,
+    swMax: 0,
+  })
+  results.length = 0
+  t0 = performance.now()
+  log('sys', '로그 초기화')
+}
+
+const n2 = (v: number) => v.toFixed(2)
+
+function logText(): string {
+  const p = stats.powers
+  const lostPct = stats.poseFrames
+    ? Math.round((stats.lostFrames / stats.poseFrames) * 100)
+    : 0
+  const head = [
+    `[낚시게임 실기 로그] ${((performance.now() - t0) / 1000).toFixed(0)}초 · 크랭크손=${crankSide.value === 'right' ? '오른손' : '왼손'}`,
+    `어깨너비: 중앙값=${Math.round(norm.sw())}px (관측 ${Math.round(stats.swMin)}~${Math.round(stats.swMax)}) · 랜드마크 손실=${lostPct}% (${stats.lostFrames}/${stats.poseFrames}f)`,
+    `던짐: ${p.length}회 파워=[${p.map((v) => n2(v)).join(' ')}]${p.length ? ` 최소=${n2(Math.min(...p))} 최대=${n2(Math.max(...p))}` : ''}`,
+    `무효 던짐(낙하 부족)=${stats.voids}회 · 조준 취소=${stats.cancels}회`,
+    `챔질: ${stats.hookOk}/${stats.hookTry} 성공`,
+    `힘겨루기: ${results.length}건`,
+    ...results.map(
+      (r) =>
+        `  ${r.name} ${r.outcome} ${r.sec.toFixed(1)}s 요구=${n2(r.req)} 관측최대=${n2(r.maxRate)} 지속=${n2(r.sustained)}`,
+    ),
+    `설정: 낙하 ${DEFAULT_CAST.dropMinSw}~${DEFAULT_CAST.dropFullSw} 백스윙게이트=${DEFAULT_CAST.riseGateSw} 정착=${DEFAULT_CAST.settleMs}ms 최소백스윙=${DEFAULT_CAST.minBackMs}ms 훅킹 ${DEFAULT_HOOK.upVelSw}/s·${DEFAULT_HOOK.minRiseSw} 릴진폭=${DEFAULT_PUMP.minAmpSw}`,
+    '',
+    '── 이벤트 (최신순) ──',
+  ]
+  return [...head, ...logs.value.map((e) => `${e.sec}s [${e.tag}] ${e.text}`)].join('\n')
+}
+
+const copied = ref(false)
+const showRaw = ref(false)
+const rawText = ref('')
+async function copyLog() {
+  try {
+    await navigator.clipboard.writeText(logText())
+  } catch {
+    rawText.value = logText()
+    showRaw.value = true
+    return
+  }
+  copied.value = true
+  window.setTimeout(() => (copied.value = false), 1500)
+}
+function toggleRaw() {
+  rawText.value = logText()
+  showRaw.value = !showRaw.value
+}
+
 function onPose(result: PoseLandmarkerResult) {
   const lm = result.landmarks?.[0]
   const now = performance.now()
   const phase = loop.state().phase
+  stats.poseFrames++
 
-  /*
-   * 릴 감기는 **양손 사이 거리**의 왕복으로 잰다 (2026-07-29 실측으로 y에서 교체).
-   *
-   * 손으로 그린 원은 화면에 가로로 납작하게 찍힌다 — 랩이 실측한 궤도 종횡비가 0.55다.
-   * 그래서 y만 보는 판정은 실제 크랭크 동작의 y 진폭이 문턱(90px)을 못 넘어 **한 번도
-   * 안 세어졌다**(같은 동작에 y 0.00/s vs 양손 거리 0.96/s). y로 재려면 팔 전체를 415px
-   * 흔들어야 했고 그게 지속 속도 0.8/s 상한과 "팔 아프다"의 원인이었다.
-   *
-   * 2D 거리는 x 성분을 포함하므로 납작한 원도 잡는다. 그리고 화면 안내("빙글빙글 돌려요")와
-   * 실제 동작이 처음으로 일치한다 — 지금까지는 안내는 원인데 판정은 위아래였다.
-   *
-   * 두 신호의 rate는 같은 진동 주파수를 읽으므로 속도 자체는 차이가 없다. 이득은
-   * "잡을 수 있는 동작의 범위"다.
-   *
-   * 단일 손목 판정보다 **앞에** 둔다 — 주 손목을 놓친 프레임에도 rate를 0으로 내려야 한다.
-   */
-  if (phase === 'fighting') {
-    const wl = lm?.[WRIST.left]
-    const wr = lm?.[WRIST.right]
-    if (wl && wr && (wl.visibility ?? 0) >= VIS_MIN && (wr.visibility ?? 0) >= VIS_MIN) {
-      // 거울 반전은 차이값에서 상쇄되므로 raw x를 그대로 쓴다
-      const dist = Math.hypot((wr.x - wl.x) * W, (wr.y - wl.y) * H)
-      reelRate.value = pump.feed(dist, now).rate
-    } else {
-      // 한 손이라도 놓치면 감기를 멈춘다. feed를 건너뛰면 마지막 rate가 남아서
-      // 손을 내려도 게이지가 계속 찬다.
-      reelRate.value = 0
-    }
+  // ── 분모 먼저 ── 어깨를 못 본 프레임에는 갱신하지 않고 직전 중앙값을 그대로 쓴다
+  const sl = lm?.[SHOULDER.left]
+  const sr = lm?.[SHOULDER.right]
+  if (sl && sr && (sl.visibility ?? 0) >= VIS_MIN && (sr.visibility ?? 0) >= VIS_MIN) {
+    const width = Math.hypot((sr.x - sl.x) * W, (sr.y - sl.y) * H)
+    norm.push(width)
+    stats.swMin = stats.swMin === 0 ? width : Math.min(stats.swMin, width)
+    stats.swMax = Math.max(stats.swMax, width)
   }
+  const sw = norm.ready() ? norm.sw() : 0
 
-  const w = lm?.[WRIST[handSide.value]]
-  const sh = lm?.[SHOULDER[handSide.value]]
-  if (!w || (w.visibility ?? 0) < VIS_MIN) {
-    wrist = null
+  const wl = lm?.[WRIST.left]
+  const wr = lm?.[WRIST.right]
+  const leftOk = !!wl && (wl.visibility ?? 0) >= VIS_MIN
+  const rightOk = !!wr && (wr.visibility ?? 0) >= VIS_MIN
+
+  if (phase === 'fighting') {
+    /*
+     * 릴 감기 — **크랭크 손 손목 y**의 왕복.
+     *
+     * 한 손은 대를 잡고 다른 손으로 원을 그리는 자세다. 화면에 찍히는 궤도는 세로로 긴
+     * 타원이라(오른손 종횡비 실측 0.21~0.23) x는 y의 1/5뿐이고, 섞으면 신호 대 잡음만
+     * 나빠진다. 그래서 y 하나만 본다.
+     *
+     * 이전에 이 방식을 버렸던 이유는 진폭 문턱 90px을 못 넘어서였는데, 실측하니 진폭이
+     * 어깨너비 ×1.68~1.74(=278~361px)로 문턱을 3배 넘었다 — 신호가 아니라 문턱이 틀렸다.
+     */
+    const cw = crankSide.value === 'right' ? wr : wl
+    const ok = crankSide.value === 'right' ? rightOk : leftOk
+    if (cw && ok) {
+      const y = cw.y * H
+      marker = { x: (1 - cw.x) * W, y }
+      reelRate.value = pump.feed(y, sw, now).rate
+      if (reelRate.value > fightRun.maxRate) fightRun.maxRate = reelRate.value
+      if (reelRate.value > 0 && fightRun.firstRateT === 0) fightRun.firstRateT = now
+    } else {
+      // 손을 놓치면 감기를 멈춘다. feed를 건너뛰면 마지막 rate가 남아 손을 내려도 게이지가 찬다
+      marker = null
+      reelRate.value = 0
+      stats.lostFrames++
+    }
     return
   }
-  const x = (1 - w.x) * W
-  const y = w.y * H
-  wrist = { x, y }
+
+  /*
+   * 캐스팅·훅킹 — **양손 손목의 중점**.
+   *
+   * 양손으로 대를 쥐고 던지는 동작이라 두 손이 함께 움직인다. 중점을 쓰면 노이즈가 단일
+   * 손목의 절반이고, 한 손이라도 놓치면 판정이 멈춰 "양손으로 쥐었는지"가 자동 검증된다.
+   */
+  if (!wl || !wr || !leftOk || !rightOk) {
+    marker = null
+    stats.lostFrames++
+    return
+  }
+  const midX = ((1 - wl.x) * W + (1 - wr.x) * W) / 2
+  const midY = (wl.y * H + wr.y * H) / 2
+  marker = { x: midX, y: midY }
 
   // 페이즈별로 하나만 — 서로 오발하지 않는다
-  if (phase === 'idle' && sh) {
-    const c = cast.feed(x, y, sh.y * H, now)
-    aim.locked = c.phase === 'armed'
+  if (phase === 'idle') {
+    const c = cast.feed(midX, midY, sw, now)
+    aim.locked = c.phase === 'back'
     if (c.aimX !== null) aim.x = c.aimX
+    if (c.dropSw > 0) lastDropSw = c.dropSw
+    if (c.riseSw > 0) lastRiseSw = c.riseSw
+
+    if (c.phase !== prevCastPhase) {
+      if (c.phase === 'back') log('aim', `조준 시작 (상승 ×${n2(c.riseSw)})`)
+      if (prevCastPhase === 'back' && c.phase === 'idle')
+        // 스윙 없이 back → idle = 천천히 내려서 취소된 것
+        { stats.cancels++; log('aim', '조준 취소 — 던지지 않고 내렸다') }
+      if (c.phase === 'forward') log('cast', `스윙 시작 (상승 ×${n2(c.riseSw)})`)
+      prevCastPhase = c.phase
+    }
+
     // 조준은 발사 시점에 판정기가 확정한 값을 쓴다(내려꽂는 동안의 흔들림 배제)
-    if (c.fired !== null) loop.cast(c.firedAimX, c.fired)
+    if (c.fired !== null) {
+      lastPower = c.fired
+      stats.powers.push(c.fired)
+      log(
+        'cast',
+        `던짐 파워=${n2(c.fired)} 낙하=×${n2(lastDropSw)} 상승=×${n2(lastRiseSw)} 조준x=${Math.round(c.firedAimX)} sw=${Math.round(sw)}px`,
+      )
+      loop.cast(c.firedAimX, c.fired)
+      lastDropSw = 0
+    } else if (prevCastPhase === 'idle' && lastDropSw > 0) {
+      /*
+       * 스윙은 있었는데 발사가 없었다 = 낙하가 문턱 미달. "안 던져진다"의 유일한 단서다.
+       * forward에서 idle로 떨어진 다음 프레임에 잡힌다(위에서 prevCastPhase가 갱신된 뒤).
+       */
+      stats.voids++
+      log(
+        'void',
+        `무효 — 낙하 ×${n2(lastDropSw)} < 문턱 ×${DEFAULT_CAST.dropMinSw} (상승 ×${n2(lastRiseSw)})`,
+      )
+      lastDropSw = 0
+    }
   } else if (phase === 'bite') {
-    if (hook.feed(y, now).fired) loop.hook()
+    const h = hook.feed(midY, sw, now)
+    if (h.upVelSw > hookPeak.vel) hookPeak.vel = h.upVelSw
+    if (h.riseSw > hookPeak.rise) hookPeak.rise = h.riseSw
+    if (h.fired) {
+      log('hook', `챔질 성공 — 상향 ×${n2(h.upVelSw)}/s 상승 ×${n2(h.riseSw)}`)
+      loop.hook()
+    }
   }
 }
 
@@ -166,14 +365,65 @@ function frame(now: number) {
 
     // 페이즈 전환 처리 — 판정기를 초기화해 이전 동작이 새 페이즈로 새지 않게 한다
     if (s.phase !== prevPhase) {
-      if (s.phase === 'waiting') spawnSplash(s.bobber.x, s.bobber.y)
-      if (s.phase === 'bite') hook.reset()
-      if (s.phase === 'fighting') pump.reset()
+      if (s.phase === 'waiting') {
+        spawnSplash(s.bobber.x, s.bobber.y)
+        // 착수 y로 거리 매핑을 확인한다 — 위(수평선)일수록 멀다
+        const depth = (H - s.bobber.y) / (H - DEFAULT_LOOP.waterY)
+        log(
+          'land',
+          `착수 y=${Math.round(s.bobber.y)} (수면까지 ${(depth * 100).toFixed(0)}%) ← 파워 ${n2(lastPower)}`,
+        )
+      }
+      if (s.phase === 'bite') {
+        hook.reset()
+        hookPeak.vel = 0
+        hookPeak.rise = 0
+        stats.hookTry++
+        log('bite', `입질! ${s.active?.spec.name ?? '?'} — 챔질 창 ${DEFAULT_LOOP.biteWindowSec}s`)
+      }
+      if (s.phase === 'fighting') {
+        pump.reset()
+        stats.hookOk++
+        fightRun.startT = now
+        fightRun.name = s.active?.spec.name ?? '?'
+        fightRun.req = s.active?.spec.requiredRate ?? 0
+        fightRun.maxRate = 0
+        fightRun.firstRateT = 0
+        log('fight', `힘겨루기 시작 ${fightRun.name} 요구=${n2(fightRun.req)}/s`)
+      }
       if (s.phase === 'idle') {
         cast.reset()
         aim.locked = false
+        prevCastPhase = 'idle'
+        lastDropSw = 0
       }
-      if (s.phase === 'result' && s.last?.outcome === 'caught') spawnSplash(s.bobber.x, s.bobber.y)
+      if (s.phase === 'result') {
+        if (prevPhase === 'bite') {
+          // 챔질 실패 — 관측 최대값이 문턱 조정의 유일한 근거다
+          log(
+            'hook',
+            `챔질 실패 — 관측 최대 상향 ×${n2(hookPeak.vel)}/s (문턱 ${DEFAULT_HOOK.upVelSw}) 상승 ×${n2(hookPeak.rise)} (문턱 ${DEFAULT_HOOK.minRiseSw})`,
+          )
+        } else if (prevPhase === 'fighting') {
+          const d = pump.debug()
+          const span = (d.lastTick - d.firstTick) / 1000
+          const sustained = d.halves >= 3 && span > 0 ? (d.halves - 1) / 2 / span : 0
+          const sec = (now - fightRun.startT) / 1000
+          results.push({
+            name: fightRun.name,
+            outcome: s.last?.outcome ?? '?',
+            sec,
+            req: fightRun.req,
+            maxRate: fightRun.maxRate,
+            sustained,
+          })
+          log(
+            'fight',
+            `${fightRun.name} ${s.last?.outcome} ${sec.toFixed(1)}s 요구=${n2(fightRun.req)} 관측최대=${n2(fightRun.maxRate)} 지속=${n2(sustained)}`,
+          )
+        }
+        if (s.last?.outcome === 'caught') spawnSplash(s.bobber.x, s.bobber.y)
+      }
       prevPhase = s.phase
     }
     st.value = s
@@ -229,7 +479,7 @@ function draw() {
   drawSplashes(ctx)
   if (s.bobber.visible) drawBobber(ctx, s)
   if (s.phase === 'idle' && aim.locked) drawAim(ctx)
-  if (wrist) drawWristMarker(ctx, s)
+  if (marker) drawSignalMarker(ctx, s)
   drawGauges(ctx, s)
 }
 
@@ -348,8 +598,8 @@ function drawSplashes(ctx: CanvasRenderingContext2D) {
   ctx.restore()
 }
 
-function drawWristMarker(ctx: CanvasRenderingContext2D, s: LoopState) {
-  if (!wrist) return
+function drawSignalMarker(ctx: CanvasRenderingContext2D, s: LoopState) {
+  if (!marker) return
   const color =
     s.phase === 'bite' ? '#FF5D73' : s.phase === 'fighting' && s.reeling ? '#C6FF5E' : '#3ddcff'
   ctx.save()
@@ -357,7 +607,7 @@ function drawWristMarker(ctx: CanvasRenderingContext2D, s: LoopState) {
   ctx.shadowBlur = 14
   ctx.fillStyle = color
   ctx.beginPath()
-  ctx.arc(wrist.x, wrist.y, 8, 0, Math.PI * 2)
+  ctx.arc(marker.x, marker.y, 8, 0, Math.PI * 2)
   ctx.fill()
   ctx.restore()
 }
@@ -411,10 +661,21 @@ onBeforeUnmount(() => {
     <header>
       <h1>낚시 <small>게임⑤ · S15P11A706-10</small></h1>
       <span class="score">SCORE {{ st.score }}</span>
-      <button type="button" @click="handSide = handSide === 'right' ? 'left' : 'right'">
-        {{ handSide === 'right' ? '오른손' : '왼손' }}
+      <button
+        type="button"
+        title="릴을 돌리는 손 — 던지기·챔질은 양손이라 영향 없다"
+        @click="crankSide = crankSide === 'right' ? 'left' : 'right'"
+      >
+        릴 {{ crankSide === 'right' ? '오른손' : '왼손' }}
       </button>
       <button type="button" @click="loop.reset()">다시</button>
+      <div class="logbar">
+        <button type="button" class="copy" @click="copyLog">
+          {{ copied ? '복사됨 ✓' : '로그 복사' }}
+        </button>
+        <button type="button" @click="toggleRaw">원문</button>
+        <button type="button" @click="clearLog">로그 초기화</button>
+      </div>
     </header>
 
     <p class="err" v-if="camError || pose.error.value">{{ camError || pose.error.value }}</p>
@@ -430,13 +691,14 @@ onBeforeUnmount(() => {
 
     <ol class="guide">
       <li>
-        <b>던지기</b> — 손목을 어깨 위로 올리면 조준선이 뜬다. 손을 <b>좌우로 옮겨 조준</b>하고
-        <b>내려꽂는 세기로 거리</b>가 정해진다(세게 = 멀리)
+        <b>던지기</b> — <b>양손으로 낚싯대를 쥐고</b> 뒤로 젖히면 조준선이 뜬다. 손을
+        <b>좌우로 옮겨 조준</b>하고 그대로 앞으로 던진다. <b>팔로스루를 크게</b> 하면 멀리
+        간다(멈추는 단계 없이 한 동작으로)
       </li>
       <li><b>기다리기</b> — 물고기가 <b>?</b> → <b>!</b> 로 다가온다</li>
-      <li><b>챔질</b> — <b>!!</b> 가 뜨면 손을 위로 번쩍</li>
+      <li><b>챔질</b> — <b>!!</b> 가 뜨면 양손 그대로 <b>위로 번쩍</b></li>
       <li>
-        <b>감기</b> — 양손으로 낚싯대 잡고 <b>오른손으로 원을 그리듯</b> 릴을 돌린다. 멈추면
+        <b>감기</b> — <b>한 손으로 대를 잡고</b> 오른손으로 원을 그리듯 릴을 돌린다. 멈추면
         도망간다
       </li>
     </ol>
@@ -444,6 +706,36 @@ onBeforeUnmount(() => {
     <div class="catches" v-if="st.caught.length">
       <span v-for="(c, i) in st.caught" :key="i" class="chip">{{ c.name }} +{{ c.score }}</span>
     </div>
+
+    <textarea
+      v-if="showRaw"
+      class="rawbox"
+      readonly
+      rows="14"
+      :value="rawText"
+      @focus="(e) => (e.target as HTMLTextAreaElement).select()"
+    />
+
+    <section class="logpanel">
+      <h2>
+        판정 로그
+        <small>
+          던짐 {{ stats.powers.length }} · 무효 {{ stats.voids }} · 취소 {{ stats.cancels }} · 챔질
+          {{ stats.hookOk }}/{{ stats.hookTry }} · sw {{ Math.round(norm.sw()) }}px
+        </small>
+      </h2>
+      <p class="empty" v-if="!logs.length">
+        아직 이벤트가 없다. 던지고 챔질하고 감으면 판정에 쓰인 숫자가 여기 쌓인다 —
+        <b>무효 던짐</b>과 <b>챔질 실패 시 관측 최대값</b>이 문턱 조정의 근거다.
+      </p>
+      <ul v-else>
+        <li v-for="(e, i) in logs" :key="i" :class="e.tag">
+          <span class="t">{{ e.sec }}s</span>
+          <span class="g">{{ e.tag }}</span>
+          <span class="x">{{ e.text }}</span>
+        </li>
+      </ul>
+    </section>
   </div>
 </template>
 
@@ -462,8 +754,23 @@ onBeforeUnmount(() => {
 header {
   display: flex;
   align-items: baseline;
-  gap: 14px;
+  gap: 8px;
+  flex-wrap: wrap;
   width: min(640px, 100%);
+}
+.logbar {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+button.copy {
+  background: #c6ff5e;
+  color: #101a12;
+  border-color: #c6ff5e;
+  font-weight: 700;
+}
+button.copy:hover {
+  background: #d6ff8a;
 }
 h1 {
   font-size: 18px;
@@ -480,6 +787,89 @@ h1 small {
   font-family: ui-monospace, monospace;
   font-weight: 700;
   color: #c6ff5e;
+}
+.rawbox {
+  width: min(640px, 100%);
+  background: #0d1128;
+  color: #f4f0ff;
+  border: 1px solid rgba(198, 255, 94, 0.4);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  resize: vertical;
+}
+.logpanel {
+  width: min(640px, 100%);
+  background: #101a3d;
+  border: 1px solid rgba(244, 240, 255, 0.1);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.logpanel h2 {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #93a1c9;
+  margin: 0 0 8px;
+}
+.logpanel h2 small {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: ui-monospace, monospace;
+  color: #f4f0ff;
+  margin-left: 8px;
+}
+.logpanel .empty {
+  margin: 0;
+  font-size: 11.5px;
+  color: #93a1c9;
+  line-height: 1.6;
+}
+.logpanel .empty b {
+  color: #f4f0ff;
+}
+.logpanel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+}
+.logpanel li {
+  display: grid;
+  grid-template-columns: 44px 42px 1fr;
+  gap: 8px;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(244, 240, 255, 0.05);
+}
+.logpanel .t {
+  color: #4d5f92;
+  text-align: right;
+}
+.logpanel .g {
+  color: #93a1c9;
+}
+/* 색은 "봐야 하는 것"에만 준다 — 무효 던짐과 챔질이 분석의 핵심이다 */
+.logpanel li.cast .x {
+  color: #c6ff5e;
+}
+.logpanel li.void .x {
+  color: #ff5d73;
+}
+.logpanel li.hook .x {
+  color: #ffd23f;
+}
+.logpanel li.fight .x {
+  color: #3ddcff;
+}
+.logpanel li.aim .x,
+.logpanel li.land .x,
+.logpanel li.bite .x {
+  color: #93a1c9;
 }
 button {
   background: #1c2a5e;

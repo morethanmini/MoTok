@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest'
-import { createFight, FISH, idealCatchSeconds, type FishSpec } from '../fight'
+import {
+  createFight,
+  DRAIN_CAP,
+  DRAIN_PER_GAIN,
+  drainSeconds,
+  expectedCatchSeconds,
+  FISH,
+  reactionSeconds,
+  WARMUP_SEC,
+  type FishSpec,
+} from '../fight'
 
 /**
  * 힘겨루기 게이지 스펙.
@@ -113,10 +123,56 @@ describe('어종표 — 밸런스', () => {
     expect(FISH.map((f) => f.score)).toEqual([5, 15, 25, 35, 45, 70, 120])
   })
 
-  it('큰 물고기일수록 요구 속도·저항이 높다', () => {
+  it('큰 물고기일수록 요구 속도가 높고 게이지가 천천히 찬다', () => {
     for (let i = 1; i < FISH.length; i++) {
       expect(FISH[i]!.requiredRate).toBeGreaterThan(FISH[i - 1]!.requiredRate)
-      expect(FISH[i]!.drain).toBeGreaterThan(FISH[i - 1]!.drain)
+      expect(FISH[i]!.gain).toBeLessThan(FISH[i - 1]!.gain)
+    }
+  })
+
+  /**
+   * drain은 gain에 비례해야 한다. "큰 물고기일수록 저항이 크다"로 잡으면 못 잡는 물고기가
+   * 생긴다 — 잡히는 조건이 `p·gain > (1-p)·drain`인데 큰 물고기는 gain이 작기 때문이다.
+   * 이전 버전에서 상어 요구 1.30이 물리적으로 불가능했던 것과 같은 실패 모드다.
+   */
+  it('drain이 gain에 비례하되 상한을 넘지 않는다 — 못 잡는 물고기가 생기지 않는 배치', () => {
+    for (const f of FISH) {
+      expect(f.drain).toBeCloseTo(Math.min(DRAIN_PER_GAIN * f.gain, DRAIN_CAP), 2)
+    }
+  })
+
+  /**
+   * 2026-07-30 실기: 멸치 4마리 중 3마리가 `관측최대=0.00`으로 도망갔다 — **감기를 시작하지도
+   * 못했다.** drain을 gain에 비례시키니 gain이 가장 큰 멸치가 drain도 가장 커져(0.68) 유예 뒤
+   * 0.44초 만에 게이지가 비었고, pump 워밍업이 1초라 물리적으로 이길 수 없었다.
+   */
+  it('감기를 시작할 수 있는 시간이 pump 워밍업보다 넉넉하다', () => {
+    for (const f of FISH) {
+      // 워밍업 1초 + 사람 반응 0.5초 = 1.5초보다 여유가 있어야 한다
+      expect(reactionSeconds(f)).toBeGreaterThan(WARMUP_SEC + 1.5)
+    }
+  })
+
+  it('요구 속도를 65% 이상 유지하면 어떤 어종도 잡힌다', () => {
+    // p·gain > (1-p)·drain 을 p=0.65에서 만족하는지 — drain/gain 비율의 상한이 여기서 나온다
+    const P = 0.65
+    for (const f of FISH) {
+      expect(P * f.gain).toBeGreaterThan((1 - P) * f.drain)
+    }
+  })
+
+  /**
+   * DANGER가 위협이려면 멈췄을 때 게이지가 그 어종의 싸움 시간 안에 비어야 한다.
+   *
+   * 단 **멸치는 예외다.** 3초짜리 싸움에 1.2초의 반응 여유(DRAIN_CAP)를 주면 게이지 비는
+   * 시간이 4초가 되어 목표를 넘는다. 둘이 충돌할 때는 반응 여유가 이긴다 — 손쓸 수 없이
+   * 죽는 물고기(2026-07-30 멸치 3마리)가 위협 없는 물고기보다 나쁘다.
+   * 3초 안에 끝나는 싸움은 애초에 멈출 틈이 없어서 위협이 필요하지도 않다.
+   */
+  it('멈추면 게이지가 빈다 — 오래 싸우는 어종은 목표 시간 안에', () => {
+    for (const f of FISH) {
+      expect(f.drain).toBeGreaterThan(0)
+      if (f.targetSec >= 5) expect(drainSeconds(f)).toBeLessThan(f.targetSec)
     }
   })
 
@@ -132,40 +188,36 @@ describe('어종표 — 밸런스', () => {
   })
 
   /**
-   * 실측 배율(실제 ÷ ideal)은 어종마다 2.1~3.3이다. gain이 목표 시간과 이 배율에 대해
-   * 대략 정합한지 본다 — ideal × 배율이 targetSec의 ±40% 안이면 튜닝이 유효하다.
+   * gain은 `워밍업 + 실측배율 × 이론시간 = targetSec`으로 역산한다. 이론시간만 맞추면
+   * 실제가 1.3배 + 1초로 나온다(2026-07-30 7전: 상어 목표 20s → 실제 26.2s).
    */
-  it('gain이 실측 배율 기준으로 목표 시간과 정합한다', () => {
-    const factorFor = (i: number) => 2.1 + (i / (FISH.length - 1)) * 1.2 // 2.1 → 3.3 선형
-    FISH.forEach((f, i) => {
-      const predicted = idealCatchSeconds(f) * factorFor(i)
-      expect(predicted).toBeGreaterThan(f.targetSec * 0.6)
-      expect(predicted).toBeLessThan(f.targetSec * 1.4)
-    })
+  it('예상 소요 시간이 목표와 정합한다 — 워밍업·실측 배율 포함', () => {
+    for (const f of FISH) {
+      expect(expectedCatchSeconds(f)).toBeCloseTo(f.targetSec, 0)
+    }
   })
 
   /**
-   * 2026-07-29 실측: 지속 가능한 감기 속도는 0.37~0.63 왕복/s였다. 처음에 쓴 "1.1~1.7"은
-   * 회전 판정 화면에서 스쳐본 순간값이라 지속 속도가 아니었고, 그 탓에 상어 요구 1.30이
-   * 물리적으로 불가능해 무조건 도망갔다. 요구 속도 전체를 실측 범위 안으로 넣는다.
+   * 2026-07-30 실측(게임 루프 6전): 지속 감기 속도가 **1.45~2.41 왕복/s(평균 2.07)**.
+   * 이전 표는 0.30~0.75라 전 어종이 문턱의 3~7배 아래였고 DANGER가 뜰 일이 없었다.
+   * 요구 속도를 실측 밴드 안에 펼쳐야 큰 물고기가 실제로 저항한다.
    */
-  it('모든 어종의 요구 속도가 실측 지속 가능 범위(0.37~0.8) 안에 있다', () => {
-    for (const f of FISH) {
-      expect(f.requiredRate).toBeGreaterThanOrEqual(0.25)
-      expect(f.requiredRate).toBeLessThanOrEqual(0.8)
-    }
+  it('요구 속도가 실측 지속 밴드(1.45~2.41) 안에 펼쳐진다', () => {
+    // 가장 약한 물고기는 누구나 넘는다
+    expect(FISH[0]!.requiredRate).toBeLessThan(1.45 * 0.5)
+    // 가장 센 물고기는 실측 최저보다 위 — 자주 문턱 아래로 떨어져야 저항이 된다
+    expect(shark.requiredRate).toBeGreaterThan(1.45)
+    // 다만 실측 평균은 넘지 않는다. 넘으면 물리적으로 불가능해진다(이전 버전의 실패 모드)
+    expect(shark.requiredRate).toBeLessThan(2.07)
   })
 
-  it('실측 지속 속도(0.6)로 연어까지 잡히고, 참치·상어는 더 빨리 감아야 한다', () => {
-    // 멸치~연어(요구 0.30~0.58) — 평소 속도로 잡힌다
-    for (const f of FISH.slice(0, 5)) {
-      expect(fightAt(f, 0.6).state).toBe('caught')
+  it('실측 최저 지속 속도(1.45)로 참치까지 잡히고, 상어는 더 빨리 감아야 한다', () => {
+    for (const f of FISH.slice(0, 6)) {
+      expect(fightAt(f, 1.45).state).toBe('caught')
     }
-    // 참치(0.65)·상어(0.75) — 평소 속도로는 놓치고, 분발하면 잡힌다
-    expect(fightAt(FISH[5]!, 0.6).state).toBe('escaped')
-    expect(fightAt(FISH[5]!, 0.7).state).toBe('caught')
-    expect(fightAt(shark, 0.6).state).toBe('escaped')
-    expect(fightAt(shark, 0.8).state).toBe('caught')
+    expect(fightAt(shark, 1.45).state).toBe('escaped')
+    // 실측 평균(2.07)이면 상어도 잡힌다
+    expect(fightAt(shark, 2.07).state).toBe('caught')
   })
 })
 
