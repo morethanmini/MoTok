@@ -20,6 +20,19 @@ const LEAD_MS = 5 * 60 * 1000
 /** TTL이 짧은 개발 설정에서 타이머가 촘촘히 도는 것을 막는 하한. */
 const MIN_DELAY_MS = 30 * 1000
 
+/**
+ * 갱신 시각을 흩는 폭(ms). 0~4분 사이에서 무작위로 <b>늦춘다</b>.
+ *
+ * <p>갱신 시각은 로그인 시각에만 의존한다(TTL 1시간 − LEAD 5분 = 55분 뒤 고정).
+ * 공지를 보고 2000명이 몇 분 안에 몰려 로그인하면 <b>55분 뒤 같은 몇 분에 2000건의 refresh</b>가
+ * 몰린다 — Redis 토큰 회전 write가 한꺼번에 터지는 모양이다.</p>
+ *
+ * <p>지터는 반드시 <b>늦추는 방향</b>으로만 준다. 앞당기면 갱신이 잦아질 뿐이고,
+ * 늦추는 쪽은 LEAD_MS(5분) 여유 안에서만 움직이면 만료 전에 반드시 끝난다.
+ * 4분을 쓰면 최소 1분 여유가 남는다.</p>
+ */
+const REFRESH_JITTER_MS = 4 * 60 * 1000
+
 let timer: ReturnType<typeof setTimeout> | undefined
 let started = false
 
@@ -33,7 +46,10 @@ function schedule() {
   }
 
   if (!hasRefreshSession()) return // 비로그인 — 갱신할 것이 없다
-  const delay = Math.max(MIN_DELAY_MS, accessTokenRemainingMs() - LEAD_MS)
+  const base = accessTokenRemainingMs() - LEAD_MS
+  // 여유가 충분할 때만 흩는다. 이미 만료가 임박했으면(base가 하한 이하) 미루지 않고 바로 간다.
+  const delay =
+    base > MIN_DELAY_MS ? base + Math.random() * REFRESH_JITTER_MS : MIN_DELAY_MS
   timer = setTimeout(() => void tick(), delay)
 }
 
