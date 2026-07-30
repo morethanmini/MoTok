@@ -71,10 +71,19 @@ public class AuthController {
         return authService.signup(req);
     }
 
-    /** POST /auth/login — 일반 로그인. Refresh 토큰은 Set-Cookie로 나간다(rememberMe면 영구 쿠키). */
+    /**
+     * POST /auth/login — 일반 로그인. Refresh 토큰은 Set-Cookie로 나간다(rememberMe면 영구 쿠키).
+     *
+     * <p>옛 Refresh 쿠키를 함께 읽는 이유 — 쿠키 Path가 {@code /api/auth}라 이 요청에도 실려 온다.
+     * 로그아웃 없이 탭을 닫았다 다시 로그인하면 서버측 세션이 남아 있어 자기 자신을 "다른 곳"으로
+     * 오판하는데, 이 값이 그걸 가려낸다({@code SessionTerminator.displacePrevious}).</p>
+     */
     @PostMapping("/login")
-    public ResponseEntity<TokenResponse> login(@Valid @RequestBody LoginRequest req, HttpServletRequest http) {
-        return respond(authService.login(req), http);
+    public ResponseEntity<TokenResponse> login(
+            @Valid @RequestBody LoginRequest req,
+            @CookieValue(name = RefreshCookies.NAME, required = false) String staleRefreshToken,
+            HttpServletRequest http) {
+        return respond(authService.login(req, staleRefreshToken), http);
     }
 
     /** POST /auth/find-id — 닉네임으로 마스킹된 이메일 찾기 */
@@ -85,10 +94,12 @@ public class AuthController {
 
     /** POST /auth/social/{provider} — 소셜 로그인(google·kakao). 최초 로그인 시 계정 자동 생성·연동 */
     @PostMapping("/social/{provider}")
-    public ResponseEntity<TokenResponse> social(@PathVariable String provider,
-                                                @Valid @RequestBody SocialLoginRequest req,
-                                                HttpServletRequest http) {
-        return respond(authService.socialLogin(provider, req), http);
+    public ResponseEntity<TokenResponse> social(
+            @PathVariable String provider,
+            @Valid @RequestBody SocialLoginRequest req,
+            @CookieValue(name = RefreshCookies.NAME, required = false) String staleRefreshToken,
+            HttpServletRequest http) {
+        return respond(authService.socialLogin(provider, req, staleRefreshToken), http);
     }
 
     /** POST /auth/password/reset-request — 재설정 링크 메일 발송(존재 여부 무관 202) */

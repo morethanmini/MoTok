@@ -52,6 +52,12 @@ class SessionTerminatorTest {
 
     private static final String PREVIOUS_SID = "sid-42-previous";
 
+    /**
+     * 다른 기기에서 로그인한 상황 — 그쪽 브라우저에는 이 계정의 Refresh 쿠키가 없거나 다른 세션의 것이다.
+     * 밀어내기의 기본 케이스라 대부분의 테스트가 이 값을 쓴다.
+     */
+    private static final String OTHER_DEVICE_SID = "sid-42-other-device";
+
     private void inNoRoom() {
         given(roomPresenceTracker.roomsOfMember(USER_ID)).willReturn(List.of());
     }
@@ -143,7 +149,7 @@ class SessionTerminatorTest {
             inNoRoom();
             hasPreviousSession();
 
-            terminator.displacePrevious(USER_ID);
+            terminator.displacePrevious(USER_ID, OTHER_DEVICE_SID);
 
             InOrder order = inOrder(sessionRevocationStore, userNotifier);
             order.verify(sessionRevocationStore)
@@ -158,7 +164,7 @@ class SessionTerminatorTest {
             given(roomPresenceTracker.roomsOfMember(USER_ID)).willReturn(List.of("room-1", "room-2"));
             hasPreviousSession();
 
-            terminator.displacePrevious(USER_ID);
+            terminator.displacePrevious(USER_ID, OTHER_DEVICE_SID);
 
             verify(sfuParticipantEjector, timeout(1000)).eject("room-1", "42");
             verify(sfuParticipantEjector, timeout(1000)).eject("room-2", "42");
@@ -170,7 +176,7 @@ class SessionTerminatorTest {
             given(roomPresenceTracker.roomsOfMember(USER_ID)).willReturn(List.of("room-1"));
             hasPreviousSession();
 
-            terminator.displacePrevious(USER_ID);
+            terminator.displacePrevious(USER_ID, OTHER_DEVICE_SID);
 
             InOrder order = inOrder(roomPresenceTracker);
             // 재실 목록이 먼저 — 비운 뒤에 읽으면 SFU에서 끊을 방을 잃는다(terminate와 같은 계약).
@@ -184,14 +190,28 @@ class SessionTerminatorTest {
             inNoRoom();
             hasPreviousSession();
 
-            terminator.displacePrevious(USER_ID);
+            terminator.displacePrevious(USER_ID, OTHER_DEVICE_SID);
 
             // Refresh를 지우면 뒤이어 저장할 새 토큰과 경합하고, 프레즌스를 지우면
             // 친구 목록에 오프라인→온라인이 한 번 깜빡이며 접속시간이 로그인마다 끊겨 정산된다.
             verify(refreshTokenStore, never()).delete(anyLong());
             verify(presenceService, never()).clear(anyLong());
             // 소켓 종료는 알림이 나갈 유예(2초) 뒤라 이 시점에는 아직 닫히지 않았다.
-            verify(stompSessionRegistry, never()).closeAllOf(anyLong());
+            verify(stompSessionRegistry, never()).close(any(), any());
+        }
+
+        @Test
+        @DisplayName("끊을 연결은 지금 열려 있는 것으로 고정한다 — 유예 중에 붙는 새 로그인의 소켓을 끊지 않는다")
+        void snapshotsDoomedSessionsBeforeTheDelay() {
+            inNoRoom();
+            hasPreviousSession();
+
+            terminator.displacePrevious(USER_ID, OTHER_DEVICE_SID);
+
+            // 원장은 sid가 아니라 userId로 묶여 있다. 유예가 끝난 뒤에 목록을 읽으면 그 사이 붙은
+            // 새 세션까지 끊기므로, 대상 확정은 유예 '전'이어야 한다.
+            verify(stompSessionRegistry).detachSessionsOf(USER_ID);
+            verify(stompSessionRegistry, never()).close(any(), any());
         }
 
         @Test
@@ -200,7 +220,7 @@ class SessionTerminatorTest {
             // sessionId가 null = 이전 세션 없음(첫 로그인, 또는 Redis의 Refresh 토큰을 비운 로컬 테스트).
             given(refreshTokenStore.sessionId(USER_ID)).willReturn(null);
 
-            terminator.displacePrevious(USER_ID);
+            terminator.displacePrevious(USER_ID, OTHER_DEVICE_SID);
 
             // 알림·종료는 sid가 아니라 userId로 나간다. 밀어낼 세션이 없는데도 보내면 방금 로그인한
             // 세션이 그 알림을 받아 "다른 곳에서 로그인했어요"를 띄우고 스스로 튕긴다.
@@ -209,7 +229,41 @@ class SessionTerminatorTest {
             verify(roomPresenceTracker, never()).evictFromRooms(anyLong());
             verify(sfuParticipantEjector, never()).eject(anyString(), anyString());
             // 유예 뒤 닫기까지 예약되지 않았는지 — 예약됐다면 2초 뒤 새 세션의 소켓이 끊긴다.
-            verify(stompSessionRegistry, after(2500).never()).closeAllOf(anyLong());
+            verify(stompSessionRegistry, after(2500).never()).close(any(), any());
+        }
+
+        @Test
+        @DisplayName("같은 브라우저의 재로그인은 밀어내기가 아니다 — 옛 쿠키의 sid가 이전 세션과 같다")
+        void treatsSameBrowserReloginAsSessionReplacement() {
+            inNoRoom();
+            hasPreviousSession();
+
+            // 로그아웃 없이 탭을 닫았다 다시 로그인한 경우. 쿠키 Path가 /api/auth라 로그인 요청에도
+            // 옛 Refresh 쿠키가 실려 오고, 그 sid는 남아 있는 이전 세션의 것과 같다.
+            terminator.displacePrevious(USER_ID, PREVIOUS_SID);
+
+            // 끝난 것은 '다른 곳'이 아니라 자기 세션이다 — 사유도 로그아웃이어야 한다.
+            // DISPLACED로 찍으면 남아 있던 옛 소켓이 재연결할 때 또 "다른 곳에서 로그인" 안내가 뜬다.
+            verify(sessionRevocationStore).revoke(PREVIOUS_SID, SessionRevocationStore.Reason.LOGGED_OUT);
+            // 알릴 상대도 끊을 대상도 없다. 알림이 나가면 방금 로그인한 본인이 그걸 받아 스스로 튕긴다.
+            verify(userNotifier, never()).notify(anyLong(), any(UserNotification.class));
+            verify(roomPresenceTracker, never()).evictFromRooms(anyLong());
+            verify(sfuParticipantEjector, never()).eject(anyString(), anyString());
+            verify(stompSessionRegistry, after(2500).never()).close(any(), any());
+        }
+
+        @Test
+        @DisplayName("쿠키가 없으면 밀어낸다 — 다른 기기의 로그인과 구분할 근거가 없다")
+        void displacesWhenNoCookieIsPresented() {
+            inNoRoom();
+            hasPreviousSession();
+
+            // 브라우저를 완전히 껐다 켠 재로그인도 여기 걸린다(세션 쿠키가 사라져 보낼 것이 없다).
+            // 그쪽은 알림을 받을 소켓이 이미 죽어 무해하고, 새 세션의 소켓은 위 스냅샷이 지킨다.
+            terminator.displacePrevious(USER_ID, null);
+
+            verify(sessionRevocationStore).revoke(PREVIOUS_SID, SessionRevocationStore.Reason.DISPLACED);
+            verify(userNotifier).notify(eq(USER_ID), any(UserNotification.class));
         }
     }
 }
