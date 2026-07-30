@@ -70,10 +70,14 @@ export const roomsApi = {
    * 문서 언로드(탭 닫기·주소창 이탈·새로고침) 전용 퇴장 통보.
    * 문서가 내려가는 중이라 응답을 기다릴 수 없어 keepalive로 쏜다 — sendBeacon은 POST만
    * 가능해서 fetch keepalive를 쓴다. leave가 멱등이라 SPA 경로와 중복 발사돼도 안전하다.
+   *
+   * unload=true(-164): 서버는 즉시 제거하지 않고 유예를 둔다 — 새로고침이면 복귀한 페이지의
+   * join이 유예 안에 도착해 퇴장이 없던 일이 되고(방장·멤버십 유지), 진짜 탭 닫기면 유예 뒤
+   * 일반 퇴장(방장 이양·빈방 삭제)이 실행된다.
    */
   leaveOnUnload: (roomId: string) => {
     const token = getAccessToken()
-    void fetch(`${API_BASE}${BASE}/${roomId}/members/me`, {
+    void fetch(`${API_BASE}${BASE}/${roomId}/members/me?unload=true`, {
       method: 'DELETE',
       keepalive: true,
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,

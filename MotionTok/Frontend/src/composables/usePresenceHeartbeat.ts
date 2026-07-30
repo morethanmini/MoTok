@@ -28,7 +28,6 @@ import { useRoute } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import {
   isMemberSession,
-  onStompConnected,
   publishGlobal,
   stompConnected,
   subscribeGlobal,
@@ -85,8 +84,13 @@ export function usePresenceHeartbeat() {
     }
   })
 
-  // 연결이 (재)성립하면 즉시 한 번 — 끊겨 있던 동안 서버는 나를 오프라인으로 봤을 수 있다.
-  const offConnected = onStompConnected(beat)
+  // 연결이 성립하는 순간마다 즉시 한 번 — 첫 연결과 재연결 모두. 예전에는
+  // onStompConnected(재연결 전용 훅)만 걸어서 새로고침 후 <b>첫 연결에는 비트가 영영 시작되지
+  // 않았다</b>(-164): 소켓은 살아 있는데 아무도 beat를 안 불러 60초 뒤 TTL 만료로 조용히
+  // 오프라인이 됐고, 다음 재연결에 온라인으로 돌아와 친구 목록이 널뛰었다.
+  watch(stompConnected, (connected) => {
+    if (connected) beat()
+  }, { immediate: true })
 
   // 방에 들어가거나 나오는 순간을 최대 한 주기(20초)나 기다리게 하지 않는다.
   watch(currentRoomId, () => {
@@ -96,7 +100,6 @@ export function usePresenceHeartbeat() {
   onBeforeUnmount(() => {
     stopped = true
     clearTimeout(timer)
-    offConnected()
     unsubscribe()
   })
 }

@@ -57,6 +57,8 @@ class BodyFitRotationFlowTest {
 
     private final FakeSessionRepository sessions = new FakeSessionRepository();
     private final List<GameEventResponse> events = new ArrayList<>();
+    /** 예약된 태스크들 — [0]에 준비 타임아웃(-162), 이후 라운드 정산이 쌓인다. */
+    private final List<Runnable> scheduled = new ArrayList<>();
 
     // 게임⑩(그림으로 말해요) AI 채점 클라이언트 — 게임④ 흐름에서는 호출되지 않는다
     private final DrawJudgeClient judgeClient = mock(DrawJudgeClient.class);
@@ -65,7 +67,8 @@ class BodyFitRotationFlowTest {
     private final LiveRoomService liveRoomService = mock(LiveRoomService.class);
 
     private final GameSessionService service = new GameSessionService(
-            membershipReader, liveRoomRepository, liveRoomService, sessions, gameRepository,
+            membershipReader, liveRoomRepository, liveRoomService, sessions,
+            mock(ssafy.a706.backend.rhythm.RhythmSessionRepository.class), gameRepository,
             messagingTemplate, taskScheduler, eventPublisher, judgeClient);
 
     private void givenRoom(int playerCount) {
@@ -81,13 +84,25 @@ class BodyFitRotationFlowTest {
         when(gameRepository.findById(4L)).thenReturn(Optional.of(Game.builder()
                 .id(4L).name("몸 끼워 맞추기").roundDurationSec(30).countdownSec(3).active(true).build()));
         when(taskScheduler.schedule(any(Runnable.class), any(Instant.class)))
-                .thenReturn(mock(ScheduledFuture.class));
+                .thenAnswer(inv -> {
+                    scheduled.add(inv.getArgument(0, Runnable.class));
+                    return mock(ScheduledFuture.class);
+                });
         // 브로드캐스트 캡처 — 이벤트 순서가 이 테스트의 관심사다
         when(messagingTemplate.toString()).thenReturn("mock");
         org.mockito.Mockito.doAnswer(inv -> {
             events.add(inv.getArgument(1, GameEventResponse.class));
             return null;
         }).when(messagingTemplate).convertAndSend(eq(GAME_TOPIC), any(Object.class));
+    }
+
+    /**
+     * -162 시작 준비 확인: start()는 GAME_PREPARE만 배포한다. 방금 예약된 준비 타임아웃
+     * 러너를 즉시 실행해 실제 세션 시작(GAME_START)까지 진행시킨다.
+     */
+    private void startAndBegin(GameStartRequest request) {
+        service.start(ROOM_ID, request, new MemberPrincipal(1L, "P1"));
+        scheduled.get(scheduled.size() - 1).run();
     }
 
     /** 이번 라운드 출제자를 뺀 전원이 제출 → 조기 정산으로 다음 라운드가 열린다. */
@@ -111,7 +126,7 @@ class BodyFitRotationFlowTest {
     @Test
     void 세명이_세라운드를_끝까지_돌면_전원이_한_번씩_출제하고_마지막에_GAME_END가_온다() {
         givenRoom(3);
-        service.start(ROOM_ID, new GameStartRequest(4L, null, "easy", null, null), new MemberPrincipal(1L, "P1"));
+        startAndBegin(new GameStartRequest(4L, null, "easy", null, null));
 
         allPlayersFinish(3); // 라운드1 종료 → 라운드2
         allPlayersFinish(3); // 라운드2 종료 → 라운드3
@@ -141,7 +156,7 @@ class BodyFitRotationFlowTest {
     @Test
     void 네명이면_네라운드가_전부_열린다() {
         givenRoom(4);
-        service.start(ROOM_ID, new GameStartRequest(4L, null, "easy", null, null), new MemberPrincipal(1L, "P1"));
+        startAndBegin(new GameStartRequest(4L, null, "easy", null, null));
 
         for (int r = 0; r < 4; r++) {
             allPlayersFinish(4);
@@ -166,7 +181,7 @@ class BodyFitRotationFlowTest {
         for (int i = 0; i < 20; i++) {
             sessions.session = null; // 진행 중 세션 가드 우회 — 매 번 새로 시작
             events.clear();
-            service.start(ROOM_ID, new GameStartRequest(4L, null, "easy", null, null), new MemberPrincipal(1L, "P1"));
+            startAndBegin(new GameStartRequest(4L, null, "easy", null, null));
             firstSetters.add(starts().get(0).setterUserId());
         }
         // 4명 중 20회 모두 같은 사람이 뽑힐 확률은 (1/4)^19 — 사실상 0
