@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import ssafy.a706.backend.global.response.ApiResponse;
+import ssafy.a706.backend.user.sanction.dto.SanctionHistoryListResponse;
 import ssafy.a706.backend.user.sanction.dto.SanctionedReportsResponse;
 
 import java.util.List;
@@ -22,6 +23,24 @@ import java.util.List;
 public class SanctionQueryAdminController {
 
     private final UserSanctionService userSanctionService;
+
+    /**
+     * GET /v1/admin/sanctions?userId=&type=&page=&size= — 제재 내역 전체 목록(최신순).
+     *
+     * <p>대상 회원을 정해야 하는 {@code /v1/admin/users/{userId}/sanctions}와 짝이다. 그쪽은
+     * "이 사람이 무슨 제재를 받아 왔나"에 답하고, 이쪽은 <b>"요즘 무슨 제재가 나갔나"</b>에 답한다 —
+     * 신고에서 사용자로 들어가는 흐름 밖에서 운영을 점검하려면 후자가 필요하다.</p>
+     *
+     * <p>{@code userId}·{@code type}은 선택이다. 둘 다 없으면 전체를 최신순으로 준다.</p>
+     */
+    @GetMapping
+    public ApiResponse<SanctionHistoryListResponse> history(
+            @RequestParam(required = false) Long userId,
+            @RequestParam(required = false) SanctionType type,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(userSanctionService.searchHistory(userId, type, page, size));
+    }
 
     /**
      * GET /v1/admin/sanctions/reports?type=USER_REPORT&reportIds=1,2,3

@@ -14,6 +14,26 @@ public interface SanctionHistoryRepository extends JpaRepository<SanctionHistory
 
     Page<SanctionHistory> findByUserId(Long userId, Pageable pageable);
 
+    /**
+     * 제재 내역 전체 목록(-106 후속) — 대상 회원을 정하지 않고 최근 순으로 훑는 조회.
+     *
+     * <p>사용자별 조회({@link #findByUserId})만 있던 시절의 전제는 "관리자는 신고에서 특정
+     * 사용자로 들어온다"였다. 그 흐름은 남아 있지만, <b>운영 화면은 반대 방향도 필요하다</b> —
+     * 회원 id를 모르는 상태에서 "요즘 무슨 제재가 나갔나"를 보는 자리가 있어야 오판·과잉 제재를
+     * 사후에 발견할 수 있다.</p>
+     *
+     * <p>필터를 {@code null} 허용 파라미터로 받는 이유 — Specification을 쓰면 조건이 두 개인 것에
+     * 비해 코드가 훨씬 두꺼워지고, 여기 조건은 앞으로도 늘 이유가 없다(대상·유형이 전부다).</p>
+     */
+    @Query("""
+            select h from SanctionHistory h
+            where (:userId is null or h.userId = :userId)
+              and (:type is null or h.type = :type)
+            """)
+    Page<SanctionHistory> search(@Param("userId") Long userId,
+                                 @Param("type") SanctionType type,
+                                 Pageable pageable);
+
     /** 누적 정지 횟수 — 반복 위반자에게 더 긴 기간을 매길 때 관리자가 보는 값이다. */
     long countByUserIdAndType(Long userId, SanctionType type);
 
