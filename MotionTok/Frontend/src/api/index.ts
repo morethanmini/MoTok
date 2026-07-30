@@ -23,6 +23,8 @@ export { contentApi } from './modules/content'
 export {
   adminApi,
   adminChatReportsApi,
+  adminGamesApi,
+  adminPointsApi,
   adminSanctionApi,
   adminUserReportsApi,
 } from './modules/admin'

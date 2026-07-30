@@ -1,11 +1,14 @@
 package ssafy.a706.backend.liveroom.service;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
+import ssafy.a706.backend.liveroom.event.LiveRoomClosedEvent;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
 import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomRequest;
 import ssafy.a706.backend.liveroom.controller.dto.CreateLiveRoomResponse;
@@ -25,12 +28,15 @@ import ssafy.a706.backend.liveroom.model.LiveRoom;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.model.LiveRoomVisibility;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
 
 @Service
 @RequiredArgsConstructor
@@ -43,9 +49,21 @@ public class LiveRoomService {
 
     private static final String MEMBERS_TOPIC = "/topic/rooms/%s/members";
 
+    /**
+     * 언로드 퇴장 유예(-164). 새로고침도 pagehide라 leave가 즉시 날아오는데, 곧바로 같은 사람이
+     * 재입장한다 — 즉시 제거하면 그 짧은 사이에 방장 이양·빈방 삭제가 일어나 "방장 탈취",
+     * "방이 사라져 같은 이름 방 2개" 같은 부수효과가 났다. 이 시간 안에 재입장하면 없던 일로 한다.
+     */
+    private static final long UNLOAD_LEAVE_GRACE_MS = 10_000;
+
     private final LiveRoomRepository repository;
     private final SimpMessagingTemplate messagingTemplate;
     private final LobbyBroadcaster lobbyBroadcaster;
+    private final ApplicationEventPublisher eventPublisher;
+    private final TaskScheduler gameTaskScheduler;
+
+    /** 언로드 유예 중인 퇴장 예약 (roomId|playerKey → future). 인메모리 — 단일 인스턴스 전제(게임 endTasks와 동일). */
+    private final Map<String, ScheduledFuture<?>> pendingUnloadLeaves = new ConcurrentHashMap<>();
 
     public CreateLiveRoomResponse create(AuthPrincipal principal, CreateLiveRoomRequest req) {
         validatePasswordRule(req.visibility(), req.password());
@@ -155,7 +173,10 @@ public class LiveRoomService {
 
     public LiveRoomDetailResponse join(AuthPrincipal principal, String roomId, JoinLiveRoomRequest req) {
         LiveRoom room = loadRoom(roomId);
-        if (room.hasPassword() && !room.password().equals(req.password())) {
+        // 재입장(새로고침 복귀, -164)은 비밀번호를 다시 묻지 않는다 — 이미 검증을 통과해
+        // 들어와 있던 사람이고, 복귀 화면은 비밀번호를 들고 있지 않다.
+        boolean rejoining = repository.hasMember(roomId, playerKey(principal));
+        if (!rejoining && room.hasPassword() && !room.password().equals(req.password())) {
             if (req.password() == null) {
                 throw new BusinessException(ErrorCode.ROOM_PASSWORD_REQUIRED);
             }
@@ -214,8 +235,25 @@ public class LiveRoomService {
      * 마지막 인원이 나가면 방을 즉시 종료하고, 방장이 나가면 남은 참가자 중 입장 순으로 위임한다(S15P11A706-72).
      */
     public void leave(AuthPrincipal principal, String roomId) {
-        LiveRoom room = loadRoom(roomId); // 방 존재 검증(없으면 ROOM_NOT_FOUND)
         String key = playerKey(principal);
+        cancelPendingUnloadLeave(roomId, key); // 명시적 퇴장이 유예 예약보다 우선한다(-164)
+        processLeave(roomId, principal.userId(), principal.displayName(), key);
+    }
+
+    /**
+     * 유령 멤버 강제 퇴장(-164 후속) — 스위퍼가 "프레즌스가 완전히 끊긴 회원"을 내보낼 때 쓴다.
+     * 본인 요청(leave)과 동일한 후처리(브로드캐스트·방장 이양·빈방 삭제)를 태우므로,
+     * 남은 참가자·로비 화면 어디에서도 일반 퇴장과 구별되지 않는다.
+     */
+    public void evictGhostMember(String roomId, LiveRoomMemberValue member) {
+        String key = playerKey(member.userId(), member.guest());
+        cancelPendingUnloadLeave(roomId, key);
+        processLeave(roomId, member.userId(), member.displayName(), key);
+    }
+
+    /** 퇴장 공통 처리 — 멤버 제거·MEMBER_LEFT 방송·빈방 삭제·방장 이양. */
+    private void processLeave(String roomId, String userId, String displayName, String key) {
+        LiveRoom room = loadRoom(roomId); // 방 존재 검증(없으면 ROOM_NOT_FOUND)
         if (!repository.hasMember(roomId, key)) {
             return; // 이미 나간 상태 — 멱등 처리, 유령 브로드캐스트 방지
         }
@@ -223,11 +261,12 @@ public class LiveRoomService {
         List<LiveRoomMemberValue> remaining = repository.findMembers(roomId);
         messagingTemplate.convertAndSend(
                 String.format(MEMBERS_TOPIC, roomId),
-                new LiveRoomMemberLeftEvent(principal.userId(), principal.displayName(), remaining.size()));
+                new LiveRoomMemberLeftEvent(userId, displayName, remaining.size()));
 
         if (remaining.isEmpty()) {
             boolean wasListed = repository.isIndexed(roomId);
             repository.deleteRoom(roomId);
+            eventPublisher.publishEvent(new LiveRoomClosedEvent(roomId));
             // 게스트 1인방은 rooms:index에 없어 로비에 뜬 적이 없다 — 폐쇄 알림도 보낼 이유가 없다.
             if (wasListed) {
                 lobbyBroadcaster.roomClosed(roomId);
@@ -235,7 +274,7 @@ public class LiveRoomService {
             return;
         }
         lobbyBroadcaster.roomUpdated(LiveRoomSummaryResponse.from(loadRoom(roomId)));
-        if (room.hostUserId().equals(principal.userId())) {
+        if (room.hostUserId().equals(userId)) {
             LiveRoomMemberValue newHost = remaining.stream()
                     .min(Comparator.comparingLong(LiveRoomMemberValue::joinedAt))
                     .orElseThrow();
@@ -244,6 +283,47 @@ public class LiveRoomService {
                     String.format(MEMBERS_TOPIC, roomId),
                     new LiveRoomHostChangedEvent(newHost.userId(), newHost.displayName()));
         }
+    }
+
+    /**
+     * 문서 언로드(pagehide) 퇴장 통보 — 즉시 나가지 않고 {@link #UNLOAD_LEAVE_GRACE_MS} 유예를 둔다(-164).
+     *
+     * <p>새로고침도 pagehide이므로 이 경로로 leave가 온다. 유예 안에 같은 사람이 재입장
+     * ({@link #joinRoom})하면 예약이 철회돼 방장·멤버십이 그대로 유지되고, 재입장이 없으면
+     * (진짜 탭 닫기) 유예 뒤 일반 {@link #leave}가 실행된다 — 퇴장 브로드캐스트·방장 이양·
+     * 빈방 삭제가 그때 일어난다.</p>
+     */
+    public void leaveOnUnload(AuthPrincipal principal, String roomId) {
+        String key = playerKey(principal);
+        if (!repository.hasMember(roomId, key)) {
+            return; // 멤버가 아니면 예약할 것도 없다(멱등)
+        }
+        String pendingKey = pendingUnloadKey(roomId, key);
+        ScheduledFuture<?> future = gameTaskScheduler.schedule(
+                () -> {
+                    pendingUnloadLeaves.remove(pendingKey);
+                    try {
+                        leave(principal, roomId);
+                    } catch (BusinessException ignored) {
+                        // 유예 사이 방이 사라진 경우(ROOM_NOT_FOUND) — 정리할 것이 없다
+                    }
+                },
+                Instant.ofEpochMilli(System.currentTimeMillis() + UNLOAD_LEAVE_GRACE_MS));
+        ScheduledFuture<?> prev = pendingUnloadLeaves.put(pendingKey, future);
+        if (prev != null) {
+            prev.cancel(false);
+        }
+    }
+
+    private void cancelPendingUnloadLeave(String roomId, String playerKey) {
+        ScheduledFuture<?> pending = pendingUnloadLeaves.remove(pendingUnloadKey(roomId, playerKey));
+        if (pending != null) {
+            pending.cancel(false);
+        }
+    }
+
+    private String pendingUnloadKey(String roomId, String playerKey) {
+        return roomId + "|" + playerKey;
     }
 
     /**
@@ -274,6 +354,7 @@ public class LiveRoomService {
 
         if (remaining.isEmpty()) {
             repository.deleteRoom(roomId);
+            eventPublisher.publishEvent(new LiveRoomClosedEvent(roomId));
             lobbyBroadcaster.roomClosed(roomId);
             return;
         }
@@ -328,6 +409,12 @@ public class LiveRoomService {
      * 상태 전환을 서비스 메서드 하나로 모아 두면 알림 누락이 구조적으로 불가능해진다.</p>
      */
     public void changeStatus(String roomId, String status) {
+        // 정산 타이머는 방이 이미 삭제된 뒤에도 발화할 수 있다(마지막 인원이 게임 중 이탈, -164).
+        // 그대로 HSET하면 삭제된 해시가 status 필드 하나만 가진 좀비 키(TTL 없음)로 부활하고,
+        // 그 방의 조회는 전부 NPE로 죽는다. 방이 없으면 조용히 끝낸다.
+        if (repository.findRoomFields(roomId).isEmpty()) {
+            return;
+        }
         repository.updateStatus(roomId, status);
         repository.findRoomFields(roomId)
                 .map(fields -> toLiveRoom(roomId, fields, repository.findMembers(roomId)))
@@ -337,6 +424,8 @@ public class LiveRoomService {
 
     private LiveRoomDetailResponse joinRoom(AuthPrincipal principal, LiveRoom room) {
         String key = playerKey(principal);
+        // 새로고침 복귀(-164) — 언로드 유예 중이면 퇴장 예약을 철회한다(없던 일로).
+        cancelPendingUnloadLeave(room.roomId(), key);
         if (repository.isKicked(room.roomId(), key)) {
             throw new BusinessException(ErrorCode.ROOM_KICKED);
         }

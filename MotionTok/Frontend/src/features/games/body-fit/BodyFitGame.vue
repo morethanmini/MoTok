@@ -1164,7 +1164,11 @@ onMounted(async () => {
     const pip = videoRef.value!
     pip.srcObject = props.video.srcObject
     pip.play().catch(() => {})
-    await pose.start(props.video, onPose)
+    // 실패(모델 로드·GPU 초기화)를 삼키면 화면은 도는데 자세만 안 잡힌다(-161) — 한 번
+    // 재시도하고, 그래도 안 되면 페이즈 필 자리에 에러를 띄운다(camError와 같은 자리).
+    if (!(await pose.start(props.video, onPose)) && !(await pose.start(props.video, onPose))) {
+      camError.value = pose.error.value ?? '자세 인식 모델을 불러오지 못했어요'
+    }
     return
   }
 
@@ -1180,7 +1184,9 @@ onMounted(async () => {
   const video = videoRef.value!
   video.srcObject = stream
   await video.play().catch(() => {})
-  await pose.start(video, onPose)
+  if (!(await pose.start(video, onPose)) && !(await pose.start(video, onPose))) {
+    camError.value = pose.error.value ?? '자세 인식 모델을 불러오지 못했어요'
+  }
 })
 
 /** 게임룸이 게임 화면을 captureStream으로 송출할 수 있게 3D 캔버스를 노출 (게임① 패턴) */

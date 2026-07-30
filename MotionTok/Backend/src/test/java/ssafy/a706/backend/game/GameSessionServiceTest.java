@@ -15,6 +15,7 @@ import ssafy.a706.backend.game.dto.GameEventResponse;
 import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.repository.GameRepository;
 import ssafy.a706.backend.game.dto.GameFinishRequest;
+import ssafy.a706.backend.game.dto.GameReadyRequest;
 import ssafy.a706.backend.game.dto.GameStartRequest;
 import ssafy.a706.backend.game.model.GamePlayerScore;
 import ssafy.a706.backend.game.model.GameSession;
@@ -53,6 +54,8 @@ class GameSessionServiceTest {
     @Mock RoomMembershipReader membershipReader;
     @Mock LiveRoomRepository liveRoomRepository;
     @Mock GameSessionRepository sessionRepository;
+    /** 교차 중복 시작 차단(-164) — 기본 모킹은 "리듬 세션 없음"(Optional.empty)이라 기존 시나리오 불변 */
+    @Mock ssafy.a706.backend.rhythm.RhythmSessionRepository rhythmSessionRepository;
     @Mock GameRepository gameRepository;
     @Mock SimpMessagingTemplate messagingTemplate;
     @Mock TaskScheduler gameTaskScheduler;
@@ -66,6 +69,15 @@ class GameSessionServiceTest {
     @Captor ArgumentCaptor<GameEventResponse> eventCaptor;
     @Captor ArgumentCaptor<Runnable> endTaskCaptor;
 
+    /**
+     * -162 시작 준비 확인: start()는 이제 GAME_PREPARE만 배포하고, 실제 세션은 전원 ready
+     * 또는 타임아웃에 열린다. 테스트에서는 첫 예약(준비 타임아웃 러너)을 즉시 실행해
+     * 기존 "시작 → 세션 생성" 흐름으로 진행시킨다. (ready 경로는 전용 테스트에서 검증)
+     */
+    private void runPrepareTimeout() {
+        endTaskCaptor.getAllValues().get(0).run();
+    }
+
     private final MemberPrincipal host = new MemberPrincipal(1L, "방장");
     private final MemberPrincipal member = new MemberPrincipal(2L, "참가자");
 
@@ -76,10 +88,10 @@ class GameSessionServiceTest {
                 .thenReturn(Optional.of(Map.of("hostUserId", "1")));
     }
 
-    /** 카탈로그에서 게임1(핑거 스타, 90초 매치·카운트다운 3s)을 조회하도록 스텁. */
+    /** 카탈로그에서 게임1(핑거 스타, 60초 매치·카운트다운 3s)을 조회하도록 스텁. */
     private void givenGame1() {
         when(gameRepository.findById(1L)).thenReturn(Optional.of(Game.builder()
-                .id(1L).name("핑거 스타").roundDurationSec(90).countdownSec(3).active(true).build()));
+                .id(1L).name("핑거 스타").roundDurationSec(60).countdownSec(3).active(true).build()));
     }
 
     /** 카탈로그에서 게임4(몸 끼워 맞추기)를 조회하도록 스텁 — 라운드 길이는 모드별로 서버가 따로 정한다. */
@@ -98,25 +110,58 @@ class GameSessionServiceTest {
                 .isEqualTo(ErrorCode.NOT_ROOM_HOST);
     }
 
+    /**
+     * 관리자가 닫은 게임(-106)은 <b>GAME_NOT_FOUND가 아니다.</b> 닫힌 게임은 카탈로그에 잠긴
+     * 카드로 여전히 보이므로 "존재하지 않는다"고 답하면 화면과 어긋나고, 방장은 자기 방이
+     * 고장 났다고 읽는다. 다시 열리면 플레이되므로 404가 아니라 409다.
+     */
+    @Test
+    void 관리자가_닫은_게임은_GAME_CLOSED로_거부한다() {
+        givenRoomWithHost();
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(Game.builder()
+                .id(1L).name("핑거 스타").roundDurationSec(60).countdownSec(3).active(false).build()));
+
+        assertThatThrownBy(() -> service.start(ROOM_ID, new GameStartRequest(1L, null, null, null, null), host))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.GAME_CLOSED);
+    }
+
+    @Test
+    void 카탈로그에_없는_게임은_GAME_NOT_FOUND로_거부한다() {
+        givenRoomWithHost();
+        when(gameRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.start(ROOM_ID, new GameStartRequest(99L, null, null, null, null), host))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.GAME_NOT_FOUND);
+    }
+
     @Test
     void 시작하면_GAME_START를_배포하고_방을_잠그고_정산을_예약한다() {
         givenRoomWithHost();
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.empty());
-        when(gameTaskScheduler.schedule(any(Runnable.class), any(Instant.class)))
+        when(gameTaskScheduler.schedule(endTaskCaptor.capture(), any(Instant.class)))
                 .thenReturn(mock(ScheduledFuture.class));
         givenGame1();
 
         service.start(ROOM_ID, new GameStartRequest(1L, null, null, null, null), host);
+        runPrepareTimeout();
 
         verify(liveRoomService).changeStatus(ROOM_ID, "PLAYING");
-        verify(gameTaskScheduler).schedule(any(Runnable.class), any(Instant.class));
-        verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
+        // 준비 타임아웃 1회 + 정산 예약 1회
+        verify(gameTaskScheduler, org.mockito.Mockito.times(2))
+                .schedule(any(Runnable.class), any(Instant.class));
+        // GAME_PREPARE 1회 + GAME_START 1회
+        verify(messagingTemplate, org.mockito.Mockito.times(2))
+                .convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
         GameEventResponse event = eventCaptor.getValue();
         assertThat(event.type()).isEqualTo(GameEventResponse.EventType.GAME_START);
-        // 게임① 과제 = 90초 매치 공유 시드(숫자 문자열) — 전원이 같은 별자리 순서를 뽑는 근거
+        // 게임① 과제 = 60초 매치 공유 시드(숫자 문자열) — 전원이 같은 별자리 순서를 뽑는 근거
         assertThat(event.challenge()).matches("\\d+");
         assertThat(event.constellationKey()).isEqualTo(event.challenge()); // 게임① 하위호환 필드 (-137)
-        assertThat(event.endAt() - event.startAt()).isEqualTo(90_000); // 90초 매치
+        assertThat(event.endAt() - event.startAt()).isEqualTo(60_000); // 60초 매치
         assertThat(event.startAt()).isLessThan(event.endAt());
         assertThat(event.serverNow()).isLessThanOrEqualTo(event.startAt());
     }
@@ -126,7 +171,7 @@ class GameSessionServiceTest {
     void 게임1이_아니면_시작_시_과제가_비어있다() {
         givenRoomWithHost();
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.empty());
-        when(gameTaskScheduler.schedule(any(Runnable.class), any(Instant.class)))
+        when(gameTaskScheduler.schedule(endTaskCaptor.capture(), any(Instant.class)))
                 .thenReturn(mock(ScheduledFuture.class));
         when(gameRepository.findById(4L)).thenReturn(Optional.of(Game.builder()
                 .id(4L).name("몸 끼워 맞추기").roundDurationSec(15).countdownSec(3).active(true).build()));
@@ -136,8 +181,10 @@ class GameSessionServiceTest {
                 new LiveRoomMemberValue("2", "참가자", false, 1)));
 
         service.start(ROOM_ID, new GameStartRequest(4L, null, "hard", null, null), host);
+        runPrepareTimeout();
 
-        verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
+        verify(messagingTemplate, org.mockito.Mockito.times(2))
+                .convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
         GameEventResponse event = eventCaptor.getValue();
         assertThat(event.challenge()).isNull();
         assertThat(event.constellationKey()).isNull();
@@ -171,7 +218,7 @@ class GameSessionServiceTest {
     void 연속_서바이벌은_출제자없이_시드와_벽수를_배포한다() {
         givenRoomWithHost();
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.empty());
-        when(gameTaskScheduler.schedule(any(Runnable.class), any(Instant.class)))
+        when(gameTaskScheduler.schedule(endTaskCaptor.capture(), any(Instant.class)))
                 .thenReturn(mock(ScheduledFuture.class));
         givenGame4();
         when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
@@ -179,6 +226,7 @@ class GameSessionServiceTest {
                 new LiveRoomMemberValue("2", "참가자", false, 1)));
 
         service.start(ROOM_ID, new GameStartRequest(4L, null, "easy", "chain", 20), host);
+        runPrepareTimeout();
 
         ArgumentCaptor<GameSession> sessionCaptor = ArgumentCaptor.forClass(GameSession.class);
         verify(sessionRepository).saveSession(eq(ROOM_ID), sessionCaptor.capture());
@@ -189,7 +237,8 @@ class GameSessionServiceTest {
         assertThat(saved.wallCount()).isEqualTo(20);
         assertThat(Long.parseLong(saved.challenge())).isPositive(); // 포즈 시드
 
-        verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
+        verify(messagingTemplate, org.mockito.Mockito.times(2))
+                .convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
         GameEventResponse event = eventCaptor.getValue();
         assertThat(event.mode()).isEqualTo("chain");
         assertThat(event.wallCount()).isEqualTo(20);
@@ -207,7 +256,7 @@ class GameSessionServiceTest {
     void 연속_서바이벌_벽수는_선택지밖이면_기본값이_된다() {
         givenRoomWithHost();
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.empty());
-        when(gameTaskScheduler.schedule(any(Runnable.class), any(Instant.class)))
+        when(gameTaskScheduler.schedule(endTaskCaptor.capture(), any(Instant.class)))
                 .thenReturn(mock(ScheduledFuture.class));
         givenGame4();
         when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
@@ -216,8 +265,10 @@ class GameSessionServiceTest {
 
         // 0(무한)은 종료 시각을 정할 수 없어 방에서는 허용하지 않는다 — 솔로 전용이다
         service.start(ROOM_ID, new GameStartRequest(4L, null, "easy", "chain", 0), host);
+        runPrepareTimeout();
 
-        verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
+        verify(messagingTemplate, org.mockito.Mockito.times(2))
+                .convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
         GameEventResponse event = eventCaptor.getValue();
         assertThat(event.wallCount()).isEqualTo(10);
         // 10벽 = chainDurationMs(6000, 10, 5) 26614 + 꼬리 1500 (FE 테스트와 같은 숫자)
@@ -301,6 +352,54 @@ class GameSessionServiceTest {
                 .isEqualTo(ErrorCode.GAME_SESSION_ALREADY_ACTIVE);
     }
 
+    /** -162: 전원이 ready를 회신하면 타임아웃을 기다리지 않고 즉시 GAME_START가 열린다. */
+    @Test
+    void 전원이_ready면_즉시_세션이_시작된다() {
+        givenRoomWithHost();
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.empty());
+        when(gameTaskScheduler.schedule(endTaskCaptor.capture(), any(Instant.class)))
+                .thenReturn(mock(ScheduledFuture.class));
+        givenGame1();
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue("1", "방장", false, 0),
+                new LiveRoomMemberValue("2", "참가자", false, 1)));
+
+        service.start(ROOM_ID, new GameStartRequest(1L, null, null, null, null), host);
+        verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
+        GameEventResponse prepare = eventCaptor.getValue();
+        assertThat(prepare.type()).isEqualTo(GameEventResponse.EventType.GAME_PREPARE);
+        assertThat(prepare.totalCount()).isEqualTo(2);
+
+        service.ready(ROOM_ID, new GameReadyRequest(prepare.prepareId()), host);
+        service.ready(ROOM_ID, new GameReadyRequest(prepare.prepareId()), member);
+
+        // GAME_PREPARE + READY_PROGRESS(1/2) + READY_PROGRESS(2/2) + GAME_START
+        verify(messagingTemplate, org.mockito.Mockito.times(4))
+                .convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
+        assertThat(eventCaptor.getValue().type()).isEqualTo(GameEventResponse.EventType.GAME_START);
+        verify(liveRoomService).changeStatus(ROOM_ID, "PLAYING");
+    }
+
+    /** -164: 방장 강제종료 — 정산(GameSettledEvent) 없이 GAME_ABORTED가 배포되고 방이 풀린다. */
+    @Test
+    void 방장이_강제종료하면_정산없이_GAME_ABORTED가_배포된다() {
+        givenRoomWithHost();
+        long now = System.currentTimeMillis();
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(
+                new GameSession("s1", 1L, "12345", null, now - 5_000, now + 60_000,
+                        GameSession.STATUS_PLAYING, List.of(), 0, null, null, 0)));
+        when(sessionRepository.tryAcquireEndGuard(ROOM_ID, "s1", 0)).thenReturn(true);
+
+        service.abort(ROOM_ID, host);
+
+        verify(sessionRepository).markEnded(ROOM_ID);
+        verify(liveRoomService).changeStatus(ROOM_ID, "WAITING");
+        verify(eventPublisher, never()).publishEvent(any());
+        verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
+        assertThat(eventCaptor.getValue().type()).isEqualTo(GameEventResponse.EventType.GAME_ABORTED);
+        assertThat(eventCaptor.getValue().sessionId()).isEqualTo("s1");
+    }
+
     @Test
     void 중복_제출은_무시되고_브로드캐스트도_없다() {
         when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
@@ -316,7 +415,7 @@ class GameSessionServiceTest {
         verify(messagingTemplate, never()).convertAndSend(eq(GAME_TOPIC), any(GameEventResponse.class));
     }
 
-    /** 게임① 90초 매치: 총점은 완성 개수×100 상한으로, 완성 개수는 이론상 최대치로 클램프된다. */
+    /** 게임① 60초 매치: 총점은 완성 개수×100 상한으로, 완성 개수는 이론상 최대치로 클램프된다. */
     @Test
     void 게임1_총점은_완성_개수_상한으로_클램프되어_기록된다() {
         when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
@@ -339,7 +438,7 @@ class GameSessionServiceTest {
         assertThat(scoreCaptor.getValue().completedCount()).isEqualTo(2);
     }
 
-    /** 게임① 90초 매치: 완성 개수 없이 총점만 주장하면 0점으로 잘린다(무완성 위조 차단). */
+    /** 게임① 60초 매치: 완성 개수 없이 총점만 주장하면 0점으로 잘린다(무완성 위조 차단). */
     @Test
     void 게임1_완성_개수가_없으면_총점도_0으로_잘린다() {
         when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
@@ -386,7 +485,9 @@ class GameSessionServiceTest {
         givenGame1();
 
         service.start(ROOM_ID, new GameStartRequest(1L, null, null, null, null), host);
-        verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
+        runPrepareTimeout();
+        verify(messagingTemplate, org.mockito.Mockito.times(2))
+                .convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
         String sessionId = eventCaptor.getValue().sessionId();
 
         // 매치 종료 시각 도달 — 예약된 정산 실행
@@ -404,8 +505,8 @@ class GameSessionServiceTest {
 
         verify(sessionRepository).markEnded(ROOM_ID);
         verify(liveRoomService).changeStatus(ROOM_ID, "WAITING");
-        // GAME_START 1회 + GAME_END 1회
-        verify(messagingTemplate, org.mockito.Mockito.times(2))
+        // GAME_PREPARE + GAME_START + GAME_END
+        verify(messagingTemplate, org.mockito.Mockito.times(3))
                 .convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
         GameEventResponse end = eventCaptor.getValue();
         assertThat(end.type()).isEqualTo(GameEventResponse.EventType.GAME_END);
@@ -421,7 +522,7 @@ class GameSessionServiceTest {
         assertThat(end.results().get(0).pointsEarned()).isEqualTo(28);
     }
 
-    /** 게임① 90초 매치 순위(개선안): 완성 개수가 1순위, 개수가 같으면 총점(=평균)이 2순위. */
+    /** 게임① 60초 매치 순위(개선안): 완성 개수가 1순위, 개수가 같으면 총점(=평균)이 2순위. */
     @Test
     void 게임1_순위는_완성_개수_우선이고_동수면_총점으로_가른다() {
         givenRoomWithHost();
@@ -431,7 +532,9 @@ class GameSessionServiceTest {
         givenGame1();
 
         service.start(ROOM_ID, new GameStartRequest(1L, null, null, null, null), host);
-        verify(messagingTemplate).convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
+        runPrepareTimeout();
+        verify(messagingTemplate, org.mockito.Mockito.times(2))
+                .convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
         String sessionId = eventCaptor.getValue().sessionId();
 
         when(sessionRepository.tryAcquireEndGuard(ROOM_ID, sessionId, 0)).thenReturn(true);
@@ -450,7 +553,7 @@ class GameSessionServiceTest {
 
         endTaskCaptor.getValue().run();
 
-        verify(messagingTemplate, org.mockito.Mockito.times(2))
+        verify(messagingTemplate, org.mockito.Mockito.times(3))
                 .convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
         GameEventResponse end = eventCaptor.getValue();
         assertThat(end.results()).extracting(r -> r.userId()).containsExactly("3", "1", "2");

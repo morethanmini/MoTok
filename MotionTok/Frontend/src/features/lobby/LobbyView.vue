@@ -18,6 +18,7 @@ import {
 import { useSessionStore } from '@/stores/session'
 import { useAsyncData } from '@/composables/useAsyncData'
 import { useLobbyLive } from '@/composables/useLobbyLive'
+import { motionModelsReady } from '@/composables/motionModels'
 import { useWhisper } from '@/composables/useWhisper'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
@@ -55,9 +56,11 @@ const { message: toast, flash } = useToast()
 /** 친구 박스 클릭 → 공개 프로필(-96). 친구·랭킹 화면과 같은 컴포저블. */
 const viewer = useUserProfile()
 
-// 스플래시(로딩)는 세션 첫 진입에만 표시. 이후 로비 재방문 시엔 건너뜀.
-const SPLASH_SEEN_KEY = 'motok.splashSeen'
-const showSplash = ref(sessionStorage.getItem(SPLASH_SEEN_KEY) !== '1')
+// 스플래시(로딩)는 "모델이 실제로 준비됐는가"로 판정한다(-161). 예전엔 sessionStorage
+// 플래그로 세션당 1회만 띄웠는데, 새로고침이면 힙 싱글턴(모델)은 죽고 플래그는 살아남아
+// 재다운로드 경로가 영영 사라졌다 — 8인 테스트에서 3명이 게임을 못 돌린 원인.
+// 모델이 이미 있으면(SPA 재방문) 안 뜨고, 캐시 복원이면 1초 미만으로 스쳐 지나간다.
+const showSplash = ref(!motionModelsReady())
 const query = ref('')
 const showJoin = ref(false)
 const showCreate = ref(false)
@@ -187,7 +190,6 @@ onMounted(() => {
 
 function enterLobby() {
   showSplash.value = false
-  sessionStorage.setItem(SPLASH_SEEN_KEY, '1')
   void bgm.play()
 }
 
@@ -227,8 +229,7 @@ const openJoin = () => guardMember(() => (showJoin.value = true))
 // 초대코드 입장(joinRoom)은 비밀번호를 받지 않는다(확정안 ③).
 function enterRoom(room: Room) {
   guardMember(async () => {
-    if (room.disabled) return
-    if (!room.roomId) return goDevice(room.game, 'MP4X9K') // 목업 폴백
+    if (room.disabled || !room.roomId) return
     if (room.hasPassword) {
       pwTarget.value = room
       pwError.value = ''
@@ -238,8 +239,9 @@ function enterRoom(room: Room) {
       const res = await roomsApi.join(room.roomId)
       goDevice(room.game, res.roomId)
     } catch (e) {
-      if (e instanceof ApiError) return flash(e.message)
-      goDevice(room.game, room.roomId)
+      // 예전에는 네트워크 오류면 그냥 방으로 보냈다(백엔드 미연동 데모 폴백) — 서버가 모르는
+      // 입장이라 "각자 1인방" 같은 유령 상태를 만든다(-164). 실패는 실패로 알린다.
+      flash(e instanceof ApiError ? e.message : '방에 입장하지 못했어요 · 잠시 후 다시 시도해 주세요')
     }
   })
 }
@@ -346,18 +348,27 @@ useLobbyLive({
  * 초대 수락 (-100) — 초대에 실린 초대코드로 기존 입장 흐름을 탄다.
  * 초대받아 들어가는 경로라 비밀방이어도 비밀번호를 묻지 않는다(방 안 사람이 허락한 입장이다).
  *
- * 초대를 치우는 건 입장에 성공한 <b>뒤</b>다 — 먼저 지우면 그 사이 정원이 찼거나 게임이 시작돼
- * 입장이 막혔을 때 다시 눌러 볼 카드가 사라진다.
+ * <b>카드는 일회용</b>이다 — 참가든 거절이든 누른 순간 사라진다. 종전에는 입장이 실패하면
+ * 카드를 남겨 다시 눌러 볼 수 있게 했는데, 그러면 실패 사유마다 "남길 것/치울 것"을 따져야 하고
+ * (방이 사라진 초대는 영영 성공하지 못하면서 계속 남았다) 사용자도 카드가 언제 사라지는지 알 수 없다.
+ * 입장이 막혔으면 초대를 다시 받으면 된다 — 방 안에서 다시 부르는 건 한 번의 클릭이다.
+ *
+ * 입장 요청보다 치우기가 먼저다 — 응답을 기다렸다 지우면 그 사이 카드가 눌린 채 남아 있다.
+ * 서버 정리(DELETE)는 기다리지 않는다: 화면에서 사라지는 것이 이 동작의 본체다.
  */
 async function acceptInvitation(invitation: InvitationItem) {
-  let roomId: string
+  void dismissInvitation(invitation)
   try {
-    roomId = (await roomsApi.joinByInviteCode(invitation.inviteCode)).roomId
+    const { roomId } = await roomsApi.joinByInviteCode(invitation.inviteCode)
+    goDevice('친구의 게임', roomId)
   } catch (e) {
-    return flash(e instanceof ApiError ? e.message : '입장하지 못했어요')
+    // 카드가 이미 사라졌으므로 "다시 누르면 된다"가 성립하지 않는다 — 다음 행동까지 알려 준다.
+    // 강퇴만 예외다: 그 방이 유지되는 동안 어떤 경로로도 막히므로(LiveRoomService.kick)
+    // 다시 초대받아도 같은 실패다. 할 수 없는 일을 권하지 않는다.
+    const reason = e instanceof ApiError ? e.message : '방에 입장하지 못했어요'
+    const kicked = e instanceof ApiError && e.code === 'ROOM_KICKED'
+    flash(kicked ? reason : `${reason} · 초대를 다시 받아 주세요`)
   }
-  await dismissInvitation(invitation)
-  goDevice('친구의 게임', roomId)
 }
 
 /** 초대를 서버와 화면에서 치운다. 이미 만료됐으면 404가 나는데, 사라지는 게 목적이라 그대로 둔다. */
@@ -402,8 +413,8 @@ async function joinRoom(code: string) {
     const res = await roomsApi.joinByInviteCode(code)
     goDevice('친구의 게임', res.roomId)
   } catch (e) {
-    if (e instanceof ApiError) return flash(e.message)
-    goDevice('친구의 게임', code) // 폴백
+    // 초대코드는 roomId가 아니다 — 실패 시 코드로 입장하는 폴백은 없는 방을 그린다(-164)
+    flash(e instanceof ApiError ? e.message : '방에 입장하지 못했어요 · 잠시 후 다시 시도해 주세요')
   }
 }
 
@@ -432,8 +443,9 @@ async function createRoom(payload: NewRoom) {
     showCreate.value = false // 성공했을 때만 닫는다 — 실패 시엔 모달을 남겨 재시도할 수 있게
     goDevice('게임 선택 중', res.roomId)
   } catch (e) {
-    if (e instanceof ApiError) return flash(e.message)
-    goDevice('게임 선택 중', 'MP' + Math.random().toString(36).slice(2, 6).toUpperCase())
+    // 예전에는 실패하면 가짜 roomId로 방에 들어갔다(데모 폴백) — 서버엔 없는 방이라
+    // "오프라인인데 방이 만들어지고 둘 다 방장" 같은 유령 상태의 근원이었다(-164).
+    flash(e instanceof ApiError ? e.message : '방을 만들지 못했어요 · 잠시 후 다시 시도해 주세요')
   } finally {
     creating.value = false
   }

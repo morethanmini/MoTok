@@ -3,12 +3,17 @@ package ssafy.a706.backend.rhythm;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.event.EventListener;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
+import ssafy.a706.backend.game.GameSessionService;
 import ssafy.a706.backend.game.GameSettledEvent;
 import ssafy.a706.backend.game.dto.GameResultEntry;
+import ssafy.a706.backend.game.entity.Game;
+import ssafy.a706.backend.game.repository.GameRepository;
+import ssafy.a706.backend.liveroom.event.LiveRoomClosedEvent;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
@@ -77,6 +82,10 @@ public class RhythmSessionService {
     /** 방 상태 전환은 서비스 경유 — 로비 실시간 갱신(-148) 알림이 그 안에 붙어 있다. */
     private final LiveRoomService liveRoomService;
     private final RhythmSessionRepository sessionRepository;
+    /** 공용 게임 세션 상태 조회 — 교차 중복 시작 차단(-164) 전용. 도메인 지식은 넘기지 않는다. */
+    private final GameSessionService gameSessionService;
+    /** 카탈로그 노출 제어(-106) 확인용 — 관리자가 닫은 게임은 리듬 채널로도 시작되지 않아야 한다. */
+    private final GameRepository gameRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final TaskScheduler rhythmTaskScheduler;
     private final ApplicationEventPublisher eventPublisher;
@@ -99,6 +108,19 @@ public class RhythmSessionService {
                 .orElse(false);
         if (activeExists) {
             throw RhythmException.alreadyActive();
+        }
+        // 공용 게임 세션(핑거스타 등)이 진행/준비 중이면 리듬을 겹쳐 시작할 수 없다(-164).
+        // 저장소가 따로라 여기서 교차 확인하지 않으면 게임 위에 게임을 얹을 수 있었다
+        // (반대 방향은 GameSessionService.start가 확인한다).
+        if (gameSessionService.isSessionActiveOrPreparing(roomId)) {
+            throw RhythmException.alreadyActive();
+        }
+        // 카탈로그 노출 제어(-106) — 전용 채널이라 games 테이블을 안 보고 있었다. 이걸 빼면
+        // 관리자가 캐치캐치리듬을 닫아도 리듬만 계속 시작된다(공용 게임은 GameSessionService가 막는다).
+        Game game = gameRepository.findById(RhythmGameSeeder.GAME_ID)
+                .orElseThrow(RhythmException::gameNotFound);
+        if (!game.isActive()) {
+            throw RhythmException.gameClosed();
         }
 
         String difficulty = resolveDifficulty(request == null ? null : request.difficulty());
@@ -246,6 +268,12 @@ public class RhythmSessionService {
         if (prev != null) {
             prev.cancel(false);
         }
+    }
+
+    /** 방 폐쇄(-164) — 사라진 방의 정산 예약을 정리한다(게임 세션과 동일한 이유). */
+    @EventListener
+    public void onRoomClosed(LiveRoomClosedEvent event) {
+        cancelScheduledEnd(event.roomId());
     }
 
     private RhythmSession requireActiveSession(String roomId) {
