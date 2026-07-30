@@ -17,6 +17,7 @@ import {
   LEG_LEN,
   LEG_R_MUL,
   LEG_SPLAY,
+  LEG_TOP_DROP,
   STAGE_DROP,
   STAGE_SCALE,
   TORSO_LEN,
@@ -201,8 +202,20 @@ export class AvatarRig {
     swap(this.legR, new THREE.CapsuleGeometry(legR, legLen, 6, 16))
 
     // 다리 고정 포즈 — legs 그룹 로컬 좌표(원점 = 힙 중점)
-    setBetween(this.legL, -HIP_HALF_WIDTH, 0, -HIP_HALF_WIDTH - LEG_SPLAY, -legLen)
-    setBetween(this.legR, HIP_HALF_WIDTH, 0, HIP_HALF_WIDTH + LEG_SPLAY, -legLen)
+    setBetween(
+      this.legL,
+      -HIP_HALF_WIDTH,
+      -LEG_TOP_DROP,
+      -HIP_HALF_WIDTH - LEG_SPLAY,
+      -legLen,
+    )
+    setBetween(
+      this.legR,
+      HIP_HALF_WIDTH,
+      -LEG_TOP_DROP,
+      HIP_HALF_WIDTH + LEG_SPLAY,
+      -legLen,
+    )
     // STAGE_SCALE을 곱해 월드 값으로 내보낸다 — 소비자(stage.setFloorY)는 월드 Y를 기대하고,
     // group에 같은 배율이 걸려 있어 실제 발바닥도 이 높이에 온다. STAGE_DROP까지 더해야
     // 포디움이 내려앉은 아바타를 그대로 따라간다.
