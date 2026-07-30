@@ -26,6 +26,7 @@ import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
 import GameSetupModal from './components/GameSetupModal.vue'
 import ReportIcon from './components/ReportIcon.vue'
+import MusicVolumeButton from './components/MusicVolumeButton.vue'
 import HostWaitingOverlay from './components/HostWaitingOverlay.vue'
 import InviteFriendsModal from './components/InviteFriendsModal.vue'
 // 방 정보 수정 모달(-130) — 입력 필드가 방 생성과 동일 규격(명세 §4)이라 로비 모달을 그대로 재사용한다.
@@ -664,19 +665,21 @@ watch(hostAway, (away) => {
 }, { immediate: true })
 
 /**
- * 게임④는 자체 사운드(S15P11A706-138)를 가지므로 로비 BGM을 내린다.
- * useBgm의 suspendForGame/resumeAfterGame은 만들어져만 있고 호출부가 없었다 — 여기서 연결한다.
- * 게임④에만 거는 이유: 다른 게임은 자체 사운드가 없거나 담당이 달라, 임의로 BGM을 끄면 그쪽
- * 체감이 바뀐다. 전체에 걸려면 조건만 `!!activeGame.value`로 넓히면 된다.
+ * 자체 사운드를 가진 게임은 로비 BGM을 내린다 — 안 내리면 테마와 게임 음악이 겹쳐 들린다.
+ * 게임④(shape, -138)로 시작했고, 핑거 스타(finger)·그림 릴레이(draw)가 인게임 루프를 받으면서
+ * 함께 들어왔다. 캐치캐치리듬(rhythm)은 서버가 준 곡을 자체 재생하므로 담당과 합의 후 넣는다.
  *
  * 반드시 activeGame 선언 아래에 둔다 — watch는 초기값을 잡으려고 getter를 setup 중 즉시
  * 실행하므로, 위에 두면 const TDZ에 걸려 setup 전체가 죽는다(빌드는 통과한다: TS는 화살표
  * 함수 안의 선언 전 참조를 잡지 않는다).
  */
+const AUDIO_OWNING_GAMES = ['shape', 'finger', 'draw']
 watch(
   // 설정 창(-9)도 인게임 베드를 직접 깔기 때문에 같이 내린다 — 소유 판정을 여기 한 곳에 모아두면
   // 창을 닫고 게임으로 넘어가는 사이에 테마가 잠깐 살아나는 일이 없다.
-  () => activeGame.value?.id === 'shape' || setupGame.value?.id === 'shape',
+  () =>
+    AUDIO_OWNING_GAMES.includes(activeGame.value?.id ?? '') ||
+    AUDIO_OWNING_GAMES.includes(setupGame.value?.id ?? ''),
   (ownsAudio) => (ownsAudio ? bgm.suspendForGame() : bgm.resumeAfterGame()),
 )
 
@@ -1468,6 +1471,9 @@ const startHint = computed(() =>
       <button class="ribbon-report" title="유저 신고" @click="openUserReport">
         <ReportIcon :width="16" :height="20" />
       </button>
+
+      <!-- 게임 BGM 볼륨. 로비 음악은 설정 › 소리에서 따로 조절한다 -->
+      <MusicVolumeButton />
 
       <!-- 친구 초대 (-100) — 참가자 누구나, 대기실에서만. 게임 중엔 서버도 409로 거부한다. -->
       <button v-if="!activeGame" class="ribbon-invite" title="친구 초대" @click="openInvite">
@@ -2402,6 +2408,21 @@ const startHint = computed(() =>
 }
 .ribbon-report:hover { background: transparent; color: #c15d5a; }
 .ribbon-invite:hover, .ribbon-settings:hover { background: transparent; color: #5b8d45; }
+/* 음악 버튼도 이웃과 같은 아이콘 형태로 — 컴포넌트 자체 스타일은 박스라 여기서 벗긴다.
+   열려 있을 때만 배경으로 표시한다(팝오버가 떠 있다는 신호). */
+.ribbon-music-wrap :deep(.ribbon-music) {
+  width: auto;
+  height: auto;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--room-ink);
+}
+.ribbon-music-wrap :deep(.ribbon-music:hover) { background: transparent; color: #5b8d45; }
+.ribbon-music-wrap :deep(.ribbon-music.open) { background: rgba(183, 141, 93, .18); color: #5b8d45; box-shadow: none; }
+.ribbon-music-wrap :deep(.ribbon-music.silent) { color: #c15d5a; }
 .code-box {
   display: grid;
   gap: 2px;
@@ -2418,8 +2439,10 @@ const startHint = computed(() =>
 .copy { border: 0; border-radius: 0; background: transparent; color: var(--room-ink); }
 .room-ribbon .px-kicker { order: 0; }
 .code-box { position: relative; order: 1; }
-.ribbon-report, .ribbon-invite, .ribbon-settings { position: relative; order: 2; }
-.ribbon-report::before, .ribbon-invite::before, .ribbon-settings::before {
+/* 음악 버튼도 버튼 그룹(order 2)에 넣는다 — 기본 order 0으로 두면 방 코드 앞으로 튄다.
+   같은 order 안에서는 DOM 순서를 따르므로 신고 버튼 왼쪽에 선다. */
+.ribbon-report, .ribbon-invite, .ribbon-settings, .ribbon-music-wrap { position: relative; order: 2; }
+.ribbon-report::before, .ribbon-invite::before, .ribbon-settings::before, .ribbon-music-wrap::before {
   position: absolute;
   top: 50%;
   left: -12px;

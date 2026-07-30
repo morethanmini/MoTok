@@ -5,8 +5,9 @@
  * - view가 있으면 참가자 표시: 카메라 켜짐이면 영상, 아니면 이니셜 아바타. 마이크/왕관/발화 표시.
  * LiveKit 트랙은 <video>/<audio>에 attach하고 언마운트·교체 시 detach한다.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { ParticipantView } from '@/composables/useLiveKitRoom'
+import { attachSpeakerGain, detachSpeakerGain } from '@/composables/useSpeakerGain'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 import type { StickerSprite } from '@/features/decor/sticker'
 
@@ -105,11 +106,17 @@ watch(
   ([track, el], _prev, onCleanup) => {
     if (track && el) {
       track.attach(el)
+      // 스피커 증폭은 트랙이 아니라 요소에 건다 — 트랙이 갈려도 요소는 같은 DOM 노드라
+      // createMediaElementSource(요소당 1회 제약)를 다시 부르지 않게 된다.
+      attachSpeakerGain(el)
       onCleanup(() => track.detach(el))
     }
   },
   { immediate: true },
 )
+onBeforeUnmount(() => {
+  if (audioEl.value) detachSpeakerGain(audioEl.value)
+})
 
 const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase())
 
