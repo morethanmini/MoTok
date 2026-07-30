@@ -34,6 +34,7 @@ import WhisperModal from '@/components/common/WhisperModal.vue'
 import { useWarningNotice, currentWarning } from '@/composables/useWarningNotice'
 import { useToast } from '@/composables/useToast'
 import { loadRemoteWordlist } from '@/utils/profanity'
+import { startRum } from '@/composables/useRum'
 
 const router = useRouter()
 const session = useSessionStore()
@@ -93,6 +94,10 @@ const accountBlocked = ref<AccountBlockKind | null>(null)
 let unsubscribeBlocked: (() => void) | undefined
 
 onMounted(() => {
+  // 베타 관측(RUM) — 서버 로그가 못 보는 것(접속 거부·모델 이탈·재연결 횟수·체감 지연)을 남긴다.
+  // 수신은 nginx가 return 204로 끝내므로 앱을 거치지 않는다. 실패해도 앱에 영향이 없다.
+  startRum()
+
   unsubscribe = onSessionExpired((reason) => {
     if (sessionExpired.value) return // 동시 요청이 함께 실패해도 한 번만 안내
     // 토큰을 지우기 전에 읽어 둔다 — clear() 뒤에는 이용 시간을 알 길이 없다.
