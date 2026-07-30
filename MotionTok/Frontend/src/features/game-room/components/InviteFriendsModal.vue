@@ -47,7 +47,8 @@ async function invite(friend: Friend) {
 </script>
 
 <template>
-  <PixelModal @close="$emit('close')">
+  <PixelModal variant="lobby" @close="$emit('close')">
+    <section class="invite-modal">
     <h3 class="invite-title">👋 친구 초대</h3>
     <p class="invite-desc">부른 친구는 로비에서 초대 카드를 받아요. 초대는 5분 뒤 사라져요.</p>
 
@@ -74,12 +75,12 @@ async function invite(friend: Friend) {
         </button>
       </li>
     </ul>
+    </section>
   </PixelModal>
 </template>
 
 <style scoped>
-.invite-title { margin: 0 0 6px; font-size: 15px; }
-.invite-desc { margin: 0 0 12px; font-size: 9px; line-height: 1.6; color: var(--c-muted); }
+:deep(.modal.lobby) { width: 430px; padding: 0; overflow: hidden; }.invite-modal { padding: 24px; }.invite-title { margin: -24px -24px 0; padding: 21px 24px 0; border-bottom: 0; background: #fff2d8; color: #3d2c22; font-family: var(--font-pixel); font-size: 22px; font-weight: 400; }.invite-desc { margin: 0 -24px 18px; padding: 6px 24px 18px; border-bottom: 0; background: #fff2d8; font-size: 11px; line-height: 1.6; color: #87715e; }
 .invite-error {
   margin: 0 0 10px;
   padding: 7px 9px;
@@ -97,7 +98,6 @@ async function invite(friend: Friend) {
   align-items: center;
   gap: 9px;
   padding: 9px 2px;
-  border-bottom: 2px dashed #eaddea;
 }
 .invite-row:last-child { border: 0; }
 .dot {
@@ -114,13 +114,13 @@ async function invite(friend: Friend) {
 .who small { display: block; margin-top: 3px; font-size: 8px; color: var(--c-muted); }
 .invite-btn {
   margin-left: auto;
-  border: 2px solid var(--c-ink);
-  border-radius: 8px;
-  background: var(--c-yellow);
+  border: 2px solid #9a674b;
+  border-radius: 6px;
+  background: #e7c996;
   padding: 6px 10px;
   font-size: 8px;
   font-weight: 700;
-  box-shadow: var(--shadow-sm);
+  box-shadow: 2px 2px 0 #d3ad7d;
 }
 .invite-btn:disabled { box-shadow: none; }
 .invite-btn.done { background: var(--c-mint-soft); }
