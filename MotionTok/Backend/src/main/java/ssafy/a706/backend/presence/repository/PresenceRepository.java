@@ -1,7 +1,9 @@
 package ssafy.a706.backend.presence.repository;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Repository;
@@ -9,6 +11,7 @@ import ssafy.a706.backend.presence.model.PresenceSnapshot;
 import ssafy.a706.backend.presence.model.PresenceState;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -103,6 +106,64 @@ public class PresenceRepository {
 
     public PresenceSnapshot find(Long userId) {
         return findAll(List.of(userId)).getOrDefault(userId, PresenceSnapshot.OFFLINE);
+    }
+
+    /** 접속 중인 사용자 한 명. heartbeatAt은 epoch ms — 표시 시각이 아니라 "얼마나 전"을 계산하는 값이다. */
+    public record OnlinePresence(Long userId, String roomId, Long heartbeatAt) {
+    }
+
+    /**
+     * 지금 접속 중인 사용자 전부(최대 {@code limit}명) — 관리자 접속자 목록용.
+     *
+     * <p>온라인 목록을 따로 두지 않고 <b>키를 훑는다</b>. TTL로 조용히 사라지는 키와 별도 목록은
+     * 반드시 어긋나고(정리 주체가 없다), 그 어긋남은 "접속 중인데 목록에 없다"로 나타난다.
+     * 키의 존재가 곧 접속이므로 스캔이 원장이다.</p>
+     *
+     * <p>SCAN이라 서버를 멈추지 않고, MATCH로 서버 쪽에서 걸러 온다. 상한을 두는 건 응답 크기를
+     * 예측 가능하게 두기 위해서다 — 동시 접속이 상한을 넘을 규모면 그때는 목록이 아니라 지표가 답이다.</p>
+     */
+    public List<OnlinePresence> scanOnline(int limit) {
+        List<Long> userIds = new ArrayList<>();
+        ScanOptions options = ScanOptions.scanOptions().match(KEY_PREFIX + "*").count(100).build();
+        try (Cursor<String> cursor = redis.scan(options)) {
+            while (cursor.hasNext() && userIds.size() < limit) {
+                String key = cursor.next();
+                try {
+                    userIds.add(Long.parseLong(key.substring(KEY_PREFIX.length())));
+                } catch (NumberFormatException ignored) {
+                    // presence:{id}:sessions(세션 원장) 같은 다른 키 — 뒤가 숫자가 아니면 우리 대상이 아니다
+                }
+            }
+        }
+        if (userIds.isEmpty()) {
+            return List.of();
+        }
+
+        List<Object> results = redis.executePipelined(new SessionCallback<Object>() {
+            @Override
+            public Object execute(RedisOperations operations) {
+                for (Long id : userIds) {
+                    operations.opsForHash().entries(KEY_PREFIX + id);
+                }
+                return null;
+            }
+        });
+
+        List<OnlinePresence> online = new ArrayList<>();
+        for (int i = 0; i < userIds.size(); i++) {
+            Object raw = i < results.size() ? results.get(i) : null;
+            // 스캔과 읽기 사이에 TTL이 끝날 수 있다 — 빈 Hash는 그새 오프라인이 된 것이라 뺀다.
+            if (!(raw instanceof Map<?, ?> hash) || hash.isEmpty()) {
+                continue;
+            }
+            Object roomId = hash.get(FIELD_ROOM_ID);
+            Object beatAt = hash.get(FIELD_HEARTBEAT_AT);
+            online.add(new OnlinePresence(
+                    userIds.get(i),
+                    roomId == null ? null : roomId.toString(),
+                    beatAt == null ? null : Long.parseLong(beatAt.toString())));
+        }
+        return online;
     }
 
     /**

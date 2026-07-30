@@ -8,7 +8,8 @@
  * 끝나도록" 재생 위치를 뒤에서 역산한다 — 빌드업의 정점이 벽 도착 순간과 맞는다.
  * 나중에 파일을 페이즈 길이에 맞춰 자르더라도 offset이 0에 수렴할 뿐 그대로 동작한다.</p>
  */
-import { useBgm } from '@/composables/useBgm'
+import { watch, type WatchStopHandle } from 'vue'
+import { gameMusicGain, useBgm } from '@/composables/useBgm'
 
 /** 큐별 음원 경로. 게임 시작 전 설정 창도 ingame을 쓰므로 밖에서 참조할 수 있게 열어둔다 */
 export const SRC = {
@@ -21,7 +22,12 @@ export const SRC = {
 
 export type Cue = keyof typeof SRC
 
-const VOLUME = 0.5
+/**
+ * 로비 테마(useBgm 의 0.2)와 체감을 맞춘 값 — 파일 RMS 를 재서 역산했다.
+ * 로비 테마 −15.2 dBFS 대 이 큐들 −16.4 dBFS 라서 0.23 이 같은 레벨이 된다.
+ * 0.5 였을 때 로비보다 +6.8 dB 커서 세 게임 중 가장 컸다(gameBgm.ts 와 같은 기준으로 정렬).
+ */
+const VOLUME = 0.23
 
 /**
  * 큐 교체 시 겹치는 시간.
@@ -43,13 +49,29 @@ export class BodyFitAudio {
   private current: Cue | null = null
   /** 진행 중인 볼륨 램프 (큐별 1개) — 같은 큐에 램프가 겹치면 서로 볼륨을 되돌린다 */
   private ramps = new Map<Cue, number>()
+  private stopWatch: WatchStopHandle
+
+  constructor() {
+    // 게임방 음악 슬라이더를 움직이면 재생 중인 큐에 즉시 반영한다.
+    // 램프가 돌고 있는 큐는 건드리지 않는다 — 램프가 끝날 때 목표값으로 알아서 수렴한다.
+    this.stopWatch = watch(useBgm().gameMusic, () => {
+      this.els.forEach((a, cue) => {
+        if (!a.paused && !this.ramps.has(cue)) a.volume = this.target()
+      })
+    })
+  }
+
+  /** 곡별 기준 레벨 × 게임 음악 배수(0.5에서 1배, 1.0에서 2배) */
+  private target(): number {
+    return Math.min(1, VOLUME * gameMusicGain())
+  }
 
   private el(cue: Cue): HTMLAudioElement {
     let a = this.els.get(cue)
     if (!a) {
       a = new Audio(SRC[cue])
       a.preload = 'auto'
-      a.volume = VOLUME
+      a.volume = this.target()
       this.els.set(cue, a)
     }
     return a
@@ -113,8 +135,9 @@ export class BodyFitAudio {
       // 직전 라운드의 페이드아웃이 남긴 볼륨(0 근처)에서 시작해 올린다
       a.volume = 0
       // 자동재생 차단(사용자 상호작용 전)은 조용히 넘긴다 — 다음 큐에서 다시 시도된다
-      a.play().catch(() => {})
-      this.ramp(cue, VOLUME)
+      // jsdom 은 play() 가 미구현이라 Promise 가 아니라 undefined 를 준다 — 반환값을 그대로 믿지 않는다
+      void Promise.resolve(a.play()).catch(() => {})
+      this.ramp(cue, this.target())
     }
     if (a.readyState >= 1) start()
     else a.addEventListener('loadedmetadata', start, { once: true })
@@ -131,7 +154,8 @@ export class BodyFitAudio {
   }
 
   dispose() {
-    // 언마운트는 즉시 침묵 — 램프 타이머를 남기면 사라진 컴포넌트가 소리를 계속 만진다
+    // 언마운트는 즉시 침묵 — 램프 타이머나 감시자를 남기면 사라진 컴포넌트가 소리를 계속 만진다
+    this.stopWatch()
     this.ramps.forEach((id) => window.clearInterval(id))
     this.ramps.clear()
     this.current = null
