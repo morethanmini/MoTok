@@ -13,12 +13,13 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import AdminView from '@/features/admin/AdminView.vue'
 import { routes } from '@/router/routes'
 
-const { setActive, gamesList, sanctionsList, pointsList, sanctionStatus } = vi.hoisted(() => ({
+const { setActive, gamesList, sanctionsList, pointsList, sanctionStatus, searchUsers } = vi.hoisted(() => ({
   setActive: vi.fn<(gameId: number, isActive: boolean) => Promise<unknown>>(),
   gamesList: vi.fn<() => Promise<unknown>>(),
   sanctionsList: vi.fn<(p?: object) => Promise<unknown>>(),
   pointsList: vi.fn<(p?: object) => Promise<unknown>>(),
   sanctionStatus: vi.fn<(userId: number) => Promise<unknown>>(),
+  searchUsers: vi.fn<(nickname: string) => Promise<unknown>>(),
 }))
 
 const GAMES = [
@@ -65,7 +66,7 @@ vi.mock('@/api', async () => {
   const empty = { reports: [], page: 0, size: 20, totalElements: 0, totalPages: 0 }
   return {
     ...actual,
-    adminApi: { reports: () => Promise.resolve([]), auditLogs: () => Promise.reject(new Error('미구현')) },
+    adminApi: { reports: () => Promise.resolve([]), searchUsers: searchUsers },
     adminGamesApi: { list: gamesList, setActive },
     adminPointsApi: { list: pointsList },
     adminSanctionApi: { allHistory: sanctionsList, status: sanctionStatus },
@@ -107,6 +108,66 @@ beforeEach(() => {
   sanctionsList.mockResolvedValue(SANCTIONS)
   pointsList.mockResolvedValue(POINTS)
   sanctionStatus.mockResolvedValue(null)
+  searchUsers.mockResolvedValue([])
+})
+
+/** 닉네임 검색창에 값을 넣고 조회를 누른다. */
+async function searchNickname(wrapper: Awaited<ReturnType<typeof mountAdmin>>, nickname: string) {
+  const input = wrapper.find('input[type="search"]')
+  expect(input.exists(), '닉네임 검색창').toBe(true)
+  await input.setValue(nickname)
+  await wrapper.find('form.cr-filter').trigger('submit')
+  await flushPromises()
+}
+
+describe('닉네임으로 회원 좁히기', () => {
+  it('닉네임을 id로 바꿔 조회한다 — 서버 필터는 여전히 userId다', async () => {
+    searchUsers.mockResolvedValue([{ userId: 42, nickname: '민지' }])
+    sanctionStatus.mockResolvedValue({
+      suspended: false, banned: false, warnCount: 0, suspendCount: 0, banCount: 0,
+      remainingSeconds: null, releaseAt: null, suspendReason: null, banReason: null,
+    })
+    const wrapper = await mountAdmin()
+    await openTab(wrapper, '제재 내역')
+
+    await searchNickname(wrapper, '민지')
+
+    expect(searchUsers).toHaveBeenCalledWith('민지')
+    expect(sanctionsList).toHaveBeenLastCalledWith(expect.objectContaining({ userId: 42 }))
+    // 상태 카드는 대상이 정해져야 뜬다 — 닉네임 검색도 그 조건을 만족시켜야 한다.
+    expect(sanctionStatus).toHaveBeenCalledWith(42)
+  })
+
+  it('후보가 여럿이면 고르게 한다 — 임의로 한 명을 집으면 엉뚱한 사람에게 제재가 나간다', async () => {
+    searchUsers.mockResolvedValue([
+      { userId: 9, nickname: 'master2' },
+      { userId: 11, nickname: 'grandmaster' },
+    ])
+    const wrapper = await mountAdmin()
+    await openTab(wrapper, '제재 내역')
+    sanctionsList.mockClear()
+
+    await searchNickname(wrapper, 'master')
+
+    expect(sanctionsList).not.toHaveBeenCalled()
+    const picker = wrapper.find('.ux-picker')
+    expect(picker.exists()).toBe(true)
+
+    await picker.findAll('button')[1]!.trigger('click')
+    await flushPromises()
+    expect(sanctionsList).toHaveBeenLastCalledWith(expect.objectContaining({ userId: 11 }))
+  })
+
+  it('없는 닉네임은 실패를 밝힌다 — 조용히 전체 목록을 주면 남의 내역을 그 사람 것으로 읽는다', async () => {
+    const wrapper = await mountAdmin()
+    await openTab(wrapper, '포인트 내역')
+    pointsList.mockClear()
+
+    await searchNickname(wrapper, '없는사람')
+
+    expect(pointsList).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('찾지 못했어요')
+  })
 })
 
 describe('제재 내역 탭', () => {
