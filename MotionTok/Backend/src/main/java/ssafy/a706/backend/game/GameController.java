@@ -12,6 +12,7 @@ import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.game.dto.GameDrawRequest;
 import ssafy.a706.backend.game.dto.GameFinishRequest;
 import ssafy.a706.backend.game.dto.GameProgressRequest;
+import ssafy.a706.backend.game.dto.GameReadyRequest;
 import ssafy.a706.backend.game.dto.GameStartRequest;
 import ssafy.a706.backend.game.dto.GameTurnSkipRequest;
 import ssafy.a706.backend.game.dto.PoseSubmitRequest;
@@ -36,6 +37,18 @@ public class GameController {
     @MessageMapping("/rooms/{roomId}/game/start")
     public void start(@DestinationVariable String roomId, GameStartRequest request, Principal principal) {
         gameSessionService.start(roomId, request, extractSender(principal));
+    }
+
+    /** 참가자 준비 완료 회신(-162) — 전원 모이면(또는 서버 타임아웃) GAME_START가 배포된다. */
+    @MessageMapping("/rooms/{roomId}/game/ready")
+    public void ready(@DestinationVariable String roomId, GameReadyRequest request, Principal principal) {
+        gameSessionService.ready(roomId, request, extractSender(principal));
+    }
+
+    /** 방장 게임 강제종료(-164) — 정산 없이 세션을 접고 GAME_ABORTED를 배포한다. */
+    @MessageMapping("/rooms/{roomId}/game/abort")
+    public void abort(@DestinationVariable String roomId, Principal principal) {
+        gameSessionService.abort(roomId, extractSender(principal));
     }
 
     /** 게임④ 출제자 포즈 제출(-86) — 서버가 challenge 저장 후 POSE_SET을 방 전체에 배포한다. */
