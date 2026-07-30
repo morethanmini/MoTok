@@ -40,6 +40,10 @@ import java.util.Optional;
  * 요청 시 1회뿐이고, 재생성은 parentJobId로 같은 결제 건임을 밝혀 추가 차감 없이 진행한다.
  * 재생성 한도는 서버가 {@link AiItemJobRepository#existsByParentJobId}와 parent_job_id
  * UNIQUE 제약으로 이중 검증한다 — 프론트 상태만 믿으면 새로고침 등으로 우회될 수 있다.</p>
+ *
+ * <p>오픈 이벤트(app.shop.ai-item-free-event=true) 중엔 {@link #createPaidJob}의 charge가
+ * 0이 되어 최초 생성 차감이 스킵된다 — 재생성 한도는 이벤트 여부와 무관하게 그대로 적용된다
+ * (GPU 자원 보호 목적이라 무료여도 풀지 않는다).</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -64,6 +68,15 @@ public class AiItemJobService {
     private int aiItemCost;
 
     /**
+     * 오픈 이벤트 중엔 true — 이 최초 생성 건의 포인트 검증/차감/PointHistory 기록을 전부
+     * 건너뛴다(pointsCharged=0으로 저장). application.yaml app.shop.ai-item-free-event.
+     * 재생성 횟수 제한(createRetryJob)과 parentJobId 검증은 이 값과 무관하게 그대로 적용된다 —
+     * GPU 자원 보호 목적이라 무료 이벤트여도 풀지 않는다.
+     */
+    @Value("${app.shop.ai-item-free-event:false}")
+    private boolean aiItemFreeEvent;
+
+    /**
      * POST /shop/ai-items — 인증된 유저의 PENDING 작업 생성.
      * parentJobId가 없으면 새 결제(포인트 차감), 있으면 그 결제 건의 재생성(차감 없음)이다.
      */
@@ -81,9 +94,15 @@ public class AiItemJobService {
         return new AiItemJobCreateResponse(job.getId(), job.getStatus());
     }
 
-    /** 새 결제 건 — 잔액 확인·차감(부족 시 400) 후 job을 만들고 차감분을 pointsCharged로 남긴다. */
+    /**
+     * 새 결제 건 — 잔액 확인·차감(부족 시 400) 후 job을 만들고 차감분을 pointsCharged로 남긴다.
+     * 오픈 이벤트(aiItemFreeEvent=true) 중엔 charge가 0이 되어 검증/차감/PointHistory 기록을
+     * 전부 건너뛴다 — 분기는 이 메서드 안에만 두고 다른 곳(재생성 제한, 환불 등)엔 손대지 않는다.
+     */
     private AiItemJob createPaidJob(Long userId, AiItemJobCreateRequest request) {
-        if (userRepository.deductPointsIfSufficient(userId, aiItemCost) == 0) {
+        int charge = aiItemFreeEvent ? 0 : aiItemCost;
+
+        if (charge > 0 && userRepository.deductPointsIfSufficient(userId, charge) == 0) {
             throw new BusinessException(ErrorCode.AI_ITEM_INSUFFICIENT_POINT);
         }
 
@@ -93,17 +112,19 @@ public class AiItemJobService {
                 .category(request.category())
                 .sketchBase64(request.sketchBase64())
                 .status(AiJobStatus.PENDING)
-                .pointsCharged(aiItemCost)
+                .pointsCharged(charge)
                 .build());
 
-        int balanceAfter = userRepository.findById(userId).orElseThrow().getPointBalance();
-        pointHistoryRepository.save(PointHistory.builder()
-                .userId(userId)
-                .amount(-aiItemCost)
-                .type(PointHistoryType.AI_GENERATE)
-                .refId(job.getId())
-                .balanceAfter(balanceAfter)
-                .build());
+        if (charge > 0) {
+            int balanceAfter = userRepository.findById(userId).orElseThrow().getPointBalance();
+            pointHistoryRepository.save(PointHistory.builder()
+                    .userId(userId)
+                    .amount(-charge)
+                    .type(PointHistoryType.AI_GENERATE)
+                    .refId(job.getId())
+                    .balanceAfter(balanceAfter)
+                    .build());
+        }
 
         return job;
     }
