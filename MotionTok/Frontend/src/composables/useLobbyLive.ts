@@ -34,6 +34,19 @@ const NOTIFICATIONS_QUEUE = '/user/queue/notifications'
 /** 복귀 재조회의 최소 간격. focus와 visibilitychange가 거의 동시에 오는 브라우저가 있다. */
 const RESYNC_MIN_GAP_MS = 10_000
 
+/**
+ * 재연결 재조회를 흩는 폭(ms). 0~이 값 사이에서 무작위로 미룬다.
+ *
+ * <p>끊김이 서버발이면 접속자 <b>전원</b>이 거의 같은 순간에 다시 붙는다. 붙자마자 재조회를 돌리면
+ * REST 여러 발이 한꺼번에 나가 재연결 직후에 2차 스파이크가 생긴다 — 소켓은 살아났는데 그 직후
+ * API가 밀리는 모양이다. STOMP 재연결 자체에도 지터가 있지만(useGlobalStomp) 붙은 <b>뒤</b>의
+ * 조회는 별개라 여기서 한 번 더 흩는다.</p>
+ *
+ * <p>사용자 체감은 "재접속 후 목록이 최대 3초 늦게 맞춰짐"인데, 그 사이 도착하는 델타는 그대로
+ * 반영되므로 실제로 낡아 보이는 창은 훨씬 짧다.</p>
+ */
+const RESYNC_JITTER_MS = 3_000
+
 export interface LobbyLiveHandlers {
   /** 방 변화 배치 한 묶음. 서버가 1초 창으로 모아 보내므로 배열이다. */
   onRoomEvents?: (events: LobbyRoomEvent[]) => void
@@ -104,7 +117,18 @@ export function useLobbyLive(handlers: LobbyLiveHandlers) {
 
   if (handlers.onResync) {
     const resync = handlers.onResync
-    disposers.push(onStompConnected(resync))
+
+    // 재연결 재조회는 지터를 두고 미룬다(RESYNC_JITTER_MS 주석 참고).
+    // 타이머는 하나만 살려 둔다 — 재연결이 연달아 일어나도 조회가 겹쳐 쌓이면 안 되고,
+    // 화면을 떠난 뒤 뒤늦게 돌아 죽은 핸들러를 건드리는 것도 막아야 한다.
+    let resyncTimer: ReturnType<typeof setTimeout> | undefined
+    disposers.push(
+      onStompConnected(() => {
+        clearTimeout(resyncTimer)
+        resyncTimer = setTimeout(resync, Math.random() * RESYNC_JITTER_MS)
+      }),
+    )
+    disposers.push(() => clearTimeout(resyncTimer))
 
     // 탭이 다시 보일 때 한 번 — 폴링이 아니라 <b>구멍 메우기</b>다.
     //
