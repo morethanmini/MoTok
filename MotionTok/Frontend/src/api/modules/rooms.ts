@@ -11,6 +11,7 @@
 import { API_BASE, httpEnvelope } from '../http'
 import { getAccessToken } from '../token'
 import type {
+  ChatMessage,
   CreateLiveRoomRequest,
   CreateLiveRoomResponse,
   LiveRoomDetail,
@@ -58,6 +59,12 @@ export const roomsApi = {
 
   /** POST /v1/live-rooms/quick-start — 빠른 시작(랜덤 매칭, -27). 조건 맞는 방을 서버가 골라 입장시킨다. */
   quickStart: () => httpEnvelope.post<LiveRoomDetail>(`${BASE}/quick-start`),
+
+  /**
+   * GET /v1/live-rooms/{roomId}/chats — 재입장(새로고침) 시 채팅 이력 복원(-164, 멤버 전용).
+   * 원소는 STOMP 브로드캐스트(ChatMessage)와 같은 모양. TALK만 온다(제안 카드는 실시간 전용).
+   */
+  chatHistory: (roomId: string) => httpEnvelope.get<ChatMessage[]>(`${BASE}/${roomId}/chats`),
 
   /** DELETE /v1/live-rooms/{roomId}/members/me — 방 나가기(멱등). 마지막 인원이면 방 즉시 삭제. */
   leave: (roomId: string) => httpEnvelope.delete<void>(`${BASE}/${roomId}/members/me`),
