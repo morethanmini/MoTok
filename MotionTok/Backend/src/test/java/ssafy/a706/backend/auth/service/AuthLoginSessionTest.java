@@ -105,9 +105,35 @@ class AuthLoginSessionTest {
         activeUser();
         given(passwordEncoder.matches(PASSWORD, "hashed")).willReturn(true);
 
-        service.login(new LoginRequest(EMAIL, PASSWORD, true));
+        service.login(new LoginRequest(EMAIL, PASSWORD, true), null);
 
-        verify(sessionTerminator).displacePrevious(USER_ID);
+        verify(sessionTerminator).displacePrevious(USER_ID, null);
+    }
+
+    @Test
+    @DisplayName("로그인 요청에 실려 온 옛 Refresh 쿠키의 sid를 밀어내기 판단에 넘긴다")
+    void forwardsPresentedSessionIdFromStaleCookie() {
+        activeUser();
+        given(passwordEncoder.matches(PASSWORD, "hashed")).willReturn(true);
+        // 로그아웃 없이 탭을 닫았다 다시 로그인한 브라우저가 보내는 쿠키.
+        String staleCookie = tokenProvider.createRefreshToken(USER_ID, "sid-still-in-redis");
+
+        service.login(new LoginRequest(EMAIL, PASSWORD, true), staleCookie);
+
+        // 이 sid가 서버에 남아 있는 이전 세션과 같으면 밀어내기가 아니라 자기 세션의 교체다.
+        verify(sessionTerminator).displacePrevious(USER_ID, "sid-still-in-redis");
+    }
+
+    @Test
+    @DisplayName("망가진 Refresh 쿠키는 없는 것으로 본다 — 위조로 밀어내기를 건너뛸 수 없다")
+    void ignoresUnverifiableCookie() {
+        activeUser();
+        given(passwordEncoder.matches(PASSWORD, "hashed")).willReturn(true);
+
+        service.login(new LoginRequest(EMAIL, PASSWORD, true), "not-a-jwt");
+
+        // null이면 평소대로 밀어낸다 — 판단이 흐려질 때 안전한 쪽으로 접힌다.
+        verify(sessionTerminator).displacePrevious(USER_ID, null);
     }
 
     @Test
@@ -116,10 +142,10 @@ class AuthLoginSessionTest {
         activeUser();
         given(passwordEncoder.matches(anyString(), anyString())).willReturn(false);
 
-        assertThatThrownBy(() -> service.login(new LoginRequest(EMAIL, "wrong-password-1234", true)))
+        assertThatThrownBy(() -> service.login(new LoginRequest(EMAIL, "wrong-password-1234", true), null))
                 .isInstanceOf(BusinessException.class);
 
-        verify(sessionTerminator, never()).displacePrevious(anyLong());
+        verify(sessionTerminator, never()).displacePrevious(anyLong(), any());
         verify(refreshTokenStore, never()).save(anyLong(), anyString(), any(Duration.class), anyBoolean(), anyString());
     }
 
@@ -128,12 +154,12 @@ class AuthLoginSessionTest {
     void feedsLoginBackoff() {
         activeUser();
         given(passwordEncoder.matches(anyString(), anyString())).willReturn(false);
-        assertThatThrownBy(() -> service.login(new LoginRequest(EMAIL, "wrong-password-1234", true)))
+        assertThatThrownBy(() -> service.login(new LoginRequest(EMAIL, "wrong-password-1234", true), null))
                 .isInstanceOf(BusinessException.class);
         verify(loginAttemptLimiter).recordFailure(EMAIL);
 
         given(passwordEncoder.matches(PASSWORD, "hashed")).willReturn(true);
-        service.login(new LoginRequest(EMAIL, PASSWORD, true));
+        service.login(new LoginRequest(EMAIL, PASSWORD, true), null);
         verify(loginAttemptLimiter).reset(EMAIL);
     }
 
@@ -144,7 +170,7 @@ class AuthLoginSessionTest {
         willThrow(new BusinessException(ErrorCode.LOGIN_ATTEMPTS_EXCEEDED))
                 .given(loginAttemptLimiter).ensureNotBlocked(EMAIL);
 
-        assertThatThrownBy(() -> service.login(new LoginRequest(EMAIL, PASSWORD, true)))
+        assertThatThrownBy(() -> service.login(new LoginRequest(EMAIL, PASSWORD, true), null))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.LOGIN_ATTEMPTS_EXCEEDED);
 
@@ -157,10 +183,10 @@ class AuthLoginSessionTest {
         activeUser();
         given(passwordEncoder.matches(PASSWORD, "hashed")).willReturn(true);
 
-        assertThat(service.login(new LoginRequest(EMAIL, PASSWORD, false)).persistent()).isFalse();
+        assertThat(service.login(new LoginRequest(EMAIL, PASSWORD, false), null).persistent()).isFalse();
         verify(refreshTokenStore).save(eq(USER_ID), anyString(), any(Duration.class), eq(false), anyString());
 
-        assertThat(service.login(new LoginRequest(EMAIL, PASSWORD, true)).persistent()).isTrue();
+        assertThat(service.login(new LoginRequest(EMAIL, PASSWORD, true), null).persistent()).isTrue();
         verify(refreshTokenStore).save(eq(USER_ID), anyString(), any(Duration.class), eq(true), anyString());
     }
 }

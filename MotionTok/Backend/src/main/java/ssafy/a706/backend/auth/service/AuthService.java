@@ -128,8 +128,12 @@ public class AuthService {
         }
     }
 
+    /**
+     * @param presentedRefreshToken 요청에 함께 실려 온 옛 Refresh 쿠키. 같은 브라우저의 재로그인을
+     *                              밀어내기로 오판하지 않기 위한 판단 근거다({@link SessionTerminator#displacePrevious})
+     */
     @Transactional
-    public IssuedTokens login(LoginRequest req) {
+    public IssuedTokens login(LoginRequest req, String presentedRefreshToken) {
         String email = req.email().trim().toLowerCase();
         // 비밀번호를 검사하기 전에 막는다 — 차단 중이라면 대조 자체를 하지 않는다.
         loginAttemptLimiter.ensureNotBlocked(email);
@@ -151,7 +155,7 @@ public class AuthService {
         // 여기서 세면 제재된 사용자가 정상 시도만으로 자기 이메일을 레이트리밋에 걸리게 만든다.
         ensureNotBlocked(user.getId());
         // rememberMe는 Refresh 쿠키의 수명이 된다 — true면 14일 영구 쿠키, 아니면 세션 쿠키.
-        return issueTokens(user, Boolean.TRUE.equals(req.rememberMe()));
+        return issueTokens(user, Boolean.TRUE.equals(req.rememberMe()), presentedRefreshToken);
     }
 
     /**
@@ -160,7 +164,7 @@ public class AuthService {
      * 아니면 계정을 생성·연동한 뒤 토큰을 발급한다. 계정 생성·조회는 OauthLinkService가 각각 별도 트랜잭션으로 처리한다.
      */
     @Transactional(propagation = Propagation.NOT_SUPPORTED) // 클래스 기본 readOnly 트랜잭션을 벗어나, 아래 OauthLinkService가 각자 새 트랜잭션(생성은 read-write)을 열게 한다.
-    public IssuedTokens socialLogin(String providerPath, SocialLoginRequest req) {
+    public IssuedTokens socialLogin(String providerPath, SocialLoginRequest req, String presentedRefreshToken) {
         OauthProvider provider = OauthProvider.from(providerPath);
         OauthUserInfo info = oauthClientResolver.resolve(provider)
                 .fetch(req.authorizationCode(), req.redirectUri());
@@ -175,7 +179,7 @@ public class AuthService {
         }
         ensureNotBlocked(user.getId());
         // 소셜은 rememberMe를 물어볼 화면이 없다 — provider를 거쳐 돌아온 사용자를 매번 다시 로그인시키지 않도록 영구 쿠키로 둔다.
-        return issueTokens(user, true);
+        return issueTokens(user, true, presentedRefreshToken);
     }
 
     /**
@@ -306,10 +310,10 @@ public class AuthService {
         return new GuestResponse(accessToken, nickname, roomId);
     }
 
-    private IssuedTokens issueTokens(User user, boolean persistent) {
+    private IssuedTokens issueTokens(User user, boolean persistent, String presentedRefreshToken) {
         // 새 로그인이 기존 세션을 밀어낸다(단일 세션) — 옛 sid 폐기·알림·연결 종료가 모두 이 안에서 일어난다.
         // 반드시 save()보다 먼저 — 옛 sid는 Refresh 해시에 있어서, 덮어쓰고 나면 폐기할 대상을 잃는다.
-        sessionTerminator.displacePrevious(user.getId());
+        sessionTerminator.displacePrevious(user.getId(), sidOf(presentedRefreshToken));
 
         String sessionId = UUID.randomUUID().toString();
         String accessToken = tokenProvider.createAccessToken(
@@ -320,5 +324,28 @@ public class AuthService {
         return new IssuedTokens(
                 TokenResponse.of(accessToken, tokenProvider.accessExpiresInSeconds(), UserProfileResponse.from(user)),
                 refreshToken, refreshTtl, persistent);
+    }
+
+    /**
+     * 로그인 요청에 함께 실려 온 옛 Refresh 쿠키에서 sid를 읽는다 — "이 로그인이 밀어내려는 세션이
+     * 곧 이 브라우저 자신인가"를 가리는 데만 쓴다.
+     *
+     * <p>값을 신뢰해도 되는 이유는 서명을 검증하기 때문이다. 위조·손상된 쿠키는 null이 되어
+     * 밀어내기가 평소대로(다른 곳에서의 로그인으로) 동작한다 — 판단을 흐리는 쪽이 아니라
+     * 안전한 쪽으로 접힌다.</p>
+     *
+     * <p>만료된 Refresh 토큰도 여기서 null이 되지만 문제가 되지 않는다. Redis TTL이 Refresh 만료와
+     * 같아서, 토큰이 만료됐다면 서버측 세션도 이미 사라져 밀어낼 대상 자체가 없다.</p>
+     */
+    private String sidOf(String presentedRefreshToken) {
+        if (presentedRefreshToken == null || presentedRefreshToken.isBlank()) {
+            return null;
+        }
+        try {
+            Claims claims = tokenProvider.parse(presentedRefreshToken);
+            return tokenProvider.isRefresh(claims) ? tokenProvider.getSessionId(claims) : null;
+        } catch (JwtException | IllegalArgumentException e) {
+            return null;
+        }
     }
 }
