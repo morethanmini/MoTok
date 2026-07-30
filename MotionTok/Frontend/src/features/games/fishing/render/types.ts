@@ -40,6 +40,14 @@ export interface FishingView {
   tMs: number
   /** HUD 문구 — 캔버스에 HUD를 그리는 스킨만 쓴다 */
   hud: string
+  /**
+   * 화면 흔들림 0~1 — 입질·포획 순간의 타격감.
+   *
+   * 스킨이 아니라 `drawFrame`이 캔버스 전체에 적용한다. 흔들림은 특정 도형의 성질이 아니라
+   * 화면 전체에 걸리는 것이라, 스킨마다 구현하면 물고기만 흔들리고 배경은 가만히 있는 식으로
+   * 어긋난다. 생략하면 0이다(계측 화면은 흔들리면 판정을 눈으로 못 쫓는다).
+   */
+  shake?: number
 }
 
 export interface FishingSkin {
