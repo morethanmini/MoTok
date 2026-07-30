@@ -66,12 +66,14 @@ export const debugSkin: FishingSkin = {
     ctx.stroke()
   },
 
+  // 계측 스킨은 원근을 쓰지 않는다 — 위치·크기를 있는 그대로 봐야 판정을 검증할 수 있다
   drawFish(
     ctx: CanvasRenderingContext2D,
     f: SceneFish,
     isActive: boolean,
     phase: Phase,
     _tMs: number,
+    _cfg: LoopConfig,
   ) {
     const r = 8 + (1 - f.spec.requiredRate) * 14
     ctx.save()
