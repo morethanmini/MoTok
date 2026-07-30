@@ -14,7 +14,7 @@ import {
   ApiError,
   type AdminGame,
   type AdminPointHistoryListResponse,
-  type AuditLog,
+  type AdminUserSummary,
   type ChatReportDetail,
   type ChatReportListResponse,
   type ChatReportReason,
@@ -57,16 +57,24 @@ import { POINT_DIRECTION_LABEL, POINT_TYPE_LABEL, formatPoint } from './points'
 const { message: toast, flash } = useToast()
 
 // 목 데이터 없음 — 없는 걸 있는 것처럼 보여 주면 "백엔드가 붙었는데 왜 안 뜨지"를 판단할 수 없다.
-// 아직 서버가 없는 구역(감사 로그·곡 등록)은 화면에서 그렇다고 밝힌다.
-const tab = ref<
-  'chat-reports' | 'reports' | 'reported-users' | 'sanctions' | 'points' | 'audit' | 'games'
->('chat-reports')
+const tab = ref<'chat-reports' | 'reports' | 'reported-users' | 'sanctions' | 'points' | 'games'>(
+  'chat-reports',
+)
+/** 한 페이지에 담는 줄 수 — 제재·포인트·신고 유저는 한 화면에서 훑고 넘기는 목록이다. */
+const PAGE_SIZE = 5
+
 // 신고 유저 목록(-105) — 사람 단위. 신고함이 '들어온 것을 처리하는 자리'라면 여기는 '누구를 볼지 고르는 자리'다.
 const { data: reportedUsers, error: reportedUsersError } = useAsyncData<ReportedUser[]>(
   () => adminApi.reports(),
   [],
 )
-const { data: audit, error: auditError } = useAsyncData<AuditLog[]>(() => adminApi.auditLogs(), [])
+// 서버가 상한(20명)만 주고 페이지를 나누지 않는다 — 누적 신고 상위 목록이라 뒤로 넘길 페이지가 없다.
+// 그래서 쪽 나누기는 화면 몫이다.
+const reportedUserPage = ref(0)
+const reportedUserPages = computed(() => Math.ceil(reportedUsers.value.length / PAGE_SIZE))
+const pagedReportedUsers = computed(() =>
+  reportedUsers.value.slice(reportedUserPage.value * PAGE_SIZE, (reportedUserPage.value + 1) * PAGE_SIZE),
+)
 
 // ── 채팅 신고 (v0.2.17, S15P11A706-133 — 백엔드 구현 완료, mock 없음) ──
 const REASON_LABEL: Record<ChatReportReason, string> = {
@@ -401,6 +409,74 @@ async function submitSuspend() {
   }
 }
 
+// ── 회원 좁히기(닉네임 검색) ───────────────────────────
+/**
+ * 제재 내역·포인트 내역이 공유하는 "누구를 볼 것인가" 상태.
+ *
+ * 입력은 닉네임이지만 <b>서버 필터는 여전히 userId</b>다 — 정지 상태·해제·포인트 요약이 모두
+ * id로 걸려 있어서, 닉네임을 그대로 넘기면 그 자리마다 사람을 다시 찾아야 한다. 그래서 검색은
+ * 닉네임을 id로 바꾸는 단계고, 그 뒤 흐름은 예전 그대로다.
+ *
+ * 부분 일치라 후보가 여럿일 수 있다. 임의로 하나를 고르지 않고 고르게 둔다 — 엉뚱한 사람에게
+ * 제재가 나가는 것보다 클릭 한 번이 낫다. 다만 입력과 <b>똑같은</b> 닉네임이 있으면 그 사람이다
+ * (신고 목록에서 닉네임을 그대로 옮겨 적는 게 가장 흔한 경로다).
+ */
+function useUserFilter(reload: () => void) {
+  const query = ref('')
+  const userId = ref<number | null>(null)
+  const nickname = ref('')
+  const candidates = ref<AdminUserSummary[]>([])
+  const error = ref('')
+  const busy = ref(false)
+
+  function pick(user: AdminUserSummary) {
+    userId.value = user.userId
+    nickname.value = user.nickname
+    // 목록 링크로 들어온 경우까지 검색창을 실제 대상에 맞춘다 — 입력칸과 걸린 필터가 어긋나면
+    // 다음에 '조회'를 눌렀을 때 엉뚱한 사람이 걸린다.
+    query.value = user.nickname
+    candidates.value = []
+    error.value = ''
+    reload()
+  }
+
+  /** 회원 지정을 풀고 전체 목록으로 — 입력칸을 비우는 것보다 버튼이 확실하다. */
+  function clear() {
+    query.value = ''
+    userId.value = null
+    nickname.value = ''
+    candidates.value = []
+    error.value = ''
+    reload()
+  }
+
+  async function search() {
+    const q = query.value.trim()
+    if (busy.value) return
+    if (!q) {
+      clear()
+      return
+    }
+    busy.value = true
+    candidates.value = []
+    error.value = ''
+    try {
+      const found = await adminApi.searchUsers(q)
+      const exact = found.find((u) => u.nickname.toLowerCase() === q.toLowerCase())
+      if (exact) pick(exact)
+      else if (found.length === 1) pick(found[0]!)
+      else if (found.length) candidates.value = found
+      else error.value = `'${q}' 닉네임의 회원을 찾지 못했어요`
+    } catch (e) {
+      error.value = e instanceof ApiError ? e.message : '회원을 찾지 못했어요'
+    } finally {
+      busy.value = false
+    }
+  }
+
+  return { query, userId, nickname, candidates, error, busy, search, pick, clear }
+}
+
 // ── 제재 내역 · 정지 해제 ──────────────────────────────
 // 두 축이 한 탭에 있다:
 //   1) 회원을 지정하지 않은 전체 내역 — "요즘 무슨 제재가 나갔나". 오판·과잉 제재를 사후에 찾는 자리.
@@ -409,9 +485,22 @@ async function submitSuspend() {
 // 회원 id를 알아야만 아무것도 안 보이던 게 이 화면의 원래 문제였다.
 const SANCTION_TYPES: SanctionType[] = ['WARN', 'SUSPEND', 'BAN', 'RELEASE', 'UNBAN']
 
-const sanctionUserId = ref<number | null>(null)
 const sanctionTypeFilter = ref<SanctionType | ''>('')
 const sanctionPage = ref(0)
+const {
+  query: sanctionQuery,
+  userId: sanctionUserId,
+  nickname: sanctionNickname,
+  candidates: sanctionCandidates,
+  error: sanctionUserError,
+  busy: sanctionUserBusy,
+  search: searchSanctionUser,
+  pick: pickSanctionUser,
+  clear: clearSanctionUser,
+} = useUserFilter(() => {
+  sanctionPage.value = 0
+  void loadSanctions()
+})
 const sanctionStatus = ref<SanctionStatus | null>(null)
 const sanctionHistory = ref<SanctionHistoryListResponse | null>(null)
 const sanctionError = ref('')
@@ -436,14 +525,14 @@ function openRelease(kind: 'SUSPENSION' | 'BAN') {
  */
 async function loadSanctions() {
   const userId = sanctionUserId.value
-  const targeted = userId !== null && !Number.isNaN(userId)
+  const targeted = userId !== null
   sanctionError.value = ''
   try {
     sanctionHistory.value = await adminSanctionApi.allHistory({
       userId: targeted ? userId : undefined,
       type: sanctionTypeFilter.value || undefined,
       page: sanctionPage.value,
-      size: 20,
+      size: PAGE_SIZE,
     })
   } catch (e) {
     sanctionHistory.value = null
@@ -465,23 +554,16 @@ async function loadSanctions() {
 onMounted(loadSanctions)
 watch([sanctionPage, sanctionTypeFilter], loadSanctions)
 
-/** 신고에서 이 사용자의 제재 내역으로 건너간다 — 정지 전에 전력을 보는 흐름이 자연스럽다. */
-function openSanctionsOf(userId: number) {
-  sanctionUserId.value = userId
-  sanctionPage.value = 0
+/**
+ * 신고에서 이 사용자의 제재 내역으로 건너간다 — 정지 전에 전력을 보는 흐름이 자연스럽다.
+ * 닉네임까지 받는 건 화면이 "#42"가 아니라 사람 이름으로 대상을 밝히기 위해서다(검색을 거치지 않는 경로다).
+ */
+function openSanctionsOf(userId: number, nickname: string) {
+  pickSanctionUser({ userId, nickname })
   tab.value = 'sanctions'
   // 탭을 옮기면서 신고 상세를 띄워 두면 다른 탭 위에 남는다.
   userReportDetail.value = null
   chatReportDetail.value = null
-  void loadSanctions()
-}
-
-/** 회원 지정을 풀고 전체 목록으로 — 필터를 지우려면 입력칸을 비우는 것보다 버튼이 확실하다. */
-function clearSanctionUser() {
-  sanctionUserId.value = null
-  sanctionStatus.value = null
-  sanctionPage.value = 0
-  void loadSanctions()
 }
 
 async function submitRelease() {
@@ -557,21 +639,34 @@ async function toggleGame(g: AdminGame) {
 // 있으면 point_history가 게임·상점 결과의 기록이 아니라 편집 가능한 장부가 되기 때문이다.
 const POINT_DIRECTIONS: PointDirection[] = ['EARN', 'SPEND']
 
-const pointUserId = ref<number | null>(null)
 const pointDirection = ref<PointDirection | ''>('')
 const pointPage = ref(0)
 const points = ref<AdminPointHistoryListResponse | null>(null)
 const pointsError = ref('')
+const {
+  query: pointQuery,
+  userId: pointUserId,
+  nickname: pointNickname,
+  candidates: pointCandidates,
+  error: pointUserError,
+  busy: pointUserBusy,
+  search: searchPointUser,
+  pick: pickPointUser,
+  clear: clearPointUser,
+} = useUserFilter(() => {
+  pointPage.value = 0
+  void loadPoints()
+})
 
 async function loadPoints() {
   pointsError.value = ''
   const userId = pointUserId.value
   try {
     points.value = await adminPointsApi.list({
-      userId: userId !== null && !Number.isNaN(userId) ? userId : undefined,
+      userId: userId ?? undefined,
       direction: pointDirection.value || undefined,
       page: pointPage.value,
-      size: 20,
+      size: PAGE_SIZE,
     })
   } catch (e) {
     points.value = null
@@ -582,22 +677,16 @@ onMounted(loadPoints)
 watch([pointDirection, pointPage], loadPoints)
 
 /** 신고·제재에서 이 사용자의 포인트 흐름으로 — 부정 정산 의심을 확인하는 흐름이다. */
-function openPointsOf(userId: number) {
-  pointUserId.value = userId
+function openPointsOf(userId: number, nickname: string) {
   pointDirection.value = ''
-  pointPage.value = 0
+  pickPointUser({ userId, nickname })
   tab.value = 'points'
-  void loadPoints()
-}
-
-function clearPointUser() {
-  pointUserId.value = null
-  pointPage.value = 0
-  void loadPoints()
 }
 
 const fmt = (iso: string) => iso.replace('T', ' ').slice(0, 16)
 const num = (n: number) => n.toLocaleString('ko-KR')
+/** 버튼 라벨용 축약 — 게스트 닉네임(pending_… 28자)이 그대로 들어가면 버튼이 모달 밖으로 나간다. */
+const short = (s: string, max = 12) => (s.length > max ? `${s.slice(0, max)}…` : s)
 </script>
 
 <template>
@@ -609,7 +698,6 @@ const num = (n: number) => n.toLocaleString('ko-KR')
       <button :class="{ on: tab === 'sanctions' }" @click="tab = 'sanctions'">제재 내역</button>
       <button :class="{ on: tab === 'points' }" @click="tab = 'points'">포인트 내역</button>
       <button :class="{ on: tab === 'games' }" @click="tab = 'games'">게임 관리</button>
-      <button :class="{ on: tab === 'audit' }" @click="tab = 'audit'">감사 로그</button>
     </div>
 
     <!-- 채팅 신고 (v0.2.17, -133) -->
@@ -680,7 +768,7 @@ const num = (n: number) => n.toLocaleString('ko-KR')
             <td>
               {{ r.reporterNickname }} →
               <!-- 피신고자를 눌러 제재 전력으로 — 정지 기간은 누적 횟수를 보고 정하는 판단이다 -->
-              <button class="link" @click="openSanctionsOf(r.reportedUserId)">{{ r.reportedNickname }}</button>
+              <button class="link" @click="openSanctionsOf(r.reportedUserId, r.reportedNickname)">{{ r.reportedNickname }}</button>
             </td>
             <td>{{ REASON_LABEL[r.reason] }}</td>
             <td class="cr-text">{{ r.reasonDetail ?? '—' }}</td>
@@ -729,9 +817,9 @@ const num = (n: number) => n.toLocaleString('ko-KR')
         <table class="tbl">
           <thead><tr><th>#</th><th>닉네임</th><th>누적 신고</th><th>최근 사유</th><th></th></tr></thead>
           <tbody>
-            <tr v-for="u in reportedUsers" :key="u.userId">
+            <tr v-for="u in pagedReportedUsers" :key="u.userId">
               <td>{{ u.userId }}</td>
-              <td><button class="link" @click="openSanctionsOf(u.userId)">{{ u.nickname }}</button></td>
+              <td><button class="link" @click="openSanctionsOf(u.userId, u.nickname)">{{ u.nickname }}</button></td>
               <td><b>{{ u.reportCount }}</b>회</td>
               <td class="cr-text">
                 <span v-if="!u.recentReasons.length">—</span>
@@ -740,20 +828,26 @@ const num = (n: number) => n.toLocaleString('ko-KR')
                 </span>
               </td>
               <td class="acts">
-                <PixelButton @click="openSanctionsOf(u.userId)">제재 내역</PixelButton>
+                <PixelButton @click="openSanctionsOf(u.userId, u.nickname)">제재 내역</PixelButton>
               </td>
             </tr>
           </tbody>
         </table>
+        <!-- 서버가 페이지를 나누지 않는 목록이라 쪽 나누기는 화면에서 한다 -->
+        <div v-if="reportedUserPages > 1" class="cr-pager">
+          <PixelButton :disabled="reportedUserPage === 0" @click="reportedUserPage--">이전</PixelButton>
+          <span>{{ reportedUserPage + 1 }} / {{ reportedUserPages }}</span>
+          <PixelButton :disabled="reportedUserPage >= reportedUserPages - 1" @click="reportedUserPage++">다음</PixelButton>
+        </div>
       </template>
     </PixelCard>
 
     <!-- 제재 내역 — 회원 지정 없이 전체가 기본. 지정하면 현재 상태 카드와 해제 버튼이 붙는다 -->
     <PixelCard v-else-if="tab === 'sanctions'" title="계정 제재 내역">
-      <form class="cr-filter" @submit.prevent="(sanctionPage = 0, loadSanctions())">
+      <form class="cr-filter" @submit.prevent="searchSanctionUser">
         <label>
-          회원 ID
-          <input v-model.number="sanctionUserId" type="number" min="1" placeholder="전체" />
+          닉네임
+          <input v-model="sanctionQuery" type="search" maxlength="32" placeholder="전체" />
         </label>
         <label>
           유형
@@ -762,12 +856,21 @@ const num = (n: number) => n.toLocaleString('ko-KR')
             <option v-for="t in SANCTION_TYPES" :key="t" :value="t">{{ SANCTION_TYPE_LABEL[t] }}</option>
           </select>
         </label>
-        <PixelButton type="submit">조회</PixelButton>
-        <PixelButton v-if="sanctionUserId !== null" variant="secondary" @click="clearSanctionUser">
+        <PixelButton type="submit" :disabled="sanctionUserBusy">조회</PixelButton>
+        <!-- 폼 안의 버튼은 기본이 submit이라 막지 않으면 해제와 재검색이 함께 나간다 -->
+        <PixelButton v-if="sanctionUserId !== null" variant="secondary" @click.prevent="clearSanctionUser">
           회원 해제
         </PixelButton>
         <span v-if="sanctionHistory" class="cr-total">총 {{ num(sanctionHistory.totalElements) }}건</span>
       </form>
+      <!-- 부분 일치라 여럿이 걸릴 수 있다. 임의로 고르지 않는다 — 엉뚱한 사람에게 제재가 나가는 것보다 클릭 한 번이 낫다 -->
+      <div v-if="sanctionCandidates.length" class="ux-picker">
+        <span class="sx-hint">닉네임에 '{{ sanctionQuery.trim() }}'가 들어가는 회원 {{ sanctionCandidates.length }}명 — 한 명을 고르세요</span>
+        <PixelButton v-for="u in sanctionCandidates" :key="u.userId" @click="pickSanctionUser(u)">
+          {{ u.nickname }} (#{{ u.userId }})
+        </PixelButton>
+      </div>
+      <p v-if="sanctionUserError" class="cr-empty ux-nouser">{{ sanctionUserError }}</p>
 
       <p v-if="sanctionError" class="cr-empty">{{ sanctionError }}</p>
       <template v-else>
@@ -779,7 +882,8 @@ const num = (n: number) => n.toLocaleString('ko-KR')
           :class="{ on: sanctionStatus.suspended || sanctionStatus.banned }"
         >
           <div class="sx-head">
-            <b>#{{ sanctionUserId }}</b>
+            <b>{{ sanctionNickname || `#${sanctionUserId}` }}</b>
+            <span class="sx-uid">#{{ sanctionUserId }}</span>
             <!-- 영구가 기간보다 강하다 — 둘이 동시에 서는 일은 없지만 표시 우선순위는 정해 둔다 -->
             <span
               class="cr-status"
@@ -812,11 +916,11 @@ const num = (n: number) => n.toLocaleString('ko-KR')
               :disabled="sanctionBusy"
               @click="openRelease('BAN')"
             >영구 정지 해제</PixelButton>
-            <PixelButton variant="secondary" @click="openPointsOf(sanctionUserId!)">포인트 내역</PixelButton>
+            <PixelButton variant="secondary" @click="openPointsOf(sanctionUserId!, sanctionNickname)">포인트 내역</PixelButton>
           </div>
         </div>
         <p v-else class="sx-hint sx-scope-hint">
-          전체 제재 내역이에요 — 회원 ID를 넣으면 그 사람의 현재 상태와 해제 버튼이 함께 뜹니다.
+          전체 제재 내역이에요 — 닉네임으로 찾으면 그 사람의 현재 상태와 해제 버튼이 함께 뜹니다.
         </p>
 
         <p v-if="!sanctionHistory || !sanctionHistory.sanctions.length" class="cr-empty">제재 이력이 없어요</p>
@@ -826,7 +930,7 @@ const num = (n: number) => n.toLocaleString('ko-KR')
             <tr v-for="s in sanctionHistory.sanctions" :key="s.id">
               <td>{{ s.id }}</td>
               <!-- 닉네임은 제재 시점 스냅샷이다. 눌러 그 회원으로 좁힐 수 있게 둔다 -->
-              <td><button class="link" @click="(sanctionUserId = s.userId, sanctionPage = 0, loadSanctions())">{{ s.userNickname }}</button></td>
+              <td><button class="link" @click="pickSanctionUser({ userId: s.userId, nickname: s.userNickname })">{{ s.userNickname }}</button></td>
               <td><span class="cr-status" :class="s.type === 'SUSPEND' ? 'received' : s.type === 'BAN' ? 'rejected' : s.type === 'WARN' ? 'reviewing' : 'resolved'">{{ SANCTION_TYPE_LABEL[s.type] }}</span></td>
               <td>{{ s.days !== null ? `${s.days}일` : '—' }}</td>
               <td class="cr-text">{{ s.reason }}</td>
@@ -847,10 +951,10 @@ const num = (n: number) => n.toLocaleString('ko-KR')
 
     <!-- 포인트 내역 — 읽기 전용. 지급·회수 버튼은 없다(장부를 고칠 수 있으면 부정 정산을 판별할 수 없다) -->
     <PixelCard v-else-if="tab === 'points'" title="포인트 내역">
-      <form class="cr-filter" @submit.prevent="(pointPage = 0, loadPoints())">
+      <form class="cr-filter" @submit.prevent="searchPointUser">
         <label>
-          회원 ID
-          <input v-model.number="pointUserId" type="number" min="1" placeholder="전체" />
+          닉네임
+          <input v-model="pointQuery" type="search" maxlength="32" placeholder="전체" />
         </label>
         <label>
           방향
@@ -859,15 +963,23 @@ const num = (n: number) => n.toLocaleString('ko-KR')
             <option v-for="d in POINT_DIRECTIONS" :key="d" :value="d">{{ POINT_DIRECTION_LABEL[d] }}</option>
           </select>
         </label>
-        <PixelButton type="submit">조회</PixelButton>
-        <PixelButton v-if="pointUserId !== null" variant="secondary" @click="clearPointUser">회원 해제</PixelButton>
+        <PixelButton type="submit" :disabled="pointUserBusy">조회</PixelButton>
+        <PixelButton v-if="pointUserId !== null" variant="secondary" @click.prevent="clearPointUser">회원 해제</PixelButton>
         <span v-if="points" class="cr-total">총 {{ num(points.totalElements) }}건</span>
       </form>
+      <div v-if="pointCandidates.length" class="ux-picker">
+        <span class="sx-hint">닉네임에 '{{ pointQuery.trim() }}'가 들어가는 회원 {{ pointCandidates.length }}명 — 한 명을 고르세요</span>
+        <PixelButton v-for="u in pointCandidates" :key="u.userId" @click="pickPointUser(u)">
+          {{ u.nickname }} (#{{ u.userId }})
+        </PixelButton>
+      </div>
+      <p v-if="pointUserError" class="cr-empty ux-nouser">{{ pointUserError }}</p>
 
       <p v-if="pointsError" class="cr-empty">{{ pointsError }}</p>
       <template v-else>
         <!-- 요약은 필터와 무관한 전체 합계다 — '적립만' 필터에 요약까지 좁혀지면 두 숫자를 비교할 수 없다 -->
         <div v-if="points?.summary" class="px-summary">
+          <div><span>대상</span><b>{{ pointNickname || `#${pointUserId}` }}</b></div>
           <div><span>받아 간 포인트</span><b class="earn">{{ formatPoint(points.summary.earned) }}</b></div>
           <div><span>쓴 포인트</span><b class="spend">{{ formatPoint(-points.summary.spent) }}</b></div>
           <div>
@@ -880,7 +992,7 @@ const num = (n: number) => n.toLocaleString('ko-KR')
           </p>
         </div>
         <p v-else class="sx-hint sx-scope-hint">
-          전체 회원의 최근 포인트 흐름이에요 — 회원 ID를 넣으면 그 사람의 적립·사용 합계가 함께 뜹니다.
+          전체 회원의 최근 포인트 흐름이에요 — 닉네임으로 찾으면 그 사람의 적립·사용 합계가 함께 뜹니다.
         </p>
 
         <p v-if="!points || !points.histories.length" class="cr-empty">포인트 내역이 없어요</p>
@@ -890,7 +1002,7 @@ const num = (n: number) => n.toLocaleString('ko-KR')
             <tr v-for="h in points.histories" :key="h.id">
               <td>{{ h.id }}</td>
               <td>
-                <button class="link" @click="(pointUserId = h.userId, pointPage = 0, loadPoints())">
+                <button class="link" @click="pickPointUser({ userId: h.userId, nickname: h.nickname ?? '' })">
                   {{ h.nickname ?? `#${h.userId}` }}
                 </button>
               </td>
@@ -909,23 +1021,6 @@ const num = (n: number) => n.toLocaleString('ko-KR')
           <PixelButton :disabled="pointPage >= points.totalPages - 1" @click="pointPage++">다음</PixelButton>
         </div>
       </template>
-    </PixelCard>
-
-    <!-- 감사 로그 -->
-    <PixelCard v-else-if="tab === 'audit'" title="감사 로그">
-      <p v-if="auditError" class="cr-empty">{{ auditError }} · 감사 로그 API는 아직 서버에 없어요</p>
-      <p v-else-if="!audit.length" class="cr-empty">감사 로그가 없어요</p>
-      <table v-else class="tbl">
-        <thead><tr><th>행위</th><th>대상</th><th>상세</th><th>시각</th></tr></thead>
-        <tbody>
-          <tr v-for="a in audit" :key="a.id">
-            <td>{{ a.action }}</td>
-            <td>{{ a.targetType }} #{{ a.targetId }}</td>
-            <td>{{ a.detail }}</td>
-            <td>{{ fmt(a.createdAt) }}</td>
-          </tr>
-        </tbody>
-      </table>
     </PixelCard>
 
     <!-- 게임 관리 — 닫으면 목록엔 남고 선택만 막힌다. 조용히 사라지면 "어제 하던 게임이 왜 없지"에 답할 수 없다 -->
@@ -980,7 +1075,7 @@ const num = (n: number) => n.toLocaleString('ko-KR')
     </PixelCard>
 
     <!-- 채팅 신고 상세 — 스냅샷을 시간순으로 렌더링해 채팅창을 복원하고, 신고 대상을 하이라이트한다 -->
-    <PixelModal v-if="chatReportDetail" @close="chatReportDetail = null">
+    <PixelModal v-if="chatReportDetail" class="admin-modal" @close="chatReportDetail = null">
       <h3 class="cr-detail-title">
         🚩 신고 #{{ chatReportDetail.id }}
         <span class="cr-status" :class="chatReportDetail.status.toLowerCase()">{{ STATUS_LABEL[chatReportDetail.status] }}</span>
@@ -1015,7 +1110,7 @@ const num = (n: number) => n.toLocaleString('ko-KR')
           ⚠️ 경고
         </PixelButton>
         <PixelButton variant="yellow" :disabled="chatReportBusy" @click="openSuspendFromChatReport(chatReportDetail)">
-          ⛔ {{ chatReportDetail.reportedNickname }} 기간 정지
+          ⛔ {{ short(chatReportDetail.reportedNickname) }} 기간 정지
         </PixelButton>
         <PixelButton variant="secondary" :disabled="chatReportBusy" @click="openBanFromChatReport(chatReportDetail)">
           🚫 영구 정지
@@ -1025,7 +1120,7 @@ const num = (n: number) => n.toLocaleString('ko-KR')
     </PixelModal>
 
     <!-- 사용자 신고 상세 — 서버에 상세 API가 없어 목록 행을 그대로 띄운다(복원할 맥락이 없다) -->
-    <PixelModal v-if="userReportDetail" @close="userReportDetail = null">
+    <PixelModal v-if="userReportDetail" class="admin-modal" @close="userReportDetail = null">
       <h3 class="cr-detail-title">
         🚩 사용자 신고 #{{ userReportDetail.id }}
         <span class="cr-status" :class="userReportDetail.status.toLowerCase()">{{ STATUS_LABEL[userReportDetail.status] }}</span>
@@ -1041,7 +1136,7 @@ const num = (n: number) => n.toLocaleString('ko-KR')
           ⚠️ 경고
         </PixelButton>
         <PixelButton variant="yellow" @click="openSuspendFromUserReport(userReportDetail)">
-          ⛔ {{ userReportDetail.reportedNickname }} 기간 정지
+          ⛔ {{ short(userReportDetail.reportedNickname) }} 기간 정지
         </PixelButton>
         <PixelButton variant="secondary" @click="openBanFromUserReport(userReportDetail)">
           🚫 영구 정지
@@ -1049,8 +1144,8 @@ const num = (n: number) => n.toLocaleString('ko-KR')
         <span class="sx-hint">제재하면 이 신고도 종결로 넘어갑니다</span>
       </div>
       <div class="leave-actions cr-actions">
-        <PixelButton variant="secondary" @click="openSanctionsOf(userReportDetail.reportedUserId)">제재 내역 보기</PixelButton>
-        <PixelButton variant="secondary" @click="openPointsOf(userReportDetail.reportedUserId)">포인트 내역</PixelButton>
+        <PixelButton variant="secondary" @click="openSanctionsOf(userReportDetail.reportedUserId, userReportDetail.reportedNickname)">제재 내역 보기</PixelButton>
+        <PixelButton variant="secondary" @click="openPointsOf(userReportDetail.reportedUserId, userReportDetail.reportedNickname)">포인트 내역</PixelButton>
         <PixelButton @click="userReportDetail = null">닫기</PixelButton>
       </div>
     </PixelModal>
@@ -1185,13 +1280,23 @@ const num = (n: number) => n.toLocaleString('ko-KR')
 .tbl { display: block; width: 100%; overflow-x: auto; border-collapse: collapse; font-size: 12px; }.tbl th, .tbl td { padding: 12px 10px; text-align: left; border-bottom: 2px dashed #ead5b8; vertical-align: middle; }.tbl th { color: #8d7059; font-size: 10px; }.tbl tbody tr:hover { background: #fff3cf; }
 .warn { color: var(--c-coral); font-weight: 700; }.acts { display: flex; gap: 6px; align-items: center; }.acts :deep(.px-btn), .cr-pager :deep(.px-btn), .cr-actions :deep(.px-btn) { height: 33px; padding: 0 10px; border-color: #9a6b4f; border-radius: 6px; box-shadow: 2px 2px 0 #bd916e; font-size: 10px; }.state { font-size: 11px; font-weight: 700; color: #4f8e64; }.state.off { color: var(--c-muted); }
 
-.cr-filter { display: flex; align-items: center; gap: 12px; margin-bottom: 15px; color: #80674f; font-size: 11px; font-weight: 700; }.cr-filter select { height: 34px; margin-left: 6px; padding: 0 9px; border: 2px solid #b78d5d; border-radius: 6px; background: #fffdf7; color: #5a4131; font-size: 11px; }.cr-total { margin-left: auto; }.cr-empty { padding: 38px 0; color: #8c7966; font-size: 12px; text-align: center; }.cr-text { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.cr-status { display: inline-block; padding: 4px 8px; border: 1.5px solid #aa805c; border-radius: 6px; background: #fffdf7; color: #624833; font-size: 10px; font-weight: 700; }.cr-status.received { background: #ffe29a; }.cr-status.reviewing { background: #cfe8ff; }.cr-status.resolved { background: #cde9b8; }.cr-status.rejected { background: #eee5d9; color: #89786a; }.cr-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px; color: #715945; font-size: 11px; }.cr-detail-title { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: #493629; font-family: var(--font-pixel); font-size: 15px; font-weight: 400; }.cr-meta { display: grid; gap: 5px; margin-bottom: 14px; color: #655141; font-size: 11px; }.cr-context-label { margin-bottom: 7px; color: #8d7059; font-size: 10px; font-weight: 700; }.cr-context { display: grid; gap: 4px; max-height: 260px; overflow-y: auto; margin-bottom: 15px; padding: 10px; border: 2px dashed #dfc9a6; border-radius: 8px; background: #fffdf7; }.cr-line { display: flex; gap: 8px; align-items: baseline; padding: 5px 7px; border-radius: 6px; font-size: 11px; }.cr-line.target { border: 1.5px solid #b78d5d; background: #fff0b6; font-weight: 700; }.cr-line.suggest { color: #6b5ab0; }.cr-line-name { flex-shrink: 0; font-weight: 700; }.cr-line-text { flex: 1; min-width: 0; word-break: break-all; }.cr-line-time { flex-shrink: 0; color: var(--c-muted); font-size: 9px; }.cr-actions { display: flex; gap: 8px; }
+.cr-filter { display: flex; align-items: center; gap: 12px; margin-bottom: 15px; color: #80674f; font-size: 11px; font-weight: 700; }.cr-filter select { height: 34px; margin-left: 6px; padding: 0 9px; border: 2px solid #b78d5d; border-radius: 6px; background: #fffdf7; color: #5a4131; font-size: 11px; }.cr-total { margin-left: auto; }.cr-empty { padding: 38px 0; color: #8c7966; font-size: 12px; text-align: center; }.cr-text { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.cr-status { display: inline-block; padding: 4px 8px; border: 1.5px solid #aa805c; border-radius: 6px; background: #fffdf7; color: #624833; font-size: 10px; font-weight: 700; }.cr-status.received { background: #ffe29a; }.cr-status.reviewing { background: #cfe8ff; }.cr-status.resolved { background: #cde9b8; }.cr-status.rejected { background: #eee5d9; color: #89786a; }.cr-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px; color: #715945; font-size: 11px; }.cr-detail-title { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: #493629; font-family: var(--font-pixel); font-size: 15px; font-weight: 400; }.cr-meta { display: grid; gap: 5px; margin-bottom: 14px; color: #655141; font-size: 11px; }.cr-context-label { margin-bottom: 7px; color: #8d7059; font-size: 10px; font-weight: 700; }.cr-context { display: grid; gap: 4px; max-height: 260px; overflow-y: auto; margin-bottom: 15px; padding: 10px; border: 2px dashed #dfc9a6; border-radius: 8px; background: #fffdf7; }.cr-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; padding: 5px 7px; border-radius: 6px; font-size: 11px; }.cr-line.target { border: 1.5px solid #b78d5d; background: #fff0b6; font-weight: 700; }.cr-line.suggest { color: #6b5ab0; }.cr-line-name { min-width: 0; overflow-wrap: anywhere; font-weight: 700; }.cr-line-text { flex: 1; min-width: 0; word-break: break-all; }.cr-line-time { flex-shrink: 0; margin-left: auto; color: var(--c-muted); font-size: 9px; }.cr-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 @media (max-width: 760px) { .admin-page :deep(.app-page) { padding: 18px 14px 32px; }.tabs { margin-inline: 0; }.tabs button { flex: 1 1 105px; min-width: 0; }.tbl { white-space: nowrap; }.acts { min-width: max-content; } }
 
 /* ── 계정 제재(-105) 추가분 — 위 팔레트를 따르되 없던 요소만 새로 정의한다 ── */
-.cr-filter input[type='number'] { width: 92px; height: 34px; padding: 0 8px; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; font-size: 11px; margin-left: 6px; }
+.cr-filter input[type='search'] { width: 150px; height: 34px; padding: 0 8px; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; font-size: 11px; margin-left: 6px; }
 .link { border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: inherit; text-decoration: underline dashed; cursor: pointer; }
+
+/* 닉네임 후보 고르기 — 부분 일치라 여럿이 걸린다. 검색창 바로 아래, 목록 위에 둔다 */
+.ux-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; padding: 10px; border: 2px dashed #dfc9a6; border-radius: 8px; background: #fffdf7; }
+.ux-picker > .sx-hint { flex: 1 1 100%; }
+.ux-picker :deep(.px-btn) { height: 32px; padding: 0 12px; font-size: 10px; }
+.ux-nouser { padding: 14px 0 20px; }
+
+/* 신고 상세 모달 — 기본 폭(390px)엔 제재 버튼 셋도 대화 맥락도 들어가지 않아 버튼이 창 밖으로 나갔다.
+   넓히고, 내용이 길면 창 안에서 스크롤한다(뷰포트를 넘기면 위쪽 처리 버튼이 화면 밖에 남는다) */
+.admin-modal :deep(.modal) { width: 620px; max-height: 86vh; overflow-y: auto; }
 
 /* 계정 제재 */
 .sx-status { border: 2px solid var(--c-ink); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 14px; background: #fff; }
@@ -1208,9 +1313,12 @@ const num = (n: number) => n.toLocaleString('ko-KR')
 .sx-days { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .sx-days :deep(.px-btn) { height: 32px; padding: 0 12px; font-size: 10px; }
 .sx-days input[type='number'] { width: 80px; height: 32px; padding: 0 8px; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); font-size: 11px; }
-/* 상태 전이(위)와 계정 처벌(아래)은 축이 달라 시각적으로 갈라 둔다 */
-.sx-sanction-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 2px dashed #eaddea; }
+/* 상태 전이(위)와 계정 처벌(아래)은 축이 달라 시각적으로 갈라 둔다.
+   줄바꿈을 허용한다 — 버튼 셋이 한 줄에 안 들어가면 안내 문구가 한 글자 폭으로 눌려 세로로 늘어난다 */
+.sx-sanction-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 2px dashed #eaddea; }
+.sx-sanction-row .sx-hint { flex: 1 1 100%; }
 .sx-hint { font-size: 10px; color: var(--c-muted); }
+.sx-uid { font-size: 10px; color: var(--c-muted); font-weight: 700; }
 .ru-hint { display: block; margin-bottom: 12px; line-height: 1.6; }
 .ru-reason { display: inline-block; margin-right: 4px; font-size: 9px; font-weight: 700; padding: 3px 6px; border-radius: 7px; border: 1.5px solid var(--c-ink); background: #fff; }
 /* 상태(종결/기각)와 나란히 붙는 제재 배지 — 상태만으로는 실제 처벌 여부를 알 수 없다 */
