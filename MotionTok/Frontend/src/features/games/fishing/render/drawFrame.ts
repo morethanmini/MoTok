@@ -35,7 +35,7 @@ export function drawFrame(
     ctx.translate(Math.sin(view.tMs / 17) * a, Math.sin(view.tMs / 11 + 1.7) * a * 0.7)
   }
 
-  for (const f of s.fishes) skin.drawFish(ctx, f, f === s.active, s.phase, view.tMs)
+  for (const f of s.fishes) skin.drawFish(ctx, f, f === s.active, s.phase, view.tMs, cfg)
   skin.drawSplashes(ctx, view.splashes)
 
   if (s.bobber.visible) skin.drawBobber(ctx, s, cfg, view.tMs)

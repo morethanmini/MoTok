@@ -57,12 +57,20 @@ export interface FishingSkin {
   /** 하늘·바다·수면선·캠 오버레이. 매 프레임 캔버스를 덮어야 한다(clearRect 대신) */
   drawBackground(ctx: CanvasRenderingContext2D, cfg: LoopConfig, view: FishingView): void
 
+  /**
+   * `cfg`가 필요한 이유는 원근이다.
+   *
+   * 이 무대는 단면도가 아니라 **원근으로 본 수면**이다(loop.ts: 위쪽이 멀고 아래쪽이 가깝다).
+   * 그래서 물고기 y를 수면선~화면바닥 사이에서 정규화해야 "멀면 작고 흐리게"를 그릴 수 있고,
+   * 그러려면 `waterY`와 `height`를 알아야 한다.
+   */
   drawFish(
     ctx: CanvasRenderingContext2D,
     fish: SceneFish,
     isActive: boolean,
     phase: Phase,
     tMs: number,
+    cfg: LoopConfig,
   ): void
 
   drawSplashes(ctx: CanvasRenderingContext2D, splashes: Splash[]): void
