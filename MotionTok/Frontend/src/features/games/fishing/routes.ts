@@ -17,5 +17,14 @@ export const fishingRoutes: RouteRecordRaw[] = import.meta.env.DEV
         name: RouteName.DevFishingGame,
         component: () => import('./FishingGameView.vue'),
       },
+      /*
+       * 정식 화면을 방 없이 혼자 확인하는 자리 (게임④ /dev/body-fit-game과 같은 방식).
+       * video prop이 없으면 FishingGame이 직접 카메라를 열기 때문에 래퍼가 필요 없다.
+       */
+      {
+        path: '/dev/fishing-play',
+        name: RouteName.DevFishingPlay,
+        component: () => import('./FishingGame.vue'),
+      },
     ]
   : []
