@@ -66,14 +66,14 @@ public class GameSessionService {
 
     private static final String GAME_TOPIC = "/topic/rooms/%s/game";
 
-    /** 게임①(핑거 스타) — 과제(challenge)가 90초 매치 공유 시드인 게임. */
+    /** 게임①(핑거 스타) — 과제(challenge)가 60초 매치 공유 시드인 게임. */
     private static final long FINGER_STAR_GAME_ID = 1L;
     /** 게임① 부가 지표 stats 키 (-137 일반화 후 레거시 표기 유지용). */
     private static final String STAT_STARS_HIT = "starsHit";
-    /** 게임① 90초 매치 완성 개수 stats 키 — 1순위 순위 기준. */
+    /** 게임① 60초 매치 완성 개수 stats 키 — 1순위 순위 기준. */
     private static final String STAT_COMPLETED = "completedCount";
-    /** 게임① 매치 완성 개수 상한 — 90초를 홀드 3초로 나눈 이론상 최대치. */
-    private static final int MAX_COMPLETED = 30;
+    /** 게임① 매치 완성 개수 상한 — 60초를 홀드 3초로 나눈 이론상 최대치. */
+    private static final int MAX_COMPLETED = 20;
 
     /** 게임④(몸 끼워 맞추기, S15P11A706-86) — 출제 페이즈가 있는 게임. */
     private static final long BODY_FIT_GAME_ID = 4L;
@@ -641,7 +641,7 @@ public class GameSessionService {
         if (session.gameId() == BODY_FIT_GAME_ID && sender.userId().equals(session.setterUserId())) {
             return;
         }
-        // 게임① 90초 매치: score=총점(완성 개수×100 상한), 그 외 게임: 단판 점수(0~100)
+        // 게임① 60초 매치: score=총점(완성 개수×100 상한), 그 외 게임: 단판 점수(0~100)
         int score;
         int starsHit;
         Integer completedCount = null;
@@ -766,7 +766,7 @@ public class GameSessionService {
     }
 
     /**
-     * 순위 — 게임① 90초 매치는 완성 개수 내림차순(1순위) → 총점 내림차순(2순위 — 개수가 같으면
+     * 순위 — 게임① 60초 매치는 완성 개수 내림차순(1순위) → 총점 내림차순(2순위 — 개수가 같으면
      * 평균 비교와 동치) → 먼저 제출한 쪽 우선. 완성 개수 개념이 없는 게임은 전원 0이라
      * 기존 점수 내림차순과 동일하게 동작한다. 방에 남은 전원 포함 — 미제출자는 0점.
      */
@@ -874,7 +874,7 @@ public class GameSessionService {
 
     /**
      * 게임별 과제(challenge) 결정 (-137).
-     * 게임①: 90초 매치 공유 시드(숫자 문자열) — 전 클라이언트가 같은 시드로 같은 별자리
+     * 게임①: 60초 매치 공유 시드(숫자 문자열) — 전 클라이언트가 같은 시드로 같은 별자리
      * 순서를 뽑아 과제 공정성을 유지한다(별자리 데이터·출제 규칙은 FE constellations/challenge.ts).
      * 그 외(게임④ 등 출제 페이즈가 있는 게임): 시작 시점에는 과제가 없다 —
      * 세션 도중 updateChallenge로 채워진다(§9-2).

@@ -644,7 +644,7 @@ export interface GameResultEntry {
   /** 핑거 스타(게임①)는 매치 총점 — 평균은 score/completedCount로 계산 */
   score: number
   starsHit: number
-  /** 핑거 스타(게임①) 90초 매치 완성 개수(1순위 승부 기준). 다른 게임은 null */
+  /** 핑거 스타(게임①) 60초 매치 완성 개수(1순위 승부 기준). 다른 게임은 null */
   completedCount?: number | null
   /** false = 미제출(중도 이탈·타임아웃) — 0점 처리 */
   finished: boolean
