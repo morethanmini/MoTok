@@ -176,6 +176,9 @@ app:
   # AI 아이템 생성 1회 결제 비용(포인트). 이 금액으로 최초 생성 + 재생성 1회까지 가능하다.
   shop:
     ai-item-cost: ${AI_ITEM_COST:1500}
+    # 오픈 이벤트 기간 동안 AI 아이템 생성 포인트 차감을 건너뛴다(검증/차감/PointHistory 기록 전부 스킵,
+    # pointsCharged=0으로 저장). 재생성 횟수 제한(결제당 최대 2회)은 이 값과 무관하게 그대로 적용된다.
+    ai-item-free-event: ${AI_ITEM_FREE_EVENT:false}
     # 워커가 응답 없이 죽어 PROCESSING에 갇힌 job을 AiItemJobTimeoutSweeper가 이 시간(분) 이상
     # 지나면 FAILED로 강제 정리하고 환불한다.
     ai-job-timeout-minutes: ${AI_JOB_TIMEOUT_MINUTES:5}
