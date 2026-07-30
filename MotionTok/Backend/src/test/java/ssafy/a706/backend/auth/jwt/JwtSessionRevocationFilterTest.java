@@ -2,6 +2,7 @@ package ssafy.a706.backend.auth.jwt;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.mock.web.MockFilterChain;
@@ -9,10 +10,14 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
 import ssafy.a706.backend.auth.session.SessionRevocationStore;
+import ssafy.a706.backend.auth.store.AccountBlock;
+import ssafy.a706.backend.auth.store.AccountBlockStore;
+import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -30,7 +35,15 @@ class JwtSessionRevocationFilterTest {
             "test-secret-key-for-motok-auth-service-spec-0123456789",
             3_600_000L, 1_209_600_000L, 1_800_000L);
     private final SessionRevocationStore revocationStore = mock(SessionRevocationStore.class);
-    private final JwtAuthenticationFilter filter = new JwtAuthenticationFilter(provider, revocationStore);
+    private final AccountBlockStore accountBlockStore = mock(AccountBlockStore.class);
+    private final JwtAuthenticationFilter filter = new JwtAuthenticationFilter(
+            provider, revocationStore, accountBlockStore, new ObjectMapper());
+
+    /** 제재는 이 테스트의 관심사가 아니다 — 열거형 반환은 mock 기본값이 null이라 명시한다. */
+    @BeforeEach
+    void notBlocked() {
+        given(accountBlockStore.blockOf(anyLong())).willReturn(AccountBlock.NONE);
+    }
 
     @AfterEach
     void clearContext() {
