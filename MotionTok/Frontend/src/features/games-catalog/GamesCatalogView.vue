@@ -13,6 +13,7 @@ import PixelToast from '@/components/common/PixelToast.vue'
 import RhythmThumbnail from './components/RhythmThumbnail.vue'
 import FingerStarThumbnail from './components/FingerStarThumbnail.vue'
 import DrawingThumbnail from './components/DrawingThumbnail.vue'
+import BodyFitThumbnail from './components/BodyFitThumbnail.vue'
 import heroFishingCat from '@/assets/games-catalog/hero-fishing-cat-transparent.png'
 import lobbyRoomListBoard from '@/assets/lobby/lobby-room-list-board.png'
 import lobbyGardenGrassTile from '@/assets/lobby/lobby-garden-grass-tile.png'
@@ -41,6 +42,14 @@ const FINGER_STAR_GAME_ID = 1
  * 실제 백엔드 시더(GameCatalogSeeder) 기준 id=10 (2026-07-30 확인 후 MOCK_GAMES도 10으로 맞춤).
  */
 const DRAWING_GAME_ID = 10
+/**
+ * 몸 끼워 맞추기 — 이 게임 카드만 레이어형 썸네일(BodyFitThumbnail)을 쓴다.
+ * 실제 백엔드 시더(GameCatalogSeeder.seedBodyFit) 기준 id=4 — game-room/data.ts의
+ * GAME_CATALOG(gameId:4, "BODY FIT")과도 대조해 일치 확인함(2026-07-30).
+ * ⚠️ MOCK_GAMES의 "자세 매치"(id=5)를 이 게임과 같은 것으로 보고 5를 쓰면 안 된다 —
+ * 이름·설명이 다른 별개 항목이라 그대로 두었다(아래 MOCK_GAMES 주석 참고).
+ */
+const BODY_FIT_GAME_ID = 4
 /**
  * MOCK_GAMES의 id는 실제 백엔드 시더(GameCatalogSeeder/RhythmGameSeeder) 기준으로 맞춘다.
  * 확인 결과 백엔드에 실제로 존재하는 게임은 4개뿐(id 1 핑거 스타, 2 캐치캐치리듬,
@@ -76,6 +85,7 @@ function toneFor(game: Game) { return GAME_TONE[game.id % GAME_TONE.length] }
 function isRhythm(game: Game) { return game.id === RHYTHM_GAME_ID }
 function isFingerStar(game: Game) { return game.id === FINGER_STAR_GAME_ID }
 function isDrawing(game: Game) { return game.id === DRAWING_GAME_ID }
+function isBodyFit(game: Game) { return game.id === BODY_FIT_GAME_ID }
 async function openDetail(game: Game) {
   selected.value = game
   detailOpen.value = true
@@ -150,6 +160,7 @@ function goDevice(game: Game, roomId: string) {
               <RhythmThumbnail v-if="isRhythm(game)" />
               <FingerStarThumbnail v-else-if="isFingerStar(game)" />
               <DrawingThumbnail v-else-if="isDrawing(game)" />
+              <BodyFitThumbnail v-else-if="isBodyFit(game)" />
               <img v-else-if="artFor(game)" :src="artFor(game)" alt="" />
               <button type="button" class="detail-button" :aria-label="`${game.name} 상세 보기`" @click.stop="openDetail(game)"><span>자세히</span><b>›</b></button>
             </div>
