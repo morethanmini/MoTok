@@ -18,10 +18,10 @@ import ssafy.a706.backend.game.repository.GameRepository;
 @RequiredArgsConstructor
 public class GameCatalogSeeder implements ApplicationRunner {
 
-    /** 핑거 스타 90초 매치 총 시간(초) — FE FingerStarGame MATCH_SECONDS와 동기화 필수. */
-    private static final int FINGER_STAR_TOTAL_SEC = 90;
+    /** 핑거 스타 60초 매치 총 시간(초) — FE FingerStarGame MATCH_SECONDS와 동기화 필수. */
+    private static final int FINGER_STAR_TOTAL_SEC = 60;
     private static final String FINGER_STAR_RULES =
-            "90초 동안 화면에 나타나는 별자리를 최대한 많이 완성하는 게임이에요. "
+            "60초 동안 화면에 나타나는 별자리를 최대한 많이 완성하는 게임이에요. "
                     + "두 손 열 손가락을 별 위치에 맞게 벌려 모든 별을 동시에 켠 채 3초 유지하면 완성 — "
                     + "즉시 다음 별자리가 나와요. 완성 개수가 많을수록, 같으면 평균 점수가 높을수록 이겨요.";
     private static final String FINGER_STAR_CONTROLS =
@@ -66,7 +66,7 @@ public class GameCatalogSeeder implements ApplicationRunner {
                     .build());
             log.info("game catalog seeded: id=1 핑거 스타");
         } else if (existing.getRoundDurationSec() != FINGER_STAR_TOTAL_SEC || existing.getRules() == null) {
-            // 90초 매치 개편 전(라운드 30s) 또는 상세 안내(-75) 전에 시드된 행 — 규칙을 백필한다(멱등).
+            // 총 시간이 바뀐 뒤(라운드 30s·90s) 또는 상세 안내(-75) 전에 시드된 행 — 규칙을 백필한다(멱등).
             existing.updateSessionRules(FINGER_STAR_TOTAL_SEC, existing.getMinPlayers());
             existing.updateGuide(FINGER_STAR_RULES, FINGER_STAR_CONTROLS);
             gameRepository.save(existing);

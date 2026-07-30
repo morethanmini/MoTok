@@ -746,7 +746,7 @@ interface LiveScoreRow {
   nickname: string
   starsLit: number
   holdProgress: number
-  /** 핑거 스타(게임①) 90초 매치 완성 개수 — 1순위 정렬 기준. 다른 게임은 0 */
+  /** 핑거 스타(게임①) 60초 매치 완성 개수 — 1순위 정렬 기준. 다른 게임은 0 */
   completedCount: number
   finished: boolean
   score: number | null
@@ -1127,7 +1127,7 @@ function onGameProgress(starsLit: number, holdProgress: number, completedCount =
   }
 }
 
-/** 핑거 스타 90초 매치 집계 — score 자리에 총점, completedCount가 1순위 승부 기준 */
+/** 핑거 스타 60초 매치 집계 — score 자리에 총점, completedCount가 1순위 승부 기준 */
 function onGameFinished(r: { completedCount: number; totalScore: number; avgScore: number }) {
   if (activeSession.value) {
     // 서버가 최초 1회만 수리하고 PLAYER_FINISHED → (전원 완주 시) GAME_END를 배포한다.
