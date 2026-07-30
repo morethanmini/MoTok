@@ -11,6 +11,8 @@ import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.game.GameSessionService;
 import ssafy.a706.backend.game.GameSettledEvent;
 import ssafy.a706.backend.game.dto.GameResultEntry;
+import ssafy.a706.backend.game.entity.Game;
+import ssafy.a706.backend.game.repository.GameRepository;
 import ssafy.a706.backend.liveroom.event.LiveRoomClosedEvent;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
@@ -82,6 +84,8 @@ public class RhythmSessionService {
     private final RhythmSessionRepository sessionRepository;
     /** 공용 게임 세션 상태 조회 — 교차 중복 시작 차단(-164) 전용. 도메인 지식은 넘기지 않는다. */
     private final GameSessionService gameSessionService;
+    /** 카탈로그 노출 제어(-106) 확인용 — 관리자가 닫은 게임은 리듬 채널로도 시작되지 않아야 한다. */
+    private final GameRepository gameRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final TaskScheduler rhythmTaskScheduler;
     private final ApplicationEventPublisher eventPublisher;
@@ -110,6 +114,13 @@ public class RhythmSessionService {
         // (반대 방향은 GameSessionService.start가 확인한다).
         if (gameSessionService.isSessionActiveOrPreparing(roomId)) {
             throw RhythmException.alreadyActive();
+        }
+        // 카탈로그 노출 제어(-106) — 전용 채널이라 games 테이블을 안 보고 있었다. 이걸 빼면
+        // 관리자가 캐치캐치리듬을 닫아도 리듬만 계속 시작된다(공용 게임은 GameSessionService가 막는다).
+        Game game = gameRepository.findById(RhythmGameSeeder.GAME_ID)
+                .orElseThrow(RhythmException::gameNotFound);
+        if (!game.isActive()) {
+            throw RhythmException.gameClosed();
         }
 
         String difficulty = resolveDifficulty(request == null ? null : request.difficulty());

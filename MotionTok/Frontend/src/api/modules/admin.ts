@@ -1,16 +1,20 @@
 /** 관리자 API (명세 §10). */
 import { http, httpEnvelope } from '../http'
 import type {
+  AdminGame,
+  AdminPointHistoryListResponse,
   AuditLog,
   BanUserRequest,
   ChatReportDetail,
   ChatReportListResponse,
   ChatReportStatus,
-  Game,
+  PointDirection,
+  PointType,
   ReleaseSuspensionRequest,
   ReportedUser,
   SanctionHistoryListResponse,
   SanctionRefType,
+  SanctionType,
   SuspendUserRequest,
   WarnUserRequest,
   SanctionStatus,
@@ -26,9 +30,51 @@ export const adminApi = {
    * "많이 신고당한 사람"을 보는 화면이라 뒤쪽 페이지를 넘길 이유가 없다.
    */
   reports: (limit = 20) => httpEnvelope.get<ReportedUser[]>('/v1/admin/reports', { limit }),
-  toggleGame: (gameId: number, isActive: boolean) =>
-    http.patch<Game>(`/admin/games/${gameId}`, { isActive }),
+  /** ⚠️ 서버 미구현(-107). 화면은 실패를 그대로 밝힌다 — 빈 목록으로 위장하면 "로그가 없다"로 읽힌다. */
   auditLogs: (page = 0) => http.get<AuditLog[]>('/admin/audit-logs', { page }),
+}
+
+/**
+ * 관리자 게임 관리 (-106).
+ *
+ * 목록을 공개 `GET /games`로 받지 않는 이유 — 그쪽은 인원 조건이 섞인 `playable`을 주고,
+ * 무엇보다 관리자가 실제로 쥔 스위치(`active`)와 화면에 그릴 값이 어긋난다. 전용 경로는
+ * 닫아 둔 게임까지 전부 준다.
+ */
+export const adminGamesApi = {
+  /** GET /v1/admin/games — 닫아 둔 게임까지 포함한 전체 카탈로그(id 순) */
+  list: () => httpEnvelope.get<AdminGame[]>('/v1/admin/games'),
+
+  /**
+   * PATCH /v1/admin/games/{gameId} — 플레이 허용 토글.
+   *
+   * 같은 값으로 다시 눌러도 성공한다(멱등). 갱신된 항목을 돌려주므로 화면은 응답으로
+   * 상태를 맞춘다 — 낙관적으로 먼저 바꾸면 실패했을 때 숨긴 줄 알았던 게임이 그대로 열려 있다.
+   */
+  setActive: (gameId: number, isActive: boolean) =>
+    httpEnvelope.patch<AdminGame>(`/v1/admin/games/${gameId}`, { isActive }),
+}
+
+/**
+ * 관리자 포인트 내역 (-106 후속). 읽기 전용이다 — 지급·회수 엔드포인트는 없다.
+ * 있으면 point_history가 게임·상점 결과의 기록이 아니라 편집 가능한 장부가 된다.
+ */
+export const adminPointsApi = {
+  /**
+   * GET /v1/admin/points — 포인트 내역(최신순). 모든 필터가 선택이다.
+   *
+   * userId를 주면 그 회원의 **전체** 적립·사용 합계와 현재 잔액이 `summary`로 함께 온다.
+   * 안 주면 null이다 — 여러 사람의 포인트를 합친 숫자는 아무 질문에도 답하지 않는다.
+   */
+  list: (
+    params: {
+      userId?: number
+      direction?: PointDirection
+      type?: PointType
+      page?: number
+      size?: number
+    } = {},
+  ) => httpEnvelope.get<AdminPointHistoryListResponse>('/v1/admin/points', params),
 }
 
 /**
@@ -76,9 +122,20 @@ export const adminSanctionApi = {
   status: (userId: number) =>
     httpEnvelope.get<SanctionStatus>(`/v1/admin/users/${userId}/sanction-status`),
 
-  /** GET /v1/admin/users/{userId}/sanctions — 제재 이력(최신순) */
+  /** GET /v1/admin/users/{userId}/sanctions — 이 회원의 제재 이력(최신순) */
   history: (userId: number, params: { page?: number; size?: number } = {}) =>
     httpEnvelope.get<SanctionHistoryListResponse>(`/v1/admin/users/${userId}/sanctions`, params),
+
+  /**
+   * GET /v1/admin/sanctions — 제재 내역 전체 목록(최신순). userId·type은 선택 필터.
+   *
+   * 위 `history`와 짝이다. 그쪽은 "이 사람이 무슨 제재를 받아 왔나"에 답하고 이쪽은
+   * "요즘 무슨 제재가 나갔나"에 답한다 — 회원 id를 모르는 상태에서 운영을 점검하는 자리가
+   * 없으면 오판·과잉 제재를 사후에 발견할 방법이 없다. 응답 형태는 같다.
+   */
+  allHistory: (
+    params: { userId?: number; type?: SanctionType; page?: number; size?: number } = {},
+  ) => httpEnvelope.get<SanctionHistoryListResponse>('/v1/admin/sanctions', params),
 
   /**
    * GET /v1/admin/sanctions/reports — 이 신고들 중 제재로 이어진 것(목록 배지용).

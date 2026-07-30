@@ -5,7 +5,7 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch 
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, friendsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason } from '@/api'
+import { roomsApi, friendsApi, reportsApi, chatReportsApi, gamesApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason } from '@/api'
 import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { preferredAudioDeviceId, useCamera } from '@/composables/useCamera'
@@ -47,9 +47,12 @@ import { useRhythmAutoJoin } from '@/features/games/catch-rhythm/useRhythmAutoJo
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
+import { useSessionStore } from '@/stores/session'
 
 const route = useRoute()
 const router = useRouter()
+// 퇴장 확인 모달을 띄울지 가리는 데만 쓴다 — 세션이 이미 끝났다면 물을 것이 없다(onBeforeRouteLeave).
+const session = useSessionStore()
 const bgm = useBgm()
 const { message: toast, flash } = useToast(2600)
 
@@ -756,7 +759,7 @@ interface LiveScoreRow {
   nickname: string
   starsLit: number
   holdProgress: number
-  /** 핑거 스타(게임①) 90초 매치 완성 개수 — 1순위 정렬 기준. 다른 게임은 0 */
+  /** 핑거 스타(게임①) 60초 매치 완성 개수 — 1순위 정렬 기준. 다른 게임은 0 */
   completedCount: number
   finished: boolean
   score: number | null
@@ -928,6 +931,27 @@ function openPicker() {
 }
 
 /**
+ * 관리자가 닫은 게임(-106) — 서버 카탈로그의 `active=false`.
+ *
+ * <p>방 안 게임 목록(GAME_CATALOG)은 하드코딩이라 서버 상태를 모른다. 그대로 두면 관리자가
+ * 게임을 닫아도 목록에 멀쩡히 보이고, 방장이 고른 뒤 시작 시점에야 서버 에러를 받는다.
+ * 여기서 한 번 받아 두고 선택창·자동 시작 양쪽에 같은 집합을 쓴다.</p>
+ *
+ * <p>조회 실패는 <b>조용히 넘긴다</b> — 이 값은 안내용이고 강제는 서버가 한다(닫힌 게임을
+ * 시작하면 GAME_CLOSED로 거부된다). 실패했다고 게임 선택 자체를 막으면 관리자가 아무것도
+ * 닫지 않은 평시에 방이 못 놀게 된다.</p>
+ */
+const closedGameIds = ref<Set<number>>(new Set())
+onMounted(async () => {
+  try {
+    const catalog = await gamesApi.list()
+    closedGameIds.value = new Set(catalog.filter((g) => !g.active).map((g) => g.id))
+  } catch {
+    closedGameIds.value = new Set()
+  }
+})
+
+/**
  * 게임 목록에서 고른 게임 자동 시작 — 헤더 ▸ 게임 ▸ 게임 선택 ▸ 대기실 ▸ 입장하면
  * 방 안에서 다시 고르지 않고 그 게임이 바로 열린다(쿼리 autostart = 서버 gameId).
  *
@@ -957,6 +981,9 @@ function autostartBlocker(): string | null {
   if (!detailLoaded.value) return '방 정보를 불러오지 못해'
   if (!captureOn.value) return '카메라를 켤 수 없어'
   if (!GAME_CATALOG.some((g) => g.gameId === autostartGameId.value)) return '게임을 찾지 못해'
+  // 관리자가 닫은 게임(-106)이면 서버가 시작을 거부한다. 먼저 걸러야 8초를 기다린 끝에
+  // "응답을 받지 못해"라는 엉뚱한 이유가 뜨지 않는다.
+  if (closedGameIds.value.has(autostartGameId.value!)) return '점검 중인 게임이라'
   return null
 }
 
@@ -991,7 +1018,11 @@ if (autostartGameId.value) {
   autostartTimer = window.setTimeout(() => {
     if (activeGame.value) return
     // 발신까지는 갔는데 화면이 안 열렸다면 GAME_START를 못 받은 것이다(막고 있는 조건은 이미 없다).
-    const reason = autostarted ? '게임 시작 응답을 받지 못해' : autostartBlocker() ?? '알 수 없는 이유로'
+    // 닫힌 게임을 먼저 보는 이유 — 카탈로그 조회가 시작 조건보다 늦게 도착하면 발신이 먼저
+    // 나가고 서버가 거부한다. 그때 "응답을 받지 못해"라고 하면 원인을 반대로 알려 주게 된다.
+    const reason = closedGameIds.value.has(autostartGameId.value!)
+      ? '점검 중인 게임이라'
+      : autostarted ? '게임 시작 응답을 받지 못해' : autostartBlocker() ?? '알 수 없는 이유로'
     flash(`${reason} 자동 시작하지 못했어요 — 직접 골라 주세요`)
     picker.value = true
   }, AUTOSTART_TIMEOUT_MS)
@@ -1008,6 +1039,12 @@ function roomPlayerCount(): number {
  * 설정할 게 없으므로(게임 제안·로컬 폴백 경로) 지금처럼 곧바로 launch로 보낸다.</p>
  */
 function pick(g: GameEntry) {
+  // 선택창이 이미 잠긴 게임의 시작 버튼을 감추지만, 여기서도 막는다 — 게임 제안(비방장) 경로도
+  // 이 함수를 지나가고, 카탈로그 조회가 늦게 도착했으면 선택창은 잠기지 않은 상태로 열려 있다.
+  if (closedGameIds.value.has(g.gameId)) {
+    flash(`${g.name}은(는) 점검 중이라 지금은 시작할 수 없어요`)
+    return
+  }
   if (g.id === 'shape' && g.playable && roomChat.connected.value && selfIsHost.value) {
     picker.value = false
     setupGame.value = g
@@ -1103,7 +1140,7 @@ function onGameProgress(starsLit: number, holdProgress: number, completedCount =
   }
 }
 
-/** 핑거 스타 90초 매치 집계 — score 자리에 총점, completedCount가 1순위 승부 기준 */
+/** 핑거 스타 60초 매치 집계 — score 자리에 총점, completedCount가 1순위 승부 기준 */
 function onGameFinished(r: { completedCount: number; totalScore: number; avgScore: number }) {
   if (activeSession.value) {
     // 서버가 최초 1회만 수리하고 PLAYER_FINISHED → (전원 완주 시) GAME_END를 배포한다.
@@ -1298,6 +1335,10 @@ watch(
     // 서버에서만 빠진 상태다. 그대로 두면 STOMP만 살아 있는 유령 멤버(게임 시작은 전파되는데
     // 방 명단엔 없음)가 되므로 즉시 재입장해 명단과 화면을 다시 맞춘다.
     if (e.userId === myParticipantId.value && !leavingIntentionally) {
+      // 세션이 끝나서 서버가 나를 뺀 경우(다른 곳에서 로그인)는 예외다 — 토큰이 없어 재입장은
+      // 401이고, 그 실패로 로비로 보내면 회원 가드가 "로그인이 필요해요"를 안내 위에 겹쳐 띄운다.
+      // 어디로 갈지는 세션 종료 안내(App.vue)가 정한다.
+      if (!session.isAuthenticated) return
       try {
         applyDetail(await roomsApi.join(roomCode.value))
       } catch {
@@ -1328,6 +1369,11 @@ let resolveLeave: ((ok: boolean) => void) | null = null
 let leaveToLobbyAfterConfirm = false
 onBeforeRouteLeave(() => {
   if (leavingIntentionally) return true
+  // 세션이 끝나서 밀려나는 이탈(다른 곳에서 로그인·만료)은 선택이 아니다 — 안내 모달의
+  // "로그인하러 가기"를 눌렀는데 "계속 놀기"를 다시 묻는 꼴이 된다. 이미 App.vue가 토큰을
+  // 지웠으므로 방에 남아도 서버와 아무것도 할 수 없다: 확인 없이 통과시킨다.
+  // (카메라·LiveKit 정리는 언마운트 시 각 컴포저블이 맡는다. 퇴장 통보는 토큰이 없어 불가능하다.)
+  if (!session.isAuthenticated) return true
   showLeaveConfirm.value = true
   return new Promise<boolean>((resolve) => (resolveLeave = resolve))
 })
@@ -1803,7 +1849,7 @@ const startHint = computed(() =>
     </footer>
 
     <!-- 게임 선택 모달 -->
-    <GamePicker v-if="picker" @close="picker = false" @launch="pick" />
+    <GamePicker v-if="picker" :closed-game-ids="closedGameIds" @close="picker = false" @launch="pick" />
 
     <!-- 게임④(-9) 설정 창 — 모드·벽 수·난이도. 옵션이 있는 게임만 이 단계를 거친다 -->
     <GameSetupModal

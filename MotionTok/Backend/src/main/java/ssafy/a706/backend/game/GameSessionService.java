@@ -66,14 +66,14 @@ public class GameSessionService {
 
     private static final String GAME_TOPIC = "/topic/rooms/%s/game";
 
-    /** 게임①(핑거 스타) — 과제(challenge)가 90초 매치 공유 시드인 게임. */
+    /** 게임①(핑거 스타) — 과제(challenge)가 60초 매치 공유 시드인 게임. */
     private static final long FINGER_STAR_GAME_ID = 1L;
     /** 게임① 부가 지표 stats 키 (-137 일반화 후 레거시 표기 유지용). */
     private static final String STAT_STARS_HIT = "starsHit";
-    /** 게임① 90초 매치 완성 개수 stats 키 — 1순위 순위 기준. */
+    /** 게임① 60초 매치 완성 개수 stats 키 — 1순위 순위 기준. */
     private static final String STAT_COMPLETED = "completedCount";
-    /** 게임① 매치 완성 개수 상한 — 90초를 홀드 3초로 나눈 이론상 최대치. */
-    private static final int MAX_COMPLETED = 30;
+    /** 게임① 매치 완성 개수 상한 — 60초를 홀드 3초로 나눈 이론상 최대치. */
+    private static final int MAX_COMPLETED = 20;
 
     /** 게임④(몸 끼워 맞추기, S15P11A706-86) — 출제 페이즈가 있는 게임. */
     private static final long BODY_FIT_GAME_ID = 4L;
@@ -198,9 +198,7 @@ public class GameSessionService {
         if (gameId == null) {
             throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
         }
-        Game game = gameRepository.findById(gameId)
-                .filter(Game::isActive)
-                .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
+        Game game = requirePlayableGame(gameId);
         // 3) 진행 중 세션·준비 확인 중복 방지 — 리듬(전용 채널) 세션과도 교차 확인한다(-164).
         //    저장소가 따로라 여기서 안 보면 리듬 진행 중에 공용 게임을 겹쳐 시작할 수 있었다.
         long now = System.currentTimeMillis();
@@ -324,13 +322,27 @@ public class GameSessionService {
         return pending;
     }
 
+    /**
+     * 카탈로그에서 지금 시작할 수 있는 게임을 읽는다.
+     *
+     * <p>없는 게임과 관리자가 닫은 게임을 다른 코드로 구분한다 — 닫힌 게임은 목록에 여전히
+     * 보이므로 "존재하지 않는다"고 답하면 화면과 어긋나고, 방장은 자기 방이 고장 났다고 읽는다.</p>
+     */
+    private Game requirePlayableGame(Long gameId) {
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
+        if (!game.isActive()) {
+            throw new BusinessException(ErrorCode.GAME_CLOSED);
+        }
+        return game;
+    }
+
     /** 준비 확인이 끝난 뒤의 실제 세션 시작 — 세션 생성·방 잠금·GAME_START 브로드캐스트·정산 예약. */
     private void beginSession(String roomId, GameStartRequest request) {
         long now = System.currentTimeMillis();
         Long gameId = request.gameId();
-        Game game = gameRepository.findById(gameId)
-                .filter(Game::isActive)
-                .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
+        // 준비 확인 중에 관리자가 게임을 닫았을 수 있어 시작 직전에 한 번 더 본다.
+        Game game = requirePlayableGame(gameId);
 
         // 그림으로 말해요(게임 10)는 출제자·난이도가 없는 별도 타임라인이라 전용 경로로 빠진다
         if (gameId == DRAW_GAME_ID) {
@@ -629,7 +641,7 @@ public class GameSessionService {
         if (session.gameId() == BODY_FIT_GAME_ID && sender.userId().equals(session.setterUserId())) {
             return;
         }
-        // 게임① 90초 매치: score=총점(완성 개수×100 상한), 그 외 게임: 단판 점수(0~100)
+        // 게임① 60초 매치: score=총점(완성 개수×100 상한), 그 외 게임: 단판 점수(0~100)
         int score;
         int starsHit;
         Integer completedCount = null;
@@ -754,7 +766,7 @@ public class GameSessionService {
     }
 
     /**
-     * 순위 — 게임① 90초 매치는 완성 개수 내림차순(1순위) → 총점 내림차순(2순위 — 개수가 같으면
+     * 순위 — 게임① 60초 매치는 완성 개수 내림차순(1순위) → 총점 내림차순(2순위 — 개수가 같으면
      * 평균 비교와 동치) → 먼저 제출한 쪽 우선. 완성 개수 개념이 없는 게임은 전원 0이라
      * 기존 점수 내림차순과 동일하게 동작한다. 방에 남은 전원 포함 — 미제출자는 0점.
      */
@@ -862,7 +874,7 @@ public class GameSessionService {
 
     /**
      * 게임별 과제(challenge) 결정 (-137).
-     * 게임①: 90초 매치 공유 시드(숫자 문자열) — 전 클라이언트가 같은 시드로 같은 별자리
+     * 게임①: 60초 매치 공유 시드(숫자 문자열) — 전 클라이언트가 같은 시드로 같은 별자리
      * 순서를 뽑아 과제 공정성을 유지한다(별자리 데이터·출제 규칙은 FE constellations/challenge.ts).
      * 그 외(게임④ 등 출제 페이즈가 있는 게임): 시작 시점에는 과제가 없다 —
      * 세션 도중 updateChallenge로 채워진다(§9-2).

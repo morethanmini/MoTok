@@ -54,3 +54,30 @@ export function emitAccountBlocked(kind: AccountBlockKind) {
 export function emitSessionExpired(reason: SessionEndReason = 'member') {
   for (const handler of sessionExpiredHandlers) handler(reason)
 }
+
+// ── 내 로그인이 만든 밀어내기인가 ────────────────────────────────────────
+// 서버는 밀어내기 알림을 sid가 아니라 userId로 보낸다. 그래서 이미 로그인한 채로 같은 탭에서
+// 다시 로그인하면 아직 열려 있는 내 소켓에도 그 알림이 온다 — 그대로 받으면 로그인하자마자
+// "다른 곳에서 로그인했어요"를 보고 튕긴다.
+//
+// 종전에는 액세스 토큰의 iat이 최근인지로 걸렀는데 두 군데서 샜다. (1) 알림 프레임이 로그인
+// 응답보다 먼저 도착하면 그 시점의 토큰은 아직 '옛 것'이라 iat이 오래돼 걸러지지 않는다 —
+// 로그인이 한 번씩 튕기던 원인이다. (2) iat은 서버 시계 기준 초 단위라 클라이언트 시계와
+// 어긋나면 창이 밀린다. 그래서 요청을 보내기 '전에' 클라이언트가 스스로 남기는 표시로 바꾼다 —
+// 도착 순서와 시계 오차 어느 쪽에도 기대지 않는다.
+
+/** 로그인 요청을 보낸 시각(클라이언트 시계). 0이면 이 탭에서 로그인을 시도한 적이 없다. */
+let ownLoginStartedAt = 0
+
+/** 이 창 안에 도착한 밀어내기 알림은 내 로그인이 부른 것으로 본다. */
+const OWN_LOGIN_WINDOW_MS = 10_000
+
+/** 로그인·소셜 로그인 요청을 보내기 직전에 부른다(응답을 기다리기 전이어야 한다). */
+export function markOwnLoginStarted() {
+  ownLoginStartedAt = Date.now()
+}
+
+/** 방금 내가 로그인했는가 — 밀어내기 알림을 무시할지 판단하는 기준. */
+export function isOwnLoginRecent(): boolean {
+  return Date.now() - ownLoginStartedAt < OWN_LOGIN_WINDOW_MS
+}
