@@ -78,7 +78,6 @@ const roomChat = useRoomChat()
 const myParticipantId = computed(() => readAccessClaims()?.sub ?? null)
 
 const roomCode = computed(() => (route.query.room as string) || 'MP-4X9K')
-const roomGame = computed(() => (route.query.game as string) || 'DANCE BATTLE')
 // 입장 전 카메라/마이크 온오프 화면(DeviceSetupView)에서 고른 초기 상태 — 쿼리에 없으면(직접 URL 진입 등) 기본 켜짐.
 const initialCamOn = computed(() => route.query.cam !== '0')
 const initialMicOn = computed(() => route.query.mic !== '0')
@@ -1130,7 +1129,6 @@ const startHint = computed(() =>
 
     <div class="room-ribbon">
       <span class="px-kicker"><i /> {{ roomTitle ?? 'LIVE PARTY ROOM' }}</span>
-      <b>{{ roomGame }}</b>
 
       <!-- 유저 신고 (방 코드 왼쪽) -->
       <button class="ribbon-report" title="유저 신고" @click="openUserReport">
@@ -1968,11 +1966,15 @@ const startHint = computed(() =>
 .footer-right { grid-row: 1; grid-column: 3; justify-self: end; display: flex; align-items: center; gap: 10px; }
 .leave { display: flex; align-items: center; gap: 9px; padding: 0 18px; height: 52px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; background: var(--c-coral); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
 
-.room-toast { position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 60; padding: 13px 20px; background: #fffdf3; border: 3px solid #f0a815; color: #f0a815; font-size: 9px; line-height: 1.7; box-shadow: 5px 5px 0 rgba(43, 35, 51, 0.25); }
+.room-toast { position: fixed; top: 50%; left: 50%; z-index: 90; padding: 13px 20px; transform: translate(-50%, -50%); background: rgba(56, 38, 61, .9); border: 0; border-radius: 9px; color: #fff; font-size: 11px; line-height: 1.7; box-shadow: none; }
 
-.toast-enter-active { animation: px-pop 0.18s steps(3); }
+.toast-enter-active { animation: room-toast-pop 0.18s steps(3); }
 .toast-leave-active { transition: opacity 0.2s; }
 .toast-leave-to { opacity: 0; }
+@keyframes room-toast-pop {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+}
 
 @keyframes px-bubble { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
@@ -2008,22 +2010,36 @@ const startHint = computed(() =>
 }
 .room-ribbon .px-kicker i { background: #ef7775; }
 .ribbon-report, .ribbon-invite, .ribbon-settings {
-  border-color: #b78d5d;
-  border-radius: 7px;
-  background: #fff7e5;
-  box-shadow: 2px 2px 0 #e2d0b5;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .ribbon-report:hover { background: #ffe2e3; }
 .ribbon-invite:hover, .ribbon-settings:hover { background: #d8f4ec; }
 .code-box {
-  border-color: #b78d5d;
-  border-radius: 7px;
-  background: #fffdf7;
-  box-shadow: 2px 2px 0 #e2d0b5;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .code-cap { color: var(--room-muted); }
 .code-val { color: #bd6d45; }
-.copy { border-color: #b78d5d; border-radius: 5px; background: #fff0b9; color: var(--room-ink); }
+.copy { border: 0; border-radius: 0; background: transparent; color: var(--room-ink); }
+.room-ribbon .px-kicker { order: 0; }
+.code-box { position: relative; order: 1; }
+.ribbon-report, .ribbon-invite, .ribbon-settings { position: relative; order: 2; }
+.ribbon-report::before, .ribbon-invite::before, .ribbon-settings::before {
+  position: absolute;
+  top: 50%;
+  left: -12px;
+  color: #b78d5d;
+  content: '|';
+  font-size: 12px;
+  font-weight: 300;
+  line-height: 1;
+  transform: translateY(-50%);
+}
 
 .start-btn {
   border: 3px solid #925c47;

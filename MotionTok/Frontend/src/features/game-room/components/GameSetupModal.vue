@@ -163,7 +163,7 @@ onBeforeUnmount(() => {
 .overlay {
   position: fixed;
   inset: 0;
-  z-index: 41; /* 게임 선택 모달(40) 위 */
+  z-index: 81; /* 게임 선택 모달(80) 위 */
   background: rgba(43, 35, 51, 0.55);
   display: flex;
   align-items: center;
