@@ -26,7 +26,7 @@ import { createCast, DEFAULT_CAST } from './cast'
 import { createHook, DEFAULT_HOOK } from './hook'
 import { createPump, DEFAULT_PUMP } from './pump'
 import { createLoop, DEFAULT_LOOP, type LoopState } from './loop'
-import { createNormalizer, SHOULDER, VIS_MIN, WRIST } from './normalize'
+import { aimFromHands, createNormalizer, SHOULDER, VIS_MIN, WRIST } from './normalize'
 import { drawFrame } from './render/drawFrame'
 import { resolveSkin, SKINS } from './render/skins'
 import type { Splash } from './render/types'
@@ -81,6 +81,8 @@ let marker: { x: number; y: number } | null = null
 let splashes: Splash[] = []
 /** 마지막 페이즈 — 전환 시점에 판정기를 리셋하기 위한 비교값 */
 let prevPhase = st.value.phase
+/** 어깨 중점 x — 조준 0의 기준. 어깨를 놓친 프레임에는 직전 값을 유지한다 */
+let bodyMidX = W / 2
 
 const hud = computed(() => {
   const s = st.value
@@ -259,6 +261,8 @@ function onPose(result: PoseLandmarkerResult) {
     norm.push(width)
     stats.swMin = stats.swMin === 0 ? width : Math.min(stats.swMin, width)
     stats.swMax = Math.max(stats.swMax, width)
+    // 조준 0의 기준 — 정식 화면과 같은 매핑을 써야 계측이 의미가 있다
+    bodyMidX = ((1 - sl.x) * W + (1 - sr.x) * W) / 2
   }
   const sw = norm.ready() ? norm.sw() : 0
 
@@ -312,7 +316,7 @@ function onPose(result: PoseLandmarkerResult) {
 
   // 페이즈별로 하나만 — 서로 오발하지 않는다
   if (phase === 'idle') {
-    const c = cast.feed(midX, midY, sw, now)
+    const c = cast.feed(aimFromHands(midX, bodyMidX, sw, W), midY, sw, now)
     aim.locked = c.phase === 'back'
     if (c.aimX !== null) aim.x = c.aimX
     if (c.dropSw > 0) lastDropSw = c.dropSw

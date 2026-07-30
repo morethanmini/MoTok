@@ -71,6 +71,39 @@ export function createNormalizer(): Normalizer {
   }
 }
 
+/**
+ * 조준 이득 — 몸 중심에서 이만큼(어깨너비 배수) 벗어나면 화면 끝.
+ *
+ * 조준은 오랫동안 이 파일의 규칙에서 빠져 있었다. 손 중점 x를 카메라 프레임 x 그대로 화면 x에
+ * 썼는데, 2~3m 거리에서 사람 손은 프레임 좌우 끝까지 못 간다 — 조준 랩 실측에서 **화면 폭의
+ * 46%만** 덮었다(도달 offSw -0.87~0.76, 프레임 17~63%).
+ *
+ * 0.75를 고른 이유: 실측 도달이 좌우 비대칭이었다(왼쪽 0.87 / 오른쪽 0.76). 큰 쪽에 맞추면
+ * 약한 쪽 끝에 닿지 못하므로 **작은 쪽(0.76)보다 살짝 낮게** 잡아 양쪽 끝이 다 닿게 한다.
+ * 랩의 권장값 0.79는 큰 쪽 기준이라 오른쪽이 아슬아슬하다.
+ */
+export const AIM_SPAN_SW = 0.75
+
+/**
+ * 손 중점 x를 조준 x(캔버스 px)로.
+ *
+ * @param handMidX 양손 손목 중점 x (캔버스 px)
+ * @param bodyMidX 어깨 중점 x (캔버스 px) — 조준 0의 기준
+ * @param sw       어깨 너비(px). 0이면 화면 중앙을 돌려준다
+ * @param width    무대 폭(px)
+ */
+export function aimFromHands(
+  handMidX: number,
+  bodyMidX: number,
+  sw: number,
+  width: number,
+): number {
+  if (!(sw > 0)) return width / 2
+  const offSw = (handMidX - bodyMidX) / sw
+  const x = width / 2 + (offSw / AIM_SPAN_SW) * (width / 2)
+  return Math.min(width, Math.max(0, x))
+}
+
 /** MediaPipe Pose 어깨 랜드마크 인덱스 */
 export const SHOULDER = { left: 11, right: 12 } as const
 /** MediaPipe Pose 손목 랜드마크 인덱스 */

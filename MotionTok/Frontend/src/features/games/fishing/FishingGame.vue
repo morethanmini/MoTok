@@ -23,7 +23,7 @@ import { createCast, DEFAULT_CAST } from './cast'
 import { createHook, DEFAULT_HOOK } from './hook'
 import { createPump, DEFAULT_PUMP } from './pump'
 import { createLoop, DEFAULT_LOOP, type LoopState } from './loop'
-import { createNormalizer, SHOULDER, VIS_MIN, WRIST } from './normalize'
+import { aimFromHands, createNormalizer, SHOULDER, VIS_MIN, WRIST } from './normalize'
 import { drawFrame } from './render/drawFrame'
 import { cozySkin } from './render/skins/cozy'
 import type { Splash } from './render/types'
@@ -69,6 +69,8 @@ const reelRate = ref(0)
 let marker: { x: number; y: number } | null = null
 let splashes: Splash[] = []
 let prevPhase = st.value.phase
+/** 어깨 중점 x — 조준 0의 기준. 어깨를 놓친 프레임에는 직전 값을 유지한다 */
+let bodyMidX = W / 2
 /**
  * 화면 흔들림 0~1 — 매 프레임 감쇠한다.
  *
@@ -122,6 +124,8 @@ function onPose(result: PoseLandmarkerResult) {
   const sr = lm?.[SHOULDER.right]
   if (sl && sr && (sl.visibility ?? 0) >= VIS_MIN && (sr.visibility ?? 0) >= VIS_MIN) {
     norm.push(Math.hypot((sr.x - sl.x) * W, (sr.y - sl.y) * H))
+    // 조준 0의 기준 — 어깨를 놓친 프레임에는 직전 값을 그대로 쓴다
+    bodyMidX = ((1 - sl.x) * W + (1 - sr.x) * W) / 2
   }
   const sw = norm.ready() ? norm.sw() : 0
 
@@ -157,7 +161,13 @@ function onPose(result: PoseLandmarkerResult) {
   marker = { x: midX, y: midY }
 
   if (phase === 'idle') {
-    const c = cast.feed(midX, midY, sw, now)
+    /*
+     * 조준 x는 원시 프레임 좌표가 아니라 **몸 중심에서 벗어난 거리**로 넘긴다.
+     *
+     * 손 중점 x를 그대로 쓰면 2~3m 거리에서 화면 폭의 46%만 조준된다(조준 랩 실측 2026-07-30:
+     * 도달 프레임 17~63%). cast.ts는 이 x를 조준에만 쓰므로 판정 로직은 그대로다.
+     */
+    const c = cast.feed(aimFromHands(midX, bodyMidX, sw, W), midY, sw, now)
     aim.value = { locked: c.phase === 'back', x: c.aimX ?? aim.value.x }
     // 조준은 발사 시점에 판정기가 확정한 값을 쓴다(내려꽂는 동안의 흔들림 배제)
     if (c.fired !== null) loop.cast(c.firedAimX, c.fired)

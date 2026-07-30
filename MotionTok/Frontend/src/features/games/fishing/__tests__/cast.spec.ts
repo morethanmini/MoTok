@@ -41,6 +41,12 @@ const LEAD = Math.ceil(DEFAULT_CAST.settleMs / DT) + 4
  * @param drop       포워드 낙하(px) — 파워의 원본값
  * @param downFrames 낙하에 쓰는 프레임 수. 적으면 빠른 스윙, 많으면 느린 스윙.
  *                   **속도와 거리를 따로 만들 수 있어야** ①을 검증할 수 있다.
+ *
+ * 생략하면 **속도가 실측대(약 ×10/s)로 고정되도록 깊이에서 역산한다.**
+ *
+ * 고정 프레임 수를 쓰면 얕은 던짐이 자동으로 느려져서(낙하 ×0.46을 3프레임에 = ×4.6/s) 스윙
+ * 시작 게이트 아래로 떨어진다. 그러면 "파워 하한"을 테스트하려던 게 "게이트를 못 넘는다"를
+ * 테스트하는 것으로 바뀐다. 실측 던짐은 깊이와 무관하게 전부 ×10.5~13.1/s였다(2026-07-30).
  */
 function makeThrow(opts: {
   rise: number
@@ -49,7 +55,13 @@ function makeThrow(opts: {
   x?: number
   xDuringDrop?: number
 }) {
-  const { rise, drop, downFrames = 8, x = 320, xDuringDrop } = opts
+  const {
+    rise,
+    drop,
+    downFrames = Math.max(1, Math.round(drop / (SW * 0.33))),
+    x = 320,
+    xDuringDrop,
+  } = opts
   const out: { x: number; y: number }[] = []
   // 내린 자세 — 정착 구간을 지나고 상승 거리의 기준점(restY)을 만든다
   for (let i = 0; i < LEAD; i++) out.push({ x, y: REST_Y })
@@ -62,8 +74,16 @@ function makeThrow(opts: {
   // 포워드 스윙
   const dx = xDuringDrop ?? x
   for (let i = 1; i <= downFrames; i++) out.push({ x: dx, y: topY + (drop * i) / downFrames })
-  // 감속 — 속도가 떨어지면 판정이 닫힌다
-  for (let i = 0; i < 10; i++) out.push({ x: dx, y: topY + drop })
+  /*
+   * 팔로스루 반동 — 실제 팔은 최저점을 찍고 조금 되올라온다.
+   *
+   * 판정 종료가 이 반동을 본다(`endBackSw`). 예전 픽스처는 최저점에서 위치를 그대로 유지했는데,
+   * 그건 속도 기반 종료에만 맞는 모양이었다. 낙하는 최저점 기준이라 반동이 값을 줄이지 않는다.
+   */
+  const bottom = topY + drop
+  const rebound = Math.max(0.09 * SW, drop * 0.08)
+  for (let i = 1; i <= 3; i++) out.push({ x: dx, y: bottom - (rebound * i) / 3 })
+  for (let i = 0; i < 10; i++) out.push({ x: dx, y: bottom - rebound })
   return out
 }
 
@@ -79,10 +99,10 @@ function run(frames: { x: number; y: number }[], sw = SW) {
 }
 
 /** 실측 대역: 강 상승 ×0.70~1.34 / 낙하 ×0.97~1.28 */
-const strong = (dropSw: number, downFrames = 8) =>
+const strong = (dropSw: number, downFrames?: number) =>
   makeThrow({ rise: 0.9 * SW, drop: dropSw * SW, downFrames })
 /** 실측 대역: 약 상승 ×0.34~0.77 / 낙하 ×0.52~0.73 */
-const weak = (dropSw: number, downFrames = 8) =>
+const weak = (dropSw: number, downFrames?: number) =>
   makeThrow({ rise: 0.55 * SW, drop: dropSw * SW, downFrames })
 
 describe('캐스팅 — 던짐 성립', () => {
@@ -124,14 +144,16 @@ describe('캐스팅 — 오발 방지 (② 백스윙 없는 하향은 던짐이 
     const startY = REST_Y - 20
     const frames: { x: number; y: number }[] = []
     for (let i = 0; i < LEAD; i++) frames.push({ x: 320, y: startY })
-    for (let i = 1; i <= 8; i++) frames.push({ x: 320, y: startY + (1.2 * SW * i) / 8 })
-    for (let i = 0; i < 10; i++) frames.push({ x: 320, y: startY + 1.2 * SW })
+    // 3프레임 = 실측 던짐 속도대. 스윙 시작 게이트는 넘고 백스윙 조건에서 걸려야 한다
+    for (let i = 1; i <= 3; i++) frames.push({ x: 320, y: startY + (1.2 * SW * i) / 3 })
+    for (let i = 1; i <= 3; i++) frames.push({ x: 320, y: startY + 1.2 * SW - (0.1 * SW * i) / 3 })
+    for (let i = 0; i < 10; i++) frames.push({ x: 320, y: startY + 1.2 * SW - 0.1 * SW })
     expect(run(frames).fires).toHaveLength(0)
   })
 
   it('백스윙은 했지만 낙하가 문턱 미만이면 발사되지 않는다', () => {
-    // 낙하 ×0.3 < dropMinSw ×0.45
-    expect(run(strong(0.3, 3)).fires).toHaveLength(0)
+    // 낙하 ×0.3 < dropMinSw ×0.45. 1프레임 = ×9/s로 시작 게이트는 넘고 낙하에서 걸린다
+    expect(run(strong(0.3, 1)).fires).toHaveLength(0)
   })
 
   it('백스윙만 하고 가만히 있으면 발사되지 않는다', () => {
@@ -150,8 +172,10 @@ describe('캐스팅 — 오발 방지 (② 백스윙 없는 하향은 던짐이 
     for (let i = 0; i < LEAD; i++) frames.push({ x: 320, y: REST_Y })
     // 게이트(×0.3)를 한 프레임에 넘기고 곧바로 급하강
     frames.push({ x: 320, y: REST_Y - 0.32 * SW })
-    for (let i = 1; i <= 8; i++) frames.push({ x: 320, y: REST_Y - 0.32 * SW + (1.2 * SW * i) / 8 })
-    for (let i = 0; i < 10; i++) frames.push({ x: 320, y: REST_Y - 0.32 * SW + 1.2 * SW })
+    const top = REST_Y - 0.32 * SW
+    for (let i = 1; i <= 3; i++) frames.push({ x: 320, y: top + (1.2 * SW * i) / 3 })
+    for (let i = 1; i <= 3; i++) frames.push({ x: 320, y: top + 1.2 * SW - (0.1 * SW * i) / 3 })
+    for (let i = 0; i < 10; i++) frames.push({ x: 320, y: top + 1.2 * SW - 0.1 * SW })
     expect(run(frames).fires).toHaveLength(0)
   })
 
@@ -176,10 +200,16 @@ describe('캐스팅 — 파워 (① 최고 속도가 아니라 낙하 거리)', 
   })
 
   it('느리지만 깊은 스윙이 빠르지만 얕은 스윙보다 파워가 크다 — 이 설계 변경의 요점', () => {
-    // 실측에서 속도가 유저 의도를 뒤집어 읽은 사례(강 ×6.49/s < 약 ×7.53/s)의 재현.
-    // downFrames가 많을수록 느린 스윙이다.
-    const slowDeep = run(strong(1.2, 12))
-    const fastShallow = run(weak(0.55, 3))
+    /*
+     * 실측에서 속도가 유저 의도를 뒤집어 읽은 사례(강 ×6.49/s < 약 ×7.53/s)의 재현.
+     * downFrames가 많을수록 느린 스윙이다.
+     *
+     * 두 스윙 모두 시작 게이트(startVelSw ×5.0) 위에 둔다 — 느린 쪽 ×6.0/s, 빠른 쪽 ×8.3/s.
+     * 예전에는 느린 쪽을 12프레임(×3.0/s)으로 잡았는데, 그건 게이트 아래라 "느려서 파워가
+     * 낮다"가 아니라 "던짐으로 인정되지 않는다"를 테스트하게 된다. 검증하려는 건 전자다.
+     */
+    const slowDeep = run(strong(1.2, 6))
+    const fastShallow = run(weak(0.55, 2))
     expect(slowDeep.fires).toHaveLength(1)
     expect(fastShallow.fires).toHaveLength(1)
     expect(slowDeep.fires[0]!.power).toBeGreaterThan(fastShallow.fires[0]!.power)
@@ -276,12 +306,18 @@ describe('캐스팅 — 잡은 직후 재던지기 (정착 구간)', () => {
     for (let i = 0; i < LEAD; i++) feed(START)
     for (let i = 0; i < 6; i++) feed(START)
     let power: number | null = null
-    for (let i = 1; i <= 8; i++) {
-      const s = feed(START + (0.6 * SW * i) / 8)
+    // 2프레임 = ×9/s. 실측 속도대라 시작 게이트를 넘는다
+    for (let i = 1; i <= 2; i++) {
+      const s = feed(START + (0.6 * SW * i) / 2)
+      if (s.fired !== null) power = s.fired
+    }
+    // 팔로스루 반동 — 판정 종료가 이걸 본다
+    for (let i = 1; i <= 3; i++) {
+      const s = feed(START + 0.6 * SW - (0.1 * SW * i) / 3)
       if (s.fired !== null) power = s.fired
     }
     for (let i = 0; i < 10; i++) {
-      const s = feed(START + 0.6 * SW)
+      const s = feed(START + 0.6 * SW - 0.1 * SW)
       if (s.fired !== null) power = s.fired
     }
     expect(power).not.toBeNull()
@@ -298,10 +334,12 @@ describe('캐스팅 — 잡은 직후 재던지기 (정착 구간)', () => {
     for (let i = 0; i < 6; i++) frames.push({ x: 320, y: REST_Y })
     // 젖히고 던진다
     for (let i = 1; i <= 8; i++) frames.push({ x: 320, y: REST_Y - (0.9 * SW * i) / 8 })
-    for (let i = 0; i < 3; i++) frames.push({ x: 320, y: REST_Y - 0.9 * SW })
-    for (let i = 1; i <= 8; i++)
-      frames.push({ x: 320, y: REST_Y - 0.9 * SW + (1.1 * SW * i) / 8 })
-    for (let i = 0; i < 10; i++) frames.push({ x: 320, y: REST_Y - 0.9 * SW + 1.1 * SW })
+    for (let i = 0; i < 6; i++) frames.push({ x: 320, y: REST_Y - 0.9 * SW })
+    // 3프레임 = ×11/s (실측대). 이어서 팔로스루 반동
+    const top = REST_Y - 0.9 * SW
+    for (let i = 1; i <= 3; i++) frames.push({ x: 320, y: top + (1.1 * SW * i) / 3 })
+    for (let i = 1; i <= 3; i++) frames.push({ x: 320, y: top + 1.1 * SW - (0.1 * SW * i) / 3 })
+    for (let i = 0; i < 10; i++) frames.push({ x: 320, y: top + 1.1 * SW - 0.1 * SW })
     const { fires } = run(frames)
     expect(fires).toHaveLength(1)
     expect(fires[0]!.power).toBeGreaterThan(0.5)
