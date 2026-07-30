@@ -44,6 +44,7 @@ import {
   type NormalizedPoint,
   type StrokePoint,
 } from './logic'
+import { GameBgm } from '../gameBgm'
 import { requestJudge } from './scoring'
 
 const props = defineProps<{
@@ -330,7 +331,9 @@ watch(
 // 전환은 인터벌로 구동하고 RAF는 화면 갱신만 맡는다(핑거 스타 멀티 타이머와 같은 구조).
 let rafId = 0
 let phaseTicker = 0
+const bgm = new GameBgm('/assets/sfx/draw-relay/ingame-loop.mp3')
 onMounted(() => {
+  bgm.start()
   phaseTicker = window.setInterval(() => {
     mpTick()
     flushOutbox()
@@ -343,6 +346,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   hand.stop()
+  bgm.dispose()
   clearInterval(phaseTicker)
   cancelAnimationFrame(rafId)
 })
