@@ -16,6 +16,10 @@ services:
     container_name: motiontok-app
     restart: unless-stopped
     env_file: .env
+    environment:
+      # 컨테이너 기본 존은 UTC다 — 로그·JVM 존을 mysql(TZ: Asia/Seoul)과 맞춘다.
+      # 저장 시각 자체는 BackendApplication이 한 번 더 고정하므로 이 설정을 빠뜨려도 안전하다.
+      TZ: Asia/Seoul
     expose:
       - "8080"          # 호스트에 직접 노출 안 함. nginx 만 내부 네트워크로 접근.
     depends_on:
