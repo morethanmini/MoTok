@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import ssafy.a706.backend.game.PointCalculator;
 import ssafy.a706.backend.shop.model.GameRewardGrant;
 import ssafy.a706.backend.shop.model.PointHistory;
 import ssafy.a706.backend.shop.model.PointHistoryType;
@@ -44,12 +45,21 @@ public class PointRewardService {
      * @return 실제로 적립했으면 true
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public boolean grantGameReward(String sessionId, long gameId, Long userId, int points) {
-        if (points <= 0 || userId == null) {
+    public boolean grantGameReward(String sessionId, long gameId, Long userId, int requestedPoints) {
+        if (requestedPoints <= 0 || userId == null) {
             return false; // 참가 보상이 0이면 내역만 늘어난다(게스트는 애초에 userId가 없다)
         }
         if (grantRepository.existsBySessionIdAndUserId(sessionId, userId)) {
             return false;
+        }
+
+        // 마지막 방어선 — 계산기들이 이미 자르지만(PointCalculator.MAX_PER_ROUND), 새 게임이
+        // 자기 계산기를 만들면서 상한을 빠뜨릴 수 있다. 여기서 잘리면 표시액과 지급액이 어긋나므로
+        // 조용히 넘기지 않고 남긴다 — 계산 단계를 고쳐야 한다는 신호다.
+        int points = Math.min(PointCalculator.MAX_PER_ROUND, requestedPoints);
+        if (points != requestedPoints) {
+            log.warn("point reward capped: requested={} granted={} game={} session={} user={}",
+                    requestedPoints, points, gameId, sessionId, userId);
         }
 
         // 동시 요청이면 여기서 UNIQUE 위반이 나고 트랜잭션째 되돌아간다(호출 측이 중복으로 해석).
