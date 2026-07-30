@@ -30,6 +30,7 @@ import ssafy.a706.backend.liveroom.event.LiveRoomClosedEvent;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
+import ssafy.a706.backend.rhythm.RhythmSessionRepository;
 import ssafy.a706.backend.signal.RoomMembershipReader;
 
 import java.nio.charset.StandardCharsets;
@@ -142,6 +143,8 @@ public class GameSessionService {
     /** 방 상태 전환은 서비스 경유 — 로비 실시간 갱신(-148) 알림이 그 안에 붙어 있다. */
     private final LiveRoomService liveRoomService;
     private final GameSessionRepository sessionRepository;
+    /** 리듬(전용 채널) 세션 — 교차 중복 시작 차단(-164)에만 읽는다. 도메인 지식은 넘기지 않는다. */
+    private final RhythmSessionRepository rhythmSessionRepository;
     private final GameRepository gameRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final TaskScheduler gameTaskScheduler;
@@ -190,12 +193,16 @@ public class GameSessionService {
         Game game = gameRepository.findById(gameId)
                 .filter(Game::isActive)
                 .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
-        // 3) 진행 중 세션·준비 확인 중복 방지
+        // 3) 진행 중 세션·준비 확인 중복 방지 — 리듬(전용 채널) 세션과도 교차 확인한다(-164).
+        //    저장소가 따로라 여기서 안 보면 리듬 진행 중에 공용 게임을 겹쳐 시작할 수 있었다.
         long now = System.currentTimeMillis();
         boolean activeExists = sessionRepository.findSession(roomId)
                 .map(s -> s.isPlaying(now, END_GRACE_MILLIS))
                 .orElse(false);
-        if (activeExists || pendingStarts.containsKey(roomId)) {
+        boolean rhythmActive = rhythmSessionRepository.findSession(roomId)
+                .map(s -> s.isPlaying(now, END_GRACE_MILLIS))
+                .orElse(false);
+        if (activeExists || rhythmActive || pendingStarts.containsKey(roomId)) {
             throw new BusinessException(ErrorCode.GAME_SESSION_ALREADY_ACTIVE);
         }
         // 4) 인원 선검증 — beginSession도 다시 확인하지만, 방장에게는 준비 확인을 열기 전에
@@ -291,6 +298,14 @@ public class GameSessionService {
         liveRoomService.changeStatus(roomId, "WAITING");
         broadcast(roomId, GameEventResponse.gameAborted(session.sessionId()));
         log.info("game session aborted by host: room={} session={}", roomId, session.sessionId());
+    }
+
+    /** 공용 게임 세션이 진행/준비 중인가 — 리듬(전용 채널)이 교차 중복 시작을 막을 때 묻는다(-164). */
+    public boolean isSessionActiveOrPreparing(String roomId) {
+        long now = System.currentTimeMillis();
+        return pendingStarts.containsKey(roomId) || sessionRepository.findSession(roomId)
+                .map(s -> s.isPlaying(now, END_GRACE_MILLIS))
+                .orElse(false);
     }
 
     private PendingStart takePendingStart(String roomId) {
