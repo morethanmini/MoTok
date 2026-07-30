@@ -98,12 +98,12 @@ function run(frames: { x: number; y: number }[], sw = SW) {
   return { last, fires }
 }
 
-/** 실측 대역: 강 상승 ×0.70~1.34 / 낙하 ×0.97~1.28 */
+/** 실측 대역(최저점 기준 재측정): 강 상승 ×0.80~1.78 / 최대낙하 ×1.28~1.92 */
 const strong = (dropSw: number, downFrames?: number) =>
-  makeThrow({ rise: 0.9 * SW, drop: dropSw * SW, downFrames })
-/** 실측 대역: 약 상승 ×0.34~0.77 / 낙하 ×0.52~0.73 */
+  makeThrow({ rise: 1.4 * SW, drop: dropSw * SW, downFrames })
+/** 실측 대역(최저점 기준 재측정): 약 상승 ×0.38~1.04 / 최대낙하 ×0.64~1.22 */
 const weak = (dropSw: number, downFrames?: number) =>
-  makeThrow({ rise: 0.55 * SW, drop: dropSw * SW, downFrames })
+  makeThrow({ rise: 0.72 * SW, drop: dropSw * SW, downFrames })
 
 describe('캐스팅 — 던짐 성립', () => {
   it('백스윙 후 내려꽂으면 발사된다', () => {
@@ -192,9 +192,15 @@ describe('캐스팅 — 파워 (① 최고 속도가 아니라 낙하 거리)', 
   })
 
   it('실측 강·약 대역이 확실히 갈린다 — 겹치지 않는다', () => {
-    const weakPowers = [0.52, 0.62, 0.73].map((d) => run(weak(d)).fires[0]!.power)
-    const strongPowers = [0.97, 1.1, 1.28].map((d) => run(strong(d)).fires[0]!.power)
-    expect(Math.max(...weakPowers)).toBeLessThan(0.4)
+    /*
+     * 최저점 기준으로 재측정한 대역(2026-07-30 후반, 강 6회 / 약 10회):
+     *   약 최대낙하 ×0.64~1.22 / 강 최대낙하 ×1.28~1.92 — 갭 4.9%
+     * dropFullSw 1.9에서 경계가 0.55에 떨어진다. 1.3이었을 때는 약 ×1.22가 파워 0.91까지
+     * 올라가서 "약하게 던져도 멀리 간다"가 됐다.
+     */
+    const weakPowers = [0.64, 0.78, 1.22].map((d) => run(weak(d)).fires[0]!.power)
+    const strongPowers = [1.28, 1.5, 1.92].map((d) => run(strong(d)).fires[0]!.power)
+    expect(Math.max(...weakPowers)).toBeLessThan(0.55)
     expect(Math.min(...strongPowers)).toBeGreaterThan(0.55)
     expect(Math.min(...strongPowers)).toBeGreaterThan(Math.max(...weakPowers))
   })
@@ -335,11 +341,11 @@ describe('캐스팅 — 잡은 직후 재던지기 (정착 구간)', () => {
     // 젖히고 던진다
     for (let i = 1; i <= 8; i++) frames.push({ x: 320, y: REST_Y - (0.9 * SW * i) / 8 })
     for (let i = 0; i < 6; i++) frames.push({ x: 320, y: REST_Y - 0.9 * SW })
-    // 3프레임 = ×11/s (실측대). 이어서 팔로스루 반동
+    // 강한 던짐 대역(최대낙하 ×1.5)으로 던진다 — 파워가 강 구간에 들어와야 한다
     const top = REST_Y - 0.9 * SW
-    for (let i = 1; i <= 3; i++) frames.push({ x: 320, y: top + (1.1 * SW * i) / 3 })
-    for (let i = 1; i <= 3; i++) frames.push({ x: 320, y: top + 1.1 * SW - (0.1 * SW * i) / 3 })
-    for (let i = 0; i < 10; i++) frames.push({ x: 320, y: top + 1.1 * SW - 0.1 * SW })
+    for (let i = 1; i <= 3; i++) frames.push({ x: 320, y: top + (1.5 * SW * i) / 3 })
+    for (let i = 1; i <= 3; i++) frames.push({ x: 320, y: top + 1.5 * SW - (0.1 * SW * i) / 3 })
+    for (let i = 0; i < 10; i++) frames.push({ x: 320, y: top + 1.5 * SW - 0.1 * SW })
     const { fires } = run(frames)
     expect(fires).toHaveLength(1)
     expect(fires[0]!.power).toBeGreaterThan(0.5)
