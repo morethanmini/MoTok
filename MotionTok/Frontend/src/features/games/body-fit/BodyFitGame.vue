@@ -129,7 +129,18 @@ const chainSummary = ref<string | null>(null)
 /** 접근 중 실시간 판정(스로틀) — 게이지·빨강 세그먼트용 */
 const liveIou = ref(0)
 const totalScore = ref(0)
+const finalScore = ref<number | null>(null)
 const history = ref<{ round: number; grade: Grade; iou: number }[]>([])
+
+const displayedFinalScore = computed(() => {
+  if (finalScore.value !== null) return finalScore.value
+  return props.results?.find((result) => result.userId === props.myUserId)?.score ?? null
+})
+
+function closeFinalResult() {
+  finalScore.value = null
+  emit('close')
+}
 
 const GRADE_COLOR: Record<Grade, string> = {
   PERFECT: 'var(--bf-violet)',
@@ -207,13 +218,6 @@ const setterLabel = computed(() => {
 const myPoseTurn = computed(
   () => isMultiplayer.value && isSetter.value && phase.value === 'setting',
 )
-/** 라운드 사이 휴식(서버 startAt 전) 안내 — 다음이 누구 차례인지 알려준다 */
-const waitCaption = computed(() => {
-  if (!isMultiplayer.value) return '곧 시작합니다'
-  return isSetter.value
-    ? '내 차례! 포즈를 준비하세요'
-    : `${props.setterName ?? '출제자'}님 차례입니다 — 준비하세요`
-})
 /** 첫 라운드 시작 전 대기 — 같은 'wait' 페이즈지만 "다음 차례"가 아니라 "첫 출제자"다 */
 const firstWait = computed(() => (props.session?.roundNo ?? 1) <= 1)
 /** 휴식 패널 본문 — 출제 카운트다운과 문구·크기·색을 전부 분리한다(같아 보여서 헷갈렸다) */
@@ -238,32 +242,6 @@ const countdownCaption = computed(() =>
     ? '포즈를 취하세요!'
     : `${props.setterName ?? '출제자'}님이 출제 중`,
 )
-
-const phaseLabel = computed(() => {
-  if (phase.value === 'wait') return waitCaption.value
-  if (phase.value === 'setting') {
-    if (!isMultiplayer.value || isSetter.value) return '포즈를 취하세요! 이 포즈가 벽 구멍이 됩니다'
-    return '출제자가 포즈를 만드는 중 — 따라할 준비!'
-  }
-  if (phase.value === 'incoming') {
-    // 게임④(-9) 룰: 출제자는 이번 라운드에 플레이하지 않고 관전만 한다
-    if (isMultiplayer.value && isSetter.value) return '출제자는 관전 중 — 다른 사람들이 통과하는 걸 지켜보세요'
-    // 랜덤 출제면 원형 이름을 알려준다 — 사람이 낸 게 아니라는 것과 무슨 모양인지가 같이 붙는다
-    if (randomPoseName.value)
-      return chain.value
-        ? `🎲 연속 랜덤 「${randomPoseName.value}」 — 바로 맞추세요!`
-        : `🎲 랜덤 출제 「${randomPoseName.value}」 — 구멍에 맞추세요!`
-    return '벽이 다가옵니다 — 구멍에 맞추세요!'
-  }
-  if (phase.value === 'result') {
-    if (isMultiplayer.value && isSetter.value) return '라운드 종료 — 다음 출제자를 기다립니다'
-    return isMultiplayer.value && !props.results ? '집계 중…' : '판정!'
-  }
-  if (phase.value === 'stale') return '⚠ 라운드 정보를 못 받았어요 — 다음 라운드에 자동 복구됩니다'
-  // 연속 모드를 방금 끝냈으면 성적표가 먼저다
-  if (chainSummary.value) return chainSummary.value
-  return tracked.value ? '시작을 누르면 3초 뒤 내 포즈가 벽이 됩니다' : '카메라 앞에 서주세요'
-})
 
 /** 게임④ 출제자 로테이션(-48): "N/전체" 라운드 표시 — 로테이션 없는 세션(솔로 등)은 숫자만 */
 const totalRoundsLabel = computed(() =>
@@ -411,6 +389,8 @@ const POOL_MAX = 4
 const WALL_SPAN_Z = WALL_STOP_Z - WALL_START_Z
 /** 판정 팝업을 띄워두는 시간 — 다음 벽이 닿기 전에 지워야 새 판정으로 읽힌다 */
 const POP_MS = 700
+/** 마지막 판정의 등급·점수를 읽을 시간을 준 뒤 종료 화면을 띄운다. */
+const FINAL_RESULT_DELAY_MS = 1200
 /**
  * 판정된 벽이 빠져나가는 데 걸리는 시간. 이 동안 앞으로 밀면서 투명해지고, 끝나면 반납된다.
  *
@@ -455,6 +435,7 @@ let chainNextStart = 0
 /** 연속 모드 포즈 난수원 — 솔로는 undefined(Math.random). 방에서는 서버 시드 PRNG가 들어온다 */
 let chainRng: Rng | undefined
 let popAt = 0
+let finalResultTimer = 0
 
 function takeHandle(): WallHandle | null {
   const free = pool.pop()
@@ -573,10 +554,27 @@ const chainRanking = computed(() =>
   [...(props.scores ?? [])].sort((a, b) => chainScoreOf(b) - chainScoreOf(a)),
 )
 
+/** 일반 라운드용 참가자 순위. 서버 확정 점수를 우선하고, 내 점수만 전송 전 로컬값을 보인다. */
+const participantRanking = computed(() =>
+  (props.scores ?? [])
+    .map((row) => ({
+      ...row,
+      rankingScore: row.score ?? (row.userId === props.myUserId ? totalScore.value : 0),
+    }))
+    .sort((a, b) => b.rankingScore - a.rankingScore || a.nickname.localeCompare(b.nickname)),
+)
+
 /** 연속 모드 한 틱 — 스폰·이동·판정·반납을 전부 여기서 한다 */
 function chainTick(now: number) {
   const quotaLeft = !chainTarget.value || chainSpawns < chainTarget.value
-  if (quotaLeft && now >= chainNextStart) spawnChainWall(chainNextStart)
+  // Keep the playfield readable: do not reveal a new wall until the current
+  // wall has been judged and fully left the stage.
+  if (quotaLeft && !flying.length && now >= chainNextStart) {
+    // 솔로는 앞 벽이 완전히 지나간 뒤에만 다음 벽을 보여준다. 예약 시각을 그대로 쓰면
+    // 새 벽이 화면에 뜨는 순간 진행 바가 이미 중간부터 시작하므로, 실제 표시 시각을 출발점으로 쓴다.
+    const startAt = isMultiplayer.value ? chainNextStart : now
+    spawnChainWall(startAt)
+  }
 
   for (const w of flying) {
     if (w.judged) {
@@ -621,9 +619,14 @@ function chainTick(now: number) {
 
 /** 정해진 장수를 다 받았다 — 요약을 남기고 컨베이어를 접는다 */
 function finishChain() {
+  if (finalResultTimer) return
   const walls = chainArrived.value
   chainSummary.value = `🏁 ${walls}벽 완주 — 최고 ${bestCombo.value}콤보 · ${totalScore.value}점`
-  stopChain()
+  finalResultTimer = window.setTimeout(() => {
+    finalScore.value = totalScore.value
+    finalResultTimer = 0
+    stopChain()
+  }, FINAL_RESULT_DELAY_MS)
 }
 
 /** 연속 랜덤 시작/중지 */
@@ -638,6 +641,7 @@ function toggleChain() {
   chainArrived.value = 0
   combo.value = 0
   judgment.value = null
+  finalScore.value = null
   chainSummary.value = null
   wall.mesh.visible = false // 단발 라운드가 남긴 벽은 치운다
   phase.value = 'incoming' // 컨베이어가 도는 동안은 계속 "벽이 온다" 상태다
@@ -1195,6 +1199,7 @@ defineExpose({ canvas: glCanvasRef })
 onBeforeUnmount(() => {
   cancelAnimationFrame(rafId)
   clearInterval(phaseTimerId)
+  clearTimeout(finalResultTimer)
   audio.dispose()
   stream?.getTracks().forEach((t) => t.stop())
   resizeObs?.disconnect()
@@ -1215,22 +1220,57 @@ onBeforeUnmount(() => {
 <template>
   <div class="game" :class="{ embedded }">
     <header class="topbar">
-      <span class="pill round-pill">{{ round }}{{ totalRoundsLabel }} 라운드</span>
-      <span class="pill phase-pill">{{ camError ?? phaseLabel }}</span>
-      <span
-        v-if="phase === 'wait' || phase === 'setting' || phase === 'incoming'"
-        class="pill timer-pill"
-        :class="{ urgent: phase === 'incoming' && timerSec <= 2 }"
-        >00:{{ String(timerSec).padStart(2, '0') }}</span
-      >
-      <span class="pill setter-pill" :class="{ mine: isMultiplayer && isSetter }">
-        👑 출제자 {{ setterLabel }}
-      </span>
+      <span v-if="camError" class="pill phase-pill">{{ camError }}</span>
     </header>
 
     <div class="main">
       <div class="center">
         <div ref="viewportRef" class="viewport" :class="{ 'my-turn': myPoseTurn }">
+          <div class="viewport-meta">
+            <span class="pill round-pill">{{ round }}{{ totalRoundsLabel }} 라운드</span>
+            <span class="pill setter-pill" :class="{ mine: isMultiplayer && isSetter }">
+              👑 출제자 {{ setterLabel }}
+            </span>
+          </div>
+          <div v-if="!(isMultiplayer && isSetter)" class="accuracy-card">
+            <svg viewBox="0 0 120 120" class="gauge">
+              <circle cx="60" cy="60" :r="GAUGE_R" class="track" />
+              <circle
+                cx="60"
+                cy="60"
+                :r="GAUGE_R"
+                class="fill"
+                :stroke="GRADE_COLOR[gaugeGrade]"
+                :stroke-dasharray="GAUGE_C"
+                :stroke-dashoffset="gaugeOffset"
+              />
+              <line
+                v-for="tick in gaugeTicks"
+                :key="tick.label"
+                x1="60"
+                y1="4"
+                x2="60"
+                y2="12"
+                class="tick"
+                :transform="`rotate(${(tick.pct / 100) * 360} 60 60)`"
+              />
+              <text x="60" y="60" dominant-baseline="middle" class="gauge-num" :fill="GRADE_COLOR[gaugeGrade]">
+                {{ Math.round(liveIou) }}<tspan class="pct">%</tspan>
+              </text>
+            </svg>
+          </div>
+          <div v-if="!chainMode" class="score-card participant-ranking-card">
+            <h3>참가자 순위</h3>
+            <p class="score">{{ totalScore }}<small>점</small></p>
+            <ul v-if="participantRanking.length" class="rank-list score-ranking">
+              <li v-for="(row, i) in participantRanking" :key="row.userId" :class="{ me: row.userId === myUserId }">
+                <span class="rk-no">{{ i + 1 }}</span>
+                <span class="rk-name">{{ row.nickname }}</span>
+                <span class="rk-score">{{ Math.round(row.rankingScore) }}</span>
+              </li>
+            </ul>
+            <p v-else class="rank-empty">참가자 점수를 기다리는 중입니다.</p>
+          </div>
           <!-- 관전 중에는 3D를 숨기기만 한다(v-if로 떼면 three.js 컨텍스트가 날아간다) -->
           <canvas v-show="!spectating" ref="glCanvasRef" class="gl-canvas"></canvas>
 
@@ -1238,6 +1278,7 @@ onBeforeUnmount(() => {
             v-show="phase === 'incoming' && !spectating"
             ref="thumbRef"
             class="thumb"
+            :class="{ 'solo-thumb': !isMultiplayer }"
             width="96"
             height="96"
           ></canvas>
@@ -1342,8 +1383,8 @@ onBeforeUnmount(() => {
           <h3>상태</h3>
           <p class="spectate">👀 관전 중 — 이번 라운드는 안 뛰어요</p>
         </div>
-        <div v-else class="card gauge-card">
-          <h3>통과율</h3>
+        <div v-else-if="false" class="card gauge-card accuracy-card">
+          <h3>정확도</h3>
           <svg viewBox="0 0 120 120" class="gauge">
             <circle cx="60" cy="60" :r="GAUGE_R" class="track" />
             <circle
@@ -1365,15 +1406,11 @@ onBeforeUnmount(() => {
               class="tick"
               :transform="`rotate(${(tick.pct / 100) * 360} 60 60)`"
             />
-            <text x="60" y="64" class="gauge-num" :fill="GRADE_COLOR[gaugeGrade]">
+            <text x="60" y="60" dominant-baseline="middle" class="gauge-num" :fill="GRADE_COLOR[gaugeGrade]">
               {{ Math.round(liveIou) }}<tspan class="pct">%</tspan>
             </text>
           </svg>
           <p class="gauge-hint">PASS {{ cfg.judge.grade.pass }} · GREAT {{ cfg.judge.grade.great }} · PERFECT {{ cfg.judge.grade.perfect }}</p>
-        </div>
-
-        <div v-if="overflowWarning && phase === 'incoming' && !(isMultiplayer && isSetter)" class="warn-box">
-          ⚠ {{ overflowWarning }}
         </div>
 
         <!--
@@ -1399,8 +1436,8 @@ onBeforeUnmount(() => {
           <p v-else class="rank-empty">첫 벽이 지나가면 순위가 잡혀요</p>
         </div>
 
-        <div class="card score-card">
-          <h3>내 점수</h3>
+        <div v-if="false" class="card score-card">
+          <h3>참가자 순위</h3>
           <p class="score">{{ totalScore }}<small>점</small></p>
           <!-- 연속 모드의 성적 — 이번 콤보와 최고 기록. 모드를 켠 적이 있으면 계속 보여준다 -->
           <p v-if="chain || bestCombo" class="combo">
@@ -1410,13 +1447,14 @@ onBeforeUnmount(() => {
           <p v-if="isMultiplayer && chainMode" class="combo">
             📊 벽 평균 <b>{{ chainAverage }}</b>점 <small>순위 기준</small>
           </p>
-          <ul class="history">
-            <li v-for="h in history.slice(0, 5)" :key="h.round">
-              <span>{{ h.round }}R</span>
-              <b :style="{ color: GRADE_COLOR[h.grade] }">{{ h.grade }}</b>
-              <span>{{ h.iou.toFixed(0) }}%</span>
+          <ul v-if="!chainMode && participantRanking.length" class="rank-list score-ranking">
+            <li v-for="(row, i) in participantRanking" :key="row.userId" :class="{ me: row.userId === myUserId }">
+              <span class="rk-no">{{ i + 1 }}</span>
+              <span class="rk-name">{{ row.nickname }}</span>
+              <span class="rk-score">{{ Math.round(row.rankingScore) }}</span>
             </li>
           </ul>
+          <p v-else-if="!chainMode" class="rank-empty">참가자 점수를 기다리는 중입니다.</p>
         </div>
 
         <!--
@@ -1432,7 +1470,7 @@ onBeforeUnmount(() => {
           >
             ▶ {{ round === 0 ? '시작' : '다음' }}
           </button>
-          <button
+          <button v-if="false"
             class="btn-start btn-random"
             :class="{ on: chain }"
             :disabled="chain ? false : !tracked || roundBusy()"
@@ -1444,7 +1482,7 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- 연속 모드 분량 — 돌고 있는 중에는 못 바꾼다(가속 곡선과 진행률이 중간에 어긋난다) -->
-        <div v-if="!isMultiplayer" class="card diff-card">
+        <div v-if="false" class="card diff-card">
           <h3>연속 벽 수</h3>
           <div class="diff-buttons">
             <button
@@ -1465,7 +1503,7 @@ onBeforeUnmount(() => {
           🎲 랜덤 포즈로 출제
         </button>
 
-        <div v-if="!isMultiplayer" class="card diff-card">
+        <div v-if="false" class="card diff-card">
           <h3>난이도</h3>
           <div class="diff-buttons">
             <button
@@ -1483,17 +1521,20 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 멀티: GAME_END 순위 오버레이 -->
-    <div v-if="results" class="results-overlay">
-      <div class="results-card">
-        <h2>🏁 라운드 결과</h2>
-        <ol class="results-list">
+    <div v-if="results || finalScore !== null" class="results-overlay">
+      <div class="results-card" :class="{ compact: !results }">
+        <h2>🏁 게임 종료</h2>
+        <p v-if="displayedFinalScore !== null" class="final-score">
+          최종 점수 <b>{{ displayedFinalScore }}</b><small>점</small>
+        </p>
+        <ol v-if="results" class="results-list">
           <li v-for="r in results" :key="r.userId" :class="{ me: r.userId === myUserId }">
             <span class="rank">{{ r.rank }}위</span>
             <span class="name">{{ r.nickname }}</span>
             <b class="pts">{{ r.score }}점</b>
           </li>
         </ol>
-        <button class="btn-start" @click="emit('close')">닫기</button>
+        <button class="btn-start" @click="closeFinalResult">종료</button>
       </div>
     </div>
   </div>
@@ -1501,6 +1542,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .game {
+  position: relative;
   /* 게임④ HUD — "석재 명판" 방향(2026-07-28). 3D 무대가 차가운 인디고 화강암이라
      HUD는 따뜻한 석재로 온도 대비를 준다(컨셉 레퍼런스와 같은 구조).
      색뿐 아니라 보더·모서리·그림자까지 전부 여기서만 정의한다 — 이전에는
@@ -1575,6 +1617,37 @@ onBeforeUnmount(() => {
   font-size: 18px;
   font-weight: 800;
 }
+.results-card.compact {
+  min-width: 0;
+  width: min(250px, calc(100vw - 40px));
+  padding: 16px;
+  gap: 8px;
+}
+.results-card.compact h2 {
+  text-align: center;
+}
+.results-card.compact .btn-start {
+  padding: 11px;
+}
+.final-score {
+  margin: 0;
+  padding: 14px;
+  text-align: center;
+  background: var(--bf-panel-2);
+  border: 1px solid #8a6d33;
+  border-radius: var(--bf-radius-sm);
+  color: var(--bf-muted);
+}
+.final-score b {
+  margin-left: 6px;
+  font-size: 30px;
+  color: var(--bf-gold);
+  font-variant-numeric: tabular-nums;
+}
+.final-score small {
+  margin-left: 2px;
+  color: var(--bf-text);
+}
 .results-list {
   list-style: none;
   padding: 0;
@@ -1607,10 +1680,16 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
 }
 .topbar {
+  position: absolute;
+  z-index: 6;
+  top: 28px;
+  left: 50%;
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  transform: translateX(-50%);
+  pointer-events: none;
 }
 .pill {
   padding: 7px 14px;
@@ -1663,6 +1742,7 @@ onBeforeUnmount(() => {
 }
 .main {
   display: flex;
+  position: relative;
   gap: 14px;
   flex: 1;
   min-height: 0;
@@ -1677,12 +1757,34 @@ onBeforeUnmount(() => {
   position: relative;
   flex: 1;
   min-height: 0;
-  border: var(--bf-line);
+  border: 0;
   border-radius: var(--bf-radius);
   box-shadow: var(--bf-shadow);
   overflow: hidden;
   /* three.js scene.background(0x1a1411)와 같은 값 — 캔버스 로드 전 깜빡임 방지 */
   background: #1a1411;
+}
+.viewport-meta {
+  position: absolute;
+  z-index: 4;
+  top: 16px;
+  right: 12px;
+  left: 12px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 8px;
+  pointer-events: none;
+}
+.viewport-meta .pill {
+  padding: 0;
+  background: transparent;
+  background-image: none;
+  border: 0;
+  box-shadow: none;
+}
+.viewport-meta .setter-pill.mine {
+  animation: none;
 }
 /* 3D 캔버스에만 — .viewport canvas로 잡으면 썸네일·PiP 오버레이 캔버스까지 늘어난다 */
 .gl-canvas {
@@ -1701,6 +1803,9 @@ onBeforeUnmount(() => {
   border: 2px solid var(--bf-gold);
   border-radius: var(--bf-radius-sm);
   box-shadow: var(--bf-shadow-sm);
+}
+.thumb.solo-thumb {
+  top: 62px;
 }
 /* 사이드 최상단 카드 — 무대 오버레이가 아니라 통과율 위에 놓인다 */
 .pip {
@@ -1895,6 +2000,11 @@ onBeforeUnmount(() => {
   background: var(--bf-coral);
 }
 .side {
+  position: absolute;
+  z-index: 5;
+  top: 56px;
+  right: 12px;
+  bottom: 12px;
   width: 260px;
   flex-shrink: 0;
   display: flex;
@@ -1927,6 +2037,67 @@ onBeforeUnmount(() => {
   width: 150px;
   margin: 0 auto;
 }
+.accuracy-card {
+  position: absolute;
+  z-index: 5;
+  bottom: 18px;
+  left: 18px;
+  padding: 0;
+  background: transparent;
+  background-image: none;
+  border: 0;
+  box-shadow: none;
+  pointer-events: none;
+}
+.accuracy-card h3,
+.accuracy-card .gauge-hint {
+  display: none;
+}
+.participant-ranking-card {
+  position: absolute;
+  z-index: 5;
+  right: 18px;
+  bottom: 18px;
+  width: min(220px, calc(100% - 36px));
+  padding: 0;
+  background: transparent;
+  background-image: none;
+  border: 0;
+  box-shadow: none;
+  pointer-events: none;
+  text-align: right;
+}
+.participant-ranking-card h3 {
+  margin-bottom: 2px;
+  color: var(--bf-gold);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.participant-ranking-card .score {
+  font-size: 24px;
+  line-height: 1;
+}
+.participant-ranking-card .score-ranking {
+  margin-top: 6px;
+  max-height: 132px;
+}
+.participant-ranking-card .rank-list li {
+  padding: 4px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  justify-content: flex-end;
+}
+.participant-ranking-card .rk-name {
+  flex: 0 1 auto;
+}
+.participant-ranking-card .rk-score {
+  margin-left: 8px;
+}
+.participant-ranking-card .rank-list li.me {
+  color: #f0e6d2;
+}
 .gauge .track {
   fill: none;
   stroke: var(--bf-panel-2);
@@ -1939,7 +2110,6 @@ onBeforeUnmount(() => {
   transform: rotate(-90deg);
   transform-origin: 60px 60px;
   transition: stroke-dashoffset 250ms linear, stroke 250ms linear;
-  filter: drop-shadow(0 0 6px currentColor);
 }
 .gauge .tick {
   stroke: var(--bf-muted);
@@ -2147,6 +2317,11 @@ onBeforeUnmount(() => {
 .rank-empty {
   font-size: 11px;
   color: var(--bf-muted);
+}
+.score-ranking {
+  margin-top: 8px;
+  max-height: 180px;
+  overflow-y: auto;
 }
 .score {
   font-size: 30px;
