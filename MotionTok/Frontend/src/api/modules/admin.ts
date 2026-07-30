@@ -1,9 +1,9 @@
 /** 관리자 API (명세 §10). */
-import { http, httpEnvelope } from '../http'
+import { httpEnvelope } from '../http'
 import type {
   AdminGame,
   AdminPointHistoryListResponse,
-  AuditLog,
+  AdminUserSummary,
   BanUserRequest,
   ChatReportDetail,
   ChatReportListResponse,
@@ -30,8 +30,17 @@ export const adminApi = {
    * "많이 신고당한 사람"을 보는 화면이라 뒤쪽 페이지를 넘길 이유가 없다.
    */
   reports: (limit = 20) => httpEnvelope.get<ReportedUser[]>('/v1/admin/reports', { limit }),
-  /** ⚠️ 서버 미구현(-107). 화면은 실패를 그대로 밝힌다 — 빈 목록으로 위장하면 "로그가 없다"로 읽힌다. */
-  auditLogs: (page = 0) => http.get<AuditLog[]>('/admin/audit-logs', { page }),
+
+  /**
+   * GET /v1/admin/users?nickname= — 닉네임으로 회원 찾기(부분 일치, 최대 10명).
+   *
+   * 제재·포인트 조회는 userId로 걸리는데 관리자가 화면에서 아는 값은 닉네임이라, 그 사이를 잇는다.
+   * 정확 일치만 받지 않는 이유 — 오타 하나에 "그런 회원 없음"이 되면 신고 목록으로 되돌아가야 한다.
+   */
+  searchUsers: (nickname: string) =>
+    httpEnvelope
+      .get<{ users: AdminUserSummary[] }>('/v1/admin/users', { nickname })
+      .then((r) => r.users),
 }
 
 /**

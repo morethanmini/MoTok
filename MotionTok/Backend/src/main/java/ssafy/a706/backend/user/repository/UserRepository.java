@@ -5,7 +5,9 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import ssafy.a706.backend.user.entity.User;
+import ssafy.a706.backend.user.enums.UserStatus;
 
+import java.util.List;
 import java.util.Optional;
 
 public interface UserRepository extends JpaRepository<User, Long> {
@@ -13,6 +15,12 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByEmail(String email);
 
     Optional<User> findByNickname(String nickname);
+
+    /**
+     * 관리자 닉네임 검색 — 부분 일치, 탈퇴 계정 제외, 최대 10명.
+     * 상한이 없으면 한 글자만 넣어도 회원 테이블이 통째로 나간다.
+     */
+    List<User> findTop10ByNicknameContainingAndStatusNotOrderByIdAsc(String nickname, UserStatus status);
 
     boolean existsByEmail(String email);
 
