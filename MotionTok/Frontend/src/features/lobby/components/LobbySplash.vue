@@ -8,6 +8,7 @@
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { MOTION_MODELS } from '@/composables/motionModels'
+import momoWalking from '@/assets/lobby/momo-walk-right-clean.gif'
 
 const emit = defineEmits<{ enter: [] }>()
 
@@ -50,7 +51,7 @@ onBeforeUnmount(() => clearTimeout(holdTimer))
 
 <template>
   <div class="splash">
-    <div class="splash-bg" />
+    <img class="splash-cat" :src="momoWalking" alt="로비로 걸어가는 고양이" />
     <div class="splash-panel">
       <div class="splash-title"><i /> 미니게임 놀이터에 연결 중</div>
       <div class="loading-track">
@@ -75,11 +76,15 @@ onBeforeUnmount(() => clearTimeout(holdTimer))
   background: #fff4d7;
   overflow: hidden;
 }
-.splash-bg {
+.splash-cat {
   position: absolute;
-  inset: 0 0 122px;
-  background: url('/assets/motok-v2.png') center / contain no-repeat;
-  animation: splash-pan 5s steps(10) infinite;
+  z-index: 1;
+  top: 50%;
+  left: 50%;
+  width: clamp(100px, 13vw, 150px);
+  object-fit: contain;
+  image-rendering: pixelated;
+  transform: translate(-50%, -50%);
 }
 .splash::before {
   content: '';
@@ -150,16 +155,11 @@ onBeforeUnmount(() => clearTimeout(holdTimer))
   align-self: end;
 }
 
-@keyframes splash-pan {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-4px); }
-}
 @keyframes panel-rise {
   from { opacity: 0; transform: translateY(26px); }
   to { opacity: 1; transform: translateY(0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .splash-bg { animation: none; }
   .loading-fill { transition: none; }
 }
 </style>

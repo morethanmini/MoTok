@@ -1,215 +1,78 @@
 <script setup lang="ts">
-/** 게임 선택 모달. 왼쪽에서 게임을 고르면 오른쪽에 설명·플레이 방법이 뜨고, "게임 시작하기"로 launch(게임) 이벤트를 낸다. */
 import { ref } from 'vue'
 import { GAME_CATALOG, type GameEntry } from '../data'
-import PixelButton from '@/components/common/PixelButton.vue'
 
-/**
- * 이 창은 "무슨 게임을 할지"만 고른다. 모드·난이도·벽 수는 고른 뒤 설정 창(GameSetupModal)이
- * 받는다 — 성격이 다른 두 결정을 한 화면에 섞으면 상세 패널이 스크롤되고(게임④에서 이미
- * 썸네일이 잘려 보였다) 옵션이 있는 게임이 늘어날수록 나빠진다.
- */
 defineEmits<{ close: []; launch: [game: GameEntry] }>()
 
 const selected = ref<GameEntry | null>(null)
+const playableGames = GAME_CATALOG.filter((game) => game.playable)
 </script>
 
 <template>
   <div class="overlay" @click="$emit('close')">
-    <div class="dialog" @click.stop>
-      <div class="head">
+    <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="game-picker-title" @click.stop>
+      <header class="head">
         <div>
-          <h2>플레이할 게임을 골라주세요</h2>
+          <span class="eyebrow">MOTION ARCADE</span>
+          <h2 id="game-picker-title">어떤 게임을 해볼까요?</h2>
         </div>
-        <button class="close" @click="$emit('close')">X</button>
-      </div>
+        <button class="close" type="button" aria-label="게임 선택 닫기" @click="$emit('close')">×</button>
+      </header>
 
       <div class="body">
-        <!-- 좌측: 세로 게임 목록 -->
-        <ul class="game-list">
-          <li v-for="g in GAME_CATALOG" :key="g.id">
-            <button
-              class="game-row"
-              :class="{ on: selected?.id === g.id }"
-              @click="selected = g"
-            >
-              <div class="row-thumb" :style="{ background: g.thumb }">{{ g.emoji }}</div>
-              <div class="row-info">
-                <div class="row-name">{{ g.name }}</div>
-              </div>
-              <span class="row-badge" :class="g.playable ? 'play' : 'soon'">
-                {{ g.playable ? 'PLAY' : 'SOON' }}
-              </span>
-            </button>
-          </li>
-        </ul>
+        <nav class="game-nav" aria-label="게임 목록">
+          <div class="nav-label"><span>GAME LIST</span></div>
+          <ul class="game-list">
+            <li v-for="g in playableGames" :key="g.id">
+              <button
+                class="game-row"
+                :class="{ on: selected?.id === g.id }"
+                type="button"
+                :aria-pressed="selected?.id === g.id"
+                @click="selected = g"
+              >
+                <span class="row-thumb" :style="{ background: g.thumb }">{{ g.emoji }}</span>
+                <span class="row-info"><b>{{ g.name }}</b><small>{{ g.tag }}</small></span>
+              </button>
+            </li>
+          </ul>
+        </nav>
 
-        <!-- 우측: 상세 설명 -->
-        <div class="detail">
+        <article class="detail" :class="{ selected: !!selected }">
           <template v-if="selected">
-            <div class="detail-head">
-              <div class="detail-thumb" :style="{ background: selected.thumb }">{{ selected.emoji }}</div>
-              <div>
-                <div class="detail-name">{{ selected.name }}</div>
-                <div class="detail-tag">{{ selected.tag }}</div>
-              </div>
+            <div class="detail-hero" :style="{ background: selected.thumb }">
+              <span class="detail-emoji">{{ selected.emoji }}</span>
             </div>
-
-            <h3 class="detail-h">게임 설명</h3>
-            <p class="detail-desc">{{ selected.description }}</p>
-
-            <h3 class="detail-h">플레이 방법</h3>
-            <ol class="detail-steps">
-              <li v-for="(step, i) in selected.howToPlay" :key="i">{{ step }}</li>
-            </ol>
-
-            <PixelButton class="start-game-btn" variant="mint" @click="$emit('launch', selected)">
-              플레이 ▶
-            </PixelButton>
+            <div class="detail-copy">
+              <div class="detail-title">
+                <div><span>{{ selected.tag }}</span><h3>{{ selected.name }}</h3></div>
+                <button class="start-game-btn" type="button" @click="$emit('launch', selected)">GAME START <span aria-hidden="true">→</span></button>
+              </div>
+              <div class="info-block"><b>GAME STORY</b><p>{{ selected.description }}</p></div>
+              <div class="info-block how-to"><b>HOW TO PLAY</b><ol><li v-for="(step, i) in selected.howToPlay" :key="i">{{ step }}</li></ol></div>
+            </div>
           </template>
 
           <div v-else class="detail-empty">
-            <span class="detail-empty-emoji">🎮</span>
-            <p>게임을 선택하여 시작해보세요!</p>
+            <span class="empty-spark" aria-hidden="true">✦</span>
+            <strong>게임을 골라주세요</strong>
+            <p>왼쪽 목록에서 원하는 모션 게임을 선택하면<br />게임 방법을 확인할 수 있어요.</p>
           </div>
-        </div>
+        </article>
       </div>
-
-      <p class="foot">
-        카메라 권한을 허용하면 손·몸 동작으로 게임을 플레이합니다. AI 댄스 배틀은 로컬 개발 서버가 필요한 빌드예요.
-      </p>
-    </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  background: rgba(43, 35, 51, 0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* 배경은 즉시 표시 */
-}
-.dialog {
-  width: 900px;
-  max-width: 92vw;
-  background-color: #fffdf3;
-  background-image: radial-gradient(rgba(56, 38, 61, .08) 1px, transparent 1px);
-  background-size: 18px 18px;
-  border: var(--border-thick);
-  border-radius: 23px 23px 17px 23px;
-  padding: 28px 30px 32px;
-  box-shadow: 8px 8px 0 rgba(43, 35, 51, 0.3);
-  /* 창만 팝업 애니메이션 */
-  animation: px-pop 0.18s steps(3);
-}
-.head { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
-.head h2 { margin: 8px 0 0; font-size: 16px; color: var(--c-ink); }
-.close {
-  margin-left: auto;
-  width: 36px;
-  height: 36px;
-  border: 3px solid var(--c-ink-soft);
-  background: #fff;
-  color: var(--c-ink-soft);
-  font-size: 11px;
-  box-shadow: var(--shadow-sm);
-  border-radius: 10px;
-}
-
-.body { display: grid; grid-template-columns: 300px 1fr; gap: 0; height: 420px; }
-
-/* 좌측 목록: 마우스 스크롤은 되지만 스크롤바는 숨김 */
-.game-list {
-  list-style: none;
-  margin: 0;
-  padding: 4px;
-  overflow-y: auto;
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* Edge/IE */
-  border: 2px solid #eaddea;
-  border-right: none;
-  border-radius: 14px 0 0 14px;
-  background: #fff;
-}
-.game-list::-webkit-scrollbar { display: none; } /* Chrome/Safari */
-.game-row {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  text-align: left;
-  padding: 9px 10px;
-  margin-bottom: 4px;
-  border: 2px solid transparent;
-  border-radius: 12px;
-  background: transparent;
-  transition: var(--t-fast);
-}
-.game-row:hover { background: #fdf7e6; }
-.game-row.on { background: var(--c-mint-soft); border-color: var(--c-ink); box-shadow: var(--shadow-sm); }
-.row-thumb {
-  flex: none;
-  width: 40px;
-  height: 40px;
-  border: 2px solid var(--c-ink-soft);
-  border-radius: 11px;
-  display: grid;
-  place-items: center;
-  font-size: 19px;
-}
-.row-info { min-width: 0; }
-.row-name { font-size: 9px; color: var(--c-ink-soft); }
-.row-badge { margin-left: auto; flex: none; padding: 4px 6px; font-size: 7px; border: 2px solid var(--c-ink-soft); border-radius: 6px; }
-.row-badge.play { background: #5cbf4a; color: #fff; }
-.row-badge.soon { background: #f5c518; color: var(--c-ink-soft); }
-
-/* 우측 상세 */
-.detail {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  border: 2px solid #eaddea;
-  border-radius: 0 14px 14px 0;
-  background: #fff;
-  padding: 20px 22px;
-  overflow-y: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-.detail::-webkit-scrollbar { display: none; }
-.detail-empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: #a99f86;
-  font-size: 12px;
-  text-align: center;
-}
-.detail-empty-emoji { font-size: 40px; }
-.detail-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-.detail-thumb {
-  flex: none;
-  width: 54px;
-  height: 54px;
-  border: 2px solid var(--c-ink);
-  border-radius: 14px;
-  display: grid;
-  place-items: center;
-  font-size: 26px;
-}
-.detail-name { font-size: 13px; color: var(--c-ink); }
-.detail-tag { font-size: 10px; color: #a99f86; margin-top: 5px; }
-.detail-h { margin: 14px 0 6px; font-size: 10px; color: var(--c-coral); }
-.detail-desc { margin: 0; font-size: 11.5px; color: var(--c-ink-soft); line-height: 1.7; }
-.detail-steps { margin: 0; padding-left: 18px; font-size: 11.5px; color: var(--c-ink-soft); line-height: 1.9; }
-.start-game-btn { align-self: flex-end; margin-top: auto; }
-
-.foot { margin: 18px 0 0; font-size: 11px; color: #a99f86; line-height: 1.7; }
+.overlay { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 18px; background: rgba(48, 35, 47, .58); }
+.dialog { width: min(990px, 100%); max-height: min(760px, calc(100vh - 36px)); overflow: hidden; border: 3px solid #9a674b; border-radius: 18px; background: #fffaf0; box-shadow: 8px 8px 0 rgba(68, 43, 30, .32); animation: px-pop .18s steps(3); }
+.head { display: flex; align-items: start; justify-content: space-between; gap: 18px; padding: 22px 25px 19px; border-bottom: 2px solid #dec59e; background: linear-gradient(110deg, #fff2d8, #fffaf0); }.eyebrow, .nav-label span, .info-block > b, .foot > span { color: #b17b51; font-size: 9px; font-weight: 800; letter-spacing: 1.1px; }.head h2 { margin: 6px 0 5px; color: #392b22; font-family: var(--font-pixel); font-size: 25px; font-weight: 400; }.head p { margin: 0; color: #8c7564; font-size: 11px; }.close { display: grid; width: 32px; height: 32px; flex: none; place-items: center; border: 0; background: transparent; color: #895e46; font-size: 25px; line-height: 1; cursor: pointer; }.close:hover { color: #bd625b; transform: scale(1.08); }
+.body { display: grid; grid-template-columns: minmax(255px, .78fr) minmax(0, 1.22fr); height: clamp(390px, 56vh, 510px); min-height: 0; }.game-nav { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; padding: 16px 12px 14px; border-right: 2px solid #dec59e; background: #fff7e8; }.nav-label { display: flex; align-items: center; padding: 0 7px 10px; }
+.game-list { display: grid; flex: 1; gap: 7px; min-height: 0; margin: 0; padding: 0 4px; overflow-y: auto; list-style: none; scrollbar-width: thin; scrollbar-color: #c89a71 transparent; }.game-row { display: flex; width: 100%; min-width: 0; align-items: center; gap: 12px; padding: 10px; border: 2px solid transparent; border-radius: 9px; background: transparent; color: #4e3829; text-align: left; cursor: pointer; transition: transform .13s ease, background .13s ease, box-shadow .13s ease; }.game-row:hover { background: #fffdf7; transform: translateX(2px); }.game-row.on { border-color: #9a674b; background: #fffdf7; box-shadow: 3px 3px 0 #dfbd92; }.row-thumb { display: grid; width: 48px; height: 48px; flex: none; place-items: center; border: 2px solid rgba(119, 82, 57, .45); border-radius: 9px; font-size: 24px; }.row-info { display: grid; min-width: 0; gap: 5px; }.row-info b { overflow: hidden; color: #4a3427; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }.row-info small { overflow: hidden; color: #9a806b; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.detail { display: flex; min-width: 0; min-height: 0; overflow-y: auto; background: #fffdf8; scrollbar-width: thin; scrollbar-color: #c89a71 transparent; }.detail-empty { display: grid; width: 100%; place-content: center; padding: 24px; color: #947d69; text-align: center; }.empty-spark { margin-bottom: 10px; color: #e68868; font-size: 37px; }.detail-empty strong { color: #624633; font-family: var(--font-pixel); font-size: 17px; font-weight: 400; }.detail-empty p { margin: 10px 0 0; font-size: 11px; line-height: 1.7; }
+.detail-hero { position: relative; display: grid; min-height: 154px; place-items: center; overflow: hidden; border-bottom: 2px solid #d9be95; }.detail-hero::after { position: absolute; right: -19px; bottom: -38px; width: 138px; height: 138px; border: 3px solid rgba(255,255,255,.45); border-radius: 50%; content: ''; }.detail-emoji { position: relative; z-index: 1; filter: drop-shadow(3px 4px 0 rgba(89,55,39,.18)); font-size: 72px; }
+.detail.selected { display: block; }.detail-copy { padding: 17px 20px 19px; }.detail-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.detail-title > div { min-width: 0; }.detail-title span { color: #a7836b; font-size: 10px; }.detail-title h3 { margin: 4px 0 13px; color: #3d2c22; font-family: var(--font-pixel); font-size: 20px; font-weight: 400; }.start-game-btn { flex: none; margin: 0 0 9px; padding: 5px 0; border: 0; background: transparent; color: #5f9a53; font-size: 10px; font-weight: 800; letter-spacing: .2px; white-space: nowrap; cursor: pointer; }.start-game-btn:hover { color: #3e7b3a; text-decoration: underline; text-underline-offset: 4px; }.start-game-btn span { color: currentColor; font-size: 15px; }.info-block { margin-top: 12px; }.info-block > b { display: block; margin-bottom: 5px; }.info-block p { margin: 0; color: #715c4c; font-size: 11px; line-height: 1.65; }.how-to ol { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; counter-reset: steps; }.how-to li { display: grid; grid-template-columns: 18px 1fr; gap: 6px; color: #715c4c; font-size: 10px; line-height: 1.45; counter-increment: steps; }.how-to li::before { display: grid; width: 17px; height: 17px; place-items: center; border-radius: 50%; background: #f2d29b; color: #765139; content: counter(steps); font-size: 8px; font-weight: 800; }
+.nav-label span { font-size: 14px; }
+@media (max-width: 690px) { .overlay { padding: 10px; }.dialog { max-height: calc(100vh - 20px); overflow-y: auto; }.head { padding: 18px; }.head h2 { font-size: 20px; }.head p { font-size: 10px; }.body { height: auto; grid-template-columns: 1fr; }.game-nav { height: 230px; max-height: 230px; border-right: 0; border-bottom: 2px solid #dec59e; }.detail { min-height: 300px; }.detail-hero { min-height: 125px; }.detail-copy { padding: 14px 16px 17px; }.foot { padding: 10px 17px; } }
 </style>
