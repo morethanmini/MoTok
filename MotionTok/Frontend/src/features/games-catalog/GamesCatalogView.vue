@@ -11,6 +11,7 @@ import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import RhythmThumbnail from './components/RhythmThumbnail.vue'
+import FingerStarThumbnail from './components/FingerStarThumbnail.vue'
 import DrawingThumbnail from './components/DrawingThumbnail.vue'
 import heroFishingCat from '@/assets/games-catalog/hero-fishing-cat-transparent.png'
 import lobbyRoomListBoard from '@/assets/lobby/lobby-room-list-board.png'
@@ -21,7 +22,6 @@ const session = useSessionStore()
 const { message: toast, flash } = useToast()
 
 const GAME_ART: Record<number, string> = {
-  1: '/assets/intro/constellation.png',
   2: '/assets/intro/fishing-rod.png',
   3: '/assets/intro/tambourine.png',
   5: '/assets/intro/person.png',
@@ -34,6 +34,8 @@ const GAME_TONE = ['sky', 'mint', 'peach', 'lilac', 'butter']
  * 목데이터 전용 항목이 있지만 백엔드엔 존재하지 않는 이름이라 대응하지 않는다(id=3 확인 결과 반영).
  */
 const RHYTHM_GAME_ID = 2
+/** 핑거 스타 — 전용 썸네일(FingerStarThumbnail)을 쓴다. 백엔드 시더 기준 id=1. */
+const FINGER_STAR_GAME_ID = 1
 /**
  * 그림으로 말해요 — 이 게임 카드만 레이어형 썸네일(DrawingThumbnail)을 쓴다.
  * 실제 백엔드 시더(GameCatalogSeeder) 기준 id=10 (2026-07-30 확인 후 MOCK_GAMES도 10으로 맞춤).
@@ -72,6 +74,7 @@ const closedByAdmin = (game: Game) => !game.active
 function artFor(game: Game) { return game.thumbnailUrl || GAME_ART[game.id] }
 function toneFor(game: Game) { return GAME_TONE[game.id % GAME_TONE.length] }
 function isRhythm(game: Game) { return game.id === RHYTHM_GAME_ID }
+function isFingerStar(game: Game) { return game.id === FINGER_STAR_GAME_ID }
 function isDrawing(game: Game) { return game.id === DRAWING_GAME_ID }
 async function openDetail(game: Game) {
   selected.value = game
@@ -145,6 +148,7 @@ function goDevice(game: Game, roomId: string) {
           <article v-for="game in visibleGames" :key="game.id" class="game-card" :class="{ unavailable: !game.playable }" tabindex="0" @click="openDetail(game)" @keydown.enter="openDetail(game)">
             <div class="game-visual" :class="`tone-${toneFor(game)}`">
               <RhythmThumbnail v-if="isRhythm(game)" />
+              <FingerStarThumbnail v-else-if="isFingerStar(game)" />
               <DrawingThumbnail v-else-if="isDrawing(game)" />
               <img v-else-if="artFor(game)" :src="artFor(game)" alt="" />
               <button type="button" class="detail-button" :aria-label="`${game.name} 상세 보기`" @click.stop="openDetail(game)"><span>자세히</span><b>›</b></button>
