@@ -26,5 +26,14 @@ export const fishingRoutes: RouteRecordRaw[] = import.meta.env.DEV
         name: RouteName.DevFishingPlay,
         component: () => import('./FishingGame.vue'),
       },
+      /*
+       * 조준은 유일하게 어깨너비 정규화를 안 쓰는 판정이라 별도 랩으로 뺐다.
+       * 큰 랩(FishingLabView)은 어깨너비·크랭크·캐스팅 3종을 이미 담고 있어 수술 위험이 크다.
+       */
+      {
+        path: '/dev/fishing-aim-lab',
+        name: RouteName.DevFishingAimLab,
+        component: () => import('./AimLabView.vue'),
+      },
     ]
   : []
