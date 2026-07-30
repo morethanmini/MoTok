@@ -11,7 +11,7 @@ import type { ActiveGameSession } from '@/features/games/session'
 import { preferredAudioDeviceId, useCamera } from '@/composables/useCamera'
 import { useDecoration } from '@/composables/useDecoration'
 import { motionModelsReady, warmUpMotionModels } from '@/composables/motionModels'
-import { useStickerCompositor } from '@/composables/useStickerCompositor'
+import { useDecorSync } from '@/composables/useDecorSync'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
 import { useRoomChat } from '@/composables/useRoomChat'
@@ -60,26 +60,26 @@ const lk = useLiveKitRoom()
 const camera = useCamera()
 const CAMERA_CONSTRAINTS = { video: { width: 640, height: 400 }, audio: false } as const
 
-// 장착 스티커는 발행 트랙에 합성해서 내보낸다 — 원본 캡처에 그리면 모션 인식 입력이 오염되고,
-// 화면에만 얹으면 나만 보인다. 합성이 안 되는 환경에서는 원본 트랙으로 조용히 되돌아간다.
+// 장착 스티커는 영상에 굽지 않고 좌표만 데이터 채널로 알린다 — 받은 쪽이 그 사람 타일에 얹는다.
+// 캔버스 합성으로 발행하던 예전 방식은 다른 오리진(S3)에 있는 AI 아이템 이미지를 읽지 못해
+// (버킷 CORS 없음) 내 화면에만 보였다.
 const decor = useDecoration()
-const compositor = useStickerCompositor()
+const decorSync = useDecorSync(lk, () => decor.sprites.value)
 
-/** 발행에 쓸 트랙 — 스티커가 있으면 합성 트랙, 없거나 합성 실패면 원본 트랙. */
-async function publishableTrack(stream: MediaStream | null): Promise<MediaStreamTrack | null> {
-  const source = stream?.getVideoTracks()[0] ?? null
-  if (!stream || !source) return null
-  if (decor.sprites.value.length === 0) return source
-  // 이미 합성 중이면 그대로 쓴다 — 다시 시작하면 지금 발행돼 있는 복제본에 프레임이 끊긴다.
-  if (compositor.track.value) return compositor.track.value
-  return (await compositor.start(stream, () => decor.sprites.value)) ?? source
+/** 발행에 쓸 카메라 트랙 — 원본 캡처 그대로(발행 시점에 복제된다). */
+function publishableTrack(stream: MediaStream | null): MediaStreamTrack | null {
+  return stream?.getVideoTracks()[0] ?? null
+}
+
+/** 그 참가자 타일에 얹을 스티커 — 타일이 세 레이아웃에서 렌더되므로 조회를 여기 한 곳에 둔다. */
+function spritesFor(slot: Slot) {
+  return slot.view ? decorSync.spritesOf(slot.view.identity) : []
 }
 // 대기실 채팅 + 게임 제안 (STOMP, 명세 §7)
 const roomChat = useRoomChat()
 const myParticipantId = computed(() => readAccessClaims()?.sub ?? null)
 
 const roomCode = computed(() => (route.query.room as string) || 'MP-4X9K')
-const roomGame = computed(() => (route.query.game as string) || 'DANCE BATTLE')
 // 입장 전 카메라/마이크 온오프 화면(DeviceSetupView)에서 고른 초기 상태 — 쿼리에 없으면(직접 URL 진입 등) 기본 켜짐.
 const initialCamOn = computed(() => route.query.cam !== '0')
 const initialMicOn = computed(() => route.query.mic !== '0')
@@ -286,11 +286,11 @@ onMounted(async () => {
   // 내 타일과 다른 사람 화면 모두 꺼져 보이고, 방 안에서 카메라를 켜면 그때 발행한다.
   const stream = await camera.start(CAMERA_CONSTRAINTS)
   if (!stream) flash('카메라를 켤 수 없어요(권한/장치 확인)')
-  // 장착 스티커를 먼저 읽어 두고 합성 트랙을 만든다(실패하면 원본 트랙으로 발행).
+  // 접속 직후 방 전체에 알려야 하므로(아래 broadcast) 먼저 읽어 둔다.
   await decor.load()
   // LiveKit 접속 — 일시 장애는 재시도로 흡수하고, 그래도 안 되면 서로 안 보이는 반쪽 방에
   // 머무느니 퇴장 처리 후 로비로 보낸다(-164).
-  const cameraTrack = initialCamOn.value ? await publishableTrack(stream) : null
+  const cameraTrack = initialCamOn.value ? publishableTrack(stream) : null
   let ok = false
   for (let attempt = 0; attempt < 3 && !ok; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, attempt * 1500))
@@ -308,6 +308,8 @@ onMounted(async () => {
     void router.replace({ name: RouteName.Lobby })
     return
   }
+  // 이미 있던 사람들에게 내 꾸미기를 알린다(늦게 들어오는 사람은 useDecorSync가 따로 챙긴다).
+  decorSync.broadcast()
 
   // 채팅은 이력이 없어서(비영속) 구독이 늦은 만큼 그대로 유실 — 입장 직후 바로 연결.
   void roomChat.connect(roomCode.value)
@@ -535,14 +537,14 @@ async function toggleCam() {
       flash('카메라 권한을 허용해 주세요')
       return
     }
-    const track = await publishableTrack(s)
+    const track = publishableTrack(s)
     if (connected.value && track) await lk.publishCameraTrack(track)
     return
   }
   if (connected.value) {
     // 발행된 카메라가 없으면(입장 시 발행 실패) 지금 발행한다
     if (!(await lk.toggleCamera())) {
-      const track = await publishableTrack(camera.stream.value)
+      const track = publishableTrack(camera.stream.value)
       if (track) await lk.publishCameraTrack(track)
     }
     return
@@ -1395,7 +1397,6 @@ const startHint = computed(() =>
 
     <div class="room-ribbon">
       <span class="px-kicker"><i /> {{ roomTitle ?? 'LIVE PARTY ROOM' }}</span>
-      <b>{{ roomGame }}</b>
 
       <!-- 유저 신고 (방 코드 왼쪽) -->
       <button class="ribbon-report" title="유저 신고" @click="openUserReport">
@@ -1459,6 +1460,7 @@ const startHint = computed(() =>
             :prefer-cam="!activeGame"
             :cover="coverFor(slot)"
             :volume="volumeFor(slot)"
+            :sprites="spritesFor(slot)"
             play-audio
             compact
             :can-kick="amRoomHost && !!slot.view"
@@ -1477,11 +1479,8 @@ const startHint = computed(() =>
             class="self-video"
             @loadedmetadata="syncSelfVideoAspect"
           />
-          <!-- 내 <video>는 원본 캡처(게임 입력용)라 스티커가 없다. 발행 트랙에는 합성돼 나가므로
-               내 화면에도 같은 스티커를 얹어 준다. self-video는 좌우 반전이라 mirrored,
-               object-fit:contain으로 회색 여백이 생기므로 fit도 contain — 그래야 스티커가
-               여백이 아니라 영상 사각형 안 같은 자리에 얹힌다.
-               영상 비율은 타일 레이아웃이 이미 재고 있는 selfVideoAspect를 그대로 쓴다. -->
+          <!-- 상대 타일(ParticipantTile)과 같은 오버레이 — self-video는 좌우 반전이라 mirrored,
+               fit은 <video>의 object-fit과 같아야 영상 안 같은 자리에 얹힌다. -->
           <StickerOverlay
             v-if="selfCamOn"
             :sprites="decor.sprites.value"
@@ -1604,6 +1603,7 @@ const startHint = computed(() =>
             :prefer-cam="!activeGame"
             :cover="coverFor(slot)"
             :volume="volumeFor(slot)"
+            :sprites="spritesFor(slot)"
             play-audio
             compact
             :can-kick="amRoomHost && !!slot.view"
@@ -1620,6 +1620,7 @@ const startHint = computed(() =>
             :prefer-cam="!activeGame"
             :cover="coverFor(slot)"
             :volume="volumeFor(slot)"
+            :sprites="spritesFor(slot)"
             play-audio
             :can-kick="amRoomHost && !!slot.view"
             @kick="openKick(slot.view)"
@@ -2281,11 +2282,15 @@ const startHint = computed(() =>
 .footer-right { grid-row: 1; grid-column: 3; justify-self: end; display: flex; align-items: center; gap: 10px; }
 .leave { display: flex; align-items: center; gap: 9px; padding: 0 18px; height: 52px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; background: var(--c-coral); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
 
-.room-toast { position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 60; padding: 13px 20px; background: #fffdf3; border: 3px solid #f0a815; color: #f0a815; font-size: 9px; line-height: 1.7; box-shadow: 5px 5px 0 rgba(43, 35, 51, 0.25); }
+.room-toast { position: fixed; top: 50%; left: 50%; z-index: 90; padding: 13px 20px; transform: translate(-50%, -50%); background: rgba(56, 38, 61, .9); border: 0; border-radius: 9px; color: #fff; font-size: 11px; line-height: 1.7; box-shadow: none; }
 
-.toast-enter-active { animation: px-pop 0.18s steps(3); }
+.toast-enter-active { animation: room-toast-pop 0.18s steps(3); }
 .toast-leave-active { transition: opacity 0.2s; }
 .toast-leave-to { opacity: 0; }
+@keyframes room-toast-pop {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+}
 
 @keyframes px-bubble { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
@@ -2321,22 +2326,36 @@ const startHint = computed(() =>
 }
 .room-ribbon .px-kicker i { background: #ef7775; }
 .ribbon-report, .ribbon-invite, .ribbon-settings {
-  border-color: #b78d5d;
-  border-radius: 7px;
-  background: #fff7e5;
-  box-shadow: 2px 2px 0 #e2d0b5;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .ribbon-report:hover { background: #ffe2e3; }
 .ribbon-invite:hover, .ribbon-settings:hover { background: #d8f4ec; }
 .code-box {
-  border-color: #b78d5d;
-  border-radius: 7px;
-  background: #fffdf7;
-  box-shadow: 2px 2px 0 #e2d0b5;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .code-cap { color: var(--room-muted); }
 .code-val { color: #bd6d45; }
-.copy { border-color: #b78d5d; border-radius: 5px; background: #fff0b9; color: var(--room-ink); }
+.copy { border: 0; border-radius: 0; background: transparent; color: var(--room-ink); }
+.room-ribbon .px-kicker { order: 0; }
+.code-box { position: relative; order: 1; }
+.ribbon-report, .ribbon-invite, .ribbon-settings { position: relative; order: 2; }
+.ribbon-report::before, .ribbon-invite::before, .ribbon-settings::before {
+  position: absolute;
+  top: 50%;
+  left: -12px;
+  color: #b78d5d;
+  content: '|';
+  font-size: 12px;
+  font-weight: 300;
+  line-height: 1;
+  transform: translateY(-50%);
+}
 
 .start-btn {
   border: 3px solid #925c47;

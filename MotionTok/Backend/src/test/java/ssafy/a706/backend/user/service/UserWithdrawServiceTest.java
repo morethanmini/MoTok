@@ -2,6 +2,7 @@ package ssafy.a706.backend.user.service;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 import ssafy.a706.backend.auth.oauth.OauthProvider;
@@ -10,7 +11,8 @@ import ssafy.a706.backend.auth.oauth.client.OauthClient;
 import ssafy.a706.backend.auth.oauth.client.OauthClientResolver;
 import ssafy.a706.backend.auth.oauth.entity.OauthAccount;
 import ssafy.a706.backend.auth.oauth.repository.OauthAccountRepository;
-import ssafy.a706.backend.auth.store.RefreshTokenStore;
+import ssafy.a706.backend.auth.session.SessionRevocationStore;
+import ssafy.a706.backend.auth.session.SessionTerminator;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 import ssafy.a706.backend.shop.repository.PointHistoryRepository;
@@ -30,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -44,15 +47,15 @@ class UserWithdrawServiceTest {
 
     private final UserRepository userRepository = mock(UserRepository.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
-    private final RefreshTokenStore refreshTokenStore = mock(RefreshTokenStore.class);
+    private final SessionTerminator sessionTerminator = mock(SessionTerminator.class);
     private final OauthAccountRepository oauthAccountRepository = mock(OauthAccountRepository.class);
     private final OauthClientResolver oauthClientResolver = mock(OauthClientResolver.class);
     private final RejoinPolicy rejoinPolicy = mock(RejoinPolicy.class);
     private final StorageService storageService = mock(StorageService.class);
 
     private final UserService service = new UserService(userRepository,
-            mock(PointHistoryRepository.class), passwordEncoder,
-            refreshTokenStore, oauthAccountRepository, oauthClientResolver, rejoinPolicy, storageService,
+            mock(PointHistoryRepository.class), passwordEncoder, sessionTerminator,
+            oauthAccountRepository, oauthClientResolver, rejoinPolicy, storageService,
             mock(ssafy.a706.backend.conntime.service.ConnectTimeService.class));
 
     private User localUser() {
@@ -88,7 +91,37 @@ class UserWithdrawServiceTest {
 
         assertThat(user.getStatus()).isEqualTo(UserStatus.DELETED);
         verify(rejoinPolicy).record("me@motok.com", WithdrawnIdentifierType.EMAIL);
-        verify(refreshTokenStore).delete(USER_ID);
+        verify(sessionTerminator).terminate(USER_ID, SessionRevocationStore.Reason.WITHDRAWN);
+    }
+
+    // ── 탈퇴 시 세션 종료 — 없어진 계정이 토큰·소켓·화상으로 남아 있으면 안 된다 ──────────────
+
+    @Test
+    @DisplayName("탈퇴하면 DB 반영을 확정한 뒤에 세션을 끝낸다 — 반쪽 탈퇴로 연결만 끊기면 안 된다")
+    void terminatesTheSessionAfterTheAccountIsGone() {
+        User user = localUser();
+        given(passwordEncoder.matches("pw", "hashed")).willReturn(true);
+        given(oauthAccountRepository.findAllByUser(user)).willReturn(List.of());
+
+        service.withdraw(USER_ID, new WithdrawRequest("pw", null, null, null));
+
+        // 토큰 폐기·방 퇴장·소켓 종료·프레즌스 정리·SFU 퇴장의 순서는 SessionTerminatorTest가 못박는다.
+        // 여기서 고정하는 것은 소프트 딜리트가 확정된 뒤에 사유 WITHDRAWN으로 불린다는 것이다.
+        InOrder order = inOrder(userRepository, sessionTerminator);
+        order.verify(userRepository).saveAndFlush(user);
+        order.verify(sessionTerminator).terminate(USER_ID, SessionRevocationStore.Reason.WITHDRAWN);
+    }
+
+    @Test
+    @DisplayName("본인 확인에 실패하면 세션을 끊지 않는다 — 남의 세션을 끊는 수단이 되면 안 된다")
+    void keepsSessionWhenOwnershipCheckFails() {
+        localUser();
+        given(passwordEncoder.matches("wrong", "hashed")).willReturn(false);
+
+        assertThatThrownBy(() -> service.withdraw(USER_ID, new WithdrawRequest("wrong", null, null, null)))
+                .isInstanceOf(BusinessException.class);
+
+        verify(sessionTerminator, never()).terminate(any(), any());
     }
 
     @Test

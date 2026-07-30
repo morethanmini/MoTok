@@ -125,10 +125,20 @@ async function savePassword() {
   }
   try {
     await usersApi.changePassword(currentPassword.value, newPassword.value)
-    flash('비밀번호가 변경되었어요')
     currentPassword.value = ''
     newPassword.value = ''
     newPasswordConfirm.value = ''
+    // 비밀번호를 바꾸면 서버가 이 세션을 그 자리에서 끝낸다 — Refresh를 지우는 데 그치지 않고
+    // 액세스 토큰의 sid까지 폐기하므로, 화면에 그대로 머물면 다음 요청부터 전부 401이다.
+    // 그걸 방치하면 성공 안내 직후 엉뚱한 "세션이 만료되었어요"가 뜨므로(App.vue), 재로그인이
+    // 정상 절차임을 알리고 우리가 먼저 정리한다. 탈퇴(submitWithdraw)와 같은 패턴이고,
+    // 문구·지연은 같은 일을 하는 재설정 화면(ResetPasswordView)에 맞췄다.
+    // logout()이 아니라 clear() — 이미 폐기된 토큰으로 POST /auth/logout을 부를 이유가 없고,
+    // clear()가 토큰 정리와 전역 STOMP 종료까지 이어 준다(죽은 토큰의 재연결 백오프 방지).
+    session.clear()
+    flash('비밀번호가 변경되었어요. 다시 로그인해 주세요.')
+    // replace — 뒤로가기로 세션이 끊긴 설정 화면에 돌아오지 않게 한다.
+    setTimeout(() => router.replace({ name: RouteName.Auth, query: { mode: 'login' } }), 1200)
   } catch (e) {
     flash(e instanceof ApiError ? e.message : '변경 실패 (백엔드 미연동)')
   }
