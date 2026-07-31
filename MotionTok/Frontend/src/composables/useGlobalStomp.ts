@@ -32,8 +32,9 @@ import { emitAccountBlocked, type AccountBlockKind } from '@/api/authEvents'
 import { API_BASE, refreshAccessTokenIfNeeded } from '@/api/http'
 import { getAccessToken, readAccessClaims } from '@/api/token'
 import { useSessionStore } from '@/stores/session'
+import { recordDisconnect } from './useRum'
 
-/** 인증 실패로 CONNECT가 거부됐을 때 재시도 간격의 상한(ms). 같은 토큰으로 3초마다 두드리지 않는다. */
+/** 재시도 간격의 상한(ms). 죽은 자격이나 죽은 서버를 3초마다 계속 두드리지 않는다. */
 const MAX_RECONNECT_DELAY_MS = 60_000
 const BASE_RECONNECT_DELAY_MS = 3_000
 
@@ -50,7 +51,11 @@ const CLOSE_REASONS: Record<string, AccountBlockKind> = {
 type FrameHandler = (body: string) => void
 
 let client: Client | null = null
-let authFailures = 0
+/**
+ * 연속 재연결 실패 횟수. 인증 거부(onStompError)와 소켓 종료(onWebSocketClose)를 <b>같이</b> 센다.
+ * 따로 세면 서버가 죽어 끊긴 경우는 카운터가 오르지 않아 영원히 기본 간격으로 두드리게 된다.
+ */
+let reconnectFailures = 0
 /** 첫 연결에는 재동기화가 필요 없다 — 화면이 마운트하며 이미 스냅샷을 받는다. */
 let everConnected = false
 
@@ -62,6 +67,7 @@ const connectedCallbacks = new Set<() => void>()
 
 /** 연결 상태 — 화면에서 "실시간 끊김" 표시에 쓴다. */
 export const stompConnected = readonly(connected)
+
 
 /**
  * 브로커 URL. 운영 빌드는 `VITE_API_BASE_URL=/api`라 상대 경로가 들어온다 —
@@ -155,6 +161,18 @@ export function onStompConnected(callback: () => void): () => void {
   return () => connectedCallbacks.delete(callback)
 }
 
+/**
+ * 재연결 대기 시간 = 지수 백오프 × 지터(0.5~1.5배).
+ *
+ * <b>지터가 핵심이다.</b> 백오프만 있으면 간격이 늘어날 뿐 모두가 <i>같은 간격으로</i> 움직여서,
+ * 동시에 끊긴 사람들은 계속 동시에 재시도한다 — 재시도 자체가 새로운 스파이크가 된다.
+ * 배수를 흔들어야 그 동기화가 깨진다. 서버가 한 번 넘어졌을 때 스스로 일어날 수 있느냐가 여기 달려 있다.
+ */
+function backoffWithJitter(failures: number): number {
+  const base = Math.min(BASE_RECONNECT_DELAY_MS * 2 ** failures, MAX_RECONNECT_DELAY_MS)
+  return Math.round(base * (0.5 + Math.random()))
+}
+
 function activate() {
   if (client) return
   const c = new Client({
@@ -171,8 +189,8 @@ function activate() {
       c.connectHeaders = { Authorization: `Bearer ${getAccessToken() ?? ''}` }
     },
     onConnect: () => {
-      authFailures = 0
-      c.reconnectDelay = BASE_RECONNECT_DELAY_MS
+      reconnectFailures = 0
+      c.reconnectDelay = backoffWithJitter(0)
       connected.value = true
       handlers.forEach((_, destination) => bindHandlers(destination))
       // 재연결일 때만 재동기화 — 첫 연결은 화면의 초기 로드와 겹쳐 요청이 두 벌 나가고
@@ -185,16 +203,19 @@ function activate() {
     onStompError: () => {
       // CONNECT 거부(토큰 문제 등). 백오프를 늘려 죽은 자격으로 서버를 두드리지 않는다.
       connected.value = false
-      authFailures += 1
-      c.reconnectDelay = Math.min(
-        BASE_RECONNECT_DELAY_MS * 2 ** authFailures,
-        MAX_RECONNECT_DELAY_MS,
-      )
+      reconnectFailures += 1
+      c.reconnectDelay = backoffWithJitter(reconnectFailures)
     },
     onWebSocketClose: (event?: CloseEvent) => {
       connected.value = false
       // 끊긴 동안의 구독은 무효다 — 재연결 시 레지스트리에서 다시 건다.
       subscriptions.clear()
+
+      // 서버 재시작·OOM으로 소켓만 끊긴 경우가 여기다. onStompError와 달리 지금까지는 아무것도
+      // 하지 않아 간격이 기본값에 머물렀고, 그래서 접속자 전원이 3초마다 함께 몰려들었다.
+      reconnectFailures += 1
+      c.reconnectDelay = backoffWithJitter(reconnectFailures)
+      recordDisconnect() // RUM — 세션 동안 몇 번 끊겼는지가 재연결 스톰의 직접 증거다
 
       // 제재로 끊긴 연결은 재연결해도 CONNECT에서 다시 거부된다. 그냥 두면 3초마다 실패만 쌓이고
       // 사용자에게는 "실시간이 안 되는" 상태로만 보인다 — 연결을 접고 안내는 App이 맡는다.

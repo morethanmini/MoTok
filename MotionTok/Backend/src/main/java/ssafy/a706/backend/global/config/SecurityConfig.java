@@ -4,6 +4,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
+import org.springframework.boot.security.autoconfigure.actuate.web.servlet.EndpointRequest;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -53,6 +56,28 @@ public class SecurityConfig {
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
+    }
+
+    /**
+     * 관리 포트(9090) 전용 체인 — actuator만 통과시킨다 (-153).
+     *
+     * <p>아래 본 체인이 {@code anyRequest().authenticated()}로 끝나서, 그대로 두면
+     * {@code /actuator/prometheus}가 401이 되어 지표를 한 줄도 못 긁는다. 그렇다고 본 체인에
+     * permitAll을 얹으면 <b>8080에서도</b> 열리므로 포트를 분리한 의미가 사라진다.</p>
+     *
+     * <p>인증을 걸지 않는 근거는 <b>도달 경로가 막혀 있다</b>는 것이다 — 9090은 nginx가 프록시하지
+     * 않고, compose에서도 호스트 루프백({@code 127.0.0.1:9090})에만 묶는다. 접근은 SSH 터널로만
+     * 가능하다. 노출 엔드포인트도 health·prometheus 둘뿐이라 {@code heapdump}·{@code env} 처럼
+     * 위험한 것은 애초에 켜져 있지 않다(application.yaml).</p>
+     */
+    @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE)
+    public SecurityFilterChain actuatorFilterChain(HttpSecurity http) throws Exception {
+        return http
+                .securityMatcher(EndpointRequest.toAnyEndpoint())
+                .csrf(AbstractHttpConfigurer::disable)
+                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                .build();
     }
 
     @Bean

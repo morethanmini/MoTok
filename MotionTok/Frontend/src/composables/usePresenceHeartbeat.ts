@@ -36,6 +36,27 @@ import {
 /** 서버 정정 프레임을 받기 전까지 쓰는 값. 서버 기본값(TTL 60s ÷ 3)과 같다. */
 const DEFAULT_INTERVAL_SECONDS = 20
 
+/**
+ * 주기에 곱하는 지터 폭(±20%). 20초면 16~24초 사이에서 흔들린다.
+ *
+ * <p><b>왜 필요한가</b> — 비트는 주기가 고정이라 <b>한 번 몰리면 영원히 몰린다.</b>
+ * 2000명이 공지를 보고 비슷한 시각에 접속하거나, 서버가 한 번 넘어져 전원이 동시에 재연결하면
+ * 그 뒤로 20초마다 2000건이 같은 순간에 도착한다 — 평균은 100 msg/s인데 실제로는
+ * 20초에 한 번 2000건이 몰리는 톱니 모양이 된다.</p>
+ *
+ * <p>매 주기 다시 뽑으므로 뭉쳐 있던 무리가 시간이 갈수록 저절로 흩어진다.
+ * TTL(60초)에 비하면 24초는 충분히 짧아 프레즌스 정확도에는 영향이 없다.</p>
+ */
+const INTERVAL_JITTER = 0.2
+
+/**
+ * 연결 직후 첫 비트를 미루는 폭(ms).
+ *
+ * <p>재연결은 이미 흩어져 있지만(useGlobalStomp의 백오프 지터) 그 폭이 좁아 무리가 남는다.
+ * 여기서 한 번 더 흩는다. TTL이 60초라 최대 2초 지연은 프레즌스에 영향을 주지 않는다.</p>
+ */
+const CONNECT_BEAT_JITTER_MS = 2_000
+
 const HEARTBEAT_DESTINATION = '/app/presence/heartbeat'
 const PRESENCE_QUEUE = '/user/queue/presence'
 
@@ -54,7 +75,9 @@ export function usePresenceHeartbeat() {
   function schedule() {
     clearTimeout(timer)
     if (stopped) return
-    timer = setTimeout(beat, intervalSeconds * 1000)
+    // 매 주기 지터를 다시 뽑는다 — 고정 주기면 한 번 몰린 무리가 영원히 몰린 채로 남는다.
+    const jitter = 1 + (Math.random() * 2 - 1) * INTERVAL_JITTER
+    timer = setTimeout(beat, Math.round(intervalSeconds * 1000 * jitter))
   }
 
   function beat() {
@@ -88,8 +111,13 @@ export function usePresenceHeartbeat() {
   // onStompConnected(재연결 전용 훅)만 걸어서 새로고침 후 <b>첫 연결에는 비트가 영영 시작되지
   // 않았다</b>(-164): 소켓은 살아 있는데 아무도 beat를 안 불러 60초 뒤 TTL 만료로 조용히
   // 오프라인이 됐고, 다음 재연결에 온라인으로 돌아와 친구 목록이 널뛰었다.
+  // 즉시 치지 않고 아주 조금 미룬다 — 서버가 넘어졌다 살아나면 접속자 전원이 거의 같은 순간에
+  // 붙고, 그 자리에서 바로 치면 재연결 직후에 비트 2000건이 한꺼번에 도착한다.
+  // (첫 연결에도 반드시 시작돼야 한다 — 안 그러면 60초 TTL로 조용히 오프라인이 된다, -164)
   watch(stompConnected, (connected) => {
-    if (connected) beat()
+    if (!connected) return
+    clearTimeout(timer)
+    timer = setTimeout(beat, Math.round(Math.random() * CONNECT_BEAT_JITTER_MS))
   }, { immediate: true })
 
   // 방에 들어가거나 나오는 순간을 최대 한 주기(20초)나 기다리게 하지 않는다.

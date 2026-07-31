@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  구조화 로그 (-153, -121).
+
+  ## 왜 필요한가
+  지금은 스프링 기본 콘솔 출력뿐이라 로그가 사람이 읽는 문장으로만 남는다. 2000명이 만드는
+  수십만 줄에서 "어느 요청이 왜 실패했나"를 찾으려면 grep 으로는 감당이 안 되고, 무엇보다
+  nginx 로그(요청 1건 = 1줄)와 앱 로그를 <b>이어 붙일 방법이 없다</b>.
+
+  ## 두 갈래로 내보낸다
+  - CONSOLE : 사람이 읽는 용도. 개발 중 터미널과 `docker logs` 로 간다.
+  - JSON    : 기계가 읽는 용도. 호스트 볼륨의 파일로 떨어져 사후에 DuckDB 로 질의한다.
+              컨테이너가 죽어도 파일은 남아야 하므로 반드시 호스트 볼륨이어야 한다.
+
+  ## 부하를 최소화한 선택
+  1. <b>AsyncAppender + neverBlock=true</b>
+     로깅이 요청 스레드를 막으면 안 된다. 부하가 몰려 로그가 늘어나는 상황에서 로깅이 요청을
+     기다리게 하면 그게 곧 장애 증폭이다. 큐가 차면 <b>버린다</b> — 관측은 어떤 경우에도
+     서비스보다 우선할 수 없다.
+  2. <b>immediateFlush=false</b>
+     기본값(true)은 이벤트마다 flush 를 강제한다. 끄면 버퍼가 찰 때 쓰므로 syscall 이 크게 준다.
+     대신 크래시 시 마지막 몇 KB 를 잃을 수 있는데, 그 구간은 JFR·힙덤프가 대신 증언한다.
+  3. <b>includeCallerData=false</b>
+     호출 위치(클래스·줄번호)를 채우려면 매 로그마다 스택을 뜬다 — 10배 가까이 느려진다.
+  4. <b>totalSizeCap</b> 으로 상한을 건다. 디스크 풀은 우리 사망 시나리오 중 하나였다.
+
+  ## 외부 의존성이 없다
+  Spring Boot 4 에 구조화 로깅이 내장돼 있어(StructuredLogEncoder) logstash-logback-encoder
+  같은 라이브러리를 추가하지 않았다 — 버전 호환 리스크를 하나 줄인다.
+-->
+<configuration>
+  <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+  <!-- 컨테이너에서는 /logs(호스트 볼륨), 로컬에서는 ./logs -->
+  <property name="LOG_DIR" value="${LOG_DIR:-logs}"/>
+
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <!--
+        traceId 를 앞에 둔다 — 콘솔에서도 nginx 로그와 대조할 수 있어야 한다.
+        스레드명(%t)도 반드시 남긴다. 스프링 기본 패턴에는 있는데 빠뜨리면 docker logs 로
+        동시성 문제(어느 요청 스레드가 물렸나, 스케줄러인가 요청인가)를 볼 수 없다.
+        JSON 쪽은 ECS 가 process.thread.name 으로 이미 담고 있어 콘솔만 맞추면 된다.
+      -->
+      <pattern>%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] [%15.15t] %logger{36} - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <appender name="JSON_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${LOG_DIR}/app.json.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>${LOG_DIR}/app.json.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+      <maxFileSize>200MB</maxFileSize>
+      <maxHistory>7</maxHistory>
+      <!-- ★ 상한. 디스크가 차면 MySQL write 가 실패해 전체가 멈춘다 -->
+      <totalSizeCap>5GB</totalSizeCap>
+    </rollingPolicy>
+    <immediateFlush>false</immediateFlush>
+    <!-- ECS(Elastic Common Schema) — MDC 값이 최상위 필드로 올라와 질의가 쉽다 -->
+    <encoder class="org.springframework.boot.logging.logback.StructuredLogEncoder">
+      <format>ecs</format>
+    </encoder>
+  </appender>
+
+  <appender name="ASYNC_JSON" class="ch.qos.logback.classic.AsyncAppender">
+    <appender-ref ref="JSON_FILE"/>
+    <queueSize>8192</queueSize>
+    <!-- 0 = 큐가 차도 INFO 를 먼저 버리지 않는다(기본값은 20%가 남으면 INFO 이하를 버린다) -->
+    <discardingThreshold>0</discardingThreshold>
+    <!-- ★ 큐가 가득 차면 블로킹하지 않고 버린다. 로깅이 요청을 막는 일은 없어야 한다 -->
+    <neverBlock>true</neverBlock>
+    <includeCallerData>false</includeCallerData>
+  </appender>
+
+  <root level="INFO">
+    <appender-ref ref="CONSOLE"/>
+    <appender-ref ref="ASYNC_JSON"/>
+  </root>
+
+  <!--
+    하이버네이트가 SQL 을 <b>로거로</b> 내보내는 경로를 막는다(DB-03). 초당 수천 쿼리에서
+    쿼리마다 문자열 포매팅 + 디스크 쓰기가 붙으면 그 자체로 부하가 된다. 필요하면 임시로 DEBUG.
+
+    ⚠ 이 두 줄로 spring.jpa.show-sql 이 꺼지지는 않는다. show-sql 은 로거가 아니라
+      System.out 으로 직접 찍는 별개 경로라 로그 레벨로 통제되지 않는다.
+      (application.yaml 에서 `show-sql: ${JPA_SHOW_SQL:false}` 로 이미 기본 꺼짐 —
+       운영에서 JPA_SHOW_SQL 환경변수를 켜지 않는 것이 실제 방어선이다)
+  -->
+  <logger name="org.hibernate.SQL" level="WARN"/>
+  <logger name="org.hibernate.orm.jdbc.bind" level="WARN"/>
+</configuration>
