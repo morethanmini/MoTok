@@ -45,6 +45,7 @@ function makeAnalysis(): SongAnalysis {
     firstSoundMs: origin,
     onsets,
     sustains,
+    slotAccents: [],
   }
 }
 

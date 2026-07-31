@@ -9,6 +9,7 @@ import { fftMagnitude } from '../analysis/fft'
 import { extractFeatures, subtractMovingAverage, toMono } from '../analysis/features'
 import { detectOnsets } from '../analysis/onsets'
 import { analyzeSong, detectFirstSoundMs } from '../analysis/analyzeSong'
+import { formatSongAccentsSnippet } from '../analysis/accentExport'
 
 const SR = 44100
 
@@ -143,6 +144,19 @@ describe('analyzeSong (합성 클릭 트랙)', () => {
     const wrapped = Math.min(phaseDiff, beatMs - phaseDiff)
     expect(wrapped).toBeLessThanOrEqual(25)
     expect(analysis.confidence).toBeGreaterThan(1.2)
+
+    // 악센트 표: 박 자리(짝수 슬롯 = 클릭)는 평균(100) 위, 엇박(홀수 슬롯 = 무음)은 아래
+    const accents = analysis.slotAccents
+    expect(accents.length).toBeGreaterThan(100)
+    const even = accents.filter((_, i) => i % 2 === 0)
+    const odd = accents.filter((_, i) => i % 2 === 1)
+    const avg = (a: number[]) => a.reduce((s, v) => s + v, 0) / a.length
+    expect(avg(even)).toBeGreaterThan(avg(odd) * 3)
+
+    // 스니펫에 BPM과 배열이 담긴다
+    const snippet = formatSongAccentsSnippet(analysis, '합성 클릭 트랙')
+    expect(snippet).toContain(`CHART_BPM = ${analysis.bpm}`)
+    expect(snippet).toContain('SLOT_ACCENTS: readonly number[]')
   }, 30_000)
 
   it('지속 톤은 sustain으로, 음높이는 pitch로 잡힌다', async () => {

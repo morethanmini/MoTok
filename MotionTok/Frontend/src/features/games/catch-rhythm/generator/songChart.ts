@@ -34,6 +34,7 @@ import {
   type Difficulty,
 } from './presets'
 import type { AnalyzedOnset, SongAnalysis, Sustain } from '../analysis/analyzeSong'
+import type { RingBeatmap, RingNote } from '../ring/ringLogic'
 
 // ── 옵션 ─────────────────────────────────────────────────────
 
@@ -521,5 +522,36 @@ export function generateSongRingChart(
         strength: o.strength,
       })),
     },
+  }
+}
+
+/**
+ * 링 초안(에디터 규약: 파일 내 시각) → 인게임 RingBeatmap(게임 시각) — 채보 랩 미리 플레이용.
+ * 곡 격자 원점이 {@link songStartMs}에 오도록 전체를 평행이동한다.
+ */
+export function ringDraftToGameChart(
+  draft: RingDraftChart,
+  analysis: SongAnalysis,
+): RingBeatmap & { durationMs: number } {
+  const offset = songStartMs(analysis)
+  const notes: RingNote[] = draft.notes
+    .map((n) => {
+      const note: RingNote = {
+        timeMs: Math.round(offset + (n.timeMs - analysis.gridOriginMs)),
+        lane: n.lane,
+        hand: n.hand ?? 'any',
+        type: n.type === 'hold' ? 'hold' : 'tap',
+      }
+      if (n.type === 'hold') {
+        note.durationMs = n.durationMs
+        note.laneDelta = n.laneDelta ?? 0
+      }
+      return note
+    })
+    .filter((n) => n.timeMs >= LEAD_IN_MS)
+  return {
+    approachTimeMs: draft.approachTimeMs,
+    notes,
+    durationMs: notes[notes.length - 1]?.timeMs ?? 0,
   }
 }

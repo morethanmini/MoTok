@@ -6,6 +6,7 @@
  * 재분석 없이 재사용할 수 있다.
  */
 
+import { computeSlotAccents } from './accentExport'
 import { extractFeatures, toMono, type FrameFeatures, type MonoAudio } from './features'
 import { detectOnsets, type Onset } from './onsets'
 import { estimateTempo, type TempoEstimate } from './tempo'
@@ -38,6 +39,8 @@ export interface SongAnalysis {
   firstSoundMs: number
   onsets: AnalyzedOnset[]
   sustains: Sustain[]
+  /** 8분음표 슬롯별 악센트(100 = 곡 평균) — songAccents.ts 교체용 (accentExport 참고) */
+  slotAccents: number[]
 }
 
 /** 지속음으로 인정할 최소 길이 — 이보다 짧으면 그냥 탭이다 */
@@ -184,5 +187,11 @@ export async function analyzeSong(
     firstSoundMs: Math.round(detectFirstSoundMs(mono) * 10) / 10,
     onsets,
     sustains,
+    slotAccents: computeSlotAccents(
+      onsetAnalysis.novelty,
+      onsetAnalysis.frameMs,
+      tempo.gridOriginMs,
+      tempo.beatMs,
+    ),
   }
 }

@@ -10,4 +10,10 @@ export const catchRhythmRoutes: RouteRecordRaw[] = [
     name: 'dev-catch-rhythm',
     component: () => import('@/features/games/catch-rhythm/dev/CatchRhythmDevView.vue'),
   },
+  {
+    // 채보 랩 — 곡 파일을 분석해 자동 채보 초안을 만드는 운영 도구 (S15P11A706-168)
+    path: '/dev/chart-lab',
+    name: 'dev-chart-lab',
+    component: () => import('@/features/games/catch-rhythm/dev/ChartLabView.vue'),
+  },
 ]
