@@ -114,7 +114,11 @@ describe('스키마 적합성', () => {
     let prev = -1
     for (const n of chart.notes) {
       expect(n.timeMs).toBeGreaterThanOrEqual(prev)
-      expect((n.timeMs - LEAD_IN_MS) % SLOT_MS).toBe(0)
+      // 슬롯이 232.56ms(곡 129 BPM의 8분음표)라 나머지 연산으로는 못 본다 —
+      // 시각을 ms로 반올림하므로 격자에서 최대 반 칸의 0.5ms까지만 벗어난다
+      expect(n.timeMs).toBe(Math.round(n.timeMs))
+      const slot = (n.timeMs - LEAD_IN_MS) / SLOT_MS
+      expect(Math.abs(slot - Math.round(slot))).toBeLessThan(0.5 / SLOT_MS + 1e-9)
       prev = n.timeMs
     }
   })
