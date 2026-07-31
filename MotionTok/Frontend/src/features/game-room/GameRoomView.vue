@@ -313,8 +313,9 @@ const picker = ref(false)
 /** 게임을 고른 뒤 모드·난이도를 정하는 설정 창의 대상 게임(-9). null이면 닫힘 */
 const setupGame = ref<GameEntry | null>(null)
 
-// 탭 닫기·주소창 이탈 시 keepalive 퇴장 통보 + bfcache 복원 시 로비로(뒤로가기 복귀 차단)
-useRoomUnloadLeave(() => route.query.room as string | undefined)
+// bfcache 복원 시 로비로(뒤로가기 복귀 차단). 퇴장 통보는 서버 리퍼에 맡긴다 —
+// 새로고침도 pagehide라, 여기서 통보하면 끊긴 사람이 새로고침으로 복구할 길이 막힌다.
+useRoomUnloadLeave(() => route.query.room as string | undefined, { unloadLeave: false })
 
 
 onMounted(async () => {
@@ -346,6 +347,13 @@ onMounted(async () => {
     void router.replace({ name: RouteName.Lobby })
     return
   }
+  // 방 토픽 구독 — 카메라·LiveKit보다 먼저 건다.
+  // (1) 채팅은 비영속이라 구독이 늦은 만큼 그대로 유실된다.
+  // (2) 이 구독이 서버의 재실 신호다(RoomPresenceTracker). 새로고침으로 돌아온 사람은
+  //     유예(RoomPresenceTracker.GRACE_MS) 안에 다시 구독해야 방에 남는데, 카메라 권한 대기와 SFU 접속 뒤로 밀려
+  //     있으면 느린 기기에서 그 예산을 넘겨 멀쩡히 돌아오고도 퇴장 처리된다.
+  // 연결 전에 불러도 전역 레지스트리가 등록해 뒀다가 붙는 대로 SUBSCRIBE한다 — 기다릴 필요 없다.
+  void roomChat.connect(roomCode.value)
   // 로컬 캡처는 항상 켠다 — 모션 인식 게임의 입력원이라 카메라를 "꺼도" 게임 시작·참여가
   // 가능해야 한다. "카메라 끄기"는 발행·표시만 끈다: 입장 전 화면에서 껐다면 발행하지 않아
   // 내 타일과 다른 사람 화면 모두 꺼져 보이고, 방 안에서 카메라를 켜면 그때 발행한다.
@@ -376,12 +384,10 @@ onMounted(async () => {
   // 이미 있던 사람들에게 내 꾸미기를 알린다(늦게 들어오는 사람은 useDecorSync가 따로 챙긴다).
   decorSync.broadcast()
 
-  // 채팅은 이력이 없어서(비영속) 구독이 늦은 만큼 그대로 유실 — 입장 직후 바로 연결.
-  void roomChat.connect(roomCode.value)
-
-  // 자동 시작은 여기서부터 가능하다 — 위 구독이 걸린 뒤여야 startGame이 방으로 나가고
-  // 서버가 되돌려주는 GAME_START도 받는다. (감시자도 같은 조건을 보지만, 순서를 명시해 둔다)
+  // 자동 시작은 여기서부터 가능하다 — 구독(위 roomChat.connect)이 걸린 뒤여야 startGame이
+  // 방으로 나가고 서버가 되돌려주는 GAME_START도 받는다. (감시자도 같은 조건을 보지만, 순서를 명시해 둔다)
   tryAutostart()
+
 
   // 모션 모델은 로비 스플래시가 이미 받아 뒀을 것이다(싱글턴이라 여기선 즉시 끝난다).
   // 그래도 한 번 더 확인하는 이유 — 주소창으로 방에 바로 들어오거나 게스트로 로비를 건너뛴
@@ -401,6 +407,7 @@ const offStompReconnect = onStompConnected(() => {
 onBeforeUnmount(() => {
   offStompReconnect()
   clearTimeout(autostartTimer)
+  clearStartAck()
   roomChat.disconnect()
   // BGM은 모듈 싱글턴이라 suspend된 채로 방을 뜨면 로비에서도 영영 안 나온다
   bgm.resumeAfterGame()
@@ -469,7 +476,10 @@ watch(roomChat.messages, (all, prev) => {
 watch(
   () => roomChat.lastError.value,
   (e) => {
-    if (e) flash(e.message)
+    if (!e) return
+    // 시작 거부는 사유가 붙어 오므로 그쪽이 더 정확하다 — 대기 타이머의 막연한 안내를 겹치지 않게 끈다.
+    if (e.path?.endsWith('/game/start')) clearStartAck()
+    flash(e.message)
   },
 )
 
@@ -638,6 +648,31 @@ const suggestCooldown = ref(false)
 // STOMP 미연결(백엔드 미연동 데모)일 때는 로컬 솔로 플레이로 폴백.
 const activeGame = ref<GameEntry | null>(null)
 const activeSession = ref<ActiveGameSession | null>(null)
+/**
+ * START를 보낸 뒤 GAME_START를 기다리는 시간. 넘기면 "전달되지 않았다"고 알린다.
+ *
+ * <p>시작 요청은 응답이 없는 STOMP publish다. 프레임이 서버에 닿지 않아도(끊긴 걸 아직 모르는
+ * 반열림 소켓·재연결 대기 구간) 클라이언트는 성공과 구분할 수 없고, 화면은 아무 일도 없었던 것처럼
+ * 남는다 — 실제로 "START를 눌렀는데 내 카메라만 보인다"로 나타났다. 서버가 거부한 경우는
+ * /user/queue/errors로 사유가 오므로 그쪽이 더 정확하고, 여기서는 <b>아무 응답도 없는</b>
+ * 경우만 맡는다.</p>
+ *
+ * <p>카운트다운(서버 game.countdownSec)보다 짧아야 의미가 있다 — 정상 흐름에서는 GAME_START가
+ * 카운트다운 <i>이전에</i> 도착하므로 이 타이머는 왕복 지연만 넘기면 된다.</p>
+ */
+const START_ACK_TIMEOUT_MS = 3000
+let startAckTimer: ReturnType<typeof setTimeout> | undefined
+function armStartAck() {
+  clearStartAck()
+  startAckTimer = setTimeout(() => {
+    startAckTimer = undefined
+    flash('시작 신호가 전달되지 않았어요 · 새로고침해 주세요')
+  }, START_ACK_TIMEOUT_MS)
+}
+function clearStartAck() {
+  clearTimeout(startAckTimer)
+  startAckTimer = undefined
+}
 const gameResults = ref<GameResultEntry[] | null>(null)
 /** 게임④(-86): POSE_SET으로 도착한 출제 포즈(랜드마크 JSON) — 벽 생성 입력 */
 const poseChallenge = ref<string | null>(null)
@@ -897,6 +932,7 @@ function applyGameEvent(e: GameEvent) {
     return
   }
   if (e.type === 'GAME_START') {
+    clearStartAck()
     const entry = GAME_CATALOG.find((g) => g.gameId === e.gameId)
     if (!entry) return
     gameResults.value = null
@@ -1154,7 +1190,11 @@ async function launch(g: GameEntry, difficulty?: string, mode?: string, wallCoun
       activeGame.value = g
       return
     }
-    roomChat.startGame(g.gameId, undefined, difficulty, mode, wallCount)
+    if (!roomChat.startGame(g.gameId, undefined, difficulty, mode, wallCount)) {
+      flash('실시간 연결이 끊겼어요 · 새로고침해 주세요')
+      return
+    }
+    armStartAck()
     return
   }
   // 서버 미연동 데모 — 로컬 솔로 플레이 폴백. 멀티 전용 게임(minPlayers>1)은 혼자
@@ -1550,6 +1590,21 @@ async function addFriend(target: ParticipantView | null) {
   }
 }
 
+/**
+ * 실시간 연결이 끊겼음을 방 안에서 드러낸다.
+ *
+ * <p>채팅·게임 시작·진행 중계가 전부 전역 소켓 하나(-142)를 쓴다. 끊긴 줄 모르면 "눌러도
+ * 아무 일이 없는" 상태가 되고, 여러 명이 있는 방에서는 <b>일부만 게임이 시작되는데 아무도
+ * 이유를 모르는</b> 상황이 된다 — 그래서 본인에게 먼저 알린다.</p>
+ *
+ * <p>복구는 새로고침이 확실하다: 새 문서는 클라이언트를 새로 만들어 재시도 백오프(최대 60초)를
+ * 건너뛰고, 방 재실은 서버 유예(RoomPresenceTracker.GRACE_MS) 안에 다시 구독하면 유지된다.</p>
+ */
+const realtimeDown = computed(() => !roomChat.connected.value)
+function reloadPage() {
+  window.location.reload()
+}
+
 const startLabel = computed(() => (amRoomHost.value ? 'START' : 'GAME'))
 /**
  * 게임 선택 버튼 잠금 — 서버 연결 중에는 방장 여부를 알기 전까지 잠근다(제안 오발신 방지).
@@ -1619,6 +1674,12 @@ const startHint = computed(() =>
       </div>
     </div>
 
+    <!-- 실시간 끊김 안내 — 끊긴 본인만 본다. 채팅·게임 시작이 모두 이 소켓에 달려 있다. -->
+    <div v-if="realtimeDown" class="offline-bar">
+      <span class="px">실시간 연결이 끊겼어요 · 채팅과 게임 시작이 동작하지 않아요</span>
+      <button class="px offline-reload" @click="reloadPage">새로고침</button>
+    </div>
+
     <!-- 본문: 내 캠을 크게, 나머지는 인원수에 맞춰 그리드로 배치 -->
     <main class="room-main">
       <div
@@ -1649,6 +1710,7 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             play-audio
+            mirror
             compact
             :can-kick="amRoomHost && !!slot.view"
             :can-invite="!activeGame"
@@ -1851,6 +1913,7 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             play-audio
+            mirror
             compact
             :can-kick="amRoomHost && !!slot.view"
             :can-invite="!activeGame"
@@ -1870,6 +1933,7 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             play-audio
+            mirror
             :can-kick="amRoomHost && !!slot.view"
             :can-invite="!activeGame"
             @kick="openKick(slot.view)"
@@ -2277,6 +2341,24 @@ const startHint = computed(() =>
 .room-ribbon .px-kicker { padding: 5px 9px; font-size: 8px; }
 .room-ribbon .px-kicker i { width: 7px; height: 7px; border-radius: 50%; background: var(--c-coral); animation: px-blink 1s steps(2) infinite; }
 .room-ribbon b { font-size: 12px; }
+
+/* 실시간 끊김 안내 — 리본 바로 아래 전폭. 평소엔 렌더되지 않아 자리를 차지하지 않는다. */
+.offline-bar {
+  flex: none;
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 7px 16px;
+  border-bottom: 2px solid var(--c-ink);
+  background: var(--c-coral); color: #fff;
+  font-size: 9px;
+  z-index: 5;
+}
+.offline-reload {
+  flex: none;
+  border: 2px solid var(--c-ink); border-radius: 8px;
+  background: #fff; color: var(--c-ink);
+  padding: 4px 10px; font-size: 8px; font-weight: 700;
+}
+.offline-reload:hover { background: var(--c-yellow); }
 
 /* 본문 */
 .room-main {
