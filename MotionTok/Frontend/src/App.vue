@@ -35,6 +35,7 @@ import { useWarningNotice, currentWarning } from '@/composables/useWarningNotice
 import { useToast } from '@/composables/useToast'
 import { loadRemoteWordlist } from '@/utils/profanity'
 import { startRum } from '@/composables/useRum'
+import { buildOutdated, reloadForNewBuild, startBuildWatch } from '@/composables/useBuildVersion'
 
 const router = useRouter()
 const session = useSessionStore()
@@ -55,6 +56,9 @@ const { acknowledge: acknowledgeWarning } = useWarningNotice()
 // 비속어 사전 서버 정본(-152) — 가입 폼(비로그인)에서도 쓰이므로 앱 시작 시 한 번 받아 둔다.
 // 몇 KB짜리 공개 GET이고 실패해도 번들 내장본으로 동작하므로 기다리지 않는다.
 void loadRemoteWordlist()
+// 배포 교체 감지 — 낡은 탭은 지연 로딩 화면(상점·게임)에서 청크 404가 나고, 그게 화면에는
+// "눌렀는데 아무 일도 안 일어남"으로 보인다. 사고가 나기 전에 배너로 알린다.
+startBuildWatch()
 
 /**
  * 귓속말 도착 알림(-150) — 어느 화면에 있든 떠야 하므로 앱 셸이 맡는다.
@@ -70,6 +74,14 @@ watch(whisper.incoming, (msg) => {
   flashWhisper(`💬 ${msg.senderNickname}: ${preview}`)
   whisper.clearIncoming()
 })
+
+/**
+ * 새 버전 배너에서 새로고침. 쿨다운에 걸리는 경우는 직전에 자동 새로고침이 있었을 때뿐인데,
+ * 눌렀는데 아무 일도 안 일어나면 그것대로 같은 종류의 버그가 되므로 안내를 남긴다.
+ */
+function reloadForUpdate() {
+  if (!reloadForNewBuild()) flashWhisper('새로고침이 막혔어요 · 브라우저에서 직접 새로고침해 주세요')
+}
 
 function goLogin() {
   closeLoginRequired()
@@ -168,6 +180,19 @@ function sendWhisper(text: string) {
 
   <PixelToast :message="whisperToast" />
 
+  <!--
+    새 버전 배너 — 닫기 버튼이 없다.
+
+    배포가 나가면 이 탭이 들고 있는 청크 이름은 서버에서 사라진다. 상점·게임처럼 지연 로딩되는
+    화면은 그 순간부터 "눌러도 아무 일이 없는" 상태가 되고, 사용자에게는 원인이 전혀 보이지 않는다.
+    닫을 수 있게 하면 닫은 사람만 그 고장을 그대로 떠안으므로, 새로고침할 때까지 계속 붙여 둔다.
+    화면을 가리지 않도록 아래쪽에 얇게 띄운다(게임 중이면 이미 로드된 화면은 계속 동작한다).
+  -->
+  <div v-if="buildOutdated" class="build-bar" role="status">
+    <span class="px">새 버전이 배포됐어요 · 지금 새로고침하지 않으면 게임이 시작되지 않을 수 있어요</span>
+    <button class="px build-reload" @click="reloadForUpdate">새로고침</button>
+  </div>
+
   <WhisperModal
     v-if="whisper.openWith.value"
     :nickname="whisper.openNickname.value"
@@ -251,6 +276,26 @@ function sendWhisper(text: string) {
 </template>
 
 <style scoped>
+/* 새 버전 배너 — 화면 하단 고정. 각 화면이 자체 전체화면 레이아웃을 소유하므로(앱 셸 주석 참고)
+   흐름에 끼우면 화면마다 다르게 밀린다. 모달(PixelModal)보다는 아래에 둬서 안내를 가리지 않는다. */
+.build-bar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 900;
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  border-top: 2px solid var(--c-ink);
+  background: var(--c-ink); color: #fff;
+  font-size: 9px; line-height: 1.6;
+  text-align: center;
+}
+.build-reload {
+  flex: none;
+  border: 2px solid var(--c-ink); border-radius: 8px;
+  background: var(--c-yellow); color: var(--c-ink);
+  padding: 4px 12px; font-size: 8px; font-weight: 700;
+}
+.build-reload:hover { background: #fff; }
+
 .expired, .denied { text-align: center; }
 .expired .icon, .denied .icon { font-size: 40px; }
 .expired h3, .denied h3 { margin: 10px 0 8px; font-size: 16px; }

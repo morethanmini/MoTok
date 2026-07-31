@@ -13,6 +13,7 @@ import BrandLogo from './BrandLogo.vue'
 import UserAvatar from './UserAvatar.vue'
 import BgmToggle from './BgmToggle.vue'
 import ChargePointsModal from './ChargePointsModal.vue'
+import { POINT_CHARGE_ENABLED } from '@/config/features'
 import LoginRequiredModal from './LoginRequiredModal.vue'
 import lobbyIcon from '@/assets/header/nav-lobby.png'
 import gamesIcon from '@/assets/header/nav-games.png'
@@ -150,9 +151,15 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
         관리자
       </button>
       <BgmToggle />
-      <button class="coin" title="포인트 충전" @click="showCharge = true">
+      <!-- 충전이 잠긴 동안(POINT_CHARGE_ENABLED=false)은 잔액만 보여준다 — 게임 보상이 도는 걸
+           테스터가 확인해야 하므로 숫자는 남기고, ＋와 클릭만 없앤다. 버튼을 disabled로 두는 대신
+           span으로 바꾼 이유: 눌러도 안 되는 버튼이 보이면 그 자체가 버그로 보고된다. -->
+      <button v-if="POINT_CHARGE_ENABLED" class="coin" title="포인트 충전" @click="showCharge = true">
         <img class="coin-icon" :src="headerCoin" alt="" aria-hidden="true" /> {{ balance.toLocaleString() }} <b>＋</b>
       </button>
+      <span v-else class="coin coin-static">
+        <img class="coin-icon" :src="headerCoin" alt="" aria-hidden="true" /> {{ balance.toLocaleString() }}
+      </span>
       <div class="avatar-wrap" ref="accountMenuRef">
         <button class="avatar-pill" title="계정 메뉴" @click="toggleAccountMenu">
           <span class="nickname">{{ nickname }}</span>
@@ -175,8 +182,9 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
       </div>
     </div>
 
+    <!-- 이중 방어 — 버튼을 못 눌러도 다른 경로가 showCharge를 켜면 결제 화면이 열린다 -->
     <ChargePointsModal
-      v-if="showCharge"
+      v-if="POINT_CHARGE_ENABLED && showCharge"
       :current-points="balance"
       @close="showCharge = false"
       @charged="onCharged"
@@ -241,6 +249,8 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 .admin-tab.is-active { border-color: #925c47; background: #e7c996; box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), 3px 3px 0 #a66b50; color: #34251f; }
 .coin { height: 39px; padding: 0 12px; border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; display: flex; align-items: center; gap: 7px; font-weight: 700; }
 .coin b { color: #36a17f; }
+/* 충전 잠금 중 잔액 표시 — 눌리는 것처럼 보이지 않게 커서·호버를 뺀다 */
+.coin-static { cursor: default; color: var(--c-ink); }
 .avatar-wrap { position: relative; }
 .avatar-pill {
   height: 43px;

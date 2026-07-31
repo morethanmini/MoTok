@@ -13,7 +13,7 @@ import { ScoreTracker } from './core/score'
 import { COUNTDOWN_SECONDS } from './core/config'
 import { CatchLogic, type Hands, type CatchEvent, type TrackedNote } from './logic/catchLogic'
 import { generateBattleChart } from './generator/battleChart'
-import { LEAD_IN_MS, type Difficulty } from './generator/presets'
+import { LEAD_IN_MS, slotTimeMs, type Difficulty } from './generator/presets'
 import { HandInputTracker } from './input/handInput'
 import { Renderer, type RenderHand } from './render/renderer'
 import { resolveSkin } from './render/skins'
@@ -30,6 +30,41 @@ import { generateRingChart } from './ring/ringChart'
 import { RingRenderer } from './ring/ringRenderer'
 import { RING_RADIUS } from './ring/ringConfig'
 import type { GameMode } from './core/types'
+import { RhythmMusic } from './audio/music'
+
+/**
+ * 인게임 곡 — 이 게임에서는 배경음이 아니라 **채보의 박자 기준**이다
+ * (곡 실측 129 BPM이 presets.ts의 CHART_BPM). 그래서 다른 게임처럼 GameBgm으로 틀지 않고
+ * 판정 시계와 같은 AudioContext에 예약한다({@link RhythmMusic} 주석 참고).
+ */
+const BGM_SRC = '/assets/sfx/catch-rhythm/Neon_Pulse.mp3'
+/** "시작!"을 띄워두는 시간 — 첫 노트가 오기 전에 사라져야 해서 1초보다 짧게 */
+const START_FLASH_MS = 900
+/**
+ * 곡의 첫 박이 얹히는 노트 슬롯.
+ *
+ * <p>1 = 카운트다운이 끝난 뒤 한 칸(232.56ms) 뒤. "시작!" 직후 숨 한 번 두고 곡이 들어오는
+ * 체감이면서, 곡의 박자 격자가 노트 격자와 같은 순간에 시작한다. 템포도 129로 같으므로
+ * 그 뒤 한 판 내내 어긋나지 않는다.</p>
+ *
+ * <p>머리 무음·인코더 지연은 {@link RhythmMusic}이 디코드된 버퍼에서 실측해 건너뛴다 —
+ * 여기서 ms를 역산하던 상수(BGM_HEAD_SILENCE_MS)는 디코더 구현에 따라 어긋나서 없앴다.
+ * 이 값은 {@code songAccents.ts}의 SONG_START_SLOT과 반드시 같아야 한다.</p>
+ */
+const SONG_START_SLOT = 1
+/**
+ * 슬롯 정렬에서 곡만 이만큼 늦게 건다 — 실플레이에서 노트가 약간 느리게 느껴졌다.
+ *
+ * <p>격자 정렬(0.5ms)은 계산상 맞지만 체감은 화면 지연(rAF·컴포지터·디스플레이)이 얹혀서
+ * 노트 쪽이 뒤에 있다. 곡을 그만큼 늦추면 귀와 눈이 같은 순간을 가리킨다.</p>
+ *
+ * <p><b>대가</b>: {@code songAccents.ts}의 표는 곡이 정확히 정렬된 상태에서 뽑은 것이라,
+ * 이 값만큼(232.56ms 슬롯의 0.43칸) 슬롯↔소리 짝이 밀린다. 지도를 이 오프셋으로 다시 뽑아
+ * 봤지만 샘플 지점이 온셋에서 벗어나 분포가 무너졌다(중앙값 0.96→0.39, 최대 3.3→12.1) —
+ * 노트를 소리 위에 놓는 효과는 정렬된 지도를 쓰는 쪽이 낫다. 체감 보정과 배치 근거를
+ * 분리해 둔 것이고, 이 값을 크게 키우면 그 전제가 깨진다.</p>
+ */
+const SONG_NUDGE_MS = 100
 
 const props = withDefaults(
   defineProps<{
@@ -72,6 +107,8 @@ const combo = ref(0)
 const maxCombo = ref(0)
 const counts = ref<Record<Judgement, number>>({ perfect: 0, good: 0, miss: 0 })
 const countdown = ref(COUNTDOWN_SECONDS)
+/** 카운트다운이 끝난 직후 잠깐 띄우는 "시작!" — 곡이 걸리는 순간과 같다 */
+const startFlash = ref(false)
 const handsSeen = ref(false)
 const remainingSec = ref(0)
 /** 로딩이 늦어 놓친 노트 수 — 0보다 크면 안내를 띄운다 */
@@ -85,6 +122,9 @@ const chart = shallowRef(
     : generateBattleChart(props.seed, props.difficulty, props.durationMs),
 )
 
+let flashTimer = 0
+/** 곡 — audioCtx가 생긴 뒤(boot)에야 만들 수 있다 */
+let music: RhythmMusic | null = null
 let audioCtx: AudioContext | null = null
 let clock: GameClock | null = null
 let logic: CatchLogic | RingLogic | null = null
@@ -201,12 +241,28 @@ function renderHands(): Partial<Record<'left' | 'right', RenderHand | null>> {
   }
 }
 
+/**
+ * 카운트다운 → 플레이 전환. 3·2·1이 끝나면 "시작!"을 띄운다.
+ *
+ * 곡은 여기서 틀지 않는다 — 이미 boot에서 절대 시각으로 예약돼 있다. 이 함수가 늦게 불려도
+ * (프레임 드랍) 곡은 제 시각에 들어온다. 리드인부터 깔지 않는 이유는, 첫 노트 전 5초가 손을
+ * 올려 자세를 잡는 시간이라 그 사이 곡이 흐르면 "언제 시작인지"가 흐려지기 때문이다.
+ */
+function beginPlay() {
+  phase.value = 'playing'
+  startFlash.value = true
+  clearTimeout(flashTimer)
+  flashTimer = window.setTimeout(() => (startFlash.value = false), START_FLASH_MS)
+}
+
 function finish() {
   if (phase.value === 'result') return
   phase.value = 'result'
   cancelAnimationFrame(rafId)
   landmarker.stop()
   clock?.stop()
+  // 한 판이 끝나면 곡도 끝난다 — 결과 화면 위로 계속 흐르면 판이 안 끝난 것처럼 들린다
+  music?.stop()
   if (scorer) {
     emit('finished', {
       score: scorer.score,
@@ -227,7 +283,7 @@ function loop() {
     countdown.value = Math.max(1, Math.ceil((LEAD_IN_MS - t) / 1000))
     phase.value = 'countdown'
   } else if (phase.value === 'countdown') {
-    phase.value = 'playing'
+    beginPlay()
   }
   remainingSec.value = Math.max(0, Math.ceil((props.durationMs - t) / 1000))
 
@@ -281,6 +337,10 @@ async function boot() {
     // 브라우저 자동재생 정책 — 사용자 제스처로 진입했으면 즉시 풀린다
     if (audioCtx.state === 'suspended') await audioCtx.resume()
     sfx = new SfxPlayer(audioCtx)
+    // 곡 로드·디코드는 손 인식 모델(7.5MB)과 **병렬**로 돌린다. 순서대로 기다리면 카운트다운을
+    // 잡아먹고, 늦게 끝나도 아래 예약이 파일 안쪽 offset에서 시작해 위상을 지킨다.
+    music = new RhythmMusic(audioCtx, BGM_SRC)
+    const musicReady = music.load()
 
     const skin = resolveSkin(props.skinId)
     renderer = isRing ? new RingRenderer(canvas, skin) : new Renderer(canvas, skin)
@@ -317,6 +377,14 @@ async function boot() {
     const skewSec = props.epochZeroMs == null ? 0 : (props.epochZeroMs - Date.now()) / 1000
     clock.start(audioCtx.currentTime + skewSec)
 
+    // 곡을 게임 시각으로 예약한다 — 절대 시각이라 여기서 몇 프레임 늦게 걸어도 시작 순간은 같다.
+    // 판이 이미 끝났으면(늦게 들어와 즉시 정산) 걸지 않는다 — 결과 화면 위로 곡이 올라온다.
+    const musicClock = clock
+    void musicReady.then((ok) => {
+      if (!ok || disposed || phase.value === 'result') return
+      music?.start(musicClock.ctxTimeAt(slotTimeMs(SONG_START_SLOT) + SONG_NUDGE_MS))
+    })
+
     // ★ 늦게 시작한 참가자 보정.
     // 손 인식 모델(7.5MB)이 캐시에 없으면 로드에 수 초가 걸리는데, 대전에서는 t=0을
     // 서버 시각에 맞추므로 그만큼 t가 점프한다. 그때 지나간 노트를 평소 경로로 처리하면
@@ -347,8 +415,10 @@ onMounted(boot)
 onBeforeUnmount(() => {
   disposed = true
   cancelAnimationFrame(rafId)
+  clearTimeout(flashTimer)
   landmarker.stop()
   clock?.stop()
+  music?.dispose()
   ownStream?.getTracks().forEach((t) => t.stop())
   void audioCtx?.close()
 })
@@ -366,10 +436,15 @@ defineExpose({ canvas: canvasEl })
       <p>{{ loadingText }}</p>
     </div>
 
+    <!-- 리드인 5초 중 마지막 3초만 숫자를 센다 — 그 앞은 손을 올려 자세를 잡는 시간이라 안내만 띄운다 -->
     <div v-else-if="phase === 'countdown'" class="overlay">
-      <p class="count">{{ countdown }}</p>
+      <p v-if="countdown <= COUNTDOWN_SECONDS" class="count">{{ countdown }}</p>
+      <p v-else class="get-ready">준비</p>
       <p class="hint">손을 펴서 화면에 보이게 한 뒤, 노트 위에서 <b>주먹을 쥐세요</b></p>
     </div>
+
+    <!-- 곡이 걸리는 순간 — 오버레이가 아니라 얹기만 한다(첫 노트가 이미 다가오고 있다) -->
+    <p v-if="startFlash" class="start-flash">시작!</p>
 
     <div v-if="phase === 'playing'" class="hud">
       <span class="score">{{ score.toLocaleString() }}</span>
@@ -436,9 +511,37 @@ defineExpose({ canvas: canvasEl })
   color: #e07a4f;
   line-height: 1;
 }
+.get-ready {
+  font-size: clamp(1.6rem, 7vh, 3.2rem);
+  font-weight: 700;
+  color: #b0968a;
+  letter-spacing: 0.2em;
+  line-height: 1;
+}
 .hint {
   font-size: 0.95rem;
   color: #7a6a60;
+}
+.start-flash {
+  position: absolute;
+  top: 42%;
+  left: 50%;
+  margin: 0;
+  /* 애니메이션이 꺼진 환경에서도 가운데에 있도록 기본 변형을 둔다 */
+  transform: translate(-50%, -50%);
+  font-size: clamp(2.4rem, 11vh, 5.4rem);
+  font-weight: 700;
+  color: #e07a4f;
+  letter-spacing: 0.08em;
+  text-shadow: 3px 3px 0 #fff3ea;
+  pointer-events: none;
+  animation: start-pop 0.9s ease-out forwards;
+}
+@keyframes start-pop {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.7); }
+  22% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+  70% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.15); }
 }
 .hud {
   position: absolute;

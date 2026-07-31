@@ -31,6 +31,15 @@ export const roomsApi = {
   /** POST /v1/live-rooms — 방 생성 */
   create: (body: CreateLiveRoomRequest) => httpEnvelope.post<CreateLiveRoomResponse>(BASE, body),
 
+  /**
+   * POST /v1/live-rooms/{roomId}/open — 방을 로비 목록에 공개(방장 전용).
+   *
+   * 방은 생성만으로는 목록에 뜨지 않는다. 방장이 기기 점검을 마치고 게임방에 실제로 들어온 뒤
+   * 이 호출로 공개해야 로비·빠른 시작의 대상이 된다 — 방장 없는 방에 남이 들어가 무한정
+   * 기다리는 상황을 없애기 위해서다. 멱등이라 여러 번 불려도 안전하다.
+   */
+  open: (roomId: string) => httpEnvelope.post<void>(`${BASE}/${roomId}/open`),
+
   /** GET /v1/live-rooms/{roomId} — 방 상세 */
   detail: (roomId: string) => httpEnvelope.get<LiveRoomDetail>(`${BASE}/${roomId}`),
 

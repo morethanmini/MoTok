@@ -1,15 +1,16 @@
 <script setup lang="ts">
 /** 게임룸 — 화상 파티룸(LiveKit SFU). 방 정원만큼 슬롯을 만들고, 참가자는 실시간 타일로,
  *  빈 자리는 "대기 중"으로 표시한다. 무대/채팅/게임 선택은 데모. */
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch, type AsyncComponentLoader } from 'vue'
+import { isChunkLoadError, markBuildOutdated, reloadForNewBuild } from '@/composables/useBuildVersion'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, friendsApi, reportsApi, chatReportsApi, gamesApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason } from '@/api'
+import { roomsApi, friendsApi, reportsApi, chatReportsApi, gamesApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason, type InventoryItem } from '@/api'
 import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { preferredAudioDeviceId, useCamera } from '@/composables/useCamera'
-import { useDecoration } from '@/composables/useDecoration'
+import { EQUIP_LIMIT, useDecoration } from '@/composables/useDecoration'
 import { motionModelsReady, warmUpMotionModels } from '@/composables/motionModels'
 import { useDecorSync } from '@/composables/useDecorSync'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
@@ -26,28 +27,40 @@ import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
 import GameSetupModal from './components/GameSetupModal.vue'
 import ReportIcon from './components/ReportIcon.vue'
-import MusicVolumeButton from './components/MusicVolumeButton.vue'
 import HostWaitingOverlay from './components/HostWaitingOverlay.vue'
 import InviteFriendsModal from './components/InviteFriendsModal.vue'
+import inventoryChest from '@/assets/device-setup/inventory-chest.png'
 // 방 정보 수정 모달(-130) — 입력 필드가 방 생성과 동일 규격(명세 §4)이라 로비 모달을 그대로 재사용한다.
 import CreateRoomModal, { type NewRoom } from '@/features/lobby/components/CreateRoomModal.vue'
-// MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
-const FingerStarGame = defineAsyncComponent(
-  () => import('@/features/games/finger-star/FingerStarGame.vue'),
-)
-const BodyFitGame = defineAsyncComponent(
-  () => import('@/features/games/body-fit/BodyFitGame.vue'),
-)
-const DrawingRelayGame = defineAsyncComponent(
-  () => import('@/features/games/drawing-relay/DrawingRelayGame.vue'),
-)
-const CatchRhythmGame = defineAsyncComponent(
-  () => import('@/features/games/catch-rhythm/CatchRhythmGame.vue'),
-)
+/**
+ * MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
+ *
+ * <p>지연 로딩이라 <b>배포 교체에 취약하다</b> — 배포가 나가면 이 탭이 아는 청크 이름이 서버에서
+ * 사라지고, 그때 import는 404로 조용히 실패한다. GAME_START는 정상적으로 받았는데 게임만 안 뜨는
+ * 상태가 되어 "시작을 눌렀는데 카메라만 보인다"로 나타난다. 재시도는 소용없다(이름 자체가 틀렸다) —
+ * 새 index.html을 받는 것, 즉 새로고침이 유일한 복구다.</p>
+ */
+function lazyGame(loader: AsyncComponentLoader) {
+  return defineAsyncComponent({
+    loader,
+    onError(error, _retry, fail) {
+      if (isChunkLoadError(error)) {
+        markBuildOutdated() // 배너를 즉시 띄운다 — 자동 새로고침이 막혀도 사용자는 원인을 알 수 있다
+        if (reloadForNewBuild()) return
+      }
+      fail()
+    },
+  })
+}
+const FingerStarGame = lazyGame(() => import('@/features/games/finger-star/FingerStarGame.vue'))
+const BodyFitGame = lazyGame(() => import('@/features/games/body-fit/BodyFitGame.vue'))
+const FishingGame = lazyGame(() => import('@/features/games/fishing/FishingGame.vue'))
+const DrawingRelayGame = lazyGame(() => import('@/features/games/drawing-relay/DrawingRelayGame.vue'))
+const CatchRhythmGame = lazyGame(() => import('@/features/games/catch-rhythm/CatchRhythmGame.vue'))
 import { useRhythmAutoJoin } from '@/features/games/catch-rhythm/useRhythmAutoJoin'
-import AppHeader from '@/components/common/AppHeader.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
+import BrandLogo from '@/components/common/BrandLogo.vue'
 import { useSessionStore } from '@/stores/session'
 
 const route = useRoute()
@@ -56,6 +69,11 @@ const router = useRouter()
 const session = useSessionStore()
 const bgm = useBgm()
 const { message: toast, flash } = useToast(2600)
+const soundSettingsOpen = ref(false)
+const gameMusicPercent = computed(() => Math.round(bgm.gameMusic.value * 100))
+function setGameMusicVolume(e: Event) {
+  bgm.setGameMusic(Number((e.target as HTMLInputElement).value) / 100)
+}
 
 // LiveKit 실시간 방 + 로컬 카메라 캡처. 프리뷰·모션 인식 게임 입력은 항상 로컬 캡처 스트림을
 // 쓰고, LiveKit에는 복제본을 발행한다 — "카메라 끄기"는 발행만 끊어서 다른 사람에게만 꺼져
@@ -69,6 +87,29 @@ const CAMERA_CONSTRAINTS = { video: { width: 640, height: 400 }, audio: false } 
 // (버킷 CORS 없음) 내 화면에만 보였다.
 const decor = useDecoration()
 const decorSync = useDecorSync(lk, () => decor.sprites.value)
+const showDecorInventory = ref(false)
+const decorBusyItemId = ref<number | null>(null)
+const selectedDecorId = ref<number | null>(null)
+
+async function toggleDecorItem(item: InventoryItem) {
+  if (decorBusyItemId.value !== null) return
+  decorBusyItemId.value = item.itemId
+  const equipped = !item.equipped
+  const ok = await decor.setEquipped(item.itemId, equipped)
+  if (ok) selectedDecorId.value = equipped ? item.itemId : null
+  if (!ok && decor.error.value) flash(decor.error.value)
+  decorBusyItemId.value = null
+}
+
+async function removeDecorSticker(itemId: number) {
+  if (await decor.setEquipped(itemId, false)) selectedDecorId.value = null
+  else if (decor.error.value) flash(decor.error.value)
+}
+
+async function saveGameDecor() {
+  if (await decor.save()) flash('카메라 꾸미기를 저장했어요')
+  else if (decor.error.value) flash(decor.error.value)
+}
 
 /** 발행에 쓸 카메라 트랙 — 원본 캡처 그대로(발행 시점에 복제된다). */
 function publishableTrack(stream: MediaStream | null): MediaStreamTrack | null {
@@ -132,6 +173,24 @@ function applyDetail(d: LiveRoomDetail) {
   memberIds.value = d.members.map((m) => m.userId)
   // 신고 대상은 퇴장 뒤에도 남겨야 하므로, 이번 상세 조회에 없는 기존 이름을 지우지 않는다.
   memberNames.value = { ...memberNames.value, ...Object.fromEntries(d.members.map((m) => [m.userId, m.displayName])) }
+}
+
+/**
+ * 방을 로비 목록에 공개한다 — 방장이 이 화면에 도달한 것이 곧 "이 방은 굴러간다"는 신호다.
+ *
+ * 방 생성 시점에 공개하면 방장이 기기 점검 화면에 머무는 동안 시작 권한을 가진 사람이 없는 방이
+ * 목록에 떠 있게 되고, 거기 들어간 사람은 방장을 부를 수단도 없이 기다리기만 한다.
+ * 서버는 방장 여부를 다시 검증하고 멱등하게 처리하므로(이미 공개된 방이면 아무 일도 없다)
+ * 새로고침·재입장으로 여러 번 불려도 괜찮다.
+ *
+ * 실패해도 방 이용에는 지장이 없다(로비 노출만 늦어진다) — 조용히 넘긴다.
+ */
+async function publishRoom() {
+  try {
+    await roomsApi.open(roomCode.value)
+  } catch {
+    /* 목록 노출 실패가 방 이용을 막을 이유는 없다 */
+  }
 }
 
 /** userId → 닉네임 — 상세 조회 멤버를 기본으로 LiveKit 참가자 이름으로 보강(뒤늦게 들어온 참가자 대응). */
@@ -237,6 +296,7 @@ async function confirmKick() {
   }
 }
 const selfVideoAspect = ref(8 / 5)
+const selfFramePixels = computed(() => ({ w: 640, h: 640 / selfVideoAspect.value }))
 function syncSelfVideoAspect() {
   const video = selfVideoEl.value
   if (!video?.videoWidth || !video.videoHeight) return
@@ -263,8 +323,9 @@ const picker = ref(false)
 /** 게임을 고른 뒤 모드·난이도를 정하는 설정 창의 대상 게임(-9). null이면 닫힘 */
 const setupGame = ref<GameEntry | null>(null)
 
-// 탭 닫기·주소창 이탈 시 keepalive 퇴장 통보 + bfcache 복원 시 로비로(뒤로가기 복귀 차단)
-useRoomUnloadLeave(() => route.query.room as string | undefined)
+// bfcache 복원 시 로비로(뒤로가기 복귀 차단). 퇴장 통보는 서버 리퍼에 맡긴다 —
+// 새로고침도 pagehide라, 여기서 통보하면 끊긴 사람이 새로고침으로 복구할 길이 막힌다.
+useRoomUnloadLeave(() => route.query.room as string | undefined, { unloadLeave: false })
 
 
 onMounted(async () => {
@@ -283,6 +344,9 @@ onMounted(async () => {
   // 오면 퇴장을 없던 일로 한다. 이미 멤버면 멱등이고 재입장은 비밀번호를 다시 묻지 않는다.
   try {
     applyDetail(await roomsApi.join(roomCode.value))
+    // 방장이 도착했으니 이제 로비에 내놓는다. LiveKit 접속을 기다리지 않는다 —
+    // 접속에 실패해도 방장은 이 화면에 있고, 그때까지 방이 목록에서 빠져 있을 이유가 없다.
+    if (amRoomHost.value) void publishRoom()
   } catch (e) {
     // 방이 사라졌거나(ROOM_NOT_FOUND) 게임 중·정원 초과·강퇴 등 — 들어갈 수 없는 방 화면에
     // 유령으로 머무느니 이유를 알리고 로비로 보낸다(-164). main의 ROOM_NOT_FOUND 분기를
@@ -293,6 +357,13 @@ onMounted(async () => {
     void router.replace({ name: RouteName.Lobby })
     return
   }
+  // 방 토픽 구독 — 카메라·LiveKit보다 먼저 건다.
+  // (1) 채팅은 비영속이라 구독이 늦은 만큼 그대로 유실된다.
+  // (2) 이 구독이 서버의 재실 신호다(RoomPresenceTracker). 새로고침으로 돌아온 사람은
+  //     유예(RoomPresenceTracker.GRACE_MS) 안에 다시 구독해야 방에 남는데, 카메라 권한 대기와 SFU 접속 뒤로 밀려
+  //     있으면 느린 기기에서 그 예산을 넘겨 멀쩡히 돌아오고도 퇴장 처리된다.
+  // 연결 전에 불러도 전역 레지스트리가 등록해 뒀다가 붙는 대로 SUBSCRIBE한다 — 기다릴 필요 없다.
+  void roomChat.connect(roomCode.value)
   // 로컬 캡처는 항상 켠다 — 모션 인식 게임의 입력원이라 카메라를 "꺼도" 게임 시작·참여가
   // 가능해야 한다. "카메라 끄기"는 발행·표시만 끈다: 입장 전 화면에서 껐다면 발행하지 않아
   // 내 타일과 다른 사람 화면 모두 꺼져 보이고, 방 안에서 카메라를 켜면 그때 발행한다.
@@ -323,12 +394,10 @@ onMounted(async () => {
   // 이미 있던 사람들에게 내 꾸미기를 알린다(늦게 들어오는 사람은 useDecorSync가 따로 챙긴다).
   decorSync.broadcast()
 
-  // 채팅은 이력이 없어서(비영속) 구독이 늦은 만큼 그대로 유실 — 입장 직후 바로 연결.
-  void roomChat.connect(roomCode.value)
-
-  // 자동 시작은 여기서부터 가능하다 — 위 구독이 걸린 뒤여야 startGame이 방으로 나가고
-  // 서버가 되돌려주는 GAME_START도 받는다. (감시자도 같은 조건을 보지만, 순서를 명시해 둔다)
+  // 자동 시작은 여기서부터 가능하다 — 구독(위 roomChat.connect)이 걸린 뒤여야 startGame이
+  // 방으로 나가고 서버가 되돌려주는 GAME_START도 받는다. (감시자도 같은 조건을 보지만, 순서를 명시해 둔다)
   tryAutostart()
+
 
   // 모션 모델은 로비 스플래시가 이미 받아 뒀을 것이다(싱글턴이라 여기선 즉시 끝난다).
   // 그래도 한 번 더 확인하는 이유 — 주소창으로 방에 바로 들어오거나 게스트로 로비를 건너뛴
@@ -348,6 +417,7 @@ const offStompReconnect = onStompConnected(() => {
 onBeforeUnmount(() => {
   offStompReconnect()
   clearTimeout(autostartTimer)
+  clearStartAck()
   roomChat.disconnect()
   // BGM은 모듈 싱글턴이라 suspend된 채로 방을 뜨면 로비에서도 영영 안 나온다
   bgm.resumeAfterGame()
@@ -416,7 +486,10 @@ watch(roomChat.messages, (all, prev) => {
 watch(
   () => roomChat.lastError.value,
   (e) => {
-    if (e) flash(e.message)
+    if (!e) return
+    // 시작 거부는 사유가 붙어 오므로 그쪽이 더 정확하다 — 대기 타이머의 막연한 안내를 겹치지 않게 끈다.
+    if (e.path?.endsWith('/game/start')) clearStartAck()
+    flash(e.message)
   },
 )
 
@@ -585,6 +658,31 @@ const suggestCooldown = ref(false)
 // STOMP 미연결(백엔드 미연동 데모)일 때는 로컬 솔로 플레이로 폴백.
 const activeGame = ref<GameEntry | null>(null)
 const activeSession = ref<ActiveGameSession | null>(null)
+/**
+ * START를 보낸 뒤 GAME_START를 기다리는 시간. 넘기면 "전달되지 않았다"고 알린다.
+ *
+ * <p>시작 요청은 응답이 없는 STOMP publish다. 프레임이 서버에 닿지 않아도(끊긴 걸 아직 모르는
+ * 반열림 소켓·재연결 대기 구간) 클라이언트는 성공과 구분할 수 없고, 화면은 아무 일도 없었던 것처럼
+ * 남는다 — 실제로 "START를 눌렀는데 내 카메라만 보인다"로 나타났다. 서버가 거부한 경우는
+ * /user/queue/errors로 사유가 오므로 그쪽이 더 정확하고, 여기서는 <b>아무 응답도 없는</b>
+ * 경우만 맡는다.</p>
+ *
+ * <p>카운트다운(서버 game.countdownSec)보다 짧아야 의미가 있다 — 정상 흐름에서는 GAME_START가
+ * 카운트다운 <i>이전에</i> 도착하므로 이 타이머는 왕복 지연만 넘기면 된다.</p>
+ */
+const START_ACK_TIMEOUT_MS = 3000
+let startAckTimer: ReturnType<typeof setTimeout> | undefined
+function armStartAck() {
+  clearStartAck()
+  startAckTimer = setTimeout(() => {
+    startAckTimer = undefined
+    flash('시작 신호가 전달되지 않았어요 · 새로고침해 주세요')
+  }, START_ACK_TIMEOUT_MS)
+}
+function clearStartAck() {
+  clearTimeout(startAckTimer)
+  startAckTimer = undefined
+}
 const gameResults = ref<GameResultEntry[] | null>(null)
 /** 게임④(-86): POSE_SET으로 도착한 출제 포즈(랜드마크 JSON) — 벽 생성 입력 */
 const poseChallenge = ref<string | null>(null)
@@ -667,13 +765,14 @@ watch(hostAway, (away) => {
 /**
  * 자체 사운드를 가진 게임은 로비 BGM을 내린다 — 안 내리면 테마와 게임 음악이 겹쳐 들린다.
  * 게임④(shape, -138)로 시작했고, 핑거 스타(finger)·그림 릴레이(draw)가 인게임 루프를 받으면서
- * 함께 들어왔다. 캐치캐치리듬(rhythm)은 서버가 준 곡을 자체 재생하므로 담당과 합의 후 넣는다.
+ * 함께 들어왔다. 캐치캐치리듬(rhythm)도 인게임 곡을 갖게 되어 합류 — 판정음까지 내는 게임이라
+ * 테마가 남아 있으면 셋이 겹친다.
  *
  * 반드시 activeGame 선언 아래에 둔다 — watch는 초기값을 잡으려고 getter를 setup 중 즉시
  * 실행하므로, 위에 두면 const TDZ에 걸려 setup 전체가 죽는다(빌드는 통과한다: TS는 화살표
  * 함수 안의 선언 전 참조를 잡지 않는다).
  */
-const AUDIO_OWNING_GAMES = ['shape', 'finger', 'draw']
+const AUDIO_OWNING_GAMES = ['shape', 'finger', 'draw', 'rhythm']
 watch(
   // 설정 창(-9)도 인게임 베드를 직접 깔기 때문에 같이 내린다 — 소유 판정을 여기 한 곳에 모아두면
   // 창을 닫고 게임으로 넘어가는 사이에 테마가 잠깐 살아나는 일이 없다.
@@ -762,7 +861,7 @@ interface LiveScoreRow {
   nickname: string
   starsLit: number
   holdProgress: number
-  /** 핑거 스타(게임①) 60초 매치 완성 개수 — 1순위 정렬 기준. 다른 게임은 0 */
+  /** 게임①: 60초 매치 완성 개수(1순위 정렬 기준) / 게임⑤: 낚은 마리 수(표시 전용). 그 외 0 */
   completedCount: number
   finished: boolean
   score: number | null
@@ -843,6 +942,7 @@ function applyGameEvent(e: GameEvent) {
     return
   }
   if (e.type === 'GAME_START') {
+    clearStartAck()
     const entry = GAME_CATALOG.find((g) => g.gameId === e.gameId)
     if (!entry) return
     gameResults.value = null
@@ -1100,7 +1200,11 @@ async function launch(g: GameEntry, difficulty?: string, mode?: string, wallCoun
       activeGame.value = g
       return
     }
-    roomChat.startGame(g.gameId, undefined, difficulty, mode, wallCount)
+    if (!roomChat.startGame(g.gameId, undefined, difficulty, mode, wallCount)) {
+      flash('실시간 연결이 끊겼어요 · 새로고침해 주세요')
+      return
+    }
+    armStartAck()
     return
   }
   // 서버 미연동 데모 — 로컬 솔로 플레이 폴백. 멀티 전용 게임(minPlayers>1)은 혼자
@@ -1153,6 +1257,28 @@ function onGameFinished(r: { completedCount: number; totalScore: number; avgScor
   }
   // 솔로 폴백 — 결과를 토스트로만 알린다.
   flash(`✨ ${r.completedCount}개 완성 · 평균 ${r.avgScore}점`)
+}
+
+/**
+ * 게임⑤ 낚시(-49) 진행 중계 — 물고기를 낚을 때마다.
+ *
+ * 낚시 총점은 누적이라 서버 progress의 starsLit(0~10 클램프)에 실을 수 없다. 마리 수만
+ * completedCount 자리로 보내고 스코어보드는 "N마리"로 그린다. 총점은 아래 finished에서 한 번.
+ */
+function onFishingProgress(_score: number, caught: number) {
+  if (activeSession.value && !gameResults.value) {
+    roomChat.sendGameProgress(0, 0, caught)
+  }
+}
+
+/** 게임⑤ 낚시 종료 집계 — 서버는 총점을 마리 수 × 어종 최고 점수로 상한 검사한다 */
+function onFishingFinished(r: { totalScore: number; caught: number }) {
+  if (activeSession.value) {
+    roomChat.sendGameFinish(r.totalScore, 0, r.caught)
+    return
+  }
+  // 솔로 폴백(서버 미연동) — 결과를 토스트로만 알린다
+  flash(`🎣 ${r.caught}마리 · ${r.totalScore}점`)
 }
 
 /** 게임④(-86): 출제자가 캡처한 포즈(랜드마크 JSON)를 서버로 — POSE_SET이 방 전체에 돌아온다 */
@@ -1347,6 +1473,9 @@ watch(
     if (!e) return
     hostId.value = e.hostUserId
     hostName.value = e.hostDisplayName
+    // 아직 공개되지 않은 방(방장이 기기 점검 중에 나가 버린 경우)이라면 여기서 목록에 올린다 —
+    // 내가 방장이 됐고 나는 이 화면에 있으니 공개 조건을 그대로 만족한다. 이미 공개된 방이면 서버가 무시한다.
+    if (e.hostUserId === myParticipantId.value) void publishRoom()
     // 결과만 알리면 "왜 갑자기?"가 되므로 원인(방장 퇴장)을 함께 붙인다.
     flash(
       e.hostUserId === myParticipantId.value
@@ -1471,7 +1600,22 @@ async function addFriend(target: ParticipantView | null) {
   }
 }
 
-const startLabel = computed(() => (amRoomHost.value ? 'START' : '제안'))
+/**
+ * 실시간 연결이 끊겼음을 방 안에서 드러낸다.
+ *
+ * <p>채팅·게임 시작·진행 중계가 전부 전역 소켓 하나(-142)를 쓴다. 끊긴 줄 모르면 "눌러도
+ * 아무 일이 없는" 상태가 되고, 여러 명이 있는 방에서는 <b>일부만 게임이 시작되는데 아무도
+ * 이유를 모르는</b> 상황이 된다 — 그래서 본인에게 먼저 알린다.</p>
+ *
+ * <p>복구는 새로고침이 확실하다: 새 문서는 클라이언트를 새로 만들어 재시도 백오프(최대 60초)를
+ * 건너뛰고, 방 재실은 서버 유예(RoomPresenceTracker.GRACE_MS) 안에 다시 구독하면 유지된다.</p>
+ */
+const realtimeDown = computed(() => !roomChat.connected.value)
+function reloadPage() {
+  window.location.reload()
+}
+
+const startLabel = computed(() => 'GAME')
 /**
  * 게임 선택 버튼 잠금 — 서버 연결 중에는 방장 여부를 알기 전까지 잠근다(제안 오발신 방지).
  * STOMP 미연결(백엔드 미연동 로컬 데모)에서는 상세 조회가 영영 안 끝나므로 잠그지 않는다 —
@@ -1492,34 +1636,40 @@ const startHint = computed(() =>
 <template>
   <div class="room-shell">
     <!-- 상단 바 -->
-    <AppHeader />
-
     <div class="room-ribbon">
-      <span class="px-kicker"><i /> {{ roomTitle ?? 'LIVE PARTY ROOM' }}</span>
+      <div class="px-kicker"><button type="button" class="room-logo-btn" title="방 나가기" @click="leave"><BrandLogo class="room-brand" title="" size="sm" /></button>{{ roomTitle ?? 'LIVE PARTY ROOM' }}</div>
+
+      <div class="ribbon-sound">
+        <button class="ribbon-sound-btn" :class="{ active: soundSettingsOpen }" @click="soundSettingsOpen = !soundSettingsOpen">소리 설정</button>
+        <div v-if="soundSettingsOpen" class="sound-settings-pop">
+          <label>
+            <span>게임 음악</span>
+            <input type="range" min="0" max="100" step="5" :value="gameMusicPercent" aria-label="게임 음악 볼륨" @input="setGameMusicVolume" />
+          </label>
+        </div>
+      </div>
+      <span class="ribbon-divider" aria-hidden="true">|</span>
 
       <!-- 유저 신고 (방 코드 왼쪽) -->
       <button class="ribbon-report" title="유저 신고" @click="openUserReport">
-        <ReportIcon :width="16" :height="20" />
+        신고
       </button>
 
-      <!-- 게임 BGM 볼륨. 로비 음악은 설정 › 소리에서 따로 조절한다 -->
-      <MusicVolumeButton />
-
       <!-- 친구 초대 (-100) — 참가자 누구나, 대기실에서만. 게임 중엔 서버도 409로 거부한다. -->
+      <span v-if="!activeGame" class="ribbon-divider" aria-hidden="true">|</span>
       <button v-if="!activeGame" class="ribbon-invite" title="친구 초대" @click="openInvite">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">
-          <circle cx="9" cy="8" r="3.6" /><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" /><path d="M18.5 8v6M15.5 11h6" />
-        </svg>
+        친구 초대
       </button>
 
       <!-- 방 설정 (-130) — 방장만, 대기실에서만. 게임 중엔 서버도 거부하므로 버튼을 숨긴다. -->
+      <span v-if="selfIsHost && !activeGame" class="ribbon-divider" aria-hidden="true">|</span>
       <button
         v-if="selfIsHost && !activeGame"
         class="ribbon-settings"
         title="방 설정"
         @click="openSettings"
       >
-        ⚙
+        설정
       </button>
 
       <!-- 방 코드 (하단 바에서 이동) -->
@@ -1534,6 +1684,12 @@ const startHint = computed(() =>
       </div>
     </div>
 
+    <!-- 실시간 끊김 안내 — 끊긴 본인만 본다. 채팅·게임 시작이 모두 이 소켓에 달려 있다. -->
+    <div v-if="realtimeDown" class="offline-bar">
+      <span class="px">실시간 연결이 끊겼어요 · 채팅과 게임 시작이 동작하지 않아요</span>
+      <button class="px offline-reload" @click="reloadPage">새로고침</button>
+    </div>
+
     <!-- 본문: 내 캠을 크게, 나머지는 인원수에 맞춰 그리드로 배치 -->
     <main class="room-main">
       <div
@@ -1546,6 +1702,8 @@ const startHint = computed(() =>
           'three-player': capacity === 3,
           'two-player': capacity === 2,
           'solo-play': isSoloPlay,
+          'game-active': !!activeGame,
+          'fish-game': activeGame?.id === 'fish',
         }"
         :style="capacity === 2 ? { '--two-player-aspect': selfVideoAspect * 2 } : undefined"
       >
@@ -1574,7 +1732,11 @@ const startHint = computed(() =>
           />
         </div>
         <!-- 내 캠 — 항상 가장 크게 -->
-        <div class="self-tile self-spot" :style="{ '--camera-aspect': selfVideoAspect }">
+        <div
+          class="self-tile self-spot"
+          :class="{ 'fish-game': activeGame?.id === 'fish' }"
+          :style="{ '--camera-aspect': activeGame?.id === 'fish' ? 4 / 3 : selfVideoAspect }"
+        >
           <video
             v-show="selfCamOn"
             ref="selfVideoEl"
@@ -1588,11 +1750,54 @@ const startHint = computed(() =>
                fit은 <video>의 object-fit과 같아야 영상 안 같은 자리에 얹힌다. -->
           <StickerOverlay
             v-if="selfCamOn"
+            class="self-sticker-layer"
             :sprites="decor.sprites.value"
             mirrored
+            :editable="showDecorInventory"
             fit="contain"
             :frame-aspect="selfVideoAspect"
+            :frame-pixels="selfFramePixels"
+            :selected-id="selectedDecorId"
+            @move="decor.move"
+            @scale="decor.setScale"
+            @remove="removeDecorSticker"
+            @select="selectedDecorId = $event"
           />
+          <section v-if="showDecorInventory" class="game-decor-inventory" aria-label="카메라 꾸미기 인벤토리">
+            <div class="game-decor-head">
+              <strong>카메라 꾸미기</strong>
+              <button type="button" aria-label="인벤토리 닫기" @click="showDecorInventory = false">×</button>
+            </div>
+            <div v-if="decor.inventory.value.length" class="game-decor-items">
+              <button
+                v-for="item in decor.inventory.value"
+                :key="item.itemId"
+                type="button"
+                class="game-decor-item"
+                :class="{ on: item.equipped }"
+                :disabled="decorBusyItemId !== null || !decor.canEquip(item)"
+                :title="decor.canEquip(item) ? item.name : `${item.name} · 장착 한도(${EQUIP_LIMIT[item.category]}개)`"
+                @click="toggleDecorItem(item)"
+              >
+                <img v-if="item.imageUrl" :src="item.imageUrl" :alt="item.name" />
+                <span v-else>✦</span>
+              </button>
+            </div>
+            <p v-else class="game-decor-empty">{{ decor.loading.value ? '불러오는 중…' : '보유한 꾸미기 아이템이 없어요' }}</p>
+            <button v-if="decor.placements.value.length" type="button" class="game-decor-save" :disabled="decor.saving.value" @click="saveGameDecor">
+              {{ decor.saving.value ? '저장 중…' : decor.dirty.value ? '꾸미기 저장 *' : '꾸미기 저장' }}
+            </button>
+          </section>
+          <button
+            type="button"
+            class="game-decor-shortcut"
+            :class="{ active: showDecorInventory }"
+            aria-label="카메라 꾸미기 인벤토리 열기"
+            @click="showDecorInventory = !showDecorInventory"
+          >
+            <img :src="inventoryChest" alt="" />
+            <span>카메라 꾸미기</span>
+          </button>
           <div v-if="!selfCamOn" class="cam-off">
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">
               <path d="M2 6h11v12H2zM16 10l6-4v12l-6-4" /><line x1="2" y1="2" x2="22" y2="22" />
@@ -1643,6 +1848,20 @@ const startHint = computed(() =>
             @close="requestCloseGame"
             @draw="(seq: number, ops: DrawOp[]) => roomChat.sendGameDraw(seq, ops)"
             @turn-skip="(turnIdx: number, remainingMs: number) => roomChat.sendGameTurnSkip(turnIdx, remainingMs)"
+          />
+          <!-- 게임⑤ 모션 낚시(S15P11A706-49) — 서버 권위 90초 세션. 점수가 누적 합계라
+               실시간 스코어보드에는 마리 수만 중계하고 총점은 종료 시 한 번 제출한다. -->
+          <FishingGame
+            v-else-if="activeGame?.id === 'fish'"
+            ref="gameComp"
+            :video="selfVideoEl ?? null"
+            :session="activeSession"
+            :results="gameResults"
+            :my-user-id="myParticipantId"
+            embedded
+            @close="requestCloseGame"
+            @progress="onFishingProgress"
+            @finished="onFishingFinished"
           />
           <!-- 캐치캐치리듬 — 전용 STOMP 채널이라 activeSession을 쓰지 않는다(자기 생명주기 소유).
                roomChat은 구독/발행 구멍만 쓰고 리듬 도메인 지식은 컴포넌트 안에 있다. -->
@@ -1769,7 +1988,9 @@ const startHint = computed(() =>
                   ? bodyFitChain
                     ? `${Math.round(row.holdProgress * bodyFitChainMax)}점`
                     : `일치율 ${Math.round(row.holdProgress * 100)}%`
-                  : `⭐ ${row.starsLit}`
+                  : activeGame?.id === 'fish'
+                    ? `🐟 ${row.completedCount}마리`
+                    : `⭐ ${row.starsLit}`
             }}</span>
           </div>
           <div v-if="scoreboardRows.length === 0" class="gs-empty">진행 상황 수신 대기 중…</div>
@@ -1781,32 +2002,19 @@ const startHint = computed(() =>
     <!-- 하단 바 -->
     <footer class="room-footer">
       <div class="controls">
-        <button class="ctrl" :class="{ off: !speakerOn }" title="스피커" @click="speakerOn = !speakerOn">
+        <button class="ctrl" :class="{ on: speakerOn, off: !speakerOn }" title="스피커" @click="speakerOn = !speakerOn">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 9a3.5 3.5 0 010 6" /></svg>
         </button>
-        <button class="ctrl" :class="{ off: !selfMicOn }" title="마이크" @click="toggleMic">
+        <button class="ctrl" :class="{ on: selfMicOn, off: !selfMicOn }" title="마이크" @click="toggleMic">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="9" y="3" width="6" height="11" /><path d="M5 11a7 7 0 0014 0M12 18v3" /></svg>
         </button>
-        <button class="ctrl" :class="{ on: selfCamOn }" title="카메라" @click="toggleCam">
+        <button class="ctrl" :class="{ on: selfCamOn, off: !selfCamOn }" title="카메라" @click="toggleCam">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="2" y="6" width="14" height="12" /><path d="M16 10l6-4v12l-6-4" /></svg>
-        </button>
-        <button class="ctrl" :class="{ on: screenOn }" title="화면 공유" @click="screenOn = !screenOn">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="2" y="4" width="20" height="13" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>
-        </button>
-        <button class="ctrl" title="아바타"><span class="px">☻</span></button>
-        <button
-          class="px start-btn"
-          :class="{ suggest: !amRoomHost }"
-          :disabled="pickerLocked || (detailLoaded && !amRoomHost && suggestCooldown)"
-          :title="startHint"
-          @click="openPicker"
-        >
-          <span class="play-ico">▶</span>
-          <span class="start-title">{{ startLabel }}</span>
         </button>
       </div>
 
       <!-- 채팅 독 -->
+      <div class="footer-chat-actions">
       <div class="chat-dock">
         <div class="chat-log">
           <div class="chat-log-list">
@@ -1877,6 +2085,17 @@ const startHint = computed(() =>
             </div>
           </div>
         </template>
+      </div>
+      <button
+        class="px start-btn footer-start-btn"
+        :class="{ suggest: !amRoomHost }"
+        :disabled="pickerLocked || (detailLoaded && !amRoomHost && suggestCooldown)"
+        :title="startHint"
+        @click="openPicker"
+      >
+        <span class="play-ico">▶</span>
+        <span class="start-title">{{ startLabel }}</span>
+      </button>
       </div>
 
       <div class="footer-right">
@@ -2019,6 +2238,7 @@ const startHint = computed(() =>
 
     <!-- 유저 신고 (방 코드 왼쪽 버튼) -->
     <PixelModal v-if="userReportOpen" variant="lobby" @close="closeUserReport">
+      <button type="button" class="report-close" aria-label="유저 신고 닫기" @click="closeUserReport">×</button>
       <h3 class="report-title">🚩 유저 신고</h3>
       <p class="report-field-label">신고할 유저를 선택해 주세요</p>
       <ul class="report-reasons">
@@ -2051,8 +2271,7 @@ const startHint = computed(() =>
         maxlength="500"
         rows="4"
       />
-      <div class="leave-actions">
-        <PixelButton block @click="closeUserReport">취소</PixelButton>
+      <div class="leave-actions user-report-actions">
         <PixelButton
           variant="primary"
           block
@@ -2078,7 +2297,10 @@ const startHint = computed(() =>
 .room-shell {
   width: 100vw;
   height: 100vh;
-  min-width: 1120px;
+  /* min-width 하드 바닥을 두지 않는다 — Windows 배율 × 크롬 줌이 곱해져서 CSS 뷰포트가
+     물리 해상도보다 훨씬 좁아진다(1366@125% = 1093px, 1920@150%+줌125% = 1024px).
+     1120px 바닥이 있으면 그 아래에서 가로가 통째로 잘렸다. 아래 @media(max-width:1120px)로
+     크롬(리본·푸터·컨트롤)을 줄여 캠 영역을 지킨다 — AppHeader가 쓰는 것과 같은 브레이크포인트. */
   display: flex;
   flex-direction: column;
   position: relative;
@@ -2122,7 +2344,7 @@ const startHint = computed(() =>
   border: 3px solid #925c47;
   border-radius: 7px;
   box-shadow: inset 2px 2px 0 rgba(255, 255, 255, .42), inset -2px -3px 0 rgba(120, 58, 47, .18), 3px 3px 0 #a66b50;
-  font-size: 12px;
+  font-size: 19px;
 }
 .leave-confirm-actions :deep(.leave-cancel) { background: #fff7e5; color: #4b372b; }
 .leave-confirm-actions :deep(.leave-submit) { background: #ef7775; color: #fff; }
@@ -2135,6 +2357,24 @@ const startHint = computed(() =>
 .room-ribbon .px-kicker { padding: 5px 9px; font-size: 8px; }
 .room-ribbon .px-kicker i { width: 7px; height: 7px; border-radius: 50%; background: var(--c-coral); animation: px-blink 1s steps(2) infinite; }
 .room-ribbon b { font-size: 12px; }
+
+/* 실시간 끊김 안내 — 리본 바로 아래 전폭. 평소엔 렌더되지 않아 자리를 차지하지 않는다. */
+.offline-bar {
+  flex: none;
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 7px 16px;
+  border-bottom: 2px solid var(--c-ink);
+  background: var(--c-coral); color: #fff;
+  font-size: 9px;
+  z-index: 5;
+}
+.offline-reload {
+  flex: none;
+  border: 2px solid var(--c-ink); border-radius: 8px;
+  background: #fff; color: var(--c-ink);
+  padding: 4px 10px; font-size: 8px; font-weight: 700;
+}
+.offline-reload:hover { background: var(--c-yellow); }
 
 /* 본문 */
 .room-main {
@@ -2190,6 +2430,20 @@ const startHint = computed(() =>
   box-shadow: 4px 4px 0 rgba(43, 35, 51, 0.2);
 }
 .self-video { width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); background: var(--c-letterbox); }
+.game-decor-shortcut { position: absolute; z-index: 5; right: 12px; bottom: 12px; display: inline-flex; align-items: center; gap: 6px; height: 39px; padding: 0 9px 0 5px; border: 2px solid #8d6a54; border-radius: 7px; background: #fffdf7; color: #5e4432; box-shadow: 2px 2px 0 rgba(45,28,17,.35); font-size: 10px; font-weight: 700; }
+.game-decor-shortcut:hover, .game-decor-shortcut.active { background: #fff4d6; transform: translate(-1px, -1px); }
+.game-decor-shortcut img { width: 28px; height: 28px; object-fit: contain; image-rendering: pixelated; }
+.game-decor-inventory { position: absolute; z-index: 6; right: 12px; bottom: 59px; width: min(210px, calc(100% - 24px)); overflow: hidden; border: 2px solid #8d6a54; border-radius: 7px; background: #fffdf7; box-shadow: 3px 3px 0 rgba(45,28,17,.4); color: #533d2f; }
+.game-decor-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-bottom: 2px solid #dec79e; background: #f7e5bb; font-size: 11px; }
+.game-decor-head button { width: 19px; height: 19px; padding: 0; border: 0; background: transparent; color: #79553d; font-size: 19px; line-height: 1; }
+.game-decor-items { display: flex; flex-wrap: wrap; gap: 6px; min-height: 57px; padding: 10px; }
+.game-decor-item { display: grid; width: 35px; height: 35px; place-items: center; padding: 3px; border: 2px solid #d9c3a2; border-radius: 5px; background: #fff; }
+.game-decor-item.on { border-color: #75a55e; background: #e4f0d2; }
+.game-decor-item:disabled:not(.on) { opacity: .45; }
+.game-decor-item img { width: 100%; height: 100%; object-fit: contain; }
+.game-decor-empty { margin: 0; padding: 18px 10px; color: #8f7868; font-size: 10px; text-align: center; }
+.game-decor-save { width: calc(100% - 20px); height: 30px; margin: 0 10px 10px; border: 2px solid #9a694d; border-radius: 6px; background: #edc66e; color: #543a29; font-size: 10px; font-weight: 700; }
+.game-decor-save:disabled { opacity: .7; }
 .cam-off { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; background: #f3ead2; color: #a99f86; }
 .cam-off { background: linear-gradient(135deg, var(--c-mint-soft), #fff0c4); }
 .cam-on-btn { padding: 10px 16px; border: 3px solid var(--c-ink-soft); border-radius: 11px; background: var(--c-mint); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
@@ -2302,7 +2556,8 @@ const startHint = computed(() =>
 .ctrl.on { background: #d9f2cf; color: #5cbf4a; }
 .ctrl.off { background: #fbdbe0; color: #e85d6e; }
 
-.chat-dock { grid-row: 1; grid-column: 1; position: relative; justify-self: start; width: 100%; min-width: 0; max-width: 420px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; height: 52px; background: #fff; border: 3px solid var(--c-ink-soft); border-radius: 14px; box-shadow: var(--shadow-sm); }
+.footer-chat-actions { grid-row: 1; grid-column: 1; display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; }
+.chat-dock { position: relative; flex: 0 1 420px; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; height: 52px; background: #fff; border: 3px solid var(--c-ink-soft); border-radius: 14px; box-shadow: var(--shadow-sm); }
 .chat-log {
   position: absolute; bottom: 62px; left: 0; width: 100%;
   display: flex; flex-direction: column; gap: 8px;
@@ -2328,6 +2583,9 @@ const startHint = computed(() =>
 .bubble-report:hover { opacity: 0.75; }
 
 /* 신고 모달 */
+:deep(.modal.lobby) { position: relative; }
+.report-close { position: absolute; top: 21px; right: 22px; display: grid; width: 24px; height: 24px; place-items: center; padding: 0; border: 0; background: transparent; color: #79553d; font-size: 23px; line-height: 1; }
+.report-close:hover { color: #c15d5a; }
 .report-title { margin: 0 0 14px; color: #3d2c22; font-family: var(--font-pixel); font-size: 20px; font-weight: 400; }.report-title::before { display: block; margin-bottom: 5px; color: #b17b51; content: 'REPORT'; font-family: inherit; font-size: 9px; letter-spacing: 1px; }
 .report-target { margin-bottom: 14px; padding: 12px; border: 2px solid #dec59e; border-radius: 7px; background: #fff7e8; }
 .report-target-name { font-size: 11px; font-weight: 800; color: #8c5a42; }
@@ -2343,6 +2601,7 @@ const startHint = computed(() =>
 }
 .report-field-label { margin: 14px 0 0; font-size: 10px; color: var(--c-muted); }
 .report-field-label:first-of-type { margin-top: 0; }
+.report-field-label + .report-reasons { margin-top: 12px; }
 .report-textarea {
   width: 100%; margin: 8px 0 18px; padding: 8px 10px;
   border: 2px solid var(--c-ink-soft); border-radius: 9px;
@@ -2350,6 +2609,7 @@ const startHint = computed(() =>
   font-family: inherit; resize: vertical;
 }
 .report-title ~ .leave-actions { margin-top: 20px; }.report-title ~ .leave-actions :deep(.px-btn) { border: 2px solid #9a674b; border-radius: 7px; box-shadow: 3px 3px 0 #c6a47d; font-size: 14px; }.report-title ~ .leave-actions :deep(.v-secondary) { background: #fffaf0; color: #6e5646; }.report-title ~ .leave-actions :deep(.v-primary) { background: #e97872; color: #fff; }
+.user-report-actions { grid-template-columns: 1fr; margin-top: 8px !important; }
 .chat-dock input { position: relative; z-index: 47; flex: 1; min-width: 0; margin-left: -5px; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 15px; }
 .chat-count { flex: none; font-size: 9px; color: #a99f86; }
 .chat-count.over { color: var(--c-coral); }
@@ -2424,27 +2684,50 @@ const startHint = computed(() =>
 }
 
 .room-ribbon {
-  height: 68px;
+  height: 80px;
   padding: 0 42px;
   border-bottom: 3px solid var(--room-wood);
   background: rgba(255, 250, 240, .94);
   box-shadow: 0 4px 0 rgba(217, 183, 127, .2);
 }
 .room-ribbon .px-kicker {
-  padding: 9px 13px;
-  border: 2px solid #b78d5d;
-  border-radius: 7px;
-  background: #d7e7ad;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--room-ink);
-  box-shadow: 2px 2px 0 #e2d0b5;
+  box-shadow: none;
+  font-size: 32px;
 }
 .room-ribbon .px-kicker i { background: #ef7775; }
-.ribbon-report, .ribbon-invite, .ribbon-settings {
+.room-brand { margin-right: 10px; }
+.room-brand :deep(.mark) { width: 48px; height: 48px; font-size: 24px; transform: none; box-shadow: none; }
+.room-logo-btn { display: flex; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.ribbon-report, .ribbon-invite, .ribbon-settings, .ribbon-sound-btn {
+  width: auto;
+  height: 22px;
+  min-width: 32px;
+  padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+  color: var(--room-ink);
+  font-family: var(--font-pixel);
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
 }
+.ribbon-invite { min-width: 58px; }
+.ribbon-sound { position: relative; }
+.ribbon-sound-btn { min-width: 58px; cursor: pointer; }
+.ribbon-sound-btn.active, .ribbon-sound-btn:hover { color: #5b8d45; }
+.sound-settings-pop { position: absolute; z-index: 30; top: 30px; right: 0; width: 188px; padding: 12px; border: 2px solid #8d6048; border-radius: 9px; background: #fff8e9; color: #5a3e30; box-shadow: 3px 3px 0 rgba(92, 63, 44, .22); }
+.sound-settings-pop label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; font-size: 11px; }
+.sound-settings-pop input { width: 100%; min-width: 0; accent-color: #6c9b54; }
 .ribbon-report:hover { background: transparent; color: #c15d5a; }
 .ribbon-invite:hover, .ribbon-settings:hover { background: transparent; color: #5b8d45; }
 /* 음악 버튼도 이웃과 같은 아이콘 형태로 — 컴포넌트 자체 스타일은 박스라 여기서 벗긴다.
@@ -2472,25 +2755,25 @@ const startHint = computed(() =>
   background: transparent;
   box-shadow: none;
 }
-.code-cap { color: var(--room-muted); font-size: 8px; }
-.code-val { color: #bd6d45; font-size: 14px; }
+.code-cap { color: var(--room-muted); font-size: 9px; }
+.code-val { color: #bd6d45; font-size: 18px; }
 .code-line { gap: 4px; }
 .copy { border: 0; border-radius: 0; background: transparent; color: var(--room-ink); }
 .room-ribbon .px-kicker { order: 0; }
 .code-box { position: relative; order: 1; }
+.code-box { margin-right: auto; }
+.ribbon-report { margin-left: 0; }
 /* 음악 버튼도 버튼 그룹(order 2)에 넣는다 — 기본 order 0으로 두면 방 코드 앞으로 튄다.
    같은 order 안에서는 DOM 순서를 따르므로 신고 버튼 왼쪽에 선다. */
-.ribbon-report, .ribbon-invite, .ribbon-settings, .ribbon-music-wrap { position: relative; order: 2; }
-.ribbon-report::before, .ribbon-invite::before, .ribbon-settings::before, .ribbon-music-wrap::before {
-  position: absolute;
-  top: 50%;
-  left: -12px;
+.ribbon-report, .ribbon-invite, .ribbon-settings, .ribbon-music-wrap, .ribbon-sound, .ribbon-divider { position: relative; order: 2; }
+.ribbon-divider {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
   color: #b78d5d;
-  content: '|';
   font-size: 12px;
   font-weight: 300;
   line-height: 1;
-  transform: translateY(-50%);
 }
 
 .start-btn {
@@ -2507,6 +2790,8 @@ const startHint = computed(() =>
   padding: 0 16px;
   white-space: nowrap;
 }
+.footer-start-btn, .footer-start-btn.suggest { position: static; flex: none; height: 50px; padding: 0 12px; border: 3px solid #4e67a3; border-radius: 7px; background: #7195df; color: #fff; box-shadow: 3px 3px 0 #4e67a3; white-space: nowrap; transform: none; }
+.footer-start-btn .start-title { font-size: 10px; }
 
 .room-main { gap: 18px; padding: clamp(20px, 2vw, 26px) clamp(28px, 3.6vw, 46px); }
 .cam-stage {
@@ -2651,6 +2936,14 @@ const startHint = computed(() =>
   align-self: center;
   place-self: center;
 }
+
+/* 낚시는 640×480 캔버스라서 일반 카메라의 8:5 규칙을 쓰면 확대 시 세로가 잘린다. */
+.self-tile.self-spot.fish-game,
+.cam-stage.side-layout .self-tile.self-spot.fish-game,
+.cam-stage.four-player .self-tile.self-spot.fish-game,
+.cam-stage.three-player .self-tile.self-spot.fish-game {
+  aspect-ratio: 4 / 3;
+}
 .self-video { object-fit: cover; background: var(--c-letterbox); }
 .cam-off { background: linear-gradient(135deg, #bfe9ff, #d7e7ad); color: var(--room-muted); }
 .cam-on-btn { border-color: #925c47; border-radius: 7px; background: #4078cf; box-shadow: 3px 3px 0 #a66b50; }
@@ -2685,11 +2978,13 @@ const startHint = computed(() =>
 .ctrl { background: #fffdf7; color: var(--room-ink); }
 .ctrl.on { background: #d7e7ad; color: #5b8d45; }
 .ctrl.off { background: #ffe2e3; color: #d45c63; }
+.ctrl, .ctrl.on, .ctrl.off { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .chat-dock { background: #fffdf7; }
 .chat-dock input { color: var(--room-ink); }
 .chat-send { margin-left: -5px; border: 0; border-radius: 0; background: transparent; color: #bd6d45; box-shadow: none; }.send-icon { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-linecap: square; stroke-linejoin: round; stroke-width: 2.4; transform: translate(1px, 1px); }.chat-send:hover { background: transparent; color: #8e4d32; transform: translateY(-1px); }
-.chat-expand { border: 0; border-radius: 0; background: transparent; color: #a9836c; box-shadow: none; }
-.chat-expand.active { background: transparent; color: #6c9b54; }
+.chat-expand { margin-left: -7px; border: 0; border-radius: 0; background: transparent; color: #bd6d45; box-shadow: none; }
+.chat-expand.active { background: transparent; color: #bd6d45; }
+.chat-expand:hover { color: #8e4d32; }
 .bubble { border-color: #dfc9a6; border-radius: 9px; background: rgba(255, 253, 247, .78); box-shadow: 2px 2px 0 rgba(226, 208, 181, .65); }
 .bubble.me { background: rgba(255, 240, 185, .78); }
 .bubble.suggest { background: rgba(216, 244, 236, .78); }
@@ -2699,7 +2994,7 @@ const startHint = computed(() =>
 .chat-full { border-color: var(--room-wood); border-radius: 12px; background: rgba(255, 253, 247, .95); box-shadow: 4px 4px 0 var(--room-shadow); }
 .chat-full-head { color: var(--room-ink); border-bottom-color: #ead9bd; }
 .chat-full-close { border-color: #b78d5d; border-radius: 5px; background: #fff7e5; color: var(--room-ink); }
-.leave { border-color: #925c47; border-radius: 7px; background: #ef7775; box-shadow: 3px 3px 0 #a66b50; }
+.leave { border-color: #925c47; border-radius: 7px; background: #ef7775; box-shadow: 3px 3px 0 #a66b50; font-size: 10px; font-weight: 700; }
 
 /* 비방장 중간 이탈 후 게임 복귀 버튼(-164) — 셀프 타일 우상단 */
 .game-rejoin {
@@ -2779,5 +3074,50 @@ const startHint = computed(() =>
 @media (max-width: 1280px) {
   .room-ribbon { padding: 0 28px; }
   .room-footer { padding: 14px 26px; }
+}
+
+/* 브라우저 125% 배율처럼 세로 여유가 줄어든 경우에도 게임 화면을 한 프레임 안에 유지한다. */
+@media (max-height: 900px) {
+  .room-shell:has(.cam-stage.game-active) .room-main {
+    gap: 10px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+  .cam-stage.game-active {
+    padding: 8px;
+    gap: 10px;
+  }
+  .room-shell:has(.cam-stage.game-active) .room-footer {
+    padding-top: 9px;
+    padding-bottom: 9px;
+  }
+}
+
+/**
+ * 배율 대응 — AppHeader·BgmToggle이 쓰는 1120px 브레이크포인트와 같은 경계.
+ *
+ * 여기서 줄이는 건 전부 **고정 px 크롬**(리본·푸터·컨트롤·패딩)이다. `.cam-stage`는
+ * `flex: 1`이라 크롬이 먹는 만큼만 남으므로, 세로가 짧아졌을 때(1366@125% = 614px) 고정
+ * 크롬을 그대로 두면 그 차이가 전부 캠에서 깎여 타일 안 내용이 `overflow: hidden`에 잘린다.
+ * 폰트도 8~12px 고정이라 같이 줄지 않으니 여기서 함께 낮춘다.
+ */
+@media (max-width: 1120px) {
+  .room-ribbon { height: 54px; padding: 0 16px; }
+  .room-ribbon b { font-size: 11px; }
+  .room-ribbon .px-kicker { padding: 4px 7px; font-size: 7px; }
+
+  .room-main { gap: 10px; padding: 12px 16px; }
+  .cam-stage { gap: 10px; }
+
+  /* 푸터 — 3열 그리드 구조는 그대로 두고 높이만 낮춘다(중앙 정렬 로직 유지) */
+  .room-footer { gap: 10px; padding: 10px 14px; }
+  .controls { gap: 7px; }
+  .ctrl { width: 42px; height: 42px; border-width: 2px; border-radius: 11px 11px 8px 11px; }
+  .chat-dock { height: 44px; padding: 0 6px 0 11px; }
+  .leave { height: 44px; padding: 0 13px; }
+  /* chat-log는 chat-dock 높이에 맞춰 띄운다 — 52+10 이었으므로 44+10 */
+  .chat-log { bottom: 54px; }
+
+  .game-scoreboard { min-width: 140px; padding: 8px 9px; }
 }
 </style>
