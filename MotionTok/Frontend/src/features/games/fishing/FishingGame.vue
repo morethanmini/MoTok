@@ -23,7 +23,8 @@ import { createCast, DEFAULT_CAST } from './cast'
 import { createHook, DEFAULT_HOOK } from './hook'
 import { createPump, DEFAULT_PUMP } from './pump'
 import { createLoop, DEFAULT_LOOP, type LoopState } from './loop'
-import { aimFromHands, createNormalizer, SHOULDER, VIS_MIN, WRIST } from './normalize'
+import { depthFromHands } from './depth'
+import { createNormalizer, SHOULDER, VIS_MIN, WRIST } from './normalize'
 import { drawFrame } from './render/drawFrame'
 import { cozySkin } from './render/skins/cozy'
 import type { Splash } from './render/types'
@@ -64,13 +65,13 @@ const loop = createLoop(DEFAULT_LOOP, 1)
 const norm = createNormalizer()
 
 const st = ref<LoopState>(loop.state())
-const aim = ref({ locked: false, x: 0 })
+const aim = ref({ locked: false })
 const reelRate = ref(0)
 let marker: { x: number; y: number } | null = null
 let splashes: Splash[] = []
 let prevPhase = st.value.phase
-/** 어깨 중점 x — 조준 0의 기준. 어깨를 놓친 프레임에는 직전 값을 유지한다 */
-let bodyMidX = W / 2
+/** 어깨 중점 y — 깊이 0.5의 기준. 어깨를 놓친 프레임에는 직전 값을 유지한다 */
+let bodyMidY = H / 2
 /**
  * 화면 흔들림 0~1 — 매 프레임 감쇠한다.
  *
@@ -96,7 +97,9 @@ const hud = computed(() => {
     case 'casting':
       return '찌가 날아갑니다…'
     case 'waiting':
-      return s.active?.interest === 'curious' ? '물고기가 찌를 봤어요…' : '입질을 기다립니다…'
+      return s.active?.interest === 'curious'
+        ? '물고기가 미끼를 봤어요…'
+        : '손 높이로 미끼 깊이를 조절!'
     case 'bite':
       return '입질! 손을 위로!'
     case 'fighting':
@@ -124,8 +127,8 @@ function onPose(result: PoseLandmarkerResult) {
   const sr = lm?.[SHOULDER.right]
   if (sl && sr && (sl.visibility ?? 0) >= VIS_MIN && (sr.visibility ?? 0) >= VIS_MIN) {
     norm.push(Math.hypot((sr.x - sl.x) * W, (sr.y - sl.y) * H))
-    // 조준 0의 기준 — 어깨를 놓친 프레임에는 직전 값을 그대로 쓴다
-    bodyMidX = ((1 - sl.x) * W + (1 - sr.x) * W) / 2
+    // 깊이 0.5의 기준 — 어깨를 놓친 프레임에는 직전 값을 그대로 쓴다
+    bodyMidY = (sl.y * H + sr.y * H) / 2
   }
   const sw = norm.ready() ? norm.sw() : 0
 
@@ -161,16 +164,13 @@ function onPose(result: PoseLandmarkerResult) {
   marker = { x: midX, y: midY }
 
   if (phase === 'idle') {
-    /*
-     * 조준 x는 원시 프레임 좌표가 아니라 **몸 중심에서 벗어난 거리**로 넘긴다.
-     *
-     * 손 중점 x를 그대로 쓰면 2~3m 거리에서 화면 폭의 46%만 조준된다(조준 랩 실측 2026-07-30:
-     * 도달 프레임 17~63%). cast.ts는 이 x를 조준에만 쓰므로 판정 로직은 그대로다.
-     */
-    const c = cast.feed(aimFromHands(midX, bodyMidX, sw, W), midY, sw, now)
-    aim.value = { locked: c.phase === 'back', x: c.aimX ?? aim.value.x }
-    // 조준은 발사 시점에 판정기가 확정한 값을 쓴다(내려꽂는 동안의 흔들림 배제)
-    if (c.fired !== null) loop.cast(c.firedAimX, c.fired)
+    // 단면도: 착수 x는 파워가 정한다 — cast.ts의 조준 x 인자는 소비하지 않는다(판정 5파일 무수정)
+    const c = cast.feed(midX, midY, sw, now)
+    aim.value = { locked: c.phase === 'back' }
+    if (c.fired !== null) loop.cast(c.fired)
+  } else if (phase === 'waiting') {
+    // 양손 높이 → 미끼 깊이. 비어 있던 waiting 6초가 조작 구간이 된다
+    loop.steer(depthFromHands(midY, bodyMidY, sw))
   } else if (phase === 'bite') {
     if (hook.feed(midY, sw, now).fired) loop.hook()
   }
@@ -198,7 +198,7 @@ function frame(now: number) {
       if (s.phase === 'fighting') pump.reset()
       if (s.phase === 'idle') {
         cast.reset()
-        aim.value = { locked: false, x: aim.value.x }
+        aim.value = { locked: false }
       }
       if (s.phase === 'result' && s.last?.outcome === 'caught') {
         // 포획 — 제일 큰 연출. 링 3겹 + 최대 세기 흔들림

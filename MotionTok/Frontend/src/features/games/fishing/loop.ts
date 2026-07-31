@@ -1,8 +1,16 @@
 /**
  * 게임⑤ 낚시 — 게임 루프 상태머신 (기획 §게임 진행, S15P11A706-10).
  *
- * IDLE(조준) → CASTING(찌 비행) → WAITING(입질 대기) → BITE(챔질 QTE)
- *            → FIGHTING(힘겨루기) → RESULT → IDLE
+ * IDLE(백스윙) → CASTING(찌 비행) → WAITING(깊이 조작 + 입질 대기) → BITE(챔질 QTE)
+ *             → FIGHTING(힘겨루기) → RESULT → IDLE
+ *
+ * ── 공간 모델: 물속 단면도 (2026-07-31 전환) ──
+ * x = 앵글러(좌상단 수면 위)로부터의 거리 — 파워가 결정한다.
+ * y = 깊이 — WAITING 중 양손 높이(depth.ts)로 미끼를 올리고 내린다.
+ *
+ * 이전에는 원근(위=멀리, 아래=가까이)이었고 좌우 조준이 착수 x를 정했다. 단면도로 바꾸면서
+ * 조준 신호는 깊이 제어로 옮겼다 — 어종마다 깊이 층이 달라(bandIndexOf) 노리는 층을 고르는
+ * 것이 waiting의 조작이 된다. 팀 회의 결정(단면도 반응이 더 좋았다).
  *
  * 렌더링과 입력을 뺀 순수 로직이다 — 캔버스 없이 테스트할 수 있어야 밸런스를 코드로 고정할 수
  * 있다. 데모는 이 전부가 하나의 전역 객체에 렌더와 섞여 있어 판정 하나도 테스트할 수 없었다.
@@ -45,10 +53,16 @@ export interface LoopConfig {
   biteDistPx: number
   /** 관심을 보인 물고기가 찌로 접근하는 속도(px/s) */
   approachPxS: number
-  /** 가장 가까이 던졌을 때 착수 y — 화면 아래에서 이만큼 위(px) */
-  landNearMarginPx: number
-  /** 가장 멀리 던졌을 때 착수 y — 수면에서 이만큼 아래(px) */
+  /** 가장 약하게 던졌을 때(power 0) 착수 x — 앵글러 바로 앞(px) */
+  landNearXPx: number
+  /** 가장 멀리 던졌을 때(power 1) 착수 x — 오른쪽 끝에서 이만큼 안(px) */
   landFarMarginPx: number
+  /** 미끼가 오를 수 있는 최소 깊이 — 수면에서 이만큼 아래(px) */
+  depthMinMarginPx: number
+  /** 미끼가 내려갈 수 있는 최대 깊이 — 화면 아래에서 이만큼 위(px). 모래바닥 위 */
+  depthMaxMarginPx: number
+  /** 미끼가 목표 깊이로 이동하는 속도(px/s) — 손 지터의 저역통과 역할도 한다 */
+  steerPxS: number
 }
 
 export const DEFAULT_LOOP: LoopConfig = {
@@ -68,8 +82,35 @@ export const DEFAULT_LOOP: LoopConfig = {
   biteDistPx: 26,
   approachPxS: 90,
   curiousSec: 0.8,
-  landNearMarginPx: 40,
+  landNearXPx: 150,
   landFarMarginPx: 30,
+  depthMinMarginPx: 26,
+  depthMaxMarginPx: 48,
+  steerPxS: 150,
+}
+
+/**
+ * 어종 깊이 층 — 점수가 높을수록 깊다(멸치 얕음 → 상어 깊음).
+ *
+ * 문턱(25/45/120)은 cozy 스킨의 fishShape와 같다 — 실루엣이 다른 어종은 사는 층도 다르다.
+ * 층이 겹치지 않아야 "깊이를 고르는" 조작이 성립한다. 스킨이 층 경계를 그릴 수 있게
+ * 여기(로직)가 소유하고 렌더는 소비만 한다.
+ */
+export const DEPTH_BANDS = 4
+
+export function bandIndexOf(spec: FishSpec): number {
+  if (spec.score >= 120) return 3
+  if (spec.score >= 45) return 2
+  if (spec.score >= 25) return 1
+  return 0
+}
+
+/** i번째 층의 y 범위 — 물기둥(수면 여유 ~ 바닥 여유)을 층 수만큼 등분 */
+export function bandYRange(cfg: LoopConfig, i: number): { top: number; bottom: number } {
+  const top0 = cfg.waterY + cfg.depthMinMarginPx
+  const bottom0 = cfg.height - cfg.depthMaxMarginPx
+  const h = (bottom0 - top0) / DEPTH_BANDS
+  return { top: top0 + i * h, bottom: top0 + (i + 1) * h }
 }
 
 export interface SceneFish {
@@ -113,10 +154,15 @@ export interface Loop {
   state(): LoopState
   /**
    * IDLE에서만 유효.
-   * @param aimX 조준 x(px)
-   * @param power 0~1 — 스윙 최고 속도에서 나온 거리(0 가까이 ~ 1 멀리, cast.ts 주석 ③)
+   * @param power 0~1 — 착수 거리(0 앵글러 앞 ~ 1 오른쪽 끝, cast.ts 주석 ③).
+   *              단면도 전환으로 조준 x 인자가 사라졌다 — 좌우 조준 신호는 깊이 제어(steer)로 갔다
    */
-  cast(aimX: number, power: number): boolean
+  cast(power: number): boolean
+  /**
+   * WAITING에서만 유효 — 미끼 목표 깊이 0~1(depth.ts). 미끼는 steerPxS 속도로 따라간다.
+   * 다른 페이즈에서는 무시된다(입질·힘겨루기 중 깊이가 움직이면 판정이 흔들린다).
+   */
+  steer(depth01: number): void
   /** BITE에서만 유효 — 챔질 성공 여부 */
   hook(): boolean
   /** @param reelRate pump.rate (왕복/s) */
@@ -155,11 +201,15 @@ export function createLoop(config: LoopConfig = DEFAULT_LOOP, seed = 1): Loop {
   const fight = createFight(FISH[0]!)
 
   let phase: Phase = 'idle'
-  let bobber = { x: config.width / 2, y: config.height - 20, visible: false }
+  let bobber = { x: config.width / 2, y: config.waterY, visible: false }
   let castFrom = { x: 0, y: 0 }
   let castTo = { x: 0, y: 0 }
   let castT = 0
   let waitT = 0
+  /** 관심을 준 뒤 흐른 시간 — curiousSec 판정 기준. waitT가 아니라 선택 시점부터 센다 */
+  let curiousT = 0
+  /** WAITING 중 미끼 목표 y — steer가 갱신하고 tick이 따라간다 */
+  let steerY = 0
   let biteT = 0
   let resultT = 0
   let active: SceneFish | null = null
@@ -175,11 +225,13 @@ export function createLoop(config: LoopConfig = DEFAULT_LOOP, seed = 1): Loop {
   function spawnFish(atEdge: boolean): SceneFish {
     const dir: 1 | -1 = rnd() < 0.5 ? 1 : -1
     const spec = pickSpec(rnd)
+    // 어종의 깊이 층 안에서만 스폰한다 — 층이 섞이면 깊이를 고르는 조작이 무의미해진다
+    const band = bandYRange(config, bandIndexOf(spec))
     return {
       id: nextId++,
       spec,
       x: atEdge ? (dir > 0 ? -30 : config.width + 30) : rnd() * config.width,
-      y: config.waterY + 40 + rnd() * (config.height - config.waterY - 80),
+      y: band.top + rnd() * (band.bottom - band.top),
       dir,
       // 큰 물고기가 느리다 — 요구 속도로 크기를 대신 표현한다
       speed: 26 + (1 - spec.requiredRate) * 40,
@@ -232,19 +284,27 @@ export function createLoop(config: LoopConfig = DEFAULT_LOOP, seed = 1): Loop {
       toIdle()
     },
 
-    cast(aimX, power) {
+    cast(power) {
       if (phase !== 'idle') return false
-      const x = Math.min(config.width - 10, Math.max(10, aimX))
-      // 2D 바다에서는 **위쪽(수평선)이 멀고 아래쪽이 가깝다**. 세게 던지면 위로 간다.
-      const nearY = config.height - config.landNearMarginPx
-      const farY = config.waterY + config.landFarMarginPx
+      // 단면도: 세게 던지면 **오른쪽(멀리)**으로 간다. 앵글러가 좌상단 수면 위에 있다.
+      const nearX = config.landNearXPx
+      const farX = config.width - config.landFarMarginPx
       const p = Math.min(1, Math.max(0, power))
-      castFrom = { x: config.width / 2, y: config.height - 20 }
-      castTo = { x, y: nearY - p * (nearY - farY) }
+      // 낚싯대 끝 근처에서 출발 — 렌더의 rodTip과 정확히 일치할 필요는 없다(줄은 스킨이 긋는다)
+      castFrom = { x: config.width * 0.27, y: config.waterY * 0.5 }
+      castTo = { x: nearX + p * (farX - nearX), y: config.waterY + config.depthMinMarginPx }
       castT = 0
       bobber = { ...castFrom, visible: true }
       phase = 'casting'
       return true
+    },
+
+    steer(depth01) {
+      if (phase !== 'waiting') return
+      const top = config.waterY + config.depthMinMarginPx
+      const bottom = config.height - config.depthMaxMarginPx
+      const d = Math.min(1, Math.max(0, depth01))
+      steerY = top + d * (bottom - top)
     },
 
     hook() {
@@ -293,7 +353,23 @@ export function createLoop(config: LoopConfig = DEFAULT_LOOP, seed = 1): Loop {
             bobber = { ...castTo, visible: true }
             phase = 'waiting'
             waitT = 0
-            // 착수 지점 근처 물고기가 관심을 보인다 (기획: 관심 → 접근 → 입질)
+            // 물고기 선택은 WAITING의 매 틱에서 한다 — 착수 후 깊이를 조작해 노리는 층을
+            // 바꿀 수 있으므로 착수 순간 한 번의 선택으로는 조작이 반영되지 않는다.
+            steerY = castTo.y
+          }
+          break
+        }
+
+        case 'waiting': {
+          waitT += dtSec
+
+          // 깊이 조작 — 목표 깊이로 유한 속도로 이동. steer 입력의 지터도 여기서 걸러진다
+          const dy = steerY - bobber.y
+          const step = config.steerPxS * dtSec
+          bobber.y += Math.abs(dy) <= step ? dy : Math.sign(dy) * step
+
+          if (!active) {
+            // 미끼 근처 물고기가 관심을 보인다 (기획: 관심 → 접근 → 입질)
             const near = fishes
               .filter((f) => Math.hypot(f.x - bobber.x, f.y - bobber.y) <= config.interestRadiusPx)
               .sort(
@@ -306,17 +382,23 @@ export function createLoop(config: LoopConfig = DEFAULT_LOOP, seed = 1): Loop {
               // 먼저 '관심' — curiousSec이 지난 뒤에야 접근을 시작한다(기획 §입질 3단계)
               chosen.interest = 'curious'
               active = chosen
+              curiousT = 0
+            }
+          } else {
+            curiousT += dtSec
+            // 미끼를 멀리 옮기면 흥미를 잃는다 — 깊이를 다시 골라 다른 층을 노릴 수 있다.
+            // 선택 반경보다 크게 잡아(×1.25) 경계에서 선택↔해제가 떨리지 않게 한다.
+            if (
+              Math.hypot(active.x - bobber.x, active.y - bobber.y) >
+              config.interestRadiusPx * 1.25
+            ) {
+              releaseActive()
+            } else if (active.interest === 'curious' && curiousT >= config.curiousSec) {
+              // 관심 → 접근 전환. 이 지연이 없으면 미끼가 물고기 옆에 가는 즉시 입질한다.
+              active.interest = 'approaching'
             }
           }
-          break
-        }
 
-        case 'waiting': {
-          waitT += dtSec
-          // 관심 → 접근 전환. 이 지연이 없으면 찌가 물고기 위에 떨어질 때 즉시 입질한다.
-          if (active && active.interest === 'curious' && waitT >= config.curiousSec) {
-            active.interest = 'approaching'
-          }
           const arrived =
             active !== null &&
             active.interest === 'approaching' &&

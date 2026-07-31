@@ -7,7 +7,7 @@
  *
  * `FishingGameView.vue`에 있던 draw 함수들을 그대로 옮긴 것이다 — 색·수치를 바꾸지 않았다.
  */
-import type { LoopConfig, LoopState, Phase, SceneFish } from '../../loop'
+import { bandYRange, DEPTH_BANDS, type LoopConfig, type LoopState, type Phase, type SceneFish } from '../../loop'
 import type { FishingSkin, FishingView, Splash } from '../types'
 
 function drawMark(
@@ -64,6 +64,25 @@ export const debugSkin: FishingSkin = {
     ctx.moveTo(0, WATER_Y)
     ctx.lineTo(W, WATER_Y)
     ctx.stroke()
+
+    // 깊이 층 경계 — 단면도에서 y는 깊이다. 층을 안 그리면 계측 화면이 거짓 정보를 준다
+    // (물고기가 왜 그 y에 있는지, 미끼가 지금 몇 층인지 읽을 수 없다)
+    ctx.save()
+    ctx.strokeStyle = 'rgba(61,220,255,0.22)'
+    ctx.fillStyle = 'rgba(61,220,255,0.6)'
+    ctx.font = '10px system-ui, sans-serif'
+    ctx.textAlign = 'left'
+    ctx.lineWidth = 1
+    ctx.setLineDash([4, 6])
+    for (let i = 0; i < DEPTH_BANDS; i++) {
+      const band = bandYRange(cfg, i)
+      ctx.beginPath()
+      ctx.moveTo(0, band.top)
+      ctx.lineTo(W, band.top)
+      ctx.stroke()
+      ctx.fillText(`층${i} y=${Math.round(band.top)}~${Math.round(band.bottom)}`, 4, band.top + 11)
+    }
+    ctx.restore()
   },
 
   // 계측 스킨은 원근을 쓰지 않는다 — 위치·크기를 있는 그대로 봐야 판정을 검증할 수 있다
@@ -120,11 +139,11 @@ export const debugSkin: FishingSkin = {
     const shake = s.phase === 'bite' ? Math.sin(tMs * 0.03) * 4 : 0
     const bx = s.bobber.x
     const by = s.bobber.y + shake
-    // 낚싯줄 — 화면 아래 중앙(앵글러)에서 찌까지
+    // 낚싯줄 — 좌상단 앵글러(loop.ts castFrom)에서 수면을 뚫고 미끼까지
     ctx.strokeStyle = 'rgba(244,240,255,0.5)'
     ctx.lineWidth = 1.5
     ctx.beginPath()
-    ctx.moveTo(cfg.width / 2, cfg.height - 12)
+    ctx.moveTo(cfg.width * 0.27, cfg.waterY * 0.5)
     ctx.lineTo(bx, by)
     ctx.stroke()
     ctx.fillStyle = '#FF5D73'
@@ -138,42 +157,36 @@ export const debugSkin: FishingSkin = {
   },
 
   /**
-   * 조준 미리보기 — 좌우 조준선과, 착수 가능 범위(가까이~멀리)를 함께 보여준다.
+   * 착수 범위 미리보기 — 단면도에서 파워는 **착수 x**를 정한다(왼쪽 약하게 ~ 오른쪽 세게).
    * 거리는 스윙 최고 속도로 정해지므로 미리보기 게이지가 없다(cast.ts 주석 ③) — 대신 "이 선
    * 위 어딘가에 떨어진다"는 범위를 보여줘서 세게/약하게 던지는 감을 잡게 한다.
    */
-  drawAim(ctx: CanvasRenderingContext2D, aimX: number, cfg: LoopConfig, tMs: number) {
-    const nearY = cfg.height - cfg.landNearMarginPx
-    const farY = cfg.waterY + cfg.landFarMarginPx
+  drawAim(ctx: CanvasRenderingContext2D, cfg: LoopConfig, tMs: number) {
+    const nearX = cfg.landNearXPx
+    const farX = cfg.width - cfg.landFarMarginPx
+    const y = cfg.waterY + cfg.depthMinMarginPx
     ctx.save()
-    // 착수 가능 범위 — 세로 막대
+    // 착수 가능 범위 — 수면 아래 가로 막대
     ctx.strokeStyle = 'rgba(198,255,94,0.35)'
     ctx.lineWidth = 3
     ctx.beginPath()
-    ctx.moveTo(aimX, farY)
-    ctx.lineTo(aimX, nearY)
+    ctx.moveTo(nearX, y)
+    ctx.lineTo(farX, y)
     ctx.stroke()
-    // 던지는 라인
+    // 양 끝 표시 — 왼쪽이 약하게, 오른쪽이 세게
+    const pulse = 5 + Math.sin(tMs / 160) * 2
     ctx.strokeStyle = '#C6FF5E'
     ctx.lineWidth = 2
-    ctx.setLineDash([5, 5])
-    ctx.beginPath()
-    ctx.moveTo(cfg.width / 2, cfg.height - 12)
-    ctx.lineTo(aimX, nearY)
-    ctx.stroke()
-    ctx.setLineDash([])
-    // 양 끝 표시 — 위가 멀리, 아래가 가까이
-    const pulse = 5 + Math.sin(tMs / 160) * 2
-    for (const y of [farY, nearY]) {
+    for (const x of [nearX, farX]) {
       ctx.beginPath()
-      ctx.arc(aimX, y, pulse, 0, Math.PI * 2)
+      ctx.arc(x, y, pulse, 0, Math.PI * 2)
       ctx.stroke()
     }
     ctx.fillStyle = 'rgba(198,255,94,0.8)'
     ctx.font = '10px system-ui, sans-serif'
     ctx.textAlign = 'center'
-    ctx.fillText('세게', aimX, farY - 10)
-    ctx.fillText('약하게', aimX, nearY + 18)
+    ctx.fillText('약하게', nearX, y + 20)
+    ctx.fillText('세게', farX, y + 20)
     ctx.restore()
   },
 

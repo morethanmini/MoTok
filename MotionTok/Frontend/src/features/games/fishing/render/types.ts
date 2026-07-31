@@ -29,8 +29,12 @@ export interface Splash {
  */
 export interface FishingView {
   state: LoopState
-  /** 조준 — IDLE에서 조준선에 쓴다. locked면 백스윙 중 */
-  aim: { locked: boolean; x: number }
+  /**
+   * locked면 백스윙 중 — 착수 범위 미리보기를 띄운다.
+   * 단면도 전환으로 조준 x가 사라졌다(파워가 착수 x를 정한다). 좌우 조준 신호는 WAITING의
+   * 깊이 제어(depth.ts → loop.steer)로 갔고, 그 피드백은 찌 위치 자체다.
+   */
+  aim: { locked: boolean }
   /** 지금 판정에 쓰이는 점. null이면 손을 놓친 프레임이다 */
   marker: { x: number; y: number } | null
   splashes: Splash[]
@@ -58,11 +62,11 @@ export interface FishingSkin {
   drawBackground(ctx: CanvasRenderingContext2D, cfg: LoopConfig, view: FishingView): void
 
   /**
-   * `cfg`가 필요한 이유는 원근이다.
+   * `cfg`가 필요한 이유는 깊이다.
    *
-   * 이 무대는 단면도가 아니라 **원근으로 본 수면**이다(loop.ts: 위쪽이 멀고 아래쪽이 가깝다).
-   * 그래서 물고기 y를 수면선~화면바닥 사이에서 정규화해야 "멀면 작고 흐리게"를 그릴 수 있고,
-   * 그러려면 `waterY`와 `height`를 알아야 한다.
+   * 이 무대는 **물속 단면도**다(loop.ts: x=거리, y=깊이). 물고기 y를 물기둥 안에서
+   * 정규화하면 깊이별 표현(수심에 따른 명암 등)을 얹을 수 있고, 그러려면 `waterY`와
+   * `height`를 알아야 한다.
    */
   drawFish(
     ctx: CanvasRenderingContext2D,
@@ -77,8 +81,14 @@ export interface FishingSkin {
 
   drawBobber(ctx: CanvasRenderingContext2D, state: LoopState, cfg: LoopConfig, tMs: number): void
 
-  /** 조준선 — IDLE + 백스윙 중에만 불린다 */
-  drawAim(ctx: CanvasRenderingContext2D, aimX: number, cfg: LoopConfig, tMs: number): void
+  /** 착수 범위 미리보기 — IDLE + 백스윙 중에만 불린다. 파워 0~1이 어디 떨어지는지 보여준다 */
+  drawAim(ctx: CanvasRenderingContext2D, cfg: LoopConfig, tMs: number): void
+
+  /**
+   * 전경 — 물고기·찌 **앞**에 그린다(근경 해초 등). 무대와 함께 흔들린다.
+   * 배경만으로는 단면도의 깊이감이 안 나온다 — 앞뒤 겹이 있어야 물속이 된다.
+   */
+  drawForeground?(ctx: CanvasRenderingContext2D, cfg: LoopConfig, view: FishingView): void
 
   /**
    * 판정에 쓰인 점 표시 — **계측 화면 전용**이다.
