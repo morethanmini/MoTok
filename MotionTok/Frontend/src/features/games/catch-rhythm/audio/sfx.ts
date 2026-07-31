@@ -8,6 +8,18 @@ import type { ToneSpec } from '../render/skins/types'
 /** 동시 발성 상한 */
 const MAX_VOICES = 12
 
+/**
+ * 판정음 버스 레벨.
+ *
+ * <p>0.6에서 0.92로 올렸다(+3.7dB). 이 게임은 판정음이 리듬 피드백 자체인데 인게임 곡(−17.3 dBFS를
+ * {@link GameBgm}이 0.28로 재생)에 묻혀서 잘 안 들렸다.</p>
+ *
+ * <p>여기가 상한인 이유 — 스킨의 가장 큰 음색이 PERFECT의 gain 0.32라 한 발은 0.29로 여유가 있지만,
+ * 버스트에서 세 발이 겹치면 0.88이라 1.0에 붙는다. 더 올리면 그 순간 클리핑으로 지글거린다
+ * (동시 발성은 {@link MAX_VOICES}로만 막혀 있어 세 발 이상도 실제로 난다).</p>
+ */
+const BUS_GAIN = 0.92
+
 export class SfxPlayer {
   private master: GainNode | null = null
   /** 지금 울리고 있는 소리 수 — 한꺼번에 수십 개가 생기면 오디오 스레드가 막힌다 */
@@ -18,7 +30,7 @@ export class SfxPlayer {
   private get bus(): GainNode {
     if (!this.master) {
       this.master = this.ctx.createGain()
-      this.master.gain.value = 0.6
+      this.master.gain.value = BUS_GAIN
       this.master.connect(this.ctx.destination)
     }
     return this.master
