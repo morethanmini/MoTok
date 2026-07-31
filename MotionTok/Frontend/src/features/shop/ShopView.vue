@@ -14,6 +14,7 @@ import catAccessories from '@/assets/shop/cat-accessories.png'
 import { useToast } from '@/composables/useToast'
 import PurchaseConfirmModal from './components/PurchaseConfirmModal.vue'
 import ChargePointsModal from '@/components/common/ChargePointsModal.vue'
+import { POINT_CHARGE_ENABLED } from '@/config/features'
 
 const router = useRouter()
 const session = useSessionStore()
@@ -226,11 +227,12 @@ async function confirmPurchase() {
       :pending="purchasing"
       @close="selected = null"
       @confirm="confirmPurchase"
-      @charge="showCharge = true"
+      @charge="showCharge = POINT_CHARGE_ENABLED"
     />
 
+    <!-- 이중 방어 — 진입 버튼이 숨겨져도 다른 경로로 켜지면 결제 화면이 열린다 -->
     <ChargePointsModal
-      v-if="showCharge"
+      v-if="POINT_CHARGE_ENABLED && showCharge"
       :current-points="currentPoints"
       @close="showCharge = false"
       @charged="onCharged"
