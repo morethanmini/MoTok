@@ -776,7 +776,7 @@ interface LiveScoreRow {
   nickname: string
   starsLit: number
   holdProgress: number
-  /** 핑거 스타(게임①) 60초 매치 완성 개수 — 1순위 정렬 기준. 다른 게임은 0 */
+  /** 게임①: 60초 매치 완성 개수(1순위 정렬 기준) / 게임⑤: 낚은 마리 수(표시 전용). 그 외 0 */
   completedCount: number
   finished: boolean
   score: number | null
@@ -1082,13 +1082,10 @@ function backToPicker() {
 
 async function launch(g: GameEntry, difficulty?: string, mode?: string, wallCount?: number) {
   picker.value = false
-  // 캐치캐치리듬·모션 낚시는 공용 게임 세션(GAME_START) 경로를 타지 않는다.
-  // 리듬은 전용 STOMP 채널로 자기 생명주기를 소유하고, 낚시(S15P11A706-49)는 서버 games
-  // 테이블 미등록 + 종료 조건(90초 타이머) 미구현이라 서버 세션이 성립하지 않는다 —
-  // 로컬 마운트지만 캔버스는 화면공유로 발행되므로 다른 참가자는 타일 토글로 관전할 수 있다.
-  // 서버 등록·타이머가 생기면 이 분기에서 fish를 빼고 아래 startGame 경로로 옮긴다.
+  // 캐치캐치리듬은 전용 STOMP 채널을 쓴다 — 공용 게임 세션(GAME_START) 경로를 타지 않고
+  // 컴포넌트가 자기 생명주기를 소유한다. 난이도 선택·시작은 컴포넌트 안에서.
   // 비방장은 여기로 새면 안 된다 — 아래 게임 제안 경로를 그대로 타야 한다.
-  if ((g.id === 'rhythm' || g.id === 'fish') && (selfIsHost.value || !roomChat.connected.value)) {
+  if (g.id === 'rhythm' && (selfIsHost.value || !roomChat.connected.value)) {
     if (!captureOn.value) {
       flash('카메라를 켜고 시작해 주세요')
       return
@@ -1170,6 +1167,28 @@ function onGameFinished(r: { completedCount: number; totalScore: number; avgScor
   }
   // 솔로 폴백 — 결과를 토스트로만 알린다.
   flash(`✨ ${r.completedCount}개 완성 · 평균 ${r.avgScore}점`)
+}
+
+/**
+ * 게임⑤ 낚시(-49) 진행 중계 — 물고기를 낚을 때마다.
+ *
+ * 낚시 총점은 누적이라 서버 progress의 starsLit(0~10 클램프)에 실을 수 없다. 마리 수만
+ * completedCount 자리로 보내고 스코어보드는 "N마리"로 그린다. 총점은 아래 finished에서 한 번.
+ */
+function onFishingProgress(_score: number, caught: number) {
+  if (activeSession.value && !gameResults.value) {
+    roomChat.sendGameProgress(0, 0, caught)
+  }
+}
+
+/** 게임⑤ 낚시 종료 집계 — 서버는 총점을 마리 수 × 어종 최고 점수로 상한 검사한다 */
+function onFishingFinished(r: { totalScore: number; caught: number }) {
+  if (activeSession.value) {
+    roomChat.sendGameFinish(r.totalScore, 0, r.caught)
+    return
+  }
+  // 솔로 폴백(서버 미연동) — 결과를 토스트로만 알린다
+  flash(`🎣 ${r.caught}마리 · ${r.totalScore}점`)
 }
 
 /** 게임④(-86): 출제자가 캡처한 포즈(랜드마크 JSON)를 서버로 — POSE_SET이 방 전체에 돌아온다 */
@@ -1689,15 +1708,19 @@ const startHint = computed(() =>
             @draw="(seq: number, ops: DrawOp[]) => roomChat.sendGameDraw(seq, ops)"
             @turn-skip="(turnIdx: number, remainingMs: number) => roomChat.sendGameTurnSkip(turnIdx, remainingMs)"
           />
-          <!-- 게임⑤ 모션 낚시(S15P11A706-49) — 로컬 마운트(서버 games 미등록·타이머 미구현,
-               launch() 주석 참고). 점수는 캔버스 HUD에 그려져 송출로 전달되고, 서버 세션이
-               생기면 progress emit을 스코어보드에 배선한다. -->
+          <!-- 게임⑤ 모션 낚시(S15P11A706-49) — 서버 권위 90초 세션. 점수가 누적 합계라
+               실시간 스코어보드에는 마리 수만 중계하고 총점은 종료 시 한 번 제출한다. -->
           <FishingGame
             v-else-if="activeGame?.id === 'fish'"
             ref="gameComp"
             :video="selfVideoEl ?? null"
+            :session="activeSession"
+            :results="gameResults"
+            :my-user-id="myParticipantId"
             embedded
             @close="requestCloseGame"
+            @progress="onFishingProgress"
+            @finished="onFishingFinished"
           />
           <!-- 캐치캐치리듬 — 전용 STOMP 채널이라 activeSession을 쓰지 않는다(자기 생명주기 소유).
                roomChat은 구독/발행 구멍만 쓰고 리듬 도메인 지식은 컴포넌트 안에 있다. -->
@@ -1822,7 +1845,9 @@ const startHint = computed(() =>
                   ? bodyFitChain
                     ? `${Math.round(row.holdProgress * bodyFitChainMax)}점`
                     : `일치율 ${Math.round(row.holdProgress * 100)}%`
-                  : `⭐ ${row.starsLit}`
+                  : activeGame?.id === 'fish'
+                    ? `🐟 ${row.completedCount}마리`
+                    : `⭐ ${row.starsLit}`
             }}</span>
           </div>
           <div v-if="scoreboardRows.length === 0" class="gs-empty">진행 상황 수신 대기 중…</div>

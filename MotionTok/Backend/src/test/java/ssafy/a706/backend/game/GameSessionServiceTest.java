@@ -460,6 +460,95 @@ class GameSessionServiceTest {
         assertThat(scoreCaptor.getValue().completedCount()).isZero();
     }
 
+    /**
+     * 게임⑤ 낚시(-49): 점수가 누적 합계라 단판 상한(100)이 아니라 "마리 수 × 어종 최고점(120)"으로
+     * 클램프된다. 100에 걸리면 잘 낚은 사람과 못 낚은 사람이 전부 100점 동점이 된다.
+     */
+    @Test
+    void 낚시_총점은_마리수_상한으로_클램프되고_100에_걸리지_않는다() {
+        when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
+        when(membershipReader.isMember(eq(ROOM_ID), any())).thenReturn(true);
+        long now = System.currentTimeMillis();
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(
+                new GameSession("s1", 11L, null, null, now - 5_000, now + 25_000,
+                        GameSession.STATUS_PLAYING, List.of(), 0, null, null, 0)));
+        ArgumentCaptor<GamePlayerScore> scoreCaptor = ArgumentCaptor.forClass(GamePlayerScore.class);
+        when(sessionRepository.saveScoreIfAbsent(eq(ROOM_ID), scoreCaptor.capture())).thenReturn(true);
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue("1", "방장", false, 0),
+                new LiveRoomMemberValue("2", "참가자", false, 0)));
+        when(sessionRepository.countScores(ROOM_ID)).thenReturn(1L);
+
+        // 3마리로 240점(상어 2 + 광어 1 등) — 단판 상한 100에 걸리지 않고 그대로 기록된다
+        service.finish(ROOM_ID, new GameFinishRequest(240, null, 3), member);
+
+        assertThat(scoreCaptor.getValue().score()).isEqualTo(240);
+        // 마리 수는 completedCount가 아니라 caught에 둔다 — 순위가 마리 수로 갈리면 안 된다
+        assertThat(scoreCaptor.getValue().completedCount()).isZero();
+        assertThat(scoreCaptor.getValue().stats()).containsEntry("caught", 3);
+    }
+
+    /** 게임⑤ 낚시: 3마리를 주장하며 400점을 보내면 3×120=360으로 잘린다(점수 위조 차단). */
+    @Test
+    void 낚시_총점은_마리수_곱_어종최고점을_넘지_못한다() {
+        when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
+        when(membershipReader.isMember(eq(ROOM_ID), any())).thenReturn(true);
+        long now = System.currentTimeMillis();
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(
+                new GameSession("s1", 11L, null, null, now - 5_000, now + 25_000,
+                        GameSession.STATUS_PLAYING, List.of(), 0, null, null, 0)));
+        ArgumentCaptor<GamePlayerScore> scoreCaptor = ArgumentCaptor.forClass(GamePlayerScore.class);
+        when(sessionRepository.saveScoreIfAbsent(eq(ROOM_ID), scoreCaptor.capture())).thenReturn(true);
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue("1", "방장", false, 0),
+                new LiveRoomMemberValue("2", "참가자", false, 0)));
+        when(sessionRepository.countScores(ROOM_ID)).thenReturn(1L);
+
+        service.finish(ROOM_ID, new GameFinishRequest(400, null, 3), member);
+
+        assertThat(scoreCaptor.getValue().score()).isEqualTo(360);
+    }
+
+    /**
+     * 게임⑤ 낚시 순위는 <b>총점</b>으로 매긴다 — 마리 수가 1순위가 되면 상어 1마리(120점)가
+     * 멸치 3마리(15점)에게 져서 "깊은 층을 노리는" 게임이 성립하지 않는다.
+     */
+    @Test
+    void 낚시_순위는_마리수가_아니라_총점으로_매긴다() {
+        givenRoomWithHost();
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.empty());
+        when(gameTaskScheduler.schedule(endTaskCaptor.capture(), any(Instant.class)))
+                .thenReturn(mock(ScheduledFuture.class));
+        when(gameRepository.findById(11L)).thenReturn(Optional.of(Game.builder()
+                .id(11L).name("모션 낚시").roundDurationSec(90).countdownSec(3).active(true).build()));
+
+        service.start(ROOM_ID, new GameStartRequest(11L, null, null, null, null), host);
+        runPrepareTimeout();
+        verify(messagingTemplate, org.mockito.Mockito.times(2))
+                .convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
+        String sessionId = eventCaptor.getValue().sessionId();
+
+        when(sessionRepository.tryAcquireEndGuard(ROOM_ID, sessionId, 0)).thenReturn(true);
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(
+                new GameSession(sessionId, 11L, null, null, 0, 1,
+                        GameSession.STATUS_PLAYING, List.of(), 0, null, null, 0)));
+        // A: 3마리 15점(멸치만) / B: 1마리 120점(상어) — 마리 수 기준이면 A가 1등이 된다
+        when(sessionRepository.findScores(ROOM_ID)).thenReturn(Map.of(
+                "1", new GamePlayerScore("1", "A", 15, Map.of("caught", 3), 1000),
+                "2", new GamePlayerScore("2", "B", 120, Map.of("caught", 1), 1100)));
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue("1", "A", false, 0),
+                new LiveRoomMemberValue("2", "B", false, 0)));
+
+        endTaskCaptor.getValue().run();
+
+        verify(messagingTemplate, org.mockito.Mockito.times(3))
+                .convertAndSend(eq(GAME_TOPIC), eventCaptor.capture());
+        GameEventResponse end = eventCaptor.getValue();
+        assertThat(end.results()).extracting(r -> r.userId()).containsExactly("2", "1");
+        assertThat(end.results().get(0).score()).isEqualTo(120);
+    }
+
     /** 게임④(-9): 출제자는 이번 라운드에 플레이하지 않는다 — finish를 보내도 조용히 무시된다. */
     @Test
     void 출제자의_finish_제출은_무시된다() {
