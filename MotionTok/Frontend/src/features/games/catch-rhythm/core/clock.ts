@@ -36,4 +36,14 @@ export class GameClock {
     if (!this.running) return 0
     return (this.source.currentTime - this.startTime) * 1000
   }
+
+  /**
+   * 게임 시각 tMs에 해당하는 오디오 클럭 시각(초).
+   *
+   * <p>곡을 이 축에서 예약하려고 있다 — 판정과 곡이 같은 시계를 쓰지 않으면 채보 격자를
+   * 아무리 맞춰도 곡만 밀린다(rAF 프레임 지연·setTimeout 지터·element 재생 지연이 다 얹힌다).</p>
+   */
+  ctxTimeAt(tMs: number): number {
+    return this.startTime + tMs / 1000
+  }
 }

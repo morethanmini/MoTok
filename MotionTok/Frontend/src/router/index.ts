@@ -5,6 +5,7 @@ import { readAccessClaims } from '@/api/token'
 import { askLogin } from '@/composables/useLoginRequired'
 import { denyAccess } from '@/composables/useAccessDenied'
 import { useSessionStore } from '@/stores/session'
+import { isChunkLoadError, markBuildOutdated, reloadForNewBuild } from '@/composables/useBuildVersion'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -83,6 +84,19 @@ router.beforeEach(async (to) => {
   const adminCheck = requireAdmin(to)
   if (adminCheck !== true) return adminCheck
   return requireAuth(to)
+})
+
+/**
+ * 라우트 컴포넌트는 전부 지연 로딩이라(routes.ts) 배포가 나가면 <b>이동 자체가 실패한다</b> —
+ * 상점을 눌렀는데 아무 화면도 열리지 않고 콘솔에만 404가 남는 경로가 이것이다.
+ *
+ * <p>제자리 새로고침이 아니라 <b>목적지로</b> 새로 연다. 안 그러면 새 빌드를 받고도 누르려던
+ * 화면은 그대로 안 열린 채라, 사용자 입장에서는 여전히 "눌렀는데 아무 일도 안 일어난" 것이다.</p>
+ */
+router.onError((error, to) => {
+  if (!isChunkLoadError(error)) return
+  markBuildOutdated()
+  reloadForNewBuild(to.fullPath)
 })
 
 export default router

@@ -75,6 +75,28 @@ public class GameSessionService {
     /** 게임① 매치 완성 개수 상한 — 60초를 홀드 3초로 나눈 이론상 최대치. */
     private static final int MAX_COMPLETED = 20;
 
+    /**
+     * 게임⑤(모션 낚시, S15P11A706-49) — 점수가 <b>누적 합계</b>인 게임.
+     *
+     * <p>다른 단판 게임은 0~100이지만 낚시 점수는 낚은 물고기 점수의 합이라 90초에 수백 점이
+     * 된다. {@link #MAX_SCORE} 클램프에 넣으면 전원 100점 동점이 되므로, 게임①처럼 "성과
+     * 개수 × 개당 상한"으로 상한을 잡는다.</p>
+     */
+    private static final long FISHING_GAME_ID = 11L;
+    /** 게임⑤ 어종 최고 점수(상어) — FE fishing/fight.ts FISH의 최댓값과 동기화. 점수 상한의 계수. */
+    private static final int MAX_FISH_SCORE = 120;
+    /**
+     * 게임⑤ 낚은 마리 수 stats 키.
+     *
+     * <p><b>completedCount로 저장하지 않는다.</b> {@link #rank}는 completedCount를 1순위로
+     * 정렬하는데(게임① 규칙), 낚시는 총점이 승부 기준이다 — 상어 1마리(120점)가 멸치 3마리
+     * (15점)에게 지면 깊이를 노리는 게임이 성립하지 않는다. 다른 키에 두면
+     * {@code GamePlayerScore.completedCount()}가 0을 돌려주고 정렬이 점수로 떨어진다.</p>
+     */
+    private static final String STAT_CAUGHT = "caught";
+    /** 게임⑤ 마리 수 상한 — 90초를 최단 사이클(멸치)로 나눈 이론상 최대치의 여유값. */
+    private static final int MAX_CAUGHT = 30;
+
     /** 게임④(몸 끼워 맞추기, S15P11A706-86) — 출제 페이즈가 있는 게임. */
     private static final long BODY_FIT_GAME_ID = 4L;
     /** 게임④ 출제 페이즈 길이 — FE config·기획 §3과 동기화. */
@@ -653,6 +675,14 @@ public class GameSessionService {
             starsHit = 0;
             completedCount = completed;
             stats = Map.of(STAT_COMPLETED, completed);
+        } else if (session.gameId() == FISHING_GAME_ID) {
+            // 게임⑤: score=낚은 물고기 점수 합계. 상한은 마리 수 × 어종 최고 점수 —
+            // 순위는 총점으로 매기므로 마리 수는 STAT_CAUGHT에만 둔다(상수 주석 참고).
+            int caught = clamp(request.completedCount() == null ? 0 : request.completedCount(), 0, MAX_CAUGHT);
+            score = clamp(request.score() == null ? 0 : request.score(), 0, caught * MAX_FISH_SCORE);
+            starsHit = 0;
+            completedCount = caught; // PLAYER_FINISHED 표시용("3마리") — 정렬에는 쓰이지 않는다
+            stats = Map.of(STAT_CAUGHT, caught);
         } else {
             // 게임④ 연속 서바이벌(-9)도 이 분기다 — 클라이언트가 누적 총점이 아니라 벽 1장당
             // 평균(0~100)을 보내기 때문이다. 총점을 받으면 그 값이 leaderboards.best_score

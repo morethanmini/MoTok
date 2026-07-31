@@ -45,9 +45,26 @@ public class GameCatalogSeeder implements ApplicationRunner {
     private static final String BODY_FIT_CONTROLS =
             "카메라에 상반신이 잘 보이게 앉고, 벽이 다가오면 구멍 모양과 같은 포즈를 취해요.";
 
+    /**
+     * 게임⑤ 모션 낚시 한 판 시간(초).
+     *
+     * <p>FE에 같은 상수가 없다 — 낚시 루프(loop.ts)는 총 시간을 모르고, FishingGame이 세션의
+     * endAt만 보고 끝낸다. 그래서 이 값을 바꾸면 FE 수정 없이 그대로 반영된다(게임①·⑩의
+     * "FE와 동기화 필수"와 다른 이유).</p>
+     */
+    private static final int FISHING_TOTAL_SEC = 90;
+    private static final String FISHING_RULES =
+            "90초 동안 물고기를 낚아 점수를 모으는 게임이에요. 어종은 깊이 층이 나뉘어 있어서 "
+                    + "미끼를 어느 깊이에 두는지가 무엇을 낚는지를 정해요 — 멸치(5점)는 얕고 "
+                    + "상어(120점)는 가장 깊어요. 총점이 높은 사람이 이겨요.";
+    private static final String FISHING_CONTROLS =
+            "양손으로 대를 쥐고 뒤로 젖혀 조준한 뒤 앞으로 휘둘러 던져요. 기다리는 동안 양손 높이로 "
+                    + "미끼 깊이를 조절하고, 입질이 오면 손을 위로 번쩍 들어 챔질한 뒤 한 손으로 릴을 감아요.";
+
     @Override
     public void run(ApplicationArguments args) {
         seedBodyFit();
+        seedFishing();
         Game existing = gameRepository.findById(1L).orElse(null);
         if (existing == null) {
             gameRepository.save(Game.builder()
@@ -122,5 +139,27 @@ public class GameCatalogSeeder implements ApplicationRunner {
                 .controls(BODY_FIT_CONTROLS)
                 .build());
         log.info("game catalog seeded: id=4 몸 끼워 맞추기");
+    }
+
+    /** 게임⑤ 모션 낚시(S15P11A706-49) 시드 — 90초 단판, 점수 = 낚은 물고기 점수 합계. */
+    private void seedFishing() {
+        if (gameRepository.findById(11L).isPresent()) {
+            return;
+        }
+        gameRepository.save(Game.builder()
+                .id(11L)
+                .name("모션 낚시")
+                .mode("VERSUS")
+                .minPlayers(1)
+                .maxPlayers(8)
+                .roundDurationSec(FISHING_TOTAL_SEC)
+                .countdownSec(3)
+                .supportsBot(false)
+                .active(true)
+                .category("MOTION")
+                .rules(FISHING_RULES)
+                .controls(FISHING_CONTROLS)
+                .build());
+        log.info("game catalog seeded: id=11 모션 낚시");
     }
 }
