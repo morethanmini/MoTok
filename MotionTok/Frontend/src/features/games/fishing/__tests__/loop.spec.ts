@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { bandIndexOf, bandYRange, createLoop, DEFAULT_LOOP, seededRng } from '../loop'
+import {
+  bandIndexOf,
+  bandYRange,
+  createLoop,
+  DEFAULT_LOOP,
+  landingXFromAim,
+  seededRng,
+} from '../loop'
 import { FISH } from '../fight'
 
 /**
@@ -26,37 +33,37 @@ function until(loop: ReturnType<typeof createLoop>, phase: string, maxSec = 20, 
   return loop.state().phase === phase
 }
 
-describe('루프 — 캐스팅 (단면도: 파워 → 착수 x)', () => {
+describe('루프 — 캐스팅 (단면도: 조준 → 착수 x)', () => {
   it('IDLE에서 던지면 CASTING으로 가고 찌가 보인다', () => {
     const loop = createLoop()
     expect(loop.state().phase).toBe('idle')
     expect(loop.state().bobber.visible).toBe(false)
-    expect(loop.cast(0.5)).toBe(true)
+    expect(loop.cast(320)).toBe(true)
     expect(loop.state().phase).toBe('casting')
     expect(loop.state().bobber.visible).toBe(true)
   })
 
   it('CASTING 중에는 다시 던질 수 없다 — 연타로 상태가 깨지지 않는다', () => {
     const loop = createLoop()
-    loop.cast(0.5)
-    expect(loop.cast(0.5)).toBe(false)
+    loop.cast(320)
+    expect(loop.cast(320)).toBe(false)
   })
 
   it('비행이 끝나면 수면 바로 아래에 착수하고 WAITING으로 간다', () => {
     const loop = createLoop()
-    loop.cast(0.5)
+    loop.cast(320)
     run(loop, DEFAULT_LOOP.castFlightSec + 0.1)
     const s = loop.state()
     expect(s.phase).toBe('waiting')
     expect(s.bobber.y).toBe(DEFAULT_LOOP.waterY + DEFAULT_LOOP.depthMinMarginPx)
   })
 
-  it('세게 던지면(power 1) 오른쪽 끝에, 약하게 던지면 앵글러 앞에 떨어진다', () => {
+  it('오른쪽으로 조준할수록 멀리, 왼쪽 끝은 앵글러 앞에 떨어진다', () => {
     const near = createLoop()
     near.cast(0)
     run(near, DEFAULT_LOOP.castFlightSec + 0.1)
     const far = createLoop()
-    far.cast(1)
+    far.cast(DEFAULT_LOOP.width)
     run(far, DEFAULT_LOOP.castFlightSec + 0.1)
     // 단면도에서는 오른쪽이 먼 바다다(앵글러가 좌상단)
     expect(far.state().bobber.x).toBeGreaterThan(near.state().bobber.x)
@@ -64,11 +71,21 @@ describe('루프 — 캐스팅 (단면도: 파워 → 착수 x)', () => {
     expect(far.state().bobber.x).toBe(DEFAULT_LOOP.width - DEFAULT_LOOP.landFarMarginPx)
   })
 
-  it('파워가 0~1 밖이면 안쪽으로 잘린다', () => {
+  it('조준 전 구간이 착수 전 구간에 선형 대응된다 — 클램프가 아니라 리매핑', () => {
+    const nearX = DEFAULT_LOOP.landNearXPx
+    const farX = DEFAULT_LOOP.width - DEFAULT_LOOP.landFarMarginPx
+    // 화면 정중앙 조준 = 착수 범위 정중앙. 클램프 방식이면 이 등식이 깨진다
+    expect(landingXFromAim(DEFAULT_LOOP, DEFAULT_LOOP.width / 2)).toBeCloseTo((nearX + farX) / 2)
+    // 왼쪽 1/4 조준도 고유한 착수점을 가진다(클램프면 전부 nearX로 뭉개진다)
+    expect(landingXFromAim(DEFAULT_LOOP, DEFAULT_LOOP.width / 4)).toBeGreaterThan(nearX)
+  })
+
+  it('조준이 화면 밖이면 착수 범위 안쪽으로 잘린다', () => {
     const loop = createLoop()
-    loop.cast(5)
+    loop.cast(5000)
     run(loop, DEFAULT_LOOP.castFlightSec + 0.1)
     expect(loop.state().bobber.x).toBe(DEFAULT_LOOP.width - DEFAULT_LOOP.landFarMarginPx)
+    expect(landingXFromAim(DEFAULT_LOOP, -100)).toBe(DEFAULT_LOOP.landNearXPx)
   })
 })
 
@@ -76,7 +93,7 @@ describe('루프 — 깊이 조작 (단면도: 양손 높이 → 미끼 깊이)'
   /** 물고기가 끼어들지 않게 비운다 — 깊이 이동만 본다 */
   function emptyWaiting() {
     const loop = createLoop({ ...DEFAULT_LOOP, fishCount: 0 })
-    loop.cast(0.5)
+    loop.cast(320)
     run(loop, DEFAULT_LOOP.castFlightSec + 0.1)
     expect(loop.state().phase).toBe('waiting')
     return loop
@@ -123,7 +140,7 @@ describe('루프 — 깊이 조작 (단면도: 양손 높이 → 미끼 깊이)'
 
   it('미끼를 멀리 옮기면 관심을 보인 물고기가 흥미를 잃는다', () => {
     const loop = createLoop()
-    loop.cast(0.5)
+    loop.cast(320)
     run(loop, DEFAULT_LOOP.castFlightSec + 0.1)
     // 물고기가 관심을 보일 때까지 기다린다
     for (let t = 0; t < 6 && !loop.state().active; t += DT) loop.tick(DT, 0)
@@ -152,7 +169,7 @@ describe('루프 — 깊이 조작 (단면도: 양손 높이 → 미끼 깊이)'
 describe('루프 — 대기와 입질 (기획: 관심 → 접근 → 입질)', () => {
   it('착수 직후 바로 입질하지 않는다 — 물고기가 다가올 시간이 있다', () => {
     const loop = createLoop()
-    loop.cast(0.5)
+    loop.cast(320)
     run(loop, DEFAULT_LOOP.castFlightSec + 0.1)
     expect(loop.state().phase).toBe('waiting')
     // 데모는 착수와 거의 동시에 입질했다(12마리에 초당 0.9 확률을 굴렸다) — 대기가 없었다
@@ -162,14 +179,14 @@ describe('루프 — 대기와 입질 (기획: 관심 → 접근 → 입질)', (
 
   it('관심을 보인 물고기가 찌로 다가와 입질한다', () => {
     const loop = createLoop()
-    loop.cast(0.5)
+    loop.cast(320)
     expect(until(loop, 'bite')).toBe(true)
     expect(loop.state().active).not.toBeNull()
   })
 
   it('입질 창을 놓치면 물고기가 도망간다 (missed)', () => {
     const loop = createLoop()
-    loop.cast(0.5)
+    loop.cast(320)
     until(loop, 'bite')
     run(loop, DEFAULT_LOOP.biteWindowSec + 0.2)
     expect(loop.state().phase).toBe('result')
@@ -180,14 +197,14 @@ describe('루프 — 대기와 입질 (기획: 관심 → 접근 → 입질)', (
   it('BITE가 아니면 챔질해도 무효다', () => {
     const loop = createLoop()
     expect(loop.hook()).toBe(false)
-    loop.cast(0.5)
+    loop.cast(320)
     expect(loop.hook()).toBe(false)
   })
 
   it('아무도 관심을 안 보이면 제한 시간 뒤 찌를 회수한다', () => {
     // 물고기 0마리 — 입질이 일어날 수 없다
     const loop = createLoop({ ...DEFAULT_LOOP, fishCount: 0 })
-    loop.cast(0.5)
+    loop.cast(320)
     run(loop, DEFAULT_LOOP.castFlightSec + DEFAULT_LOOP.waitTimeoutSec + 0.2)
     expect(loop.state().phase).toBe('idle')
     expect(loop.state().bobber.visible).toBe(false)
@@ -197,7 +214,7 @@ describe('루프 — 대기와 입질 (기획: 관심 → 접근 → 입질)', (
 describe('루프 — 힘겨루기와 결과', () => {
   it('챔질하면 FIGHTING으로 가고, 충분히 감으면 잡아서 점수가 오른다', () => {
     const loop = createLoop()
-    loop.cast(0.5)
+    loop.cast(320)
     until(loop, 'bite')
     expect(loop.hook()).toBe(true)
     expect(loop.state().phase).toBe('fighting')
@@ -213,7 +230,7 @@ describe('루프 — 힘겨루기와 결과', () => {
 
   it('안 감으면 물고기가 도망가고 점수가 없다', () => {
     const loop = createLoop()
-    loop.cast(0.5)
+    loop.cast(320)
     until(loop, 'bite')
     loop.hook()
     run(loop, 20, 0)
@@ -223,17 +240,17 @@ describe('루프 — 힘겨루기와 결과', () => {
 
   it('RESULT가 지나면 IDLE로 돌아가 다시 던질 수 있다', () => {
     const loop = createLoop()
-    loop.cast(0.5)
+    loop.cast(320)
     until(loop, 'bite')
     loop.hook()
     run(loop, 40, 2.0)
     expect(until(loop, 'idle', 5, 2.0)).toBe(true)
-    expect(loop.cast(0.5)).toBe(true)
+    expect(loop.cast(320)).toBe(true)
   })
 
   it('힘겨루기 중 유예가 지나고 안 감으면 진행도가 줄어든다', () => {
     const loop = createLoop()
-    loop.cast(0.5)
+    loop.cast(320)
     until(loop, 'bite')
     loop.hook()
     run(loop, 0.3, 5)

@@ -27,7 +27,7 @@ import { createHook, DEFAULT_HOOK } from './hook'
 import { createPump, DEFAULT_PUMP } from './pump'
 import { bandYRange, createLoop, DEFAULT_LOOP, DEPTH_BANDS, type LoopState } from './loop'
 import { depthFromHands } from './depth'
-import { createNormalizer, SHOULDER, VIS_MIN, WRIST } from './normalize'
+import { aimFromHands, createNormalizer, SHOULDER, VIS_MIN, WRIST } from './normalize'
 import { drawFrame } from './render/drawFrame'
 import { resolveSkin, SKINS } from './render/skins'
 import type { Splash } from './render/types'
@@ -70,8 +70,8 @@ const norm = createNormalizer()
 
 /** 렌더·표시용 스냅샷 — tick 후 매 프레임 갱신 */
 const st = ref<LoopState>(loop.state())
-/** 백스윙 상태 — IDLE에서 착수 범위 미리보기에 쓴다. 착수 x는 파워가 정한다(단면도) */
-const aim = reactive({ locked: false })
+/** 조준 상태 — IDLE에서 착수점 미리보기에 쓴다. 조준이 착수 거리를 정한다(단면도) */
+const aim = reactive({ locked: false, x: 320 })
 const reelRate = ref(0)
 /**
  * 지금 판정에 쓰이는 점의 화면 좌표 — 캠 오버레이 마커.
@@ -82,8 +82,12 @@ let marker: { x: number; y: number } | null = null
 let splashes: Splash[] = []
 /** 마지막 페이즈 — 전환 시점에 판정기를 리셋하기 위한 비교값 */
 let prevPhase = st.value.phase
+/** 어깨 중점 x — 조준 0의 기준. 어깨를 놓친 프레임에는 직전 값을 유지한다 */
+let bodyMidX = W / 2
 /** 어깨 중점 y — 깊이 0.5의 기준. 어깨를 놓친 프레임에는 직전 값을 유지한다 */
 let bodyMidY = H / 2
+/** 캐스팅용 어깨너비 래치 — 백스윙 진입 시점 sw 고정. 정식 화면(FishingGame.vue)과 같은 방식 */
+let castSw = 0
 /** 미끼가 있는 깊이 층 — 층이 바뀔 때만 로그를 찍기 위한 비교값 */
 let lastBandIdx = -1
 
@@ -92,7 +96,7 @@ const hud = computed(() => {
   switch (s.phase) {
     case 'idle':
       return aim.locked
-        ? '조준 중 — 그대로 앞으로 던지세요'
+        ? '좌우로 조준하고 앞으로 던지세요'
         : '양손으로 낚싯대를 쥐고 뒤로 젖히세요'
     case 'casting':
       return '찌가 날아갑니다…'
@@ -264,7 +268,8 @@ function onPose(result: PoseLandmarkerResult) {
     norm.push(width)
     stats.swMin = stats.swMin === 0 ? width : Math.min(stats.swMin, width)
     stats.swMax = Math.max(stats.swMax, width)
-    // 깊이 0.5의 기준 — 정식 화면과 같은 매핑을 써야 계측이 의미가 있다
+    // 조준 0·깊이 0.5의 기준 — 정식 화면과 같은 매핑을 써야 계측이 의미가 있다
+    bodyMidX = ((1 - sl.x) * W + (1 - sr.x) * W) / 2
     bodyMidY = (sl.y * H + sr.y * H) / 2
   }
   const sw = norm.ready() ? norm.sw() : 0
@@ -319,9 +324,12 @@ function onPose(result: PoseLandmarkerResult) {
 
   // 페이즈별로 하나만 — 서로 오발하지 않는다
   if (phase === 'idle') {
-    // 단면도: 착수 x는 파워가 정한다 — cast.ts의 조준 x 인자는 소비하지 않는다(판정 5파일 무수정)
-    const c = cast.feed(midX, midY, sw, now)
+    // 백스윙 전에는 매 프레임 갱신, 백스윙에 들어가면 그 값으로 고정 (sw 변동 21~28% 차단)
+    if (!aim.locked || !(castSw > 0)) castSw = sw
+    // 조준 → 착수 거리. 스윙은 발사 게이트일 뿐, 파워는 거리에 관여하지 않는다
+    const c = cast.feed(aimFromHands(midX, bodyMidX, castSw, W), midY, castSw, now)
     aim.locked = c.phase === 'back'
+    if (c.aimX !== null) aim.x = c.aimX
     if (c.dropSw > 0) lastDropSw = c.dropSw
     if (c.riseSw > 0) lastRiseSw = c.riseSw
 
@@ -334,14 +342,15 @@ function onPose(result: PoseLandmarkerResult) {
       prevCastPhase = c.phase
     }
 
+    // 조준은 발사 시점에 판정기가 확정한 값을 쓴다(내려꽂는 동안의 흔들림 배제)
     if (c.fired !== null) {
       lastPower = c.fired
       stats.powers.push(c.fired)
       log(
         'cast',
-        `던짐 파워=${n2(c.fired)} 낙하=×${n2(lastDropSw)} 상승=×${n2(lastRiseSw)} sw=${Math.round(sw)}px`,
+        `던짐 조준x=${Math.round(c.firedAimX)} 파워=${n2(c.fired)}(연출) 낙하=×${n2(lastDropSw)} 상승=×${n2(lastRiseSw)} sw래치=${Math.round(castSw)}px(라이브 ${Math.round(sw)})`,
       )
-      loop.cast(c.fired)
+      loop.cast(c.firedAimX)
       lastDropSw = 0
     } else if (prevCastPhase === 'idle' && lastDropSw > 0) {
       /*
@@ -386,12 +395,12 @@ function frame(now: number) {
     if (s.phase !== prevPhase) {
       if (s.phase === 'waiting') {
         spawnSplash(s.bobber.x, s.bobber.y)
-        // 착수 x로 거리 매핑을 확인한다 — 오른쪽일수록 멀다(단면도)
+        // 착수 x로 조준→거리 매핑을 확인한다 — 오른쪽일수록 멀다(단면도). 파워는 연출 전용
         const range = W - DEFAULT_LOOP.landFarMarginPx - DEFAULT_LOOP.landNearXPx
         const dist = (s.bobber.x - DEFAULT_LOOP.landNearXPx) / range
         log(
           'land',
-          `착수 x=${Math.round(s.bobber.x)} (거리 ${(dist * 100).toFixed(0)}%) ← 파워 ${n2(lastPower)}`,
+          `착수 x=${Math.round(s.bobber.x)} (거리 ${(dist * 100).toFixed(0)}%) · 파워 ${n2(lastPower)}(연출)`,
         )
       }
       if (s.phase === 'bite') {

@@ -7,7 +7,15 @@
  *
  * `FishingGameView.vue`에 있던 draw 함수들을 그대로 옮긴 것이다 — 색·수치를 바꾸지 않았다.
  */
-import { bandYRange, DEPTH_BANDS, type LoopConfig, type LoopState, type Phase, type SceneFish } from '../../loop'
+import {
+  bandYRange,
+  DEPTH_BANDS,
+  landingXFromAim,
+  type LoopConfig,
+  type LoopState,
+  type Phase,
+  type SceneFish,
+} from '../../loop'
 import type { FishingSkin, FishingView, Splash } from '../types'
 
 function drawMark(
@@ -157,14 +165,14 @@ export const debugSkin: FishingSkin = {
   },
 
   /**
-   * 착수 범위 미리보기 — 단면도에서 파워는 **착수 x**를 정한다(왼쪽 약하게 ~ 오른쪽 세게).
-   * 거리는 스윙 최고 속도로 정해지므로 미리보기 게이지가 없다(cast.ts 주석 ③) — 대신 "이 선
-   * 위 어딘가에 떨어진다"는 범위를 보여줘서 세게/약하게 던지는 감을 잡게 한다.
+   * 착수점 미리보기 — 조준(aimX)이 착수 거리를 정한다. 계측 목적상 원시 조준 x와 리매핑된
+   * 착수 x를 **둘 다** 보여준다 — 리매핑이 틀어지면 이 두 마커의 관계에서 바로 드러난다.
    */
-  drawAim(ctx: CanvasRenderingContext2D, cfg: LoopConfig, tMs: number) {
+  drawAim(ctx: CanvasRenderingContext2D, aimX: number, cfg: LoopConfig, tMs: number) {
     const nearX = cfg.landNearXPx
     const farX = cfg.width - cfg.landFarMarginPx
     const y = cfg.waterY + cfg.depthMinMarginPx
+    const lx = landingXFromAim(cfg, aimX)
     ctx.save()
     // 착수 가능 범위 — 수면 아래 가로 막대
     ctx.strokeStyle = 'rgba(198,255,94,0.35)'
@@ -173,20 +181,26 @@ export const debugSkin: FishingSkin = {
     ctx.moveTo(nearX, y)
     ctx.lineTo(farX, y)
     ctx.stroke()
-    // 양 끝 표시 — 왼쪽이 약하게, 오른쪽이 세게
+    // 원시 조준 x — 수면 위 세로 눈금(리매핑 전 값)
+    ctx.strokeStyle = 'rgba(61,220,255,0.7)'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(aimX, cfg.waterY - 14)
+    ctx.lineTo(aimX, cfg.waterY)
+    ctx.stroke()
+    // 착수점 — 맥동 링
     const pulse = 5 + Math.sin(tMs / 160) * 2
     ctx.strokeStyle = '#C6FF5E'
     ctx.lineWidth = 2
-    for (const x of [nearX, farX]) {
-      ctx.beginPath()
-      ctx.arc(x, y, pulse, 0, Math.PI * 2)
-      ctx.stroke()
-    }
+    ctx.beginPath()
+    ctx.arc(lx, y, pulse, 0, Math.PI * 2)
+    ctx.stroke()
     ctx.fillStyle = 'rgba(198,255,94,0.8)'
     ctx.font = '10px system-ui, sans-serif'
     ctx.textAlign = 'center'
-    ctx.fillText('약하게', nearX, y + 20)
-    ctx.fillText('세게', farX, y + 20)
+    ctx.fillText(`착수 ${Math.round(lx)}`, lx, y + 20)
+    ctx.fillText('가까이', nearX, y + 20)
+    ctx.fillText('멀리', farX, y + 20)
     ctx.restore()
   },
 
