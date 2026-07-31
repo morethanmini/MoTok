@@ -23,7 +23,10 @@ import {
   MAX_TRAIL_MS,
   PLACEMENT_CANDIDATES,
   SLOT_MS,
+  slotTimeMs,
+  beats,
   LEAD_IN_MS,
+  MAX_GAP_BEATS,
   CHART_BPM,
   HAND_SHUFFLE_RATE,
   TRAIL_SEGMENTS,
@@ -32,6 +35,7 @@ import {
   type KindWeights,
   type Difficulty,
 } from './presets'
+import { isOnBeat, slotAccent } from './songAccents'
 
 /** 생성된 노트 — 스키마(CatchNote)에 튜닝·디버그용 정보를 얹었다. */
 export interface GeneratedNote extends CatchNote {
@@ -248,8 +252,26 @@ export function generateBattleChart(
   // 시작 손도 시드에서 — 매판 같은 손으로 시작하지 않게
   let nextHand: Hand = rng() < 0.5 ? 'left' : 'right'
 
-  for (let timeMs = LEAD_IN_MS; timeMs <= durationMs; timeMs += SLOT_MS) {
-    if (rng() >= preset.density) continue
+  const maxGapMs = beats(MAX_GAP_BEATS[difficulty])
+  /** 마지막으로 노트가 실제로 놓인 시각 — 공백이 길어지면 추첨을 건너뛴다 */
+  let lastPlacedMs = LEAD_IN_MS
+
+  // 슬롯 번호로 돈다 — 232.56ms를 누적하면 소수점이 쌓인다(slotTimeMs 주석 참고)
+  for (let slot = 0; ; slot++) {
+    const timeMs = slotTimeMs(slot)
+    if (timeMs > durationMs) break
+    // 추첨은 공백 여부와 무관하게 항상 소비한다 — 안 그러면 난수 흐름이 공백 이력에 따라
+    // 밀려서, 같은 시드로도 슬롯 번호와 난수의 대응이 달라진다(디버깅이 어려워진다)
+    const roll = rng()
+    // 곡에서 소리가 큰 슬롯에 노트가 몰린다 — 격자만 맞추면 "박자 위"이긴 해도
+    // 킥이 있는 자리인지는 무관해서 곡을 따라간다는 감각이 안 생긴다(songAccents 참고)
+    const wanted = roll < preset.density * slotAccent(slot)
+    // 너무 오래 비었으면 박 위에 하나 놓는다. 그 박에서도 물리 제약(연타·도달)에 막히면
+    // 1.5배까지 기다렸다가 엇박이라도 채운다 — 공백을 남기지 않는 게 우선이다
+    const gapMs = timeMs - lastPlacedMs
+    const forced = gapMs >= maxGapMs && (isOnBeat(slot) || gapMs >= maxGapMs * 1.5)
+    if (!wanted && !forced) continue
+    const before = notes.length
 
     const simultaneous = rng() < preset.simultaneous
     const owners: Hand[] = simultaneous ? ['left', 'right'] : [nextHand]
@@ -288,6 +310,8 @@ export function generateBattleChart(
       lastByHand[owner] = note
       placedThisSlot.push({ x, y, needGap: MIN_GAP })
     }
+
+    if (notes.length > before) lastPlacedMs = timeMs
 
     // 좌우 교대가 기본, 가끔 한 번 더 뒤집어 같은 손이 연속되게 한다
     nextHand = other(nextHand)

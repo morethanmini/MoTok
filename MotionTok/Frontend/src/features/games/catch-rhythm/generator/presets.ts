@@ -91,10 +91,34 @@ export const PRESETS: Record<Difficulty, Preset> = {
 
 // ── 채보 기하 ──────────────────────────────────────────────
 
-/** 고정 BPM. 곡 채보(확장)가 들어오면 이 값 대신 곡의 bpm을 쓴다. */
-export const CHART_BPM = 120
-/** 1/2박 = 250ms @ BPM 120 — 노트가 놓일 수 있는 최소 간격 */
-export const SLOT_MS = 250
+/**
+ * 인게임 곡(`/assets/sfx/catch-rhythm/Neon_Pulse.mp3`)의 실측 템포.
+ *
+ * <p>파형을 디코드해 스펙트럼 플럭스 온셋의 자기상관으로 재보니 **129.00 BPM**이고 곡 전체가
+ * 일정하다 — 전곡 격자 정합도가 129.00에서 14.8인데 인접 BPM(128.5·129.3·130)은 1.4~1.9로,
+ * 봉우리가 이렇게 날카로운 건 템포가 기계적으로 고정이라는 뜻이다. 0~20·20~40·40~60초 구간에서
+ * 8분 격자 위상이 154ms로 완전히 같았다(드리프트 0).</p>
+ *
+ * <p>예전에는 120(슬롯 250ms)이었다. 곡이 129라서 슬롯마다 17.4ms씩 밀리고, 그 위상이
+ * <b>13슬롯(약 3.1초)마다 한 바퀴</b> 돌았다 — 노트와 곡의 간격이 0에서 116ms(8분 반 칸)
+ * 사이를 계속 오가서, 얹히는 순간이 우연 말고는 없었다. 곡을 갈아끼우면 이 값을 그 곡의
+ * 실측 BPM으로 바꾼다(그게 이 파일에서 유일하게 손댈 곳이다).</p>
+ */
+export const CHART_BPM = 129
+/** 한 박 = 465.12ms */
+export const BEAT_MS = 60000 / CHART_BPM
+/** 1/2박(8분음표) = 232.56ms — 노트가 놓일 수 있는 최소 간격. **정수가 아니다** */
+export const SLOT_MS = BEAT_MS / 2
+/** 1/4박(16분음표) — 프레이즈 내부 간격을 붙이는 가장 촘촘한 격자 */
+export const SIXTEENTH_MS = BEAT_MS / 4
+/** n박을 ms로 — 프리셋이 "375ms"가 아니라 "점8분"으로 읽히게 한다 */
+export function beats(n: number): number {
+  return n * BEAT_MS
+}
+/** ms를 16분음표 격자에 붙인다(최소 한 칸) */
+export function snapToSixteenth(ms: number): number {
+  return Math.max(SIXTEENTH_MS, Math.round(ms / SIXTEENTH_MS) * SIXTEENTH_MS)
+}
 /**
  * 카운트다운 직후 유예 — 이 시간 전에는 노트를 놓지 않는다.
  *
@@ -102,6 +126,22 @@ export const SLOT_MS = 250
  * 카운트다운 3초 + 손을 올리고 자세를 잡을 2초를 준다.
  */
 export const LEAD_IN_MS = 5000
+
+/**
+ * i번째 슬롯의 절대 시각.
+ *
+ * <p>슬롯이 232.56ms라 `timeMs += SLOT_MS`로 누적하면 소수점이 쌓여 노트 시각이 정수 ms에서
+ * 미세하게 벗어난다(스냅샷·JSON 왕복이 지저분해진다). 곱셈 한 번으로 구하고 ms로 반올림하면
+ * 격자 오차가 어느 슬롯에서도 ±0.5ms를 넘지 않는다.</p>
+ */
+export function slotTimeMs(i: number): number {
+  return LEAD_IN_MS + Math.round(i * SLOT_MS)
+}
+
+/** ms를 8분음표 격자(LEAD_IN_MS가 원점)에 붙인다 — 프레이즈가 박자에서 출발하도록 */
+export function snapToSlot(ms: number): number {
+  return slotTimeMs(Math.round((ms - LEAD_IN_MS) / SLOT_MS))
+}
 
 /** 손별 기본 스폰 영역(게임 좌표). 두 구간이 이어져 있어 합집합이 볼록하다(도달 보정에 필요). */
 export const X_RANGE: Record<Hand, readonly [number, number]> = {
@@ -125,6 +165,22 @@ export const PLACEMENT_CANDIDATES = 24
 
 /** 좌우 교대를 기본으로 하되 이 확률로 한 번 더 뒤집어 단조로움을 깬다 */
 export const HAND_SHUFFLE_RATE = 0.25
+
+/**
+ * 노트가 하나도 없이 지나갈 수 있는 최대 시간(박 단위) — 캐치·링 공용.
+ *
+ * <p>악센트 가중(songAccents)을 넣은 뒤 곡이 조용한 구간에서 노트가 통째로 비었다.
+ * 실측: EASY 캐치 최대 공백 <b>7.7초</b>, 시드당 평균 최대 5.6초, 3초 이상 공백이 시드당 4.7회.
+ * 음악적으로는 맞는 배치지만 게임이 멈춘 것처럼 보인다.</p>
+ *
+ * <p>이 시간을 넘기면 밀도 추첨을 건너뛰고 <b>박 위에</b> 하나 놓는다({@code isOnBeat}).
+ * 박 단위로 적는 이유는 곡이 바뀌어도 "몇 박까지 비어도 되나"라는 감각이 유지되기 때문이다.</p>
+ */
+export const MAX_GAP_BEATS: Record<Difficulty, number> = {
+  EASY: 4, // 1860ms — 한 마디
+  NORMAL: 3, // 1395ms
+  HARD: 2, // 930ms
+}
 
 /** 연결 노트 경로의 꺾임 개수 범위 (시작점 제외한 추가 점 개수) */
 /** 어떤 난이도에서도 연결 노트가 이보다 길지 않다 — 장애물 스캔 범위 계산에 쓴다 */
