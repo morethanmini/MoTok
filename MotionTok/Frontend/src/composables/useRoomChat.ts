@@ -201,16 +201,24 @@ export function useRoomChat() {
   }
 
   // ── 게임 세션 발신 (S15P11A706-115) ──────────
-  /** 게임 시작(방장 전용 — 서버가 방장 검증). 수리되면 GAME_START가 방 전체에 배포된다. */
+  /**
+   * 게임 시작(방장 전용 — 서버가 방장 검증). 수리되면 GAME_START가 방 전체에 배포된다.
+   *
+   * 다른 발신과 달리 성공 여부를 돌려준다 — 시작은 화면 전환을 동반하는 유일한 발신이라,
+   * 소켓이 끊겨 프레임이 나가지 못하면 "눌렀는데 아무 일도 안 일어난다"가 된다.
+   * 호출부가 그 사실을 사용자에게 알릴 수 있어야 한다.
+   *
+   * @returns 발행 성공 여부 — 미연결이면 false
+   */
   function startGame(
     gameId: number,
     constellationKey?: string,
     difficulty?: string,
     mode?: string,
     wallCount?: number,
-  ) {
-    if (!currentRoomId) return
-    publishGlobal(`/app/rooms/${currentRoomId}/game/start`, {
+  ): boolean {
+    if (!currentRoomId) return false
+    return publishGlobal(`/app/rooms/${currentRoomId}/game/start`, {
       gameId,
       constellationKey: constellationKey ?? null,
       difficulty: difficulty ?? null,

@@ -96,7 +96,7 @@
           <div class="desc">참가자 목록 · playerKey(u:{id}/g:{id}) → URL-encoded 필드값(jackson 미의존, JSON 아님)</div></div>
         <div class="kv"><div class="row"><code>rooms:index</code>
           <div class="badges"><span class="badge b-type">ZSET</span><span class="badge b-ttl">TTL 없음</span></div></div>
-          <div class="desc"><b>정정(구 <code>rooms:public</code>)</b>: 공개방만이 아니라 공개+비공개 방 전체 인덱스. score=createdAt · 조회 시 죽은 방 lazy 청소</div></div>
+          <div class="desc"><b>정정(구 <code>rooms:public</code>)</b>: 공개방만이 아니라 공개+비공개 방 전체 인덱스. score=createdAt · 조회 시 죽은 방 lazy 청소<br><b>등록 시점은 방 생성이 아니라 방장 입장</b> — <code>POST /live-rooms/{roomId}/open</code>이 ZADD한다. 방장이 기기 점검 화면에 머무는 동안 목록에 떠 있던 유령방을 없애기 위한 것으로, 그 사이 방은 <code>room:{roomId}</code>로만 존재한다(초대코드 입장은 가능, 로비·빠른 시작에는 미노출). 게스트 1인방은 이 경로로도 등록되지 않는다.</div></div>
         <div class="kv"><div class="row"><code>room:invite:{code}</code>
           <div class="badges"><span class="badge b-type">String</span><span class="badge b-ttl">TTL 24h</span></div></div>
           <div class="desc">초대코드 → roomId 역조회 · <b>공개방·비공개방 공통 발급</b>(-25, <code>3bd67d9</code>) · 상세 조회 응답에도 노출돼 호스트가 나중에 다시 꺼내볼 수 있음</div></div>
