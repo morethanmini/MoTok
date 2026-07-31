@@ -130,6 +130,29 @@ describe('캐스팅 — 던짐 성립', () => {
     expect(run(strong(1.1)).fires).toHaveLength(1)
   })
 
+  /**
+   * 실기 지적(2026-07-31): "무효 던짐 뒤 다시 던지려고 손을 올리는 순간 대가 발사된다."
+   *
+   * 올리는 동안 랜드마크가 한 프레임 아래로 튀면 velSw가 순간적으로 치솟아 forward로 넘어가고,
+   * 그 튐이 그대로 낙하로 측정돼 발사됐다. 튐은 다음 프레임에 원위치하므로 `holdBelowPeakSw`
+   * (발사 시점에 손이 최고점 아래에 남아 있어야 한다)가 이 경로를 자른다.
+   */
+  it('올리는 중 한 프레임 튐은 발사되지 않는다', () => {
+    const frames: { x: number; y: number }[] = []
+    for (let i = 0; i < LEAD; i++) frames.push({ x: 320, y: REST_Y })
+    // 손을 올린다 — 백스윙 게이트를 넘어 back에 들어간다
+    const top = REST_Y - 1.2 * SW
+    for (let i = 1; i <= 24; i++) frames.push({ x: 320, y: REST_Y - (1.2 * SW * i) / 24 })
+    // 올린 자리에서 유지 — minBackMs 만료
+    for (let i = 0; i < 10; i++) frames.push({ x: 320, y: top })
+    // ★ 한 프레임만 크게 아래로 튄다(0.8sw) — 낙하 문턱(0.45)을 훌쩍 넘는 크기
+    frames.push({ x: 320, y: top + 0.8 * SW })
+    // 곧바로 원위치 — 진짜 던짐이면 손이 아래에 남아 있어야 한다
+    for (let i = 0; i < 20; i++) frames.push({ x: 320, y: top })
+
+    expect(run(frames).fires).toHaveLength(0)
+  })
+
   it('연속 두 번 던지면 두 번 발사된다 — 두 번째 상승이 첫 스윙에 오염되지 않는다', () => {
     const { fires } = run([...strong(1.0), ...strong(1.0)])
     expect(fires).toHaveLength(2)

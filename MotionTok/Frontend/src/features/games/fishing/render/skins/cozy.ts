@@ -500,6 +500,11 @@ export const cozySkin: FishingSkin = {
      * 같은 크기·선명도로 그린다(수심 명암은 배경 그라데이션이 담당한다).
      */
     const r = fishRadius(f.spec)
+
+    // 스프라이트가 준비됐으면 그걸 쓴다. 아직 로딩 중이거나 Image가 없는 환경(스펙)에서는
+    // 아래 벡터 드로잉으로 떨어진다 — 둘 다 살려 둬야 첫 프레임이 빈 화면이 되지 않는다
+    if (drawFishSprite(ctx, f, r, isActive, tMs)) return
+
     const shape = fishShape(f.spec)
     const color = isActive ? YELLOW : rarityColor(f.spec)
     // 작은 물고기에 굵은 테두리를 두르면 테두리가 몸통을 다 먹는다
@@ -696,9 +701,17 @@ export const cozySkin: FishingSkin = {
 
   drawGauges(ctx: CanvasRenderingContext2D, s: LoopState, cfg: LoopConfig) {
     const { width: W, height: H } = cfg
-    // 앵글러가 좌상단으로 갔다(단면도) — 화면 아래는 이제 게이지가 전부 쓴다
+    /*
+     * 앵글러가 좌상단으로 갔으니 화면 아래는 게이지 자리다 — 다만 **우하단은 캠 PiP가 덮는다**
+     * (DOM 오버레이라 캔버스는 그걸 모른다). 전폭으로 그리면 게이지 오른쪽 끝이 캠에 가려
+     * 진행도가 안 보인다(실기 지적 2026-07-31).
+     *
+     * 캠은 컨테이너 폭의 clamp(150px, 24%, 260px) + 여백 14px이라 무대 좌표로 30% 안쪽이다.
+     * 그만큼 비워 두면 어느 크기에서도 안 겹친다.
+     */
     const x = 28
-    const w = W - x - 28
+    const camReserve = Math.max(150, W * 0.3)
+    const w = Math.max(120, W - x - camReserve)
     const y = H - 42
 
     if (s.phase === 'fighting') {
@@ -733,7 +746,7 @@ export const cozySkin: FishingSkin = {
    * 주체가 흔들리지 않는 쪽이 자연스럽다.
    */
   drawHud(ctx: CanvasRenderingContext2D, text: string, s: LoopState, cfg: LoopConfig) {
-    const { width: W, height: H } = cfg
+    const { width: W } = cfg
     drawAngler(ctx, cfg)
 
     // 점수 — 오른쪽 위 노란 배지
@@ -752,16 +765,133 @@ export const cozySkin: FishingSkin = {
     // coral·yellow 배지 위에서는 잉크가 잘 읽히지 않는다 — 종이색 글자로 뒤집는다
     const ink = caught ? INK : hot ? PAPER : INK
 
-    // 폭 상한 384 — 화면 폭의 60%. 앵글러가 좌상단으로 가서 겹칠 게 없어졌지만,
-    // 배너가 물을 다 가리지 않는 상한으로 유지한다
-    const px = fitFontPx(ctx, text, 384, 22)
+    /*
+     * 배너는 **수면 위(하늘)** 에 둔다 — 물속을 가리지 않는 유일한 자리다.
+     *
+     * 하단 중앙(H-50-bh)에 있었는데, 이 무대는 물속 단면도고 y가 곧 깊이라 그 자리가 정확히
+     * **가장 깊은 층(상어 층)** 위였다. 문구를 읽는 순간과 깊은 물고기를 노리는 순간이 겹쳐서
+     * "자막이 플레이를 방해한다"는 지적이 세 번 반복됐다(2026-07-30 가독성, 07-31 위치 2회).
+     * 반투명·축소로는 안 된다 — 가리는 자리 자체가 문제였다.
+     *
+     * 하늘 구간은 y 0~waterY(120)이고 좌상단은 앵글러, 우상단은 점수 배지가 쓴다. 그 사이
+     * 중앙 띠에 앉힌다. 폭 상한을 앵글러(~150px)와 점수 배지(~68px) 사이로 좁혀 겹침을 막는다.
+     */
+    const px = fitFontPx(ctx, text, Math.min(360, W - 300), 20)
     ctx.font = `${px}px ${FONT}`
-    const bw = ctx.measureText(text).width + 32
-    const bh = px + 16
-    const y = H - 50 - bh
+    const bw = ctx.measureText(text).width + 28
+    const bh = px + 14
+    // 하늘 띠의 수직 중앙. waterY보다 위에서 끝나야 물을 안 건드린다
+    const y = Math.max(6, (cfg.waterY - bh) / 2)
     badge(ctx, (W - bw) / 2, y, bw, bh, fill)
     badgeText(ctx, text, W / 2, y + bh / 2 + 1, px, ink)
   },
+}
+
+/* ────────────────────── 어종 스프라이트 ────────────────────── */
+
+/**
+ * 어종 스프라이트 시트 (1536×1024, 5열 × 4행 균등 격자).
+ *
+ * 3·4행이 중복이라 실제로 쓰는 건 0~2행 15칸이고, 그중 7칸을 현재 어종에 배정했다.
+ * 남은 8칸(블루탱·모오리돔·노랑탱·메기·복어·청새치·만다린·넙치)은 어종을 늘릴 때 쓴다.
+ *
+ * **벡터 드로잉을 지우지 않았다** — 시트 로딩 전 첫 프레임과 Image가 없는 환경(스펙)에서
+ * 물고기가 사라지면 안 된다. 여기가 false를 돌려주면 호출자가 벡터로 그린다.
+ */
+const SHEET_SRC = '/assets/games/fishing/fish-sheet.png'
+let sheet: HTMLImageElement | null = null
+let sheetReady = false
+
+function ensureSheet() {
+  if (sheet || typeof Image === 'undefined') return
+  const img = new Image()
+  img.onload = () => {
+    sheetReady = true
+  }
+  img.src = SHEET_SRC
+  sheet = img
+}
+
+/**
+ * 어종 이름 → 시트에서 잘라낼 사각형 [x, y, w, h] (원본 픽셀).
+ *
+ * **균등 격자로 자르면 안 된다.** 처음엔 1536×1024를 5×4로 나눴는데, 물고기가 칸 안에
+ * 가지런히 놓여 있지 않아서(칸 경계를 걸친 개체가 있다) 지느러미가 잘리고 한 마리가 두 칸에
+ * 쪼개졌다(실기 지적 2026-07-31 "물고기별로 깔끔하게 안 짤린 것 같다").
+ *
+ * 그래서 알파 채널 투영으로 개체별 실제 경계를 재서 박았다(임계 alpha>32 — 안티에일리어싱
+ * 잡음 제외). 폭이 174~262px로 개체마다 다르고, 세로 비율도 달라서 격자로는 표현이 안 된다.
+ * 시트를 다시 만들면 이 표도 같은 방법으로 다시 재야 한다.
+ */
+const FISH_BOX: Record<string, [number, number, number, number]> = {
+  // 1행
+  흰동가리: [176, 159, 206, 120],
+  블루탱: [399, 167, 215, 112],
+  금붕어: [634, 155, 212, 128],
+  연어: [864, 164, 262, 117], // 송어 그림 — 옆줄 분홍이 연어와 가장 가깝다
+  모오리돔: [1146, 160, 174, 129],
+  // 2행
+  상어: [168, 344, 221, 120],
+  붉은돔: [411, 350, 203, 117],
+  베타: [638, 344, 211, 129],
+  메기: [875, 355, 237, 111],
+  노랑탱: [1138, 352, 192, 116],
+  // 3행 (4행은 3행과 중복이라 쓰지 않는다)
+  복어: [189, 534, 191, 124],
+  청새치: [398, 528, 221, 119],
+  만다린: [638, 541, 216, 108],
+  광어: [879, 538, 224, 113], // 넙치 그림 — 광어와 같은 물고기다
+  참치: [1120, 528, 205, 125],
+}
+
+/**
+ * 스프라이트로 물고기 한 마리. 그렸으면 true.
+ *
+ * 시트의 물고기는 전부 **왼쪽을 본다** — 벡터(오른쪽 기준)와 반대라 dir 부호가 뒤집힌다.
+ */
+function drawFishSprite(
+  ctx: CanvasRenderingContext2D,
+  f: SceneFish,
+  r: number,
+  isActive: boolean,
+  tMs: number,
+): boolean {
+  ensureSheet()
+  const box = FISH_BOX[f.spec.name]
+  if (!sheetReady || !sheet || !box) return false
+
+  /*
+   * 원본 사각형을 1px 안쪽으로 좁힌다.
+   *
+   * drawImage는 확대할 때 소스 경계 **바깥 픽셀까지 보간에 섞는다**. 박스를 알파 기준으로
+   * 딱 맞게 재놨더니 시트의 옆칸 픽셀이 가장자리에 얇은 띠로 새어 나왔다(실기 스크린샷
+   * 2026-07-31, 화면 오른쪽에 세로 줄). 1px은 눈에 안 띄고 새는 건 확실히 막는다.
+   */
+  const [bx, by, bw, bh] = box
+  const sx = bx + 1
+  const sy = by + 1
+  const sw0 = bw - 2
+  const sh0 = bh - 2
+  // 크기는 계속 fishRadius가 정한다 — 시트의 개체 크기는 그림 사정이라 점수↔크기 관계를
+  // 흔들면 안 된다. 세로 비율만 원본 박스에서 가져와 개체별 몸 모양을 유지한다
+  const w = r * 2.6
+  const h = w * (sh0 / sw0)
+
+  ctx.save()
+  ctx.translate(q(f.x), q(f.y))
+  // 입질·힘겨루기 대상은 노란 후광 — 벡터에서 몸통을 YELLOW로 칠했던 강조를 대체한다
+  if (isActive) {
+    ctx.beginPath()
+    ctx.ellipse(0, 0, w * 0.58, h * 0.62, 0, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(255, 200, 61, 0.5)'
+    ctx.fill()
+  }
+  // 유영 — 위아래로 살짝 흔든다(벡터의 꼬리 회전 대신)
+  ctx.rotate(Math.sin(tMs / 260 + f.id) * 0.06)
+  if (f.dir >= 0) ctx.scale(-1, 1)
+  ctx.drawImage(sheet, sx, sy, sw0, sh0, -w / 2, -h / 2, w, h)
+  ctx.restore()
+  return true
 }
 
 /* ────────────────────── 앵글러 ────────────────────── */

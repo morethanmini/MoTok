@@ -138,31 +138,57 @@ describe('루프 — 깊이 조작 (단면도: 양손 높이 → 미끼 깊이)'
     }
   })
 
-  it('미끼를 멀리 옮기면 관심을 보인 물고기가 흥미를 잃는다', () => {
+  /**
+   * 선택·해제의 기준은 **깊이 층**이다 (실기 지적 2026-07-31: "상어를 노렸는데 딴 물고기가
+   * 끝까지 따라옴"). 거리로만 판정하면 approaching 물고기가 approachPxS로 미끼를 쫓아와
+   * 거리가 좁혀지므로 바닥까지 따라 내려온다 — 층을 고르는 조작이 성립하지 않는다.
+   *
+   * 이 불변식이 깨지면 "노린 물고기를 잡는다"는 게임의 전제가 무너진다.
+   */
+  it('관심을 보인 물고기는 항상 미끼와 같은 깊이 층이다', () => {
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const loop = createLoop(DEFAULT_LOOP, seed)
+      loop.cast(320)
+      run(loop, DEFAULT_LOOP.castFlightSec + 0.1)
+      // 얕은 층 → 깊은 층으로 옮겨 다니며 매 프레임 불변식을 확인한다
+      for (const depth of [0, 0.35, 0.7, 1]) {
+        loop.steer(depth)
+        for (let t = 0; t < 2.5; t += DT) {
+          loop.tick(DT, 0)
+          const s = loop.state()
+          if (s.phase !== 'waiting') break // 입질까지 갔다 — 이 시드는 여기서 끝
+          if (!s.active) continue
+          const { top, bottom } = bandYRange(DEFAULT_LOOP, bandIndexOf(s.active.spec))
+          // 해제 히스테리시스(14px)만큼 여유를 둔다
+          expect(s.bobber.y).toBeGreaterThan(top - 20)
+          expect(s.bobber.y).toBeLessThan(bottom + 20)
+        }
+      }
+    }
+  })
+
+  it('미끼를 다른 층으로 옮기면 관심을 보인 물고기가 흥미를 잃는다', () => {
     const loop = createLoop()
     loop.cast(320)
     run(loop, DEFAULT_LOOP.castFlightSec + 0.1)
-    // 물고기가 관심을 보일 때까지 기다린다
     for (let t = 0; t < 6 && !loop.state().active; t += DT) loop.tick(DT, 0)
     if (!loop.state().active) return // 이 시드에서 아무도 안 물었다 — 판정할 게 없다
-    // 반대 깊이로 급히 옮긴다 — active 물고기와 멀어지면 해제된다
-    const fishY = loop.state().active!.y
-    loop.steer(fishY < DEFAULT_LOOP.height / 2 ? 1 : 0)
+    // active 물고기의 층에서 가장 먼 층으로 옮긴다
+    const band = bandIndexOf(loop.state().active!.spec)
+    loop.steer(band <= 1 ? 1 : 0)
     let released = false
     for (let t = 0; t < 4; t += DT) {
       loop.tick(DT, 0)
       const s = loop.state()
-      if (s.phase !== 'waiting') break // 그새 입질까지 갔다 — 해제 판정 불가
+      if (s.phase !== 'waiting') break
       if (!s.active) {
         released = true
         break
       }
     }
-    // 물고기가 접근 속도로 따라올 수 있어 반드시 해제되는 건 아니다 — 해제됐다면
-    // interest가 풀려 있어야 한다는 것만 본다
-    if (released) {
-      for (const f of loop.state().fishes) expect(f.interest).toBe('none')
-    }
+    // 층 기준이므로 따라오는 속도와 무관하게 반드시 해제된다
+    expect(released).toBe(true)
+    for (const f of loop.state().fishes) expect(f.interest).toBe('none')
   })
 })
 
@@ -296,8 +322,9 @@ describe('루프 — 희귀도 (기획 §희귀도)', () => {
         counts.set(f.spec.name, (counts.get(f.spec.name) ?? 0) + 1)
       }
     }
-    const anchovy = counts.get('멸치') ?? 0
-    const shark = counts.get('상어') ?? 0
-    expect(anchovy).toBeGreaterThan(shark)
+    // 이름이 아니라 점수로 집는다 — 어종 이름이 바뀌어도(스프라이트에 맞춘 개명) 이 규칙은 같다
+    const cheapest = FISH.reduce((a, b) => (a.score <= b.score ? a : b))
+    const priciest = FISH.reduce((a, b) => (a.score >= b.score ? a : b))
+    expect(counts.get(cheapest.name) ?? 0).toBeGreaterThan(counts.get(priciest.name) ?? 0)
   })
 })
