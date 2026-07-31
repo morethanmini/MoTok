@@ -5,6 +5,7 @@ import type { Item, ItemCategory } from '@/api'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import CoinIcon from '@/components/common/CoinIcon.vue'
+import { POINT_CHARGE_ENABLED } from '@/config/features'
 
 /** pending — 구매 요청 진행 중. 버튼을 잠가 연타로 두 번 결제되는 걸 막는다. */
 const props = defineProps<{ item: Item; currentPoints: number; pending?: boolean }>()
@@ -46,13 +47,29 @@ const short = computed(() => after.value < 0)
         <div class="row"><dt>구매 후 포인트</dt><dd :class="{ neg: short }"><CoinIcon :size="14" /> {{ after.toLocaleString() }}</dd></div>
       </dl>
 
-      <p v-if="short" class="warn">포인트가 부족해요. 충전 후 구매할 수 있어요.</p>
+      <!-- 충전이 잠긴 동안에는 "충전 후 구매"라고 안내하면 안 된다 — 할 방법이 없다.
+           포인트를 얻는 유일한 경로(게임 보상)를 알려준다. -->
+      <p v-if="short" class="warn">
+        {{
+          POINT_CHARGE_ENABLED
+            ? '포인트가 부족해요. 충전 후 구매할 수 있어요.'
+            : '포인트가 부족해요. 게임을 플레이해서 포인트를 모아 보세요.'
+        }}
+      </p>
 
       <div class="actions">
         <PixelButton block :disabled="pending" @click="emit('close')">취소</PixelButton>
-        <PixelButton v-if="short" variant="yellow" block :disabled="pending" @click="emit('charge')">
+        <PixelButton
+          v-if="short && POINT_CHARGE_ENABLED"
+          variant="yellow"
+          block
+          :disabled="pending"
+          @click="emit('charge')"
+        >
           포인트 충전
         </PixelButton>
+        <!-- 잠금 중 부족 상태 — 구매 버튼을 잠가 둔다(누르면 서버가 400을 주고, 그건 버그로 보인다) -->
+        <PixelButton v-else-if="short" variant="primary" block disabled>구매</PixelButton>
         <PixelButton v-else variant="primary" block :disabled="pending" @click="emit('confirm')">
           {{ pending ? '구매 중…' : '구매' }}
         </PixelButton>
