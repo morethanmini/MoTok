@@ -5,11 +5,11 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch 
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, friendsApi, reportsApi, chatReportsApi, gamesApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason } from '@/api'
+import { roomsApi, friendsApi, reportsApi, chatReportsApi, gamesApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason, type InventoryItem } from '@/api'
 import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { preferredAudioDeviceId, useCamera } from '@/composables/useCamera'
-import { useDecoration } from '@/composables/useDecoration'
+import { EQUIP_LIMIT, useDecoration } from '@/composables/useDecoration'
 import { motionModelsReady, warmUpMotionModels } from '@/composables/motionModels'
 import { useDecorSync } from '@/composables/useDecorSync'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
@@ -26,9 +26,9 @@ import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
 import GameSetupModal from './components/GameSetupModal.vue'
 import ReportIcon from './components/ReportIcon.vue'
-import MusicVolumeButton from './components/MusicVolumeButton.vue'
 import HostWaitingOverlay from './components/HostWaitingOverlay.vue'
 import InviteFriendsModal from './components/InviteFriendsModal.vue'
+import inventoryChest from '@/assets/device-setup/inventory-chest.png'
 // 방 정보 수정 모달(-130) — 입력 필드가 방 생성과 동일 규격(명세 §4)이라 로비 모달을 그대로 재사용한다.
 import CreateRoomModal, { type NewRoom } from '@/features/lobby/components/CreateRoomModal.vue'
 // MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
@@ -69,6 +69,16 @@ const CAMERA_CONSTRAINTS = { video: { width: 640, height: 400 }, audio: false } 
 // (버킷 CORS 없음) 내 화면에만 보였다.
 const decor = useDecoration()
 const decorSync = useDecorSync(lk, () => decor.sprites.value)
+const showDecorInventory = ref(false)
+const decorBusyItemId = ref<number | null>(null)
+
+async function toggleDecorItem(item: InventoryItem) {
+  if (decorBusyItemId.value !== null) return
+  decorBusyItemId.value = item.itemId
+  const ok = await decor.setEquipped(item.itemId, !item.equipped)
+  if (!ok && decor.error.value) flash(decor.error.value)
+  decorBusyItemId.value = null
+}
 
 /** 발행에 쓸 카메라 트랙 — 원본 캡처 그대로(발행 시점에 복제된다). */
 function publishableTrack(stream: MediaStream | null): MediaStreamTrack | null {
@@ -1502,9 +1512,6 @@ const startHint = computed(() =>
         <ReportIcon :width="16" :height="20" />
       </button>
 
-      <!-- 게임 BGM 볼륨. 로비 음악은 설정 › 소리에서 따로 조절한다 -->
-      <MusicVolumeButton />
-
       <!-- 친구 초대 (-100) — 참가자 누구나, 대기실에서만. 게임 중엔 서버도 409로 거부한다. -->
       <button v-if="!activeGame" class="ribbon-invite" title="친구 초대" @click="openInvite">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">
@@ -1592,6 +1599,38 @@ const startHint = computed(() =>
             fit="contain"
             :frame-aspect="selfVideoAspect"
           />
+          <section v-if="showDecorInventory" class="game-decor-inventory" aria-label="카메라 꾸미기 인벤토리">
+            <div class="game-decor-head">
+              <strong>카메라 꾸미기</strong>
+              <button type="button" aria-label="인벤토리 닫기" @click="showDecorInventory = false">×</button>
+            </div>
+            <div v-if="decor.inventory.value.length" class="game-decor-items">
+              <button
+                v-for="item in decor.inventory.value"
+                :key="item.itemId"
+                type="button"
+                class="game-decor-item"
+                :class="{ on: item.equipped }"
+                :disabled="decorBusyItemId !== null || !decor.canEquip(item)"
+                :title="decor.canEquip(item) ? item.name : `${item.name} · 장착 한도(${EQUIP_LIMIT[item.category]}개)`"
+                @click="toggleDecorItem(item)"
+              >
+                <img v-if="item.imageUrl" :src="item.imageUrl" :alt="item.name" />
+                <span v-else>✦</span>
+              </button>
+            </div>
+            <p v-else class="game-decor-empty">{{ decor.loading.value ? '불러오는 중…' : '보유한 꾸미기 아이템이 없어요' }}</p>
+          </section>
+          <button
+            type="button"
+            class="game-decor-shortcut"
+            :class="{ active: showDecorInventory }"
+            aria-label="카메라 꾸미기 인벤토리 열기"
+            @click="showDecorInventory = !showDecorInventory"
+          >
+            <img :src="inventoryChest" alt="" />
+            <span>카메라 꾸미기</span>
+          </button>
           <div v-if="!selfCamOn" class="cam-off">
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">
               <path d="M2 6h11v12H2zM16 10l6-4v12l-6-4" /><line x1="2" y1="2" x2="22" y2="22" />
@@ -1787,10 +1826,6 @@ const startHint = computed(() =>
         <button class="ctrl" :class="{ on: selfCamOn }" title="카메라" @click="toggleCam">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="2" y="6" width="14" height="12" /><path d="M16 10l6-4v12l-6-4" /></svg>
         </button>
-        <button class="ctrl" :class="{ on: screenOn }" title="화면 공유" @click="screenOn = !screenOn">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="2" y="4" width="20" height="13" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>
-        </button>
-        <button class="ctrl" title="아바타"><span class="px">☻</span></button>
         <button
           class="px start-btn"
           :class="{ suggest: !amRoomHost }"
@@ -2187,6 +2222,18 @@ const startHint = computed(() =>
   box-shadow: 4px 4px 0 rgba(43, 35, 51, 0.2);
 }
 .self-video { width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); background: var(--c-letterbox); }
+.game-decor-shortcut { position: absolute; z-index: 5; right: 12px; bottom: 12px; display: inline-flex; align-items: center; gap: 6px; height: 39px; padding: 0 9px 0 5px; border: 2px solid #8d6a54; border-radius: 7px; background: #fffdf7; color: #5e4432; box-shadow: 2px 2px 0 rgba(45,28,17,.35); font-size: 10px; font-weight: 700; }
+.game-decor-shortcut:hover, .game-decor-shortcut.active { background: #fff4d6; transform: translate(-1px, -1px); }
+.game-decor-shortcut img { width: 28px; height: 28px; object-fit: contain; image-rendering: pixelated; }
+.game-decor-inventory { position: absolute; z-index: 6; right: 12px; bottom: 59px; width: min(210px, calc(100% - 24px)); overflow: hidden; border: 2px solid #8d6a54; border-radius: 7px; background: #fffdf7; box-shadow: 3px 3px 0 rgba(45,28,17,.4); color: #533d2f; }
+.game-decor-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-bottom: 2px solid #dec79e; background: #f7e5bb; font-size: 11px; }
+.game-decor-head button { width: 19px; height: 19px; padding: 0; border: 0; background: transparent; color: #79553d; font-size: 19px; line-height: 1; }
+.game-decor-items { display: flex; flex-wrap: wrap; gap: 6px; min-height: 57px; padding: 10px; }
+.game-decor-item { display: grid; width: 35px; height: 35px; place-items: center; padding: 3px; border: 2px solid #d9c3a2; border-radius: 5px; background: #fff; }
+.game-decor-item.on { border-color: #75a55e; background: #e4f0d2; }
+.game-decor-item:disabled:not(.on) { opacity: .45; }
+.game-decor-item img { width: 100%; height: 100%; object-fit: contain; }
+.game-decor-empty { margin: 0; padding: 18px 10px; color: #8f7868; font-size: 10px; text-align: center; }
 .cam-off { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; background: #f3ead2; color: #a99f86; }
 .cam-off { background: linear-gradient(135deg, var(--c-mint-soft), #fff0c4); }
 .cam-on-btn { padding: 10px 16px; border: 3px solid var(--c-ink-soft); border-radius: 11px; background: var(--c-mint); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
