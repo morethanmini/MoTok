@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /** 게임룸 — 화상 파티룸(LiveKit SFU). 방 정원만큼 슬롯을 만들고, 참가자는 실시간 타일로,
  *  빈 자리는 "대기 중"으로 표시한다. 무대/채팅/게임 선택은 데모. */
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch, type AsyncComponentLoader } from 'vue'
+import { isChunkLoadError, markBuildOutdated, reloadForNewBuild } from '@/composables/useBuildVersion'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
@@ -31,22 +32,31 @@ import InviteFriendsModal from './components/InviteFriendsModal.vue'
 import inventoryChest from '@/assets/device-setup/inventory-chest.png'
 // 방 정보 수정 모달(-130) — 입력 필드가 방 생성과 동일 규격(명세 §4)이라 로비 모달을 그대로 재사용한다.
 import CreateRoomModal, { type NewRoom } from '@/features/lobby/components/CreateRoomModal.vue'
-// MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
-const FingerStarGame = defineAsyncComponent(
-  () => import('@/features/games/finger-star/FingerStarGame.vue'),
-)
-const BodyFitGame = defineAsyncComponent(
-  () => import('@/features/games/body-fit/BodyFitGame.vue'),
-)
-const FishingGame = defineAsyncComponent(
-  () => import('@/features/games/fishing/FishingGame.vue'),
-)
-const DrawingRelayGame = defineAsyncComponent(
-  () => import('@/features/games/drawing-relay/DrawingRelayGame.vue'),
-)
-const CatchRhythmGame = defineAsyncComponent(
-  () => import('@/features/games/catch-rhythm/CatchRhythmGame.vue'),
-)
+/**
+ * MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
+ *
+ * <p>지연 로딩이라 <b>배포 교체에 취약하다</b> — 배포가 나가면 이 탭이 아는 청크 이름이 서버에서
+ * 사라지고, 그때 import는 404로 조용히 실패한다. GAME_START는 정상적으로 받았는데 게임만 안 뜨는
+ * 상태가 되어 "시작을 눌렀는데 카메라만 보인다"로 나타난다. 재시도는 소용없다(이름 자체가 틀렸다) —
+ * 새 index.html을 받는 것, 즉 새로고침이 유일한 복구다.</p>
+ */
+function lazyGame(loader: AsyncComponentLoader) {
+  return defineAsyncComponent({
+    loader,
+    onError(error, _retry, fail) {
+      if (isChunkLoadError(error)) {
+        markBuildOutdated() // 배너를 즉시 띄운다 — 자동 새로고침이 막혀도 사용자는 원인을 알 수 있다
+        if (reloadForNewBuild()) return
+      }
+      fail()
+    },
+  })
+}
+const FingerStarGame = lazyGame(() => import('@/features/games/finger-star/FingerStarGame.vue'))
+const BodyFitGame = lazyGame(() => import('@/features/games/body-fit/BodyFitGame.vue'))
+const FishingGame = lazyGame(() => import('@/features/games/fishing/FishingGame.vue'))
+const DrawingRelayGame = lazyGame(() => import('@/features/games/drawing-relay/DrawingRelayGame.vue'))
+const CatchRhythmGame = lazyGame(() => import('@/features/games/catch-rhythm/CatchRhythmGame.vue'))
 import { useRhythmAutoJoin } from '@/features/games/catch-rhythm/useRhythmAutoJoin'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
