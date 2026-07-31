@@ -56,6 +56,11 @@ export class RhythmMusic {
   constructor(
     private readonly ctx: AudioContext,
     private readonly src: string,
+    /**
+     * 파일 안 격자 원점(ms)을 아는 호출자(채보 랩 — 분석이 위상까지 실측한다)가 주입한다.
+     * null이면 기존처럼 첫 소리 실측 − {@link GRID_LEAD_MS}로 추정한다.
+     */
+    private readonly gridOriginMsOverride: number | null = null,
   ) {
     // 재생 중 슬라이더를 움직이면 즉시 반영. 램프 없이 얹는 이유는 gameBgm과 같다 —
     // 드래그는 값이 연속으로 들어와서 램프를 걸면 서로 취소하며 계단처럼 들린다.
@@ -76,7 +81,10 @@ export class RhythmMusic {
       const buffer = await this.ctx.decodeAudioData(bytes)
       if (this.disposed) return false
       this.buffer = buffer
-      this.gridOriginSec = Math.max(0, detectFirstSound(buffer) - GRID_LEAD_MS / 1000)
+      this.gridOriginSec =
+        this.gridOriginMsOverride != null
+          ? Math.max(0, this.gridOriginMsOverride / 1000)
+          : Math.max(0, detectFirstSound(buffer) - GRID_LEAD_MS / 1000)
       return true
     } catch {
       return false // 파일 없음·디코드 실패·컨텍스트 종료 — 곡 없이 판정음만으로 플레이
