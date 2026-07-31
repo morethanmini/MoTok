@@ -332,11 +332,23 @@ public class LiveRoomService {
                 new LiveRoomMemberLeftEvent(userId, displayName, remaining.size()));
 
         if (remaining.isEmpty()) {
+            // 게스트 1인방(-109)은 비워져도 방까지 지우지는 않는다. 이 방은 점유가 아니라 게스트 토큰의
+            // 수명에 묶여 있다 — 로그인 때 한 번 받고 다시 받을 길이 없어서, 지우면 그 게스트는 남은
+            // 세션 동안 어떤 게임도 시작할 수 없다(한 판 하고 나오면 두 번째 게임이 ROOM_NOT_FOUND).
+            // 초대코드가 없다는 게 게스트 1인방의 표식이다(open 참고). 방 해시는 TTL 24h라 새지 않고,
+            // 애초에 게스트가 들어오지 않은 1인방도 같은 TTL로 남으므로 늘어나는 몫은 없다.
+            if (room.inviteCode() == null) {
+                // 방은 남기되 게임은 접는다 — 세션이 살아 있으면 다음 시작이
+                // GAME_SESSION_ALREADY_ACTIVE로 막히고, 게임 중에 나갔어도 빈 방은 다시 대기 상태다.
+                eventPublisher.publishEvent(new LiveRoomClosedEvent(roomId));
+                repository.updateStatus(roomId, "WAITING");
+                return;
+            }
             boolean wasListed = repository.isIndexed(roomId);
             repository.deleteRoom(roomId);
             eventPublisher.publishEvent(new LiveRoomClosedEvent(roomId));
             // rooms:index에 없는 방은 로비에 뜬 적이 없다 — 폐쇄 알림도 보낼 이유가 없다.
-            // 게스트 1인방(-109)과, 방장이 기기 점검 화면에서 되돌아 나가 공개되지 않은 채 사라지는 방(open 참고).
+            // (방장이 기기 점검 화면에서 되돌아 나가 공개되지 않은 채 사라지는 방, open 참고)
             if (wasListed) {
                 lobbyBroadcaster.roomClosed(roomId);
             }
