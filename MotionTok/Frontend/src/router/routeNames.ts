@@ -29,6 +29,14 @@ export const RouteName = {
   DevWallLab: 'dev-wall-lab',
   /** 게임④ 인게임 화면(모톡 템플릿) — 개발 전용, 솔로 루프 (-47) */
   DevBodyFitGame: 'dev-body-fit-game',
+  /** 게임⑤ 릴 감기 판정 랩 — 개발 전용 (-10) */
+  DevFishingLab: 'dev-fishing-lab',
+  /** 게임⑤ 낚시 게임 루프(캐스팅→대기→입질→챔질→힘겨루기) — 개발 전용 (-10) */
+  DevFishingGame: 'dev-fishing-game',
+  /** 게임⑤ 낚시 정식 화면(서비스 톤)을 방 없이 단독 확인 — 개발 전용 (-49) */
+  DevFishingPlay: 'dev-fishing-play',
+  /** 게임⑤ 낚시 좌우 조준 도달 범위 실측 — 개발 전용 (-49) */
+  DevFishingAimLab: 'dev-fishing-aim-lab',
 } as const
 
 export type RouteName = (typeof RouteName)[keyof typeof RouteName]
