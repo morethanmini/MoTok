@@ -667,13 +667,14 @@ watch(hostAway, (away) => {
 /**
  * 자체 사운드를 가진 게임은 로비 BGM을 내린다 — 안 내리면 테마와 게임 음악이 겹쳐 들린다.
  * 게임④(shape, -138)로 시작했고, 핑거 스타(finger)·그림 릴레이(draw)가 인게임 루프를 받으면서
- * 함께 들어왔다. 캐치캐치리듬(rhythm)은 서버가 준 곡을 자체 재생하므로 담당과 합의 후 넣는다.
+ * 함께 들어왔다. 캐치캐치리듬(rhythm)도 인게임 곡을 갖게 되어 합류 — 판정음까지 내는 게임이라
+ * 테마가 남아 있으면 셋이 겹친다.
  *
  * 반드시 activeGame 선언 아래에 둔다 — watch는 초기값을 잡으려고 getter를 setup 중 즉시
  * 실행하므로, 위에 두면 const TDZ에 걸려 setup 전체가 죽는다(빌드는 통과한다: TS는 화살표
  * 함수 안의 선언 전 참조를 잡지 않는다).
  */
-const AUDIO_OWNING_GAMES = ['shape', 'finger', 'draw']
+const AUDIO_OWNING_GAMES = ['shape', 'finger', 'draw', 'rhythm']
 watch(
   // 설정 창(-9)도 인게임 베드를 직접 깔기 때문에 같이 내린다 — 소유 판정을 여기 한 곳에 모아두면
   // 창을 닫고 게임으로 넘어가는 사이에 테마가 잠깐 살아나는 일이 없다.
