@@ -93,6 +93,25 @@ export interface CastConfig {
    * 게 아니라, 백스윙이 존재했는지만 본다.
    */
   minBackMs: number
+  /**
+   * 발사 시점에 손이 백스윙 최고점보다 이만큼(어깨너비 배수) **아래에 남아 있어야** 한다.
+   *
+   * "손을 올리는 순간 대가 발사된다"를 막는 조건이다(실기 지적 2026-07-31). 경로는 이렇다:
+   * 무효로 끝난 던짐 뒤 손이 아래에 있으면 `restY`가 그 낮은 위치로 옮겨지고, 다시 올리는
+   * 동안 상승 거리가 곧바로 게이트를 넘어 `back`에 들어간다. 그 시점부터 `minBackMs`(200ms)는
+   * 이미 만료돼 있어서, 올리는 중에 랜드마크가 **한 프레임 아래로 튀면** velSw가 순간적으로
+   * 치솟아(velWindowMs 창의 끝점이 그 값이 된다) forward로 넘어가고, 그 튐이 그대로 낙하로
+   * 측정돼 발사된다.
+   *
+   * 속도를 "연속 N프레임" 요구하는 방법은 못 쓴다 — 얕고 빠른 던짐은 30fps에서 하향이
+   * **1프레임**에 끝나고(스펙 `strong(0.46)`), 그걸 잘라내면 약한 던짐이 다시 죽는다.
+   *
+   * 대신 위치로 가른다: 튐은 다음 프레임에 원래 높이로 **되돌아오고**, 진짜 던짐은 팔로스루
+   * 뒤에도 손이 최고점보다 훨씬 아래에 있다. 스윙 종료가 `endBackSw`(0.05) 되올라옴이므로
+   * 진짜 던짐은 최소 `dropMinSw - endBackSw = 0.40` 아래에 남는다. 0.2는 그 절반이고 튐(≈0)과
+   * 확실히 갈린다. 프레임률과 무관한 조건이라는 게 이 방식의 이점이다.
+   */
+  holdBelowPeakSw: number
 }
 
 export const DEFAULT_CAST: CastConfig = {
@@ -136,6 +155,8 @@ export const DEFAULT_CAST: CastConfig = {
   spanWindowMs: 1500,
   settleMs: 700,
   minBackMs: 200,
+  // 진짜 던짐은 0.40 이상 아래에 남는다(dropMinSw 0.45 - endBackSw 0.05). 그 절반
+  holdBelowPeakSw: 0.2,
 }
 
 /** idle: 대기 / back: 백스윙 인정(조준 중) / forward: 스윙 관찰 중 */
@@ -338,8 +359,11 @@ export function createCast(config: CastConfig = DEFAULT_CAST): Cast {
             now - releaseAt >= config.observeMs ||
             (bottomY - midY) / sw >= config.endBackSw
           if (ended) {
+            // 손이 최고점 아래에 남아 있는가 — 한 프레임 튐은 원위치로 되돌아와 여기서 걸린다
+            // (holdBelowPeakSw 주석: "손을 올리는 순간 발사" 경로)
+            const heldBelow = (midY - dropFrom) / sw >= config.holdBelowPeakSw
             // 낙하가 문턱을 못 넘으면 던진 게 아니다 — 팔을 툭 내린 경로가 여기서 걸린다
-            if (dropSw >= config.dropMinSw) {
+            if (dropSw >= config.dropMinSw && heldBelow) {
               const denom = config.dropFullSw - config.dropMinSw
               fired = Math.min(1, Math.max(0, (dropSw - config.dropMinSw) / denom))
               firedAimX = lockedAimX

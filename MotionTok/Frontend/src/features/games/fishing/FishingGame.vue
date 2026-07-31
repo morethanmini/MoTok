@@ -10,8 +10,9 @@
  *   게임룸  — 부모가 셀프 타일의 <video>를 넘겨준다. 카메라를 새로 열지 않는다
  *   dev 라우트 — video prop이 없으므로 직접 카메라를 연다
  *
- * 게임룸은 이 컴포넌트의 **캔버스만** 화면공유로 송출한다. 그래서 HUD·점수를 DOM이 아니라
- * 캔버스에 그린다(cozy 스킨의 drawHud) — DOM에 두면 다른 참가자 타일에서 사라진다.
+ * 게임룸은 이 컴포넌트의 **캔버스만** 화면공유로 송출한다. 그래서 관전자에게 보여야 하는
+ * 것(점수)은 캔버스에 그리고(cozy 스킨의 drawHud), 플레이어 본인만 보면 되는 것(안내 문구·캠)은
+ * 캔버스 위 최상단 DOM 바에 둔다 — 물속을 가려 시야를 망치던 걸 밖으로 뺐다(2026-07-31).
  *
  * 두 가지 생명주기로 돈다(게임①과 같은 계약):
  *   솔로(session=null)   — 시간 제한 없이 계속. dev 라우트·서버 미연동 폴백
@@ -30,7 +31,7 @@ import type { ActiveGameSession } from '../session'
 import { createCast, DEFAULT_CAST } from './cast'
 import { createHook, DEFAULT_HOOK } from './hook'
 import { createPump, DEFAULT_PUMP } from './pump'
-import { createLoop, DEFAULT_LOOP, type LoopState } from './loop'
+import { createLoop, DEFAULT_LOOP, type LoopConfig, type LoopState } from './loop'
 import { depthFromHands } from './depth'
 import { aimFromHands, createNormalizer, SHOULDER, VIS_MIN, WRIST } from './normalize'
 import { drawFrame } from './render/drawFrame'
@@ -68,8 +69,30 @@ const emit = defineEmits<{
   finished: [payload: { totalScore: number; caught: number }]
 }>()
 
-const W = DEFAULT_LOOP.width
-const H = DEFAULT_LOOP.height
+/**
+ * 무대 설정 — **폭이 가변이다.**
+ *
+ * 640×480 고정이면 와이드한 타일에서 좌우에 레터박스가 생긴다(실기 지적 2026-07-31).
+ * 높이는 480으로 고정하고(깊이 층·수면 y가 이 값을 기준으로 잡혀 있다) 폭만 컨테이너 비율에
+ * 맞춰 늘린다. 폭은 착수 거리·배경 폭에만 쓰여서 늘려도 판정이 안 흔들린다.
+ *
+ * 같은 객체를 loop와 drawFrame이 함께 본다 — 여기서 width를 갈면 둘 다 다음 프레임부터 따라온다.
+ */
+const cfg: LoopConfig = { ...DEFAULT_LOOP }
+const H = cfg.height
+/** 템플릿의 canvas 비트맵 폭 바인딩용 — cfg.width와 항상 같이 갱신한다 */
+const stageW = ref(cfg.width)
+
+/** 컨테이너 비율에 맞춰 무대 폭을 다시 잡는다. 바뀔 때만 갱신(매 프레임 호출 아님) */
+function fitStage(el: HTMLElement) {
+  const r = el.getBoundingClientRect()
+  if (!r.width || !r.height) return
+  // 상·하한을 둔다 — 극단적인 비율에서 물고기 밀도가 이상해지지 않게
+  const w = Math.round(Math.min(1280, Math.max(560, H * (r.width / r.height))))
+  if (w === cfg.width) return
+  cfg.width = w
+  stageW.value = w
+}
 
 const pose = usePoseLandmarker()
 const canvasRef = ref<HTMLCanvasElement>()
@@ -81,20 +104,24 @@ const loadProgress = ref(0)
 const cast = createCast(DEFAULT_CAST)
 const hook = createHook(DEFAULT_HOOK)
 const pump = createPump(DEFAULT_PUMP)
-const loop = createLoop(DEFAULT_LOOP, 1)
+const loop = createLoop(cfg, 1)
 /** 어깨 너비 런닝 중앙값 — 모든 문턱의 분모 */
 const norm = createNormalizer()
 
 const st = ref<LoopState>(loop.state())
-const aim = ref({ locked: false, x: W / 2 })
+const aim = ref({ locked: false, x: cfg.width / 2 })
 const reelRate = ref(0)
+/** 크랭크 손을 놓쳤을 때 마지막 rate를 유지하는 상한(ms) — onPose의 유지 로직 주석 참고 */
+const REEL_HOLD_MS = 200
+/** 크랭크 손을 마지막으로 정상 관측한 시각 */
+let lastReelAt = 0
 /** 추적 상태 — PiP 테두리 색이 이걸 따라간다. "왜 안 던져지지?"의 답을 상시 띄우는 용도 */
 const trackOk = ref(false)
 let marker: { x: number; y: number } | null = null
 let splashes: Splash[] = []
 let prevPhase = st.value.phase
 /** 어깨 중점 x — 조준 0의 기준. 어깨를 놓친 프레임에는 직전 값을 유지한다 */
-let bodyMidX = W / 2
+let bodyMidX = cfg.width / 2
 /** 어깨 중점 y — 깊이 0.5의 기준. 어깨를 놓친 프레임에는 직전 값을 유지한다 */
 let bodyMidY = H / 2
 /**
@@ -190,13 +217,11 @@ watch(
 /** 판정을 돌리는 구간인가 — 카운트다운 중·종료 후에는 멈춘다 */
 const inputOpen = computed(() => mpPhase.value === 'playing')
 
-/** 캔버스에 그릴 문구. 짧게 유지한다 — 2~3m에서 읽혀야 한다 */
+/** 최상단 UI 바에 띄우는 문구. 짧게 유지한다 — 2~3m에서 읽혀야 한다 */
 const hud = computed(() => {
   const s = st.value
-  // 남은 시간은 캔버스에 얹어야 한다 — 게임룸이 송출하는 건 캔버스뿐이라 DOM에 두면
-  // 관전 중인 다른 참가자 타일에서 사라진다(헤더 주석과 같은 이유)
-  const clock =
-    props.session && mpPhase.value === 'playing' ? `⏱${Math.ceil(timeLeftSec.value)} · ` : ''
+  // 남은 시간은 템플릿의 .clock 요소가 따로 그린다 — 한 줄에 문자열로 섞으면 둘 다 안 읽힌다
+  const clock = ''
   switch (s.phase) {
     case 'idle':
       return clock + (aim.value.locked ? '좌우로 조준하고 앞으로!' : '양손으로 대를 쥐고 뒤로')
@@ -238,9 +263,9 @@ function onPose(result: PoseLandmarkerResult) {
   const sl = lm?.[SHOULDER.left]
   const sr = lm?.[SHOULDER.right]
   if (sl && sr && (sl.visibility ?? 0) >= VIS_MIN && (sr.visibility ?? 0) >= VIS_MIN) {
-    norm.push(Math.hypot((sr.x - sl.x) * W, (sr.y - sl.y) * H))
+    norm.push(Math.hypot((sr.x - sl.x) * cfg.width, (sr.y - sl.y) * H))
     // 조준 0·깊이 0.5의 기준 — 어깨를 놓친 프레임에는 직전 값을 그대로 쓴다
-    bodyMidX = ((1 - sl.x) * W + (1 - sr.x) * W) / 2
+    bodyMidX = ((1 - sl.x) * cfg.width + (1 - sr.x) * cfg.width) / 2
     bodyMidY = (sl.y * H + sr.y * H) / 2
   }
   const sw = norm.ready() ? norm.sw() : 0
@@ -264,12 +289,23 @@ function onPose(result: PoseLandmarkerResult) {
     const ok = crank.value === 'right' ? rightOk : leftOk
     if (cw && ok) {
       const y = cw.y * H
-      marker = { x: (1 - cw.x) * W, y }
+      marker = { x: (1 - cw.x) * cfg.width, y }
       reelRate.value = pump.feed(y, sw, now).rate
+      lastReelAt = now
     } else {
-      // 손을 놓치면 감기를 멈춘다. feed를 건너뛰면 마지막 rate가 남아 손을 내려도 게이지가 찬다
       marker = null
-      reelRate.value = 0
+      /*
+       * 손을 놓쳤다고 곧바로 0을 박지 않는다 — REEL_HOLD_MS 동안은 마지막 rate를 유지한다.
+       *
+       * 팔을 돌리면 손목이 몸에 가려지는 각도가 반드시 생겨서 visibility가 한두 프레임씩
+       * 떨어진다. 0을 넣으면 fight가 그 프레임을 "안 감았다"로 읽고 drain(gain의 1.5배)으로
+       * 역주행한다 — 실기 지적 2026-07-31 "릴 감을 때 끊김"의 주범이다. 플레이어는 계속
+       * 돌리고 있는데 신호만 끊긴 것이라, 유지가 맞다.
+       *
+       * 상한을 두는 이유는 반대 방향 오류를 막기 위해서다 — 손을 정말 내렸을 때도 게이지가
+       * 계속 차면 안 된다. 200ms면 인식 실패(1~4프레임)는 덮고 실제 정지는 못 덮는다.
+       */
+      if (now - lastReelAt > REEL_HOLD_MS) reelRate.value = 0
     }
     return
   }
@@ -280,7 +316,7 @@ function onPose(result: PoseLandmarkerResult) {
     marker = null
     return
   }
-  const midX = ((1 - wl.x) * W + (1 - wr.x) * W) / 2
+  const midX = ((1 - wl.x) * cfg.width + (1 - wr.x) * cfg.width) / 2
   const midY = (wl.y * H + wr.y * H) / 2
   marker = { x: midX, y: midY }
 
@@ -288,7 +324,7 @@ function onPose(result: PoseLandmarkerResult) {
     // 백스윙 전에는 매 프레임 갱신, 백스윙에 들어가면 그 값으로 고정 (castSw 주석 참고)
     if (!aim.value.locked || !(castSw > 0)) castSw = sw
     // 조준 → 착수 거리. 스윙은 발사 게이트일 뿐, 파워는 거리에 관여하지 않는다
-    const c = cast.feed(aimFromHands(midX, bodyMidX, castSw, W), midY, castSw, now)
+    const c = cast.feed(aimFromHands(midX, bodyMidX, castSw, cfg.width), midY, castSw, now)
     aim.value = { locked: c.phase === 'back', x: c.aimX ?? aim.value.x }
     // 조준은 발사 시점에 판정기가 확정한 값을 쓴다(내려꽂는 동안의 흔들림 배제)
     if (c.fired !== null) {
@@ -354,14 +390,16 @@ function frame(now: number) {
 
   const ctx = canvasRef.value?.getContext('2d')
   if (ctx) {
-    drawFrame(ctx, cozySkin, DEFAULT_LOOP, {
+    drawFrame(ctx, cozySkin, cfg, {
       state: st.value,
       aim: aim.value,
       marker,
       splashes,
       video: videoRef.value ?? props.video ?? null,
       tMs: now,
-      hud: hud.value,
+      // 안내 문구는 캔버스에 안 그린다 — 아래 DOM 바로 뺐다(시야 확보, 실기 지적 2026-07-31).
+      // 빈 문자열이면 cozy.drawHud가 배너를 건너뛰고 앵글러·점수 배지만 그린다(점수는 관전자용).
+      hud: '',
       shake,
     })
   }
@@ -370,8 +408,19 @@ function frame(now: number) {
 /** 게임룸이 게임 화면을 captureStream으로 송출할 수 있게 캔버스를 노출 (게임①④와 같은 패턴) */
 defineExpose({ canvas: canvasRef })
 
+let stageRO: ResizeObserver | null = null
+
 onMounted(async () => {
   lastT = 0
+  // 캔버스가 놓인 칸의 비율을 따라간다 — 레터박스 없이 꽉 채우려면 무대 비율이 같아야 한다
+  const host = canvasRef.value?.parentElement
+  if (host) {
+    fitStage(host)
+    if (typeof ResizeObserver !== 'undefined') {
+      stageRO = new ResizeObserver(() => fitStage(host))
+      stageRO.observe(host)
+    }
+  }
   frame(performance.now())
   preloadPoseLandmarker((f) => (loadProgress.value = f))
 
@@ -389,7 +438,7 @@ onMounted(async () => {
 
   // dev 라우트: 직접 카메라를 연다
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { width: W, height: H } })
+    stream = await navigator.mediaDevices.getUserMedia({ video: { width: DEFAULT_LOOP.width, height: H } })
   } catch {
     camError.value = '카메라를 열 수 없어요 — 브라우저 권한을 확인해 주세요'
     return
@@ -401,6 +450,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  stageRO?.disconnect()
   cancelAnimationFrame(rafId)
   pose.stop()
   stream?.getTracks().forEach((t) => t.stop())
@@ -410,8 +460,25 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="game" :class="{ embedded }">
-    <canvas ref="canvasRef" :width="W" :height="H" />
-    <!-- 캠 PiP — 캔버스 밖 DOM. 프레이밍 확인용이라 나한테만 보이면 되고, 송출(캔버스)엔 안 섞인다 -->
+    <canvas ref="canvasRef" :width="stageW" :height="H" />
+
+    <!--
+      상단 안내 — 캔버스 위 오버레이다. 배경을 반투명으로 둬서 물속이 비쳐 보인다.
+      한 번 별도 행(바)으로 분리해봤다가 되돌렸다(2026-07-31): 게임 화면이 그만큼 줄어들고
+      시야가 오히려 좁아졌다. 가리지 않는 방법은 자리를 빼는 게 아니라 투명도였다.
+    -->
+    <div class="topbar">
+      <!-- 최종 순위 화면에는 자체 나가기 버튼이 있다 — 둘 다 보이면 두 개가 된다 -->
+      <button v-if="!results" type="button" class="close" @click="emit('close')">그만하기</button>
+      <p class="hudtext" :class="{ hot: st.phase === 'bite' || st.phase === 'fighting' }">
+        <span v-if="session && mpPhase === 'playing'" class="clock">
+          ⏱{{ Math.ceil(timeLeftSec) }}
+        </span>
+        {{ hud }}
+      </p>
+    </div>
+
+    <!-- 캠 — 오른쪽 하단. 캔버스에 안 그리므로 송출(관전자 화면)에는 안 섞인다 -->
     <video ref="videoRef" playsinline muted class="pip" :class="{ lost: !trackOk }" />
 
     <p class="notice" v-if="camError || pose.error.value">{{ camError || pose.error.value }}</p>
@@ -449,9 +516,6 @@ onBeforeUnmount(() => {
       </template>
     </div>
 
-    <!-- 최종 순위 화면에는 자체 나가기 버튼이 있다 — 겹쳐 두면 같은 화면에 두 개가 된다.
-         순위 대기 중(results 없음)에는 남겨 둔다 — GAME_END가 유실되면 나갈 길이 사라진다 -->
-    <button v-if="!results" type="button" class="close" @click="emit('close')">그만하기</button>
   </div>
 </template>
 
@@ -459,9 +523,21 @@ onBeforeUnmount(() => {
 .game {
   position: relative;
   display: grid;
-  place-items: center;
-  min-height: 100vh;
-  padding: 16px;
+  /*
+   * 캔버스 짤림을 만든 함정 두 개를 여기서 막는다(둘 다 2026-07-31 실측으로 잡았다).
+   *
+   * ① minmax(0, ...)의 **0**. 기본 트랙(auto)은 콘텐츠 최소 크기 아래로 안 줄어드는데,
+   *    캔버스의 콘텐츠 기여는 고유 비율에서 역산한 높이다(폭 1024 → 768). 그래서 컨테이너가
+   *    576으로 확정돼 있어도 행이 768로 커지고 overflow: hidden이 아래를 잘라냈다.
+   *    0을 주면 행이 576으로 줄고, 그제서야 캔버스의 height: 100%가 576으로 해석된다.
+   *    — 게임룸 .room-footer의 grid-template-columns 주석과 같은 함정이다.
+   * ② place-items: center를 쓰면 안 된다. 아이템이 콘텐츠 크기가 되어 같은 역산이 다시 걸린다.
+   *    늘려서 영역을 채우고, 가운데 정렬은 object-fit: contain에 맡긴다.
+   */
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  /* min-height면 컨테이너 높이 자체가 콘텐츠 기반이 되어 위 트랙 계산의 기준이 사라진다 */
+  height: 100vh;
   /* 페이지 배경은 크림 + 도트 — 방 밖에서 열었을 때 로비와 같은 세계로 보인다 */
   background-color: var(--c-cream);
   background-image: radial-gradient(rgba(56, 38, 61, 0.1) 1px, transparent 1px);
@@ -473,34 +549,80 @@ onBeforeUnmount(() => {
 .game.embedded {
   position: absolute;
   inset: 0;
-  min-height: 0;
   height: 100%;
-  padding: 0;
   z-index: 5;
   border-radius: inherit;
 }
+/*
+ * 캔버스는 타일을 꽉 채우고 object-fit: contain이 4:3을 지킨다.
+ * 고유 크기 + max-height 조합을 쓰면 위 주석의 짤림이 재발한다.
+ */
 canvas {
   display: block;
-  width: min(640px, 100%);
-  height: auto;
-  border: var(--border-thick);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-xl);
-}
-.game.embedded canvas {
+  box-sizing: border-box;
   width: 100%;
   height: 100%;
   border: none;
   border-radius: inherit;
   box-shadow: none;
+  object-fit: contain;
 }
-/* 캠 PiP — 우하단 구석. 좌상단은 그만하기, 우상단은 점수, 하단 중앙은 HUD 배너 자리다.
+
+/* ── 상단 안내 오버레이 ── */
+.topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 6;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  /* 오른쪽은 캔버스에 그려지는 점수 배지 자리다 — 여기까지 문구가 오면 점수를 가린다
+     (실기 지적 2026-07-31). 배지는 무대 우상단 고정이라 비율로 비워 두면 어느 크기에서도 안 겹친다 */
+  padding: 12px clamp(96px, 14%, 170px) 12px 14px;
+  /* 오버레이 전체가 클릭을 먹으면 아래 캔버스가 죽는다 — 버튼만 되살린다 */
+  pointer-events: none;
+}
+.topbar .close {
+  pointer-events: auto;
+}
+/* 안내 문구 — 반투명 배경. 물속이 비쳐 보여야 시야를 안 가린다 */
+.hudtext {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 14px;
+  background: rgba(56, 38, 61, 0.42);
+  backdrop-filter: blur(2px);
+  border-radius: var(--radius-md);
+  color: #fff;
+  /* 반투명 위 글자는 그림자가 있어야 배경 밝기와 무관하게 읽힌다 */
+  text-shadow: 0 2px 3px rgba(0, 0, 0, 0.55);
+  font-size: clamp(13px, 1.8vw, 19px);
+  line-height: 1.35;
+  text-align: center;
+}
+/* 입질·힘겨루기 — 지금 뭘 해야 하는지가 제일 중요한 구간이라 불투명하게 띄운다 */
+.hudtext.hot {
+  background: rgba(239, 104, 114, 0.88);
+  text-shadow: 0 2px 3px rgba(0, 0, 0, 0.4);
+}
+/* 남은 시간 — 문구와 같은 줄이지만 노란색으로 분리해 둘 다 읽히게 */
+.clock {
+  margin-right: 8px;
+  color: var(--c-yellow);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 캠 — 오른쪽 하단. 좌상단은 그만하기, 상단은 안내, 우상단은 점수 배지가 쓴다.
    테두리는 UI 크롬 규약(잉크 + 하드 섀도우), 바깥 링이 추적 상태다(민트=잡힘 / 코랄=놓침) */
 .pip {
   position: absolute;
   right: 14px;
   bottom: 14px;
-  width: 110px;
+  z-index: 6;
+  width: clamp(150px, 24%, 260px);
   aspect-ratio: 4 / 3;
   object-fit: cover;
   transform: scaleX(-1);
@@ -533,11 +655,10 @@ canvas {
   text-align: center;
 }
 .close {
-  position: absolute;
-  /* 오버레이(.ov, z-index 6) 위 — 카운트다운·순위 대기 중에도 나갈 수 있어야 한다 */
+  /* 오버레이(.ov, z-index 6)보다 위 — 카운트다운·순위 대기 중에도 나갈 수 있어야 한다 */
+  position: relative;
   z-index: 7;
-  top: 14px;
-  left: 14px;
+  flex: none;
   padding: 7px 14px;
   background: var(--c-paper);
   color: var(--c-ink);

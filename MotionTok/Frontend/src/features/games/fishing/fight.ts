@@ -78,11 +78,40 @@ const START_PROGRESS = 0.3
  */
 const GRACE_SEC = 2
 
+/**
+ * 감기 **유지** 문턱 비율 — 시작은 `requiredRate` 100%, 한 번 감기 시작하면 이 비율까지 인정한다.
+ *
+ * 슈미트 트리거다(`pump.ts`가 반전 판정에 `deadband`로 쓰는 것과 같은 패턴). 이진 판정만
+ * 있으면 문턱을 한 프레임 밑돌 때 진행이 멈추는 게 아니라 `drain`(gain의 1.5배)으로 **역주행**
+ * 한다 — 실기 지적 2026-07-31 "릴 감을 때 끊김이 있다"의 절반이 이것이다.
+ *
+ * 손목 y로 회전을 재는 건 원운동을 1차원에 투영하는 것이라 방향 전환마다 순간 속도가 내려간다.
+ * 플레이어가 느려진 게 아니라 측정 방식의 한계이므로, 보정하는 게 맞다.
+ */
+export const REEL_HOLD_RATIO = 0.7
+
+/**
+ * 요구 속도를 넘긴 만큼 게이지를 더 준다 — 그 배수의 상한.
+ *
+ * `rate / requiredRate`를 gain에 곱하고 [1, 이 값]으로 자른다. **요구를 딱 맞췄을 때는 1.0**
+ * 이라 기존 밸런스(expectedCatchSeconds ≈ targetSec)가 그대로 유지되고, 확실히 빠르게 감을 때만
+ * 후해진다. "정확하게 측정됐을 때 후하게 준다"는 요구(2026-07-31)의 구현이다.
+ *
+ * 문턱 **아래**로는 이 보정을 주지 않는다 — 그러면 줄다리기 긴장이 사라져 힘겨루기가 대기
+ * 시간이 된다(2026-07-30에 표를 전면 재보정한 이유가 바로 그 상태였다).
+ *
+ * 1.5는 실측 평균 지속 속도(2.07)를 상어 요구(1.4)로 나눈 값(1.48)을 덮는 자리다 —
+ * 평균적인 사람이 제대로 감으면 보너스를 거의 다 받는다.
+ */
+export const GAIN_BONUS_MAX = 1.5
+
 export function createFight(initial: FishSpec): Fight {
   let spec = initial
   let progress = START_PROGRESS
   let state: FightState = 'fighting'
   let elapsed = 0
+  /** 직전 프레임에 감기로 인정됐는지 — 유지 문턱(REEL_HOLD_RATIO)의 기준 */
+  let wasReeling = false
 
   return {
     fish: () => spec,
@@ -91,6 +120,8 @@ export function createFight(initial: FishSpec): Fight {
       spec = fish
       progress = START_PROGRESS
       state = 'fighting'
+      // 이월되면 새 물고기가 첫 프레임부터 유지 문턱(70%)으로 시작한다
+      wasReeling = false
       elapsed = 0
     },
 
@@ -99,10 +130,16 @@ export function createFight(initial: FishSpec): Fight {
 
       elapsed += dtSec
       const grace = elapsed <= GRACE_SEC
-      const reeling = rate >= spec.requiredRate
+      // 시작은 요구 속도 100%, 유지는 REEL_HOLD_RATIO까지 — 방향 전환의 순간 저하로 역주행하지 않게
+      const threshold = wasReeling ? spec.requiredRate * REEL_HOLD_RATIO : spec.requiredRate
+      const reeling = rate >= threshold
+      wasReeling = reeling
       // 유예 중에는 저항을 걸지 않는다 — 감으면 차고, 안 감아도 줄지 않는다
-      if (reeling) progress += spec.gain * dtSec
-      else if (!grace) progress -= spec.drain * dtSec
+      if (reeling) {
+        // 요구를 넘긴 만큼 후하게. 딱 맞추면 1.0이라 기존 밸런스가 기준선으로 남는다
+        const bonus = Math.min(GAIN_BONUS_MAX, Math.max(1, rate / spec.requiredRate))
+        progress += spec.gain * bonus * dtSec
+      } else if (!grace) progress -= spec.drain * dtSec
 
       if (progress >= 1) {
         progress = 1
@@ -169,27 +206,49 @@ export function createFight(initial: FishSpec): Fight {
  *   멀티플레이 공정성에 직결되므로 표본을 늘려야 한다.
  */
 export const FISH: FishSpec[] = [
-  { name: '멸치', score: 5, requiredRate: 0.5, gain: 0.455, drain: 0.25, targetSec: 3 },
-  { name: '고등어', score: 15, requiredRate: 0.7, gain: 0.228, drain: 0.25, targetSec: 5 },
-  { name: '광어', score: 25, requiredRate: 0.9, gain: 0.152, drain: 0.228, targetSec: 7 },
-  { name: '농어', score: 35, requiredRate: 1.1, gain: 0.114, drain: 0.171, targetSec: 9 },
-  { name: '연어', score: 45, requiredRate: 1.25, gain: 0.091, drain: 0.137, targetSec: 11 },
-  { name: '참치', score: 70, requiredRate: 1.4, gain: 0.07, drain: 0.105, targetSec: 14 },
+  /*
+   * 15종 — 스프라이트 시트(fish-sheet.png)의 15칸과 1:1이다.
+   *
+   * 기존 7종(흰동가리·금붕어·광어·붉은돔·연어·참치·상어)의 점수·요구속도·targetSec은 실측
+   * 그대로다. 새로 넣은 8종은 **임의값이 아니라** 그 사이를 채운 값이다:
+   *   requiredRate — 이웃 두 종 사이를 선형 보간(전 구간 단조 증가 유지)
+   *   targetSec    — 이웃 두 종 사이(단조 증가 유지)
+   *   gain         — targetSec에서 역산: 0.91 / (targetSec - 1)
+   *                  (= MEASURED_FACTOR × (1 - START_PROGRESS) / (targetSec - WARMUP_SEC))
+   *   drain        — min(DRAIN_CAP, gain × DRAIN_PER_GAIN)
+   * 즉 gain·drain은 자유도가 없다. 고를 수 있는 건 점수·요구속도·targetSec 세 개뿐이고
+   * 그 세 개도 기존 대역 안에 들어간다 — 새 종이 기존 종보다 쉬우면서 점수가 높은 일은 없다.
+   *
+   * 기존 7종의 gain·drain은 손으로 3자리까지 반올림돼 있었는데 여기서 같은 식으로 4자리
+   * 재계산했다(0.152 → 0.1517 등). expectedCatchSeconds ≈ targetSec 검사가 더 정확히 맞는다.
+   */
+  { name: '흰동가리', score: 5, requiredRate: 0.5, gain: 0.455, drain: 0.25, targetSec: 3 },
+  { name: '블루탱', score: 10, requiredRate: 0.58, gain: 0.3033, drain: 0.25, targetSec: 4 },
+  { name: '금붕어', score: 15, requiredRate: 0.66, gain: 0.2275, drain: 0.25, targetSec: 5 },
+  { name: '노랑탱', score: 20, requiredRate: 0.74, gain: 0.182, drain: 0.25, targetSec: 6 },
+  { name: '광어', score: 25, requiredRate: 0.82, gain: 0.1517, drain: 0.2276, targetSec: 7 },
+  { name: '베타', score: 30, requiredRate: 0.9, gain: 0.13, drain: 0.195, targetSec: 8 },
+  { name: '붉은돔', score: 35, requiredRate: 0.98, gain: 0.1138, drain: 0.1707, targetSec: 9 },
+  { name: '만다린', score: 40, requiredRate: 1.05, gain: 0.1011, drain: 0.1517, targetSec: 10 },
+  { name: '연어', score: 45, requiredRate: 1.12, gain: 0.091, drain: 0.1365, targetSec: 11 },
+  { name: '복어', score: 50, requiredRate: 1.18, gain: 0.0827, drain: 0.124, targetSec: 12 },
+  { name: '모오리돔', score: 55, requiredRate: 1.24, gain: 0.0791, drain: 0.1187, targetSec: 12.5 },
+  { name: '메기', score: 60, requiredRate: 1.29, gain: 0.0758, drain: 0.1137, targetSec: 13 },
+  { name: '참치', score: 70, requiredRate: 1.34, gain: 0.07, drain: 0.105, targetSec: 14 },
+  { name: '청새치', score: 100, requiredRate: 1.37, gain: 0.0674, drain: 0.1011, targetSec: 14.5 },
   /*
    * 상어만 20초 → 15초로 줄였다.
    *
    * 실기에서 26.7초 걸렸다(2026-07-30, 지속 2.41/s로 요구 1.55를 1.55배 넘겼는데도). 26초
    * 연속으로 릴을 돌리면 팔이 아파서 재미가 아니라 노동이 된다.
    *
-   * 같은 세션에서 실측 배율을 역산하면 멸치 1.04 / 광어 1.13 / 상어 1.76이다. 평균 1.31이라
+   * 같은 세션에서 실측 배율을 역산하면 흰동가리 1.04 / 광어 1.13 / 상어 1.76이다. 평균 1.31이라
    * `MEASURED_FACTOR = 1.3`은 전역으로 잘 맞고 **상어만 이탈**한다 — 요구 속도가 높아 순간
    * 속도가 문턱 아래로 떨어지는 시간이 길기 때문이다.
    *
    * 배율을 어종별로 쪼개지 않고 gain만 올렸다. 어종별 배율은 종당 표본이 1건뿐이라 과적합이다.
-   * 예상 결과는 약 20초(실측 배율 1.76 기준)로, 모델상 15초와는 차이가 남는다. 다시 재고 그때도
-   * 이탈이 남으면 배율을 쪼갠다.
    */
-  { name: '상어', score: 120, requiredRate: 1.55, gain: 0.065, drain: 0.0975, targetSec: 15 },
+  { name: '상어', score: 120, requiredRate: 1.4, gain: 0.065, drain: 0.0975, targetSec: 15 },
 ]
 
 /** 어종표의 불변식 — drain은 gain에 비례한다. 이 비율이 깨지면 못 잡는 물고기가 생긴다 */
