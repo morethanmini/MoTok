@@ -38,6 +38,18 @@ public class LiveRoomController {
                 .body(ApiResponse.ok("방 생성 완료", liveRoomService.create(principal, req)));
     }
 
+    /**
+     * 방을 로비 목록에 공개한다 — 방장이 게임방 화면에 도달했을 때 호출한다.
+     * 멱등하므로 새로고침·재입장으로 여러 번 불려도 안전하다. 방장이 아니면 403.
+     */
+    @PostMapping("/{roomId}/open")
+    public ApiResponse<Void> open(
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @PathVariable String roomId) {
+        liveRoomService.open(principal, roomId);
+        return ApiResponse.ok("방 공개 완료");
+    }
+
     @GetMapping
     public ApiResponse<LiveRoomListResponse> list(@RequestParam(defaultValue = "1") int page) {
         return ApiResponse.ok(liveRoomService.list(page));
