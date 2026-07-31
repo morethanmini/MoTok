@@ -33,7 +33,7 @@ function recordingSkin(withOptional: boolean) {
 function view(state: LoopState, over: Partial<FishingView> = {}): FishingView {
   return {
     state,
-    aim: { locked: false, x: 0 },
+    aim: { locked: false },
     marker: null,
     splashes: [],
     video: null,
@@ -77,14 +77,14 @@ describe('drawFrame', () => {
     const loop = createLoop()
     const { skin, calls } = recordingSkin(false)
 
-    // IDLE + 백스윙 중 → 조준선 있다
-    drawFrame(ctx, skin, DEFAULT_LOOP, view(loop.state(), { aim: { locked: true, x: 100 } }))
+    // IDLE + 백스윙 중 → 착수 범위 미리보기 있다
+    drawFrame(ctx, skin, DEFAULT_LOOP, view(loop.state(), { aim: { locked: true } }))
     expect(calls).toContain('aim')
 
     // 던지면 phase가 casting이 되므로 locked가 남아 있어도 안 그린다
-    loop.cast(100, 0.5)
+    loop.cast(0.5)
     const after = recordingSkin(false)
-    drawFrame(ctx, after.skin, DEFAULT_LOOP, view(loop.state(), { aim: { locked: true, x: 100 } }))
+    drawFrame(ctx, after.skin, DEFAULT_LOOP, view(loop.state(), { aim: { locked: true } }))
     expect(loop.state().phase).toBe('casting')
     expect(after.calls).not.toContain('aim')
     // 찌는 날아가는 중이라 보인다

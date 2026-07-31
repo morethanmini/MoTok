@@ -25,8 +25,9 @@ import {
 import { createCast, DEFAULT_CAST } from './cast'
 import { createHook, DEFAULT_HOOK } from './hook'
 import { createPump, DEFAULT_PUMP } from './pump'
-import { createLoop, DEFAULT_LOOP, type LoopState } from './loop'
-import { aimFromHands, createNormalizer, SHOULDER, VIS_MIN, WRIST } from './normalize'
+import { bandYRange, createLoop, DEFAULT_LOOP, DEPTH_BANDS, type LoopState } from './loop'
+import { depthFromHands } from './depth'
+import { createNormalizer, SHOULDER, VIS_MIN, WRIST } from './normalize'
 import { drawFrame } from './render/drawFrame'
 import { resolveSkin, SKINS } from './render/skins'
 import type { Splash } from './render/types'
@@ -69,8 +70,8 @@ const norm = createNormalizer()
 
 /** 렌더·표시용 스냅샷 — tick 후 매 프레임 갱신 */
 const st = ref<LoopState>(loop.state())
-/** 조준 상태 — IDLE에서 조준선에 쓴다. 조준은 좌우만(거리 제어 없음) */
-const aim = reactive({ locked: false, x: 0 })
+/** 백스윙 상태 — IDLE에서 착수 범위 미리보기에 쓴다. 착수 x는 파워가 정한다(단면도) */
+const aim = reactive({ locked: false })
 const reelRate = ref(0)
 /**
  * 지금 판정에 쓰이는 점의 화면 좌표 — 캠 오버레이 마커.
@@ -81,8 +82,10 @@ let marker: { x: number; y: number } | null = null
 let splashes: Splash[] = []
 /** 마지막 페이즈 — 전환 시점에 판정기를 리셋하기 위한 비교값 */
 let prevPhase = st.value.phase
-/** 어깨 중점 x — 조준 0의 기준. 어깨를 놓친 프레임에는 직전 값을 유지한다 */
-let bodyMidX = W / 2
+/** 어깨 중점 y — 깊이 0.5의 기준. 어깨를 놓친 프레임에는 직전 값을 유지한다 */
+let bodyMidY = H / 2
+/** 미끼가 있는 깊이 층 — 층이 바뀔 때만 로그를 찍기 위한 비교값 */
+let lastBandIdx = -1
 
 const hud = computed(() => {
   const s = st.value
@@ -95,10 +98,10 @@ const hud = computed(() => {
       return '찌가 날아갑니다…'
     case 'waiting':
       return s.active?.interest === 'curious'
-        ? '물고기가 찌를 봤어요…'
+        ? '물고기가 미끼를 봤어요…'
         : s.active
           ? '물고기가 다가옵니다!'
-          : '입질을 기다립니다…'
+          : '손 높이로 미끼 깊이를 조절하세요'
     case 'bite':
       return '입질! 손을 위로 번쩍!'
     case 'fighting':
@@ -261,8 +264,8 @@ function onPose(result: PoseLandmarkerResult) {
     norm.push(width)
     stats.swMin = stats.swMin === 0 ? width : Math.min(stats.swMin, width)
     stats.swMax = Math.max(stats.swMax, width)
-    // 조준 0의 기준 — 정식 화면과 같은 매핑을 써야 계측이 의미가 있다
-    bodyMidX = ((1 - sl.x) * W + (1 - sr.x) * W) / 2
+    // 깊이 0.5의 기준 — 정식 화면과 같은 매핑을 써야 계측이 의미가 있다
+    bodyMidY = (sl.y * H + sr.y * H) / 2
   }
   const sw = norm.ready() ? norm.sw() : 0
 
@@ -316,9 +319,9 @@ function onPose(result: PoseLandmarkerResult) {
 
   // 페이즈별로 하나만 — 서로 오발하지 않는다
   if (phase === 'idle') {
-    const c = cast.feed(aimFromHands(midX, bodyMidX, sw, W), midY, sw, now)
+    // 단면도: 착수 x는 파워가 정한다 — cast.ts의 조준 x 인자는 소비하지 않는다(판정 5파일 무수정)
+    const c = cast.feed(midX, midY, sw, now)
     aim.locked = c.phase === 'back'
-    if (c.aimX !== null) aim.x = c.aimX
     if (c.dropSw > 0) lastDropSw = c.dropSw
     if (c.riseSw > 0) lastRiseSw = c.riseSw
 
@@ -331,15 +334,14 @@ function onPose(result: PoseLandmarkerResult) {
       prevCastPhase = c.phase
     }
 
-    // 조준은 발사 시점에 판정기가 확정한 값을 쓴다(내려꽂는 동안의 흔들림 배제)
     if (c.fired !== null) {
       lastPower = c.fired
       stats.powers.push(c.fired)
       log(
         'cast',
-        `던짐 파워=${n2(c.fired)} 낙하=×${n2(lastDropSw)} 상승=×${n2(lastRiseSw)} 조준x=${Math.round(c.firedAimX)} sw=${Math.round(sw)}px`,
+        `던짐 파워=${n2(c.fired)} 낙하=×${n2(lastDropSw)} 상승=×${n2(lastRiseSw)} sw=${Math.round(sw)}px`,
       )
-      loop.cast(c.firedAimX, c.fired)
+      loop.cast(c.fired)
       lastDropSw = 0
     } else if (prevCastPhase === 'idle' && lastDropSw > 0) {
       /*
@@ -353,6 +355,9 @@ function onPose(result: PoseLandmarkerResult) {
       )
       lastDropSw = 0
     }
+  } else if (phase === 'waiting') {
+    // 양손 높이 → 미끼 깊이 (단면도). 정식 화면과 같은 매핑
+    loop.steer(depthFromHands(midY, bodyMidY, sw))
   } else if (phase === 'bite') {
     const h = hook.feed(midY, sw, now)
     if (h.upVelSw > hookPeak.vel) hookPeak.vel = h.upVelSw
@@ -381,11 +386,12 @@ function frame(now: number) {
     if (s.phase !== prevPhase) {
       if (s.phase === 'waiting') {
         spawnSplash(s.bobber.x, s.bobber.y)
-        // 착수 y로 거리 매핑을 확인한다 — 위(수평선)일수록 멀다
-        const depth = (H - s.bobber.y) / (H - DEFAULT_LOOP.waterY)
+        // 착수 x로 거리 매핑을 확인한다 — 오른쪽일수록 멀다(단면도)
+        const range = W - DEFAULT_LOOP.landFarMarginPx - DEFAULT_LOOP.landNearXPx
+        const dist = (s.bobber.x - DEFAULT_LOOP.landNearXPx) / range
         log(
           'land',
-          `착수 y=${Math.round(s.bobber.y)} (수면까지 ${(depth * 100).toFixed(0)}%) ← 파워 ${n2(lastPower)}`,
+          `착수 x=${Math.round(s.bobber.x)} (거리 ${(dist * 100).toFixed(0)}%) ← 파워 ${n2(lastPower)}`,
         )
       }
       if (s.phase === 'bite') {
@@ -441,6 +447,23 @@ function frame(now: number) {
       prevPhase = s.phase
     }
     st.value = s
+
+    // 미끼 깊이 층 추적 — 층이 바뀔 때만 남긴다(매 프레임 y를 찍으면 로그가 잠긴다)
+    if (s.phase === 'waiting') {
+      let idx = DEPTH_BANDS - 1
+      for (let i = 0; i < DEPTH_BANDS; i++) {
+        if (s.bobber.y < bandYRange(DEFAULT_LOOP, i).bottom) {
+          idx = i
+          break
+        }
+      }
+      if (idx !== lastBandIdx) {
+        lastBandIdx = idx
+        log('land', `미끼 층${idx} 진입 y=${Math.round(s.bobber.y)}`)
+      }
+    } else {
+      lastBandIdx = -1
+    }
 
     for (const p of splashes) {
       p.life -= dt

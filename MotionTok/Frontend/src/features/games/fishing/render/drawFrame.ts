@@ -39,9 +39,11 @@ export function drawFrame(
   skin.drawSplashes(ctx, view.splashes)
 
   if (s.bobber.visible) skin.drawBobber(ctx, s, cfg, view.tMs)
-  // 조준선은 백스윙 중에만 — 던지고 나면 조준이 확정되므로 남겨두면 거짓 정보다
-  if (s.phase === 'idle' && view.aim.locked) skin.drawAim(ctx, view.aim.x, cfg, view.tMs)
+  // 착수 범위는 백스윙 중에만 — 던지고 나면 확정되므로 남겨두면 거짓 정보다
+  if (s.phase === 'idle' && view.aim.locked) skin.drawAim(ctx, cfg, view.tMs)
   if (view.marker) skin.drawMarker?.(ctx, view.marker, s)
+  // 전경은 물고기·찌를 덮는다 — 근경 해초가 앞에 있어야 물속의 겹이 생긴다
+  skin.drawForeground?.(ctx, cfg, view)
 
   if (shaken) ctx.restore()
 

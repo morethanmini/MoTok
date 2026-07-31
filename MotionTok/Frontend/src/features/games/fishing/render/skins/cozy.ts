@@ -1,21 +1,21 @@
 /**
  * 정식 스킨 — 서비스 톤 (S15P11A706-49).
  *
- * ─── 공간 모델 ───────────────────────────────────────────────────────────
- * 이 무대는 **단면도가 아니라 원근으로 본 수면**이다. `loop.ts`가 위쪽(수평선)을 멀리,
- * 아래쪽을 가까이로 매핑한다(`landFarMarginPx`가 수면 근처, `landNearMarginPx`가 화면 아래).
- * 그래서 코지 낚시 게임 레퍼런스에서 흔한 "위는 공기 / 아래는 심해 + 해초 + 모래바닥" 구성을
- * 그대로 쓸 수 없다. 그걸 깔면 화면 아래가 심해가 되어 던지기 거리 매핑과 정반대가 된다.
+ * ─── 공간 모델: 물속 단면도 (2026-07-31 전환) ────────────────────────────
+ * x = 앵글러(좌상단 수면 위)로부터의 거리, y = 깊이다(loop.ts와 같은 의미). 그래서 코지 낚시
+ * 레퍼런스의 "위는 공기 / 아래는 심해 + 해초 + 모래바닥" 구성을 그대로 쓴다.
+ * 이전에는 원근(위=멀리)이라 이 구성이 거리 매핑과 정반대여서 못 썼다 — 팀 회의에서
+ * 단면도 반응이 더 좋아 좌표 의미를 통째로 전환했다.
  *
- * 대신 원근에 맞는 장치로 깊이를 만든다:
- *   · 물고기가 위로 갈수록 작고 흐려진다(원근 페이드)
- *   · 근경(화면 아래)에 갈대, 원경(수평선)에 언덕·구름
- *   · 앵글러는 가까운 쪽 = 좌하단
+ * 깊이는 이렇게 표현한다:
+ *   · 물이 아래로 갈수록 어두워진다(4단 그라데이션)
+ *   · 어종 깊이 층(loop.ts bandYRange) 경계선 + **미끼가 있는 층만 밝게** — 깊이 조작 피드백
+ *   · 앵글러는 좌상단 수면 위 보트 — 줄이 수면을 뚫고 내려가는 그림이 단면도의 최대 이득
  *
  * ─── 색·테두리 규칙 ─────────────────────────────────────────────────────
  * UI·전경 오브젝트(물고기·찌·배지·보트)는 `tokens.css`의 잉크 테두리 + 하드 섀도우를 쓴다.
- * **배경(하늘·언덕·물)은 테두리 없이 부드럽게 간다.** 처음엔 배경까지 잉크로 둘렀는데 색칠공부
- * 처럼 보였다(2026-07-30 지적). 팀 에셋을 열어보니 규칙이 이미 그렇다 —
+ * **배경(하늘·물·모래·해초)은 테두리 없이 부드럽게 간다.** 처음엔 배경까지 잉크로 둘렀는데
+ * 색칠공부처럼 보였다(2026-07-30 지적). 팀 에셋을 열어보니 규칙이 이미 그렇다 —
  * `lobby/lobby-cloud-a.png`(전경 구름)는 계단식 잉크 외곽선이지만
  * `games/rhythm-thumbnail/background.png`(게임 배경)는 외곽선 없는 디더 그라데이션이다.
  *
@@ -23,7 +23,14 @@
  * 배지 위는 `badgeText`(채우기만), 배경 위에 뜬 글자는 `floatText`(2px 외곽선).
  */
 import { FISH, type FishSpec } from '../../fight'
-import type { LoopConfig, LoopState, Phase, SceneFish } from '../../loop'
+import {
+  bandYRange,
+  DEPTH_BANDS,
+  type LoopConfig,
+  type LoopState,
+  type Phase,
+  type SceneFish,
+} from '../../loop'
 import type { FishingSkin, FishingView, Splash } from '../types'
 import catUrl from '@/assets/games-catalog/hero-fishing-cat-transparent.png'
 
@@ -46,14 +53,20 @@ const SKY_TOP = '#eaf7ff'
 const SKY_BOT = '#cfe8ff'
 const HILL_FAR = '#c3e0cd'
 const HILL_NEAR = '#9ccfae'
-const WATER_TOP = '#bfe9f7'
-const WATER_MID = '#83cfea'
-const WATER_BOT = '#4fa6cd'
+// 물 — 아래로 갈수록 어두워진다. 단면도의 깊이는 이 명암이 만든다
+const WATER_TOP = '#9fdcf0'
+const WATER_MID = '#5fb2d6'
+const WATER_DEEP = '#2e7aa6'
+const WATER_BOT = '#1f5d85'
 const SURFACE = '#e2f7fe'
-const REED_FAR = '#7cbd9b'
-const REED_NEAR = '#4f9c78'
+const SAND = '#e3cf96'
+const SAND_DEEP = '#c9ad72'
+const KELP_FAR = '#3c8a72'
+const KELP_NEAR = '#2f7a5f'
 const BOAT_HULL = '#c9945f'
 const BOAT_RIM = '#9a6a3f'
+/** 모래바닥 높이(px) — 물고기 하한(depthMaxMarginPx 48)보다 낮아 물고기가 모래에 박히지 않는다 */
+const SAND_H = 36
 
 const FONT = "'DNF Bit Bit', ui-monospace, monospace"
 
@@ -170,6 +183,32 @@ function badge(
 /** 수면 물결 — 직선 대신 스캘럽. 자를 대고 그은 선처럼 보이지 않게 한다 */
 function surfaceY(x: number, waterY: number, tMs: number): number {
   return waterY + Math.sin(tMs / 1100 + x / 74) * 3.5 + Math.sin(tMs / 700 + x / 31) * 1.5
+}
+
+/** 해초 한 포기 — 세 가닥이 밑동에서 함께 흔들린다. 배경 규칙대로 테두리 없음 */
+function kelp(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  baseY: number,
+  h: number,
+  color: string,
+  tMs: number,
+  width: number,
+) {
+  ctx.strokeStyle = color
+  ctx.lineCap = 'round'
+  ctx.lineWidth = width
+  for (const [dx, hk] of [
+    [-8, 0.72],
+    [0, 1],
+    [9, 0.82],
+  ] as const) {
+    const sway = Math.sin(tMs / 900 + x / 40 + dx) * (5 + h * 0.05)
+    ctx.beginPath()
+    ctx.moveTo(x + dx, baseY)
+    ctx.quadraticCurveTo(x + dx + sway * 0.35, baseY - h * hk * 0.55, x + dx + sway, baseY - h * hk)
+    ctx.stroke()
+  }
 }
 
 /* ────────────────────────── 어종 ────────────────────────── */
@@ -298,10 +337,11 @@ export const cozySkin: FishingSkin = {
       }
     }
 
-    // ── 물 — 스캘럽 수면 + 그라데이션. 평면 색 띠는 풍경이 아니라 그라데이션 대용품이었다
+    // ── 물 — 스캘럽 수면 + 깊이 그라데이션 4단. 아래로 갈수록 어둡다(단면도의 깊이)
     const water = ctx.createLinearGradient(0, waterY, 0, H)
     water.addColorStop(0, WATER_TOP)
-    water.addColorStop(0.45, WATER_MID)
+    water.addColorStop(0.32, WATER_MID)
+    water.addColorStop(0.7, WATER_DEEP)
     water.addColorStop(1, WATER_BOT)
     ctx.fillStyle = water
     ctx.beginPath()
@@ -336,45 +376,115 @@ export const cozySkin: FishingSkin = {
       ctx.restore()
     }
 
-    // ── 물결 결 — 원근을 따라 아래로 갈수록 길고 굵어진다
+    // ── 빛줄기 — 수면에서 비스듬히 내려온다. "물속"임을 알리는 가장 싼 장치
     ctx.save()
-    ctx.strokeStyle = '#ffffff'
-    ctx.lineCap = 'round'
-    for (const [ry, len, alpha] of [
-      [0.18, 14, 0.2],
-      [0.36, 20, 0.22],
-      [0.58, 28, 0.24],
-      [0.8, 38, 0.26],
-    ] as const) {
-      const y = waterY + (H - waterY) * ry
-      ctx.globalAlpha = alpha
-      ctx.lineWidth = 2 + ry * 3
+    ctx.fillStyle = '#ffffff'
+    for (let i = 0; i < 3; i++) {
+      const rx = 150 + i * 185 + Math.sin(t / 2600 + i * 2.1) * 24
+      const topW = 26 + i * 8
+      ctx.globalAlpha = 0.06 + (i % 2) * 0.03
       ctx.beginPath()
-      for (let x = -30; x < W + 30; x += len * 2.4) {
-        const off = Math.sin(t / 950 + ry * 5 + x / 80) * (3 + ry * 4)
-        const px = x + ((t / 1000) * (4 + ry * 14)) % (len * 2.4)
-        ctx.moveTo(px, y + off)
-        ctx.lineTo(px + len, y + off)
-      }
-      ctx.stroke()
+      ctx.moveTo(rx, waterY + 4)
+      ctx.lineTo(rx + topW, waterY + 4)
+      ctx.lineTo(rx + topW + 52, waterY + 190)
+      ctx.lineTo(rx + 8, waterY + 190)
+      ctx.closePath()
+      ctx.fill()
     }
     ctx.restore()
 
-    // ── 근경 갈대 — 화면 아래 = 가까운 쪽. 좌우 가장자리에만 둬서 플레이 영역을 비운다
-    for (const [color, reeds] of [
-      [REED_FAR, [[24, 46], [58, 34], [592, 40], [622, 52]]],
-      [REED_NEAR, [[8, 62], [40, 74], [608, 66], [634, 80]]],
-    ] as const) {
-      ctx.strokeStyle = color
-      ctx.lineCap = 'round'
-      for (const [rx, rh] of reeds) {
-        const sway = Math.sin(t / 800 + rx) * 5
-        ctx.lineWidth = 5
-        ctx.beginPath()
-        ctx.moveTo(rx, H)
-        ctx.quadraticCurveTo(rx + sway * 0.4, H - rh * 0.6, rx + sway, H - rh)
-        ctx.stroke()
+    // ── 깊이 층 — 경계선 + **미끼가 있는 층만 밝게**. 깊이 조작(steer)의 화면 피드백이다
+    ctx.save()
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)'
+    ctx.lineWidth = 1
+    for (let i = 1; i < DEPTH_BANDS; i++) {
+      const y = bandYRange(cfg, i).top
+      ctx.beginPath()
+      ctx.moveTo(0, y)
+      ctx.lineTo(W, y)
+      ctx.stroke()
+    }
+    const st = view.state
+    if (st.bobber.visible && (st.phase === 'waiting' || st.phase === 'bite')) {
+      for (let i = 0; i < DEPTH_BANDS; i++) {
+        const band = bandYRange(cfg, i)
+        if (st.bobber.y >= band.top && st.bobber.y < band.bottom) {
+          ctx.fillStyle = 'rgba(255,255,255,0.07)'
+          ctx.fillRect(0, band.top, W, band.bottom - band.top)
+          break
+        }
       }
+    }
+    ctx.restore()
+
+    // ── 원경 해초 — 모래에 심는다. 어둡고 가늘어서 물고기 뒤로 물러난다
+    for (const [x, h] of [
+      [110, 64],
+      [285, 46],
+      [420, 72],
+      [560, 52],
+    ] as const) {
+      kelp(ctx, x, H - SAND_H + 10, h, KELP_FAR, t, 5)
+    }
+
+    // ── 모래바닥 — 물결진 윗선 두 겹 + 조약돌
+    const sandTop = H - SAND_H
+    ctx.fillStyle = SAND
+    ctx.beginPath()
+    ctx.moveTo(0, sandTop + Math.sin(1.3) * 5)
+    for (let x = 16; x <= W; x += 16) ctx.lineTo(x, sandTop + Math.sin(x / 46 + 1.3) * 5)
+    ctx.lineTo(W, H)
+    ctx.lineTo(0, H)
+    ctx.closePath()
+    ctx.fill()
+    ctx.fillStyle = SAND_DEEP
+    ctx.beginPath()
+    ctx.moveTo(0, H - 14 + Math.sin(4) * 4)
+    for (let x = 16; x <= W; x += 16) ctx.lineTo(x, H - 14 + Math.sin(x / 60 + 4) * 4)
+    ctx.lineTo(W, H)
+    ctx.lineTo(0, H)
+    ctx.closePath()
+    ctx.fill()
+    for (const [px, py, pr] of [
+      [86, 10, 5],
+      [204, 16, 4],
+      [351, 9, 6],
+      [489, 15, 4],
+      [598, 11, 5],
+    ] as const) {
+      ctx.beginPath()
+      ctx.ellipse(px, sandTop + py, pr + 2, pr, 0, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    // ── 기포 — 천천히 올라간다. 시각 기반이라 프레임률과 무관하다
+    ctx.save()
+    ctx.fillStyle = '#ffffff'
+    const cycle = sandTop - waterY - 20
+    for (let i = 0; i < 5; i++) {
+      const by = sandTop - 10 - ((((t / 1000) * (22 + i * 6) + i * 83) % cycle) + cycle) % cycle
+      const bx = 70 + i * 130 + Math.sin(t / 1200 + i * 1.9) * 9
+      ctx.globalAlpha = 0.22
+      ctx.beginPath()
+      ctx.arc(bx, by, 2.5 + (i % 3), 0, Math.PI * 2)
+      ctx.fill()
+    }
+    ctx.restore()
+  },
+
+  /**
+   * 근경 해초 — 물고기·미끼 **앞**에 그린다. 앞뒤 겹이 있어야 수조가 아니라 물속이 된다.
+   * 좌우 가장자리에만 둬서 플레이 영역을 가리지 않는다.
+   */
+  drawForeground(ctx: CanvasRenderingContext2D, cfg: LoopConfig, view: FishingView) {
+    const { height: H } = cfg
+    for (const [x, h, w] of [
+      [26, 96, 9],
+      [58, 70, 8],
+      [576, 62, 8],
+      [608, 88, 9],
+    ] as const) {
+      kelp(ctx, x, H - 8, h, KELP_NEAR, view.tMs, w)
     }
   },
 
@@ -384,24 +494,19 @@ export const cozySkin: FishingSkin = {
     isActive: boolean,
     phase: Phase,
     tMs: number,
-    cfg: LoopConfig,
+    _cfg: LoopConfig,
   ) {
     /*
-     * 원근 — 수면선에 가까울수록 멀다. 멀면 작고 흐리게 그린다.
-     *
-     * 희귀도 크기(fishRadius)를 덮어쓰지 않고 곱한다. 0.74~1.12 범위라 희귀도 차이는 그대로
-     * 읽히면서 깊이만 얹힌다.
+     * 단면도라 원근 페이드가 없다 — y는 거리가 아니라 깊이다. 같은 물고기는 어느 층에 있든
+     * 같은 크기·선명도로 그린다(수심 명암은 배경 그라데이션이 담당한다).
      */
-    const depth = Math.max(0, Math.min(1, (f.y - cfg.waterY) / (cfg.height - cfg.waterY)))
-    const persp = 0.74 + depth * 0.38
-    const r = fishRadius(f.spec) * persp
+    const r = fishRadius(f.spec)
     const shape = fishShape(f.spec)
     const color = isActive ? YELLOW : rarityColor(f.spec)
     // 작은 물고기에 굵은 테두리를 두르면 테두리가 몸통을 다 먹는다
     const sw = r > 20 ? 3 : 2
 
     ctx.save()
-    ctx.globalAlpha = 0.7 + depth * 0.3
     ctx.translate(q(f.x), q(f.y))
     if (f.dir < 0) ctx.scale(-1, 1)
 
@@ -513,27 +618,23 @@ export const cozySkin: FishingSkin = {
     const bx = q(s.bobber.x)
     const by = q(s.bobber.y + shake)
 
-    /*
-     * 낚싯줄은 **낚싯대 끝**에서 나온다.
-     *
-     * 예전엔 화면 아래 중앙(loop.ts의 castFrom)에서 그었는데, 그러면 아무것도 없는 가장자리에서
-     * 선이 튀어나온다. 물리 계산은 loop.ts 그대로 두고 그리는 자리만 대 끝으로 옮겼다 —
-     * 순수하게 보이는 문제라 판정에 영향이 없다.
-     */
+    // 낚싯줄 — 좌상단 대 끝에서 수면을 뚫고 미끼까지. 단면도의 최대 시각적 이득이 이 한 줄이다
     const tip = rodTip(cfg)
     ctx.beginPath()
     ctx.moveTo(tip.x, tip.y)
     ctx.lineTo(bx, by)
     inkStroke(ctx, 2)
 
-    // 찌가 물에 잠긴 자리 — 파문 두 겹
-    if (s.phase === 'waiting' || s.phase === 'bite') {
+    // 줄이 수면을 뚫는 자리 — 파문 두 겹. 미끼는 물속이므로 파문은 수면에 생긴다
+    if ((s.phase === 'waiting' || s.phase === 'bite') && by > cfg.waterY) {
+      const ct = (cfg.waterY - tip.y) / Math.max(1, by - tip.y)
+      const sx = q(tip.x + (bx - tip.x) * ct)
       ctx.save()
       ctx.globalAlpha = 0.5
       ctx.strokeStyle = PAPER
       for (const k of [1, 1.7]) {
         ctx.beginPath()
-        ctx.ellipse(bx, by + 9, q(11 * k), q(4 * k), 0, 0, Math.PI * 2)
+        ctx.ellipse(sx, cfg.waterY + 3, q(11 * k), q(4 * k), 0, 0, Math.PI * 2)
         ctx.lineWidth = 2
         ctx.stroke()
       }
@@ -558,40 +659,32 @@ export const cozySkin: FishingSkin = {
     inkStroke(ctx, 3)
   },
 
-  drawAim(ctx: CanvasRenderingContext2D, aimX: number, cfg: LoopConfig, tMs: number) {
-    const nearY = cfg.height - cfg.landNearMarginPx
-    const farY = cfg.waterY + cfg.landFarMarginPx
-    const x = q(aimX)
+  drawAim(ctx: CanvasRenderingContext2D, cfg: LoopConfig, tMs: number) {
+    // 단면도: 파워가 정하는 건 좌우 거리다 — 수면 아래 가로 캡슐로 착수 범위를 보여준다
+    const nearX = cfg.landNearXPx
+    const farX = cfg.width - cfg.landFarMarginPx
+    const y = q(cfg.waterY + cfg.depthMinMarginPx)
 
     // 착수 범위 — 얇은 캡슐. 굵으면 물을 다 가린다
-    badge(ctx, x - 5, farY, 10, nearY - farY, MINT, 2)
+    badge(ctx, nearX, y - 5, farX - nearX, 10, MINT, 2)
 
-    const tip = rodTip(cfg)
-    ctx.save()
-    ctx.setLineDash([9, 9])
-    ctx.beginPath()
-    ctx.moveTo(tip.x, tip.y)
-    ctx.lineTo(x, nearY)
-    inkStroke(ctx, 3)
-    ctx.restore()
-
-    // 양 끝 — 위가 멀리, 아래가 가까이
+    // 양 끝 — 왼쪽이 가까이(약하게), 오른쪽이 멀리(세게)
     const pulse = 6 + Math.sin(tMs / 160) * 2
-    for (const y of [farY, nearY]) {
+    for (const x of [nearX, farX]) {
       ctx.beginPath()
-      ctx.arc(x, q(y), pulse, 0, Math.PI * 2)
+      ctx.arc(q(x), y, pulse, 0, Math.PI * 2)
       ctx.fillStyle = PAPER
       ctx.fill()
       inkStroke(ctx, 2)
     }
-    floatText(ctx, '멀리', x, farY - 20, 15, PAPER)
-    floatText(ctx, '가까이', x, nearY + 22, 15, PAPER)
+    floatText(ctx, '가까이', nearX, y + 26, 15, PAPER)
+    floatText(ctx, '멀리', farX, y + 26, 15, PAPER)
   },
 
   drawGauges(ctx: CanvasRenderingContext2D, s: LoopState, cfg: LoopConfig) {
     const { width: W, height: H } = cfg
-    // 좌하단은 앵글러 자리다 — 보트 우측 끝(x=122)에 10px 여유를 두고 비켜준다
-    const x = 132
+    // 앵글러가 좌상단으로 갔다(단면도) — 화면 아래는 이제 게이지가 전부 쓴다
+    const x = 28
     const w = W - x - 28
     const y = H - 42
 
@@ -646,11 +739,8 @@ export const cozySkin: FishingSkin = {
     // coral·yellow 배지 위에서는 잉크가 잘 읽히지 않는다 — 종이색 글자로 뒤집는다
     const ink = caught ? INK : hot ? PAPER : INK
 
-    /*
-     * 폭 상한 384 — 배너가 앵글러를 덮지 않는 한계다.
-     * 중앙 정렬이므로 배지 폭 bw = 글자폭+32 ≤ 416일 때 좌측 끝이 (640-416)/2 = 112 ≥ 보트 우측이다.
-     * 실제 문구는 최대 232px라 여유가 있지만, 나중에 긴 문구가 들어와도 안 겹치게 못 박는다.
-     */
+    // 폭 상한 384 — 화면 폭의 60%. 앵글러가 좌상단으로 가서 겹칠 게 없어졌지만,
+    // 배너가 물을 다 가리지 않는 상한으로 유지한다
     const px = fitFontPx(ctx, text, 384, 22)
     ctx.font = `${px}px ${FONT}`
     const bw = ctx.measureText(text).width + 32
@@ -666,17 +756,17 @@ export const cozySkin: FishingSkin = {
 /**
  * 낚싯대 끝 — 줄이 시작하는 자리.
  *
- * 좌하단 앵글러에서 화면 중앙 쪽으로 대를 뻗는다. 좌하단에 둔 이유는 `loop.ts`의 착수 범위가
- * 화면 폭 전체(10 ~ W-10)라, 가운데에 앵글러를 놓으면 자기가 던진 찌를 자기가 가린다.
+ * 좌상단 수면 위 보트에서 바다 쪽으로 대를 뻗는다. loop.ts의 castFrom(W×0.27, waterY×0.5)과
+ * 같은 자리다 — 찌 비행 포물선이 대 끝에서 출발해야 줄과 궤적이 안 어긋난다.
  */
 function rodTip(cfg: LoopConfig) {
-  return { x: cfg.width * 0.335, y: cfg.height - 138 }
+  return { x: cfg.width * 0.27, y: cfg.waterY * 0.5 }
 }
 
 function drawAngler(ctx: CanvasRenderingContext2D, cfg: LoopConfig) {
-  const { height: H } = cfg
-  const cx = 60
-  const deckY = H - 26
+  const cx = 74
+  // 보트는 수면에 뜬다 — 갑판이 수면선 살짝 위, 선체 아랫부분은 물에 잠긴다
+  const deckY = cfg.waterY - 4
 
   // 보트 — 뱃머리가 오른쪽(던지는 방향)
   const hull = () => {
@@ -723,7 +813,7 @@ function drawAngler(ctx: CanvasRenderingContext2D, cfg: LoopConfig) {
   const tip = rodTip(cfg)
   ctx.beginPath()
   ctx.moveTo(cx + 18, deckY - 30)
-  ctx.quadraticCurveTo((cx + 18 + tip.x) / 2, deckY - 96, tip.x, tip.y)
+  ctx.quadraticCurveTo((cx + 18 + tip.x) / 2, deckY - 64, tip.x, tip.y)
   ctx.strokeStyle = INK
   ctx.lineWidth = 3.5
   ctx.lineCap = 'round'
