@@ -92,17 +92,48 @@ public class LiveRoomService {
         leaveOtherRoom(principal, playerKey(principal), roomId);
         repository.addMember(roomId, playerKey(principal), principal.userId(), principal.displayName(),
                 principal.isGuest(), now);
-        repository.indexRoom(roomId, now);
         repository.saveInviteCode(inviteCode, roomId);
 
         LiveRoom room = new LiveRoom(roomId, req.title(), req.visibility(), req.maxPlayers(), "WAITING",
                 principal.userId(), principal.displayName(), now, inviteCode, req.password(),
                 List.of(new LiveRoomMemberValue(principal.userId(), principal.displayName(),
                         principal.isGuest(), now)));
-        // 로비에 앉아 있는 사람들에게 새 방을 알린다(-148). 게스트 1인방은 rooms:index에 없어
-        // 목록에 뜨지 않으므로 createGuestSoloRoom에는 이 훅이 없다.
-        lobbyBroadcaster.roomCreated(LiveRoomSummaryResponse.from(room));
+        // 여기서는 rooms:index에 넣지 않는다 — 방이 로비에 뜨는 건 방장이 실제로 방에 들어온 뒤다(open 참고).
         return CreateLiveRoomResponse.from(room);
+    }
+
+    /**
+     * 방을 로비 목록에 공개한다 — 방장이 게임방에 실제로 입장한 순간 클라이언트가 호출한다.
+     *
+     * <h4>왜 생성 시점이 아닌가</h4>
+     * 방을 만든 사람은 곧바로 게임방에 오지 않는다. 기기 점검 화면(카메라·마이크 권한)을 먼저 거치는데,
+     * 생성 시점에 목록에 띄우면 그동안 아무나 들어올 수 있다. 들어와 봐야 시작 권한을 가진 사람이 없어
+     * 게임도 못 하고 방장을 부를 수단도 없이 기다리기만 해야 한다 — 방장이 권한 창에서 손을 놓고 있으면
+     * 그 방은 무기한 유령방이 된다. 공개를 "방장이 방 안에 있다"가 확인된 시점으로 미루면 그 구간이
+     * 목록에서 통째로 빠진다. 초대코드로 직접 들어오는 사람은 여전히 먼저 도착할 수 있지만, 그건
+     * 스스로 고른 대기이고 화면에도 방장 대기 안내가 뜬다.
+     *
+     * <p>멱등하다 — ZADD라 새로고침·재입장으로 여러 번 불려도 결과가 같고, 중복 알림만 막으면 된다.
+     * 방장이 위임된 경우(-72)에도 새 방장의 클라이언트가 같은 경로로 부른다.</p>
+     *
+     * <p>score는 공개 시각이 아니라 생성 시각이다 — 목록 정렬 기준("최신 생성 순", -124)을 바꾸지 않는다.</p>
+     */
+    public void open(AuthPrincipal principal, String roomId) {
+        LiveRoom room = loadRoom(roomId);
+        if (!room.hostUserId().equals(principal.userId())) {
+            throw new BusinessException(ErrorCode.NOT_ROOM_HOST);
+        }
+        // 게스트 1인방(-109)은 애초에 목록에 뜨지 않는 방이다. 초대코드가 없다는 게 그 표식이고,
+        // 그 방의 방장(=게스트 본인)도 게임방에 들어오므로 여기서 걸러 두지 않으면 목록에 새 나간다.
+        if (room.inviteCode() == null) {
+            return;
+        }
+        if (repository.isIndexed(roomId)) {
+            return; // 이미 공개된 방 — 또 알리면 로비에 같은 카드가 두 번 튄다
+        }
+        repository.indexRoom(roomId, room.createdAt());
+        // 로비에 앉아 있는 사람들에게 새 방을 알린다(-148).
+        lobbyBroadcaster.roomCreated(LiveRoomSummaryResponse.from(room));
     }
 
     /**
@@ -304,7 +335,8 @@ public class LiveRoomService {
             boolean wasListed = repository.isIndexed(roomId);
             repository.deleteRoom(roomId);
             eventPublisher.publishEvent(new LiveRoomClosedEvent(roomId));
-            // 게스트 1인방은 rooms:index에 없어 로비에 뜬 적이 없다 — 폐쇄 알림도 보낼 이유가 없다.
+            // rooms:index에 없는 방은 로비에 뜬 적이 없다 — 폐쇄 알림도 보낼 이유가 없다.
+            // 게스트 1인방(-109)과, 방장이 기기 점검 화면에서 되돌아 나가 공개되지 않은 채 사라지는 방(open 참고).
             if (wasListed) {
                 lobbyBroadcaster.roomClosed(roomId);
             }

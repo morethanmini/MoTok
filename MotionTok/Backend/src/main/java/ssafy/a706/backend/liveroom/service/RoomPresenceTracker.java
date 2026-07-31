@@ -41,7 +41,7 @@ import java.util.regex.Pattern;
  *       소켓이 닫히지 않으므로 <b>이쪽이 정상 퇴장 신호</b>가 된다</li>
  *   <li>DISCONNECT: 탭 종료·크래시 등 통보 없는 이탈</li>
  * </ul>
- * 어느 신호든 유예({@value #GRACE_MS}ms, FE 재연결 주기 3초의 여유분) 후에도 그 사용자의
+ * 어느 신호든 유예({@value #GRACE_MS}ms) 후에도 그 사용자의
  * 살아있는 세션이 없으면 {@link LiveRoomService#leave}를 호출한다(멱등 — REST 퇴장과 중복돼도 안전).
  *
  * <p>단일 서버 인스턴스 전제의 인메모리 레지스트리(WebSocketConfig SimpleBroker와 동일 제약).
@@ -55,8 +55,17 @@ public class RoomPresenceTracker {
     /** 게임룸 입장 시 항상 걸리는 대기실 채팅 구독 — 방 재실 판정 기준. */
     private static final Pattern CHAT_TOPIC = Pattern.compile("^/topic/rooms/([^/]+)/chat$");
 
-    /** 끊김 후 이 시간 안에 재구독하면 퇴장으로 보지 않는다(네트워크 블립·자동 재연결 보호). */
-    private static final long GRACE_MS = 15_000;
+    /**
+     * 끊김 후 이 시간 안에 재구독하면 퇴장으로 보지 않는다(네트워크 블립·자동 재연결·새로고침 보호).
+     *
+     * <p>가장 긴 복구 경로인 <b>새로고침</b>에 맞춰 잡는다 — 문서를 다시 받고, 세션을 복원하고
+     * (Refresh 쿠키 왕복), 소켓을 새로 붙이고, 방 토픽을 다시 구독하기까지가 이 예산 안에 들어와야
+     * 멀쩡히 돌아온 사람이 퇴장당하지 않는다. FE는 방 상세 조회 직후 곧바로 구독하므로
+     * (카메라 권한·SFU 접속을 기다리지 않는다) 실측은 이보다 한참 짧다.</p>
+     *
+     * <p>길게 잡을수록 안전하지만 그만큼 <b>탭을 닫은 사람이 방에 유령으로 남는 시간</b>이다.</p>
+     */
+    private static final long GRACE_MS = 10_000;
 
     private final LiveRoomService liveRoomService;
 

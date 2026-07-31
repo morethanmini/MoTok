@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /** 게임룸 — 화상 파티룸(LiveKit SFU). 방 정원만큼 슬롯을 만들고, 참가자는 실시간 타일로,
  *  빈 자리는 "대기 중"으로 표시한다. 무대/채팅/게임 선택은 데모. */
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch, type AsyncComponentLoader } from 'vue'
+import { isChunkLoadError, markBuildOutdated, reloadForNewBuild } from '@/composables/useBuildVersion'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
@@ -31,22 +32,31 @@ import InviteFriendsModal from './components/InviteFriendsModal.vue'
 import inventoryChest from '@/assets/device-setup/inventory-chest.png'
 // 방 정보 수정 모달(-130) — 입력 필드가 방 생성과 동일 규격(명세 §4)이라 로비 모달을 그대로 재사용한다.
 import CreateRoomModal, { type NewRoom } from '@/features/lobby/components/CreateRoomModal.vue'
-// MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
-const FingerStarGame = defineAsyncComponent(
-  () => import('@/features/games/finger-star/FingerStarGame.vue'),
-)
-const BodyFitGame = defineAsyncComponent(
-  () => import('@/features/games/body-fit/BodyFitGame.vue'),
-)
-const FishingGame = defineAsyncComponent(
-  () => import('@/features/games/fishing/FishingGame.vue'),
-)
-const DrawingRelayGame = defineAsyncComponent(
-  () => import('@/features/games/drawing-relay/DrawingRelayGame.vue'),
-)
-const CatchRhythmGame = defineAsyncComponent(
-  () => import('@/features/games/catch-rhythm/CatchRhythmGame.vue'),
-)
+/**
+ * MediaPipe 번들(~600KB)이 무거워서 게임을 시작할 때만 로드한다.
+ *
+ * <p>지연 로딩이라 <b>배포 교체에 취약하다</b> — 배포가 나가면 이 탭이 아는 청크 이름이 서버에서
+ * 사라지고, 그때 import는 404로 조용히 실패한다. GAME_START는 정상적으로 받았는데 게임만 안 뜨는
+ * 상태가 되어 "시작을 눌렀는데 카메라만 보인다"로 나타난다. 재시도는 소용없다(이름 자체가 틀렸다) —
+ * 새 index.html을 받는 것, 즉 새로고침이 유일한 복구다.</p>
+ */
+function lazyGame(loader: AsyncComponentLoader) {
+  return defineAsyncComponent({
+    loader,
+    onError(error, _retry, fail) {
+      if (isChunkLoadError(error)) {
+        markBuildOutdated() // 배너를 즉시 띄운다 — 자동 새로고침이 막혀도 사용자는 원인을 알 수 있다
+        if (reloadForNewBuild()) return
+      }
+      fail()
+    },
+  })
+}
+const FingerStarGame = lazyGame(() => import('@/features/games/finger-star/FingerStarGame.vue'))
+const BodyFitGame = lazyGame(() => import('@/features/games/body-fit/BodyFitGame.vue'))
+const FishingGame = lazyGame(() => import('@/features/games/fishing/FishingGame.vue'))
+const DrawingRelayGame = lazyGame(() => import('@/features/games/drawing-relay/DrawingRelayGame.vue'))
+const CatchRhythmGame = lazyGame(() => import('@/features/games/catch-rhythm/CatchRhythmGame.vue'))
 import { useRhythmAutoJoin } from '@/features/games/catch-rhythm/useRhythmAutoJoin'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -163,6 +173,24 @@ function applyDetail(d: LiveRoomDetail) {
   memberIds.value = d.members.map((m) => m.userId)
   // 신고 대상은 퇴장 뒤에도 남겨야 하므로, 이번 상세 조회에 없는 기존 이름을 지우지 않는다.
   memberNames.value = { ...memberNames.value, ...Object.fromEntries(d.members.map((m) => [m.userId, m.displayName])) }
+}
+
+/**
+ * 방을 로비 목록에 공개한다 — 방장이 이 화면에 도달한 것이 곧 "이 방은 굴러간다"는 신호다.
+ *
+ * 방 생성 시점에 공개하면 방장이 기기 점검 화면에 머무는 동안 시작 권한을 가진 사람이 없는 방이
+ * 목록에 떠 있게 되고, 거기 들어간 사람은 방장을 부를 수단도 없이 기다리기만 한다.
+ * 서버는 방장 여부를 다시 검증하고 멱등하게 처리하므로(이미 공개된 방이면 아무 일도 없다)
+ * 새로고침·재입장으로 여러 번 불려도 괜찮다.
+ *
+ * 실패해도 방 이용에는 지장이 없다(로비 노출만 늦어진다) — 조용히 넘긴다.
+ */
+async function publishRoom() {
+  try {
+    await roomsApi.open(roomCode.value)
+  } catch {
+    /* 목록 노출 실패가 방 이용을 막을 이유는 없다 */
+  }
 }
 
 /** userId → 닉네임 — 상세 조회 멤버를 기본으로 LiveKit 참가자 이름으로 보강(뒤늦게 들어온 참가자 대응). */
@@ -295,8 +323,9 @@ const picker = ref(false)
 /** 게임을 고른 뒤 모드·난이도를 정하는 설정 창의 대상 게임(-9). null이면 닫힘 */
 const setupGame = ref<GameEntry | null>(null)
 
-// 탭 닫기·주소창 이탈 시 keepalive 퇴장 통보 + bfcache 복원 시 로비로(뒤로가기 복귀 차단)
-useRoomUnloadLeave(() => route.query.room as string | undefined)
+// bfcache 복원 시 로비로(뒤로가기 복귀 차단). 퇴장 통보는 서버 리퍼에 맡긴다 —
+// 새로고침도 pagehide라, 여기서 통보하면 끊긴 사람이 새로고침으로 복구할 길이 막힌다.
+useRoomUnloadLeave(() => route.query.room as string | undefined, { unloadLeave: false })
 
 
 onMounted(async () => {
@@ -315,6 +344,9 @@ onMounted(async () => {
   // 오면 퇴장을 없던 일로 한다. 이미 멤버면 멱등이고 재입장은 비밀번호를 다시 묻지 않는다.
   try {
     applyDetail(await roomsApi.join(roomCode.value))
+    // 방장이 도착했으니 이제 로비에 내놓는다. LiveKit 접속을 기다리지 않는다 —
+    // 접속에 실패해도 방장은 이 화면에 있고, 그때까지 방이 목록에서 빠져 있을 이유가 없다.
+    if (amRoomHost.value) void publishRoom()
   } catch (e) {
     // 방이 사라졌거나(ROOM_NOT_FOUND) 게임 중·정원 초과·강퇴 등 — 들어갈 수 없는 방 화면에
     // 유령으로 머무느니 이유를 알리고 로비로 보낸다(-164). main의 ROOM_NOT_FOUND 분기를
@@ -325,6 +357,13 @@ onMounted(async () => {
     void router.replace({ name: RouteName.Lobby })
     return
   }
+  // 방 토픽 구독 — 카메라·LiveKit보다 먼저 건다.
+  // (1) 채팅은 비영속이라 구독이 늦은 만큼 그대로 유실된다.
+  // (2) 이 구독이 서버의 재실 신호다(RoomPresenceTracker). 새로고침으로 돌아온 사람은
+  //     유예(RoomPresenceTracker.GRACE_MS) 안에 다시 구독해야 방에 남는데, 카메라 권한 대기와 SFU 접속 뒤로 밀려
+  //     있으면 느린 기기에서 그 예산을 넘겨 멀쩡히 돌아오고도 퇴장 처리된다.
+  // 연결 전에 불러도 전역 레지스트리가 등록해 뒀다가 붙는 대로 SUBSCRIBE한다 — 기다릴 필요 없다.
+  void roomChat.connect(roomCode.value)
   // 로컬 캡처는 항상 켠다 — 모션 인식 게임의 입력원이라 카메라를 "꺼도" 게임 시작·참여가
   // 가능해야 한다. "카메라 끄기"는 발행·표시만 끈다: 입장 전 화면에서 껐다면 발행하지 않아
   // 내 타일과 다른 사람 화면 모두 꺼져 보이고, 방 안에서 카메라를 켜면 그때 발행한다.
@@ -355,12 +394,10 @@ onMounted(async () => {
   // 이미 있던 사람들에게 내 꾸미기를 알린다(늦게 들어오는 사람은 useDecorSync가 따로 챙긴다).
   decorSync.broadcast()
 
-  // 채팅은 이력이 없어서(비영속) 구독이 늦은 만큼 그대로 유실 — 입장 직후 바로 연결.
-  void roomChat.connect(roomCode.value)
-
-  // 자동 시작은 여기서부터 가능하다 — 위 구독이 걸린 뒤여야 startGame이 방으로 나가고
-  // 서버가 되돌려주는 GAME_START도 받는다. (감시자도 같은 조건을 보지만, 순서를 명시해 둔다)
+  // 자동 시작은 여기서부터 가능하다 — 구독(위 roomChat.connect)이 걸린 뒤여야 startGame이
+  // 방으로 나가고 서버가 되돌려주는 GAME_START도 받는다. (감시자도 같은 조건을 보지만, 순서를 명시해 둔다)
   tryAutostart()
+
 
   // 모션 모델은 로비 스플래시가 이미 받아 뒀을 것이다(싱글턴이라 여기선 즉시 끝난다).
   // 그래도 한 번 더 확인하는 이유 — 주소창으로 방에 바로 들어오거나 게스트로 로비를 건너뛴
@@ -380,6 +417,7 @@ const offStompReconnect = onStompConnected(() => {
 onBeforeUnmount(() => {
   offStompReconnect()
   clearTimeout(autostartTimer)
+  clearStartAck()
   roomChat.disconnect()
   // BGM은 모듈 싱글턴이라 suspend된 채로 방을 뜨면 로비에서도 영영 안 나온다
   bgm.resumeAfterGame()
@@ -448,7 +486,10 @@ watch(roomChat.messages, (all, prev) => {
 watch(
   () => roomChat.lastError.value,
   (e) => {
-    if (e) flash(e.message)
+    if (!e) return
+    // 시작 거부는 사유가 붙어 오므로 그쪽이 더 정확하다 — 대기 타이머의 막연한 안내를 겹치지 않게 끈다.
+    if (e.path?.endsWith('/game/start')) clearStartAck()
+    flash(e.message)
   },
 )
 
@@ -617,6 +658,31 @@ const suggestCooldown = ref(false)
 // STOMP 미연결(백엔드 미연동 데모)일 때는 로컬 솔로 플레이로 폴백.
 const activeGame = ref<GameEntry | null>(null)
 const activeSession = ref<ActiveGameSession | null>(null)
+/**
+ * START를 보낸 뒤 GAME_START를 기다리는 시간. 넘기면 "전달되지 않았다"고 알린다.
+ *
+ * <p>시작 요청은 응답이 없는 STOMP publish다. 프레임이 서버에 닿지 않아도(끊긴 걸 아직 모르는
+ * 반열림 소켓·재연결 대기 구간) 클라이언트는 성공과 구분할 수 없고, 화면은 아무 일도 없었던 것처럼
+ * 남는다 — 실제로 "START를 눌렀는데 내 카메라만 보인다"로 나타났다. 서버가 거부한 경우는
+ * /user/queue/errors로 사유가 오므로 그쪽이 더 정확하고, 여기서는 <b>아무 응답도 없는</b>
+ * 경우만 맡는다.</p>
+ *
+ * <p>카운트다운(서버 game.countdownSec)보다 짧아야 의미가 있다 — 정상 흐름에서는 GAME_START가
+ * 카운트다운 <i>이전에</i> 도착하므로 이 타이머는 왕복 지연만 넘기면 된다.</p>
+ */
+const START_ACK_TIMEOUT_MS = 3000
+let startAckTimer: ReturnType<typeof setTimeout> | undefined
+function armStartAck() {
+  clearStartAck()
+  startAckTimer = setTimeout(() => {
+    startAckTimer = undefined
+    flash('시작 신호가 전달되지 않았어요 · 새로고침해 주세요')
+  }, START_ACK_TIMEOUT_MS)
+}
+function clearStartAck() {
+  clearTimeout(startAckTimer)
+  startAckTimer = undefined
+}
 const gameResults = ref<GameResultEntry[] | null>(null)
 /** 게임④(-86): POSE_SET으로 도착한 출제 포즈(랜드마크 JSON) — 벽 생성 입력 */
 const poseChallenge = ref<string | null>(null)
@@ -876,6 +942,7 @@ function applyGameEvent(e: GameEvent) {
     return
   }
   if (e.type === 'GAME_START') {
+    clearStartAck()
     const entry = GAME_CATALOG.find((g) => g.gameId === e.gameId)
     if (!entry) return
     gameResults.value = null
@@ -1133,7 +1200,11 @@ async function launch(g: GameEntry, difficulty?: string, mode?: string, wallCoun
       activeGame.value = g
       return
     }
-    roomChat.startGame(g.gameId, undefined, difficulty, mode, wallCount)
+    if (!roomChat.startGame(g.gameId, undefined, difficulty, mode, wallCount)) {
+      flash('실시간 연결이 끊겼어요 · 새로고침해 주세요')
+      return
+    }
+    armStartAck()
     return
   }
   // 서버 미연동 데모 — 로컬 솔로 플레이 폴백. 멀티 전용 게임(minPlayers>1)은 혼자
@@ -1402,6 +1473,9 @@ watch(
     if (!e) return
     hostId.value = e.hostUserId
     hostName.value = e.hostDisplayName
+    // 아직 공개되지 않은 방(방장이 기기 점검 중에 나가 버린 경우)이라면 여기서 목록에 올린다 —
+    // 내가 방장이 됐고 나는 이 화면에 있으니 공개 조건을 그대로 만족한다. 이미 공개된 방이면 서버가 무시한다.
+    if (e.hostUserId === myParticipantId.value) void publishRoom()
     // 결과만 알리면 "왜 갑자기?"가 되므로 원인(방장 퇴장)을 함께 붙인다.
     flash(
       e.hostUserId === myParticipantId.value
@@ -1526,6 +1600,21 @@ async function addFriend(target: ParticipantView | null) {
   }
 }
 
+/**
+ * 실시간 연결이 끊겼음을 방 안에서 드러낸다.
+ *
+ * <p>채팅·게임 시작·진행 중계가 전부 전역 소켓 하나(-142)를 쓴다. 끊긴 줄 모르면 "눌러도
+ * 아무 일이 없는" 상태가 되고, 여러 명이 있는 방에서는 <b>일부만 게임이 시작되는데 아무도
+ * 이유를 모르는</b> 상황이 된다 — 그래서 본인에게 먼저 알린다.</p>
+ *
+ * <p>복구는 새로고침이 확실하다: 새 문서는 클라이언트를 새로 만들어 재시도 백오프(최대 60초)를
+ * 건너뛰고, 방 재실은 서버 유예(RoomPresenceTracker.GRACE_MS) 안에 다시 구독하면 유지된다.</p>
+ */
+const realtimeDown = computed(() => !roomChat.connected.value)
+function reloadPage() {
+  window.location.reload()
+}
+
 const startLabel = computed(() => 'GAME')
 /**
  * 게임 선택 버튼 잠금 — 서버 연결 중에는 방장 여부를 알기 전까지 잠근다(제안 오발신 방지).
@@ -1595,6 +1684,12 @@ const startHint = computed(() =>
       </div>
     </div>
 
+    <!-- 실시간 끊김 안내 — 끊긴 본인만 본다. 채팅·게임 시작이 모두 이 소켓에 달려 있다. -->
+    <div v-if="realtimeDown" class="offline-bar">
+      <span class="px">실시간 연결이 끊겼어요 · 채팅과 게임 시작이 동작하지 않아요</span>
+      <button class="px offline-reload" @click="reloadPage">새로고침</button>
+    </div>
+
     <!-- 본문: 내 캠을 크게, 나머지는 인원수에 맞춰 그리드로 배치 -->
     <main class="room-main">
       <div
@@ -1627,6 +1722,7 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             play-audio
+            mirror
             compact
             :can-kick="amRoomHost && !!slot.view"
             :can-invite="!activeGame"
@@ -1833,6 +1929,7 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             play-audio
+            mirror
             compact
             :can-kick="amRoomHost && !!slot.view"
             :can-invite="!activeGame"
@@ -1852,6 +1949,7 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             play-audio
+            mirror
             :can-kick="amRoomHost && !!slot.view"
             :can-invite="!activeGame"
             @kick="openKick(slot.view)"
@@ -2259,6 +2357,24 @@ const startHint = computed(() =>
 .room-ribbon .px-kicker { padding: 5px 9px; font-size: 8px; }
 .room-ribbon .px-kicker i { width: 7px; height: 7px; border-radius: 50%; background: var(--c-coral); animation: px-blink 1s steps(2) infinite; }
 .room-ribbon b { font-size: 12px; }
+
+/* 실시간 끊김 안내 — 리본 바로 아래 전폭. 평소엔 렌더되지 않아 자리를 차지하지 않는다. */
+.offline-bar {
+  flex: none;
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 7px 16px;
+  border-bottom: 2px solid var(--c-ink);
+  background: var(--c-coral); color: #fff;
+  font-size: 9px;
+  z-index: 5;
+}
+.offline-reload {
+  flex: none;
+  border: 2px solid var(--c-ink); border-radius: 8px;
+  background: #fff; color: var(--c-ink);
+  padding: 4px 10px; font-size: 8px; font-weight: 700;
+}
+.offline-reload:hover { background: var(--c-yellow); }
 
 /* 본문 */
 .room-main {
