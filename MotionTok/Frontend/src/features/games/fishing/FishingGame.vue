@@ -562,6 +562,9 @@ canvas {
   box-sizing: border-box;
   width: 100%;
   height: 100%;
+  border: none;
+  border-radius: inherit;
+  box-shadow: none;
   object-fit: contain;
 }
 
