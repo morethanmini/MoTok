@@ -4,6 +4,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Repository;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 
@@ -41,6 +43,30 @@ public class LiveRoomRepository {
     private static final Duration ROOM_TTL = Duration.ofHours(24);
     private static final String ROOM_INDEX_KEY = "rooms:index";
 
+    /**
+     * room:member:{playerKey} → roomId (String, TTL 24h) — "이 플레이어가 지금 있는 방".
+     *
+     * <p>members 해시는 <b>방 → 플레이어</b> 방향이라, 플레이어 하나를 두고 "어느 방에 있나"를
+     * 물으려면 방을 전부 훑어야 한다. 계정당 한 방을 강제하려면 그 질문에 왕복 한 번으로
+     * 답해야 해서 역방향 색인을 둔다. 수명은 방과 같다 — 방이 TTL로 사라지면 이 기록도 함께 늙는다.</p>
+     */
+    private static final String MEMBER_ROOM_KEY = "room:member:";
+
+    /**
+     * 적힌 방이 지금 지우려는 그 방일 때만 색인을 지운다.
+     *
+     * <p>무조건 지우면 안 되는 이유 — 퇴장은 여러 경로에서 <b>늦게</b> 온다(프레즌스 유예 15초,
+     * 언로드 유예, 스위퍼). A방에서 B방으로 옮긴 뒤 A의 늦은 정리가 도착하면, 그게 방금 쓴
+     * B 기록을 지워 버려 그 사람은 색인상 <b>아무 방에도 없는</b> 상태가 된다 — 한 방 제한이
+     * 조용히 뚫린다. 비교와 삭제가 갈라지면 그 사이에 같은 일이 생기므로 한 덩어리로 돈다.</p>
+     */
+    private static final RedisScript<Long> RELEASE_IF_IN_ROOM = new DefaultRedisScript<>("""
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+              return redis.call('DEL', KEYS[1])
+            end
+            return 0
+            """, Long.class);
+
     private final StringRedisTemplate redisTemplate;
     private final SecureRandom random = new SecureRandom();
 
@@ -72,6 +98,14 @@ public class LiveRoomRepository {
         String value = encodeMember(new LiveRoomMemberValue(userId, displayName, guest, joinedAt));
         redisTemplate.<String, String>opsForHash().put(key, playerKey, value);
         redisTemplate.expire(key, ROOM_TTL);
+        // 역방향 색인도 같이 옮긴다 — 여기서만 쓰면 입장 경로(생성·입장·초대코드·빠른시작)가
+        // 전부 자동으로 덮인다. 덮어쓰기라 옛 방 기록은 자연히 밀린다.
+        redisTemplate.opsForValue().set(memberRoomKey(playerKey), roomId, ROOM_TTL);
+    }
+
+    /** 이 플레이어가 지금 있는 방. 없으면 비어 있다. */
+    public Optional<String> findRoomIdOfPlayer(String playerKey) {
+        return Optional.ofNullable(redisTemplate.opsForValue().get(memberRoomKey(playerKey)));
     }
 
     public void saveInviteCode(String code, String roomId) {
@@ -170,6 +204,12 @@ public class LiveRoomRepository {
 
     public void removeMember(String roomId, String playerKey) {
         redisTemplate.opsForHash().delete(membersKey(roomId), playerKey);
+        releaseMemberRoom(roomId, playerKey);
+    }
+
+    /** 색인이 이 방을 가리킬 때만 놓아 준다({@link #RELEASE_IF_IN_ROOM} 주석 참고). */
+    private void releaseMemberRoom(String roomId, String playerKey) {
+        redisTemplate.execute(RELEASE_IF_IN_ROOM, List.of(memberRoomKey(playerKey)), roomId);
     }
 
     public void updateHost(String roomId, String hostUserId, String hostDisplayName) {
@@ -213,6 +253,10 @@ public class LiveRoomRepository {
      * 채팅 로그도 즉시 삭제한다 — 방이 사라지면 신고(-132)도 불가가 정책(키맵 v0.4).
      */
     public void deleteRoom(String roomId) {
+        // 남아 있던 참가자들의 역방향 색인을 먼저 놓아 준다 — members 해시를 지운 뒤에는
+        // 누가 있었는지 알 수 없어, 그 사람들이 사라진 방에 묶인 채로 남는다.
+        redisTemplate.opsForHash().keys(membersKey(roomId))
+                .forEach(playerKey -> releaseMemberRoom(roomId, (String) playerKey));
         redisTemplate.delete(roomKey(roomId));
         redisTemplate.delete(membersKey(roomId));
         redisTemplate.delete(kickedKey(roomId));
@@ -271,6 +315,10 @@ public class LiveRoomRepository {
 
     private String kickedKey(String roomId) {
         return "room:" + roomId + ":kicked";
+    }
+
+    private String memberRoomKey(String playerKey) {
+        return MEMBER_ROOM_KEY + playerKey;
     }
 
     /** 채팅 로그 키 — 쓰기·조회는 chat.ChatLogRepository 소유, 여기서는 방 폭파 시 삭제만 한다. */

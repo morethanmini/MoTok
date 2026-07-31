@@ -17,6 +17,7 @@ import {
   setAccessToken,
 } from './token'
 import type { ApiError as ApiErrorBody, TokenResponse } from './types'
+import { recordApiTiming } from '@/composables/useRum'
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080/api'
 
@@ -181,12 +182,16 @@ async function request<T>(
     bodyInit = JSON.stringify(opts.body)
   }
 
+  // 클라 체감 소요시간을 잰다(RUM). 서버가 100ms여도 큐잉·네트워크로 클라는 몇 초일 수 있고,
+  // 그 격차가 베타에서 알고 싶은 것 중 하나다. 값은 모아 뒀다 60초마다 한 번에 나간다.
+  const startedAt = performance.now()
   const res = await fetch(buildUrl(path, opts.query), {
     method,
     headers,
     body: bodyInit,
     credentials: 'include',
   })
+  recordApiTiming(performance.now() - startedAt)
 
   // 선제 갱신이 빗나갔거나(시계 오차) 서버가 토큰을 무효화한 경우 — 한 번만 갱신 후 재시도한다.
   if (res.status === 401 && allowRetry && !isAuthPath(path) && canRefresh()) {
