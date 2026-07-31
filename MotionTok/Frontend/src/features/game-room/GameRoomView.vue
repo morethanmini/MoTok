@@ -1526,7 +1526,7 @@ async function addFriend(target: ParticipantView | null) {
   }
 }
 
-const startLabel = computed(() => (amRoomHost.value ? 'START' : 'GAME'))
+const startLabel = computed(() => 'GAME')
 /**
  * 게임 선택 버튼 잠금 — 서버 연결 중에는 방장 여부를 알기 전까지 잠근다(제안 오발신 방지).
  * STOMP 미연결(백엔드 미연동 로컬 데모)에서는 상세 조회가 영영 안 끝나므로 잠그지 않는다 —
@@ -1607,6 +1607,8 @@ const startHint = computed(() =>
           'three-player': capacity === 3,
           'two-player': capacity === 2,
           'solo-play': isSoloPlay,
+          'game-active': !!activeGame,
+          'fish-game': activeGame?.id === 'fish',
         }"
         :style="capacity === 2 ? { '--two-player-aspect': selfVideoAspect * 2 } : undefined"
       >
@@ -1634,7 +1636,11 @@ const startHint = computed(() =>
           />
         </div>
         <!-- 내 캠 — 항상 가장 크게 -->
-        <div class="self-tile self-spot" :style="{ '--camera-aspect': selfVideoAspect }">
+        <div
+          class="self-tile self-spot"
+          :class="{ 'fish-game': activeGame?.id === 'fish' }"
+          :style="{ '--camera-aspect': activeGame?.id === 'fish' ? 4 / 3 : selfVideoAspect }"
+        >
           <video
             v-show="selfCamOn"
             ref="selfVideoEl"
@@ -2811,6 +2817,14 @@ const startHint = computed(() =>
   align-self: center;
   place-self: center;
 }
+
+/* 낚시는 640×480 캔버스라서 일반 카메라의 8:5 규칙을 쓰면 확대 시 세로가 잘린다. */
+.self-tile.self-spot.fish-game,
+.cam-stage.side-layout .self-tile.self-spot.fish-game,
+.cam-stage.four-player .self-tile.self-spot.fish-game,
+.cam-stage.three-player .self-tile.self-spot.fish-game {
+  aspect-ratio: 4 / 3;
+}
 .self-video { object-fit: cover; background: var(--c-letterbox); }
 .cam-off { background: linear-gradient(135deg, #bfe9ff, #d7e7ad); color: var(--room-muted); }
 .cam-on-btn { border-color: #925c47; border-radius: 7px; background: #4078cf; box-shadow: 3px 3px 0 #a66b50; }
@@ -2941,5 +2955,22 @@ const startHint = computed(() =>
 @media (max-width: 1280px) {
   .room-ribbon { padding: 0 28px; }
   .room-footer { padding: 14px 26px; }
+}
+
+/* 브라우저 125% 배율처럼 세로 여유가 줄어든 경우에도 게임 화면을 한 프레임 안에 유지한다. */
+@media (max-height: 900px) {
+  .room-shell:has(.cam-stage.game-active) .room-main {
+    gap: 10px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+  .cam-stage.game-active {
+    padding: 8px;
+    gap: 10px;
+  }
+  .room-shell:has(.cam-stage.game-active) .room-footer {
+    padding-top: 9px;
+    padding-bottom: 9px;
+  }
 }
 </style>
