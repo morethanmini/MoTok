@@ -5,7 +5,7 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch 
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason } from '@/api'
+import { roomsApi, friendsApi, reportsApi, chatReportsApi, gamesApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason } from '@/api'
 import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { preferredAudioDeviceId, useCamera } from '@/composables/useCamera'
@@ -26,6 +26,7 @@ import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
 import GameSetupModal from './components/GameSetupModal.vue'
 import ReportIcon from './components/ReportIcon.vue'
+import MusicVolumeButton from './components/MusicVolumeButton.vue'
 import HostWaitingOverlay from './components/HostWaitingOverlay.vue'
 import InviteFriendsModal from './components/InviteFriendsModal.vue'
 // 방 정보 수정 모달(-130) — 입력 필드가 방 생성과 동일 규격(명세 §4)이라 로비 모달을 그대로 재사용한다.
@@ -47,9 +48,12 @@ import { useRhythmAutoJoin } from '@/features/games/catch-rhythm/useRhythmAutoJo
 import AppHeader from '@/components/common/AppHeader.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
+import { useSessionStore } from '@/stores/session'
 
 const route = useRoute()
 const router = useRouter()
+// 퇴장 확인 모달을 띄울지 가리는 데만 쓴다 — 세션이 이미 끝났다면 물을 것이 없다(onBeforeRouteLeave).
+const session = useSessionStore()
 const bgm = useBgm()
 const { message: toast, flash } = useToast(2600)
 
@@ -126,7 +130,8 @@ function applyDetail(d: LiveRoomDetail) {
   roomVisibility.value = d.visibility
   participantCount.value = d.participantCount
   memberIds.value = d.members.map((m) => m.userId)
-  memberNames.value = Object.fromEntries(d.members.map((m) => [m.userId, m.displayName]))
+  // 신고 대상은 퇴장 뒤에도 남겨야 하므로, 이번 상세 조회에 없는 기존 이름을 지우지 않는다.
+  memberNames.value = { ...memberNames.value, ...Object.fromEntries(d.members.map((m) => [m.userId, m.displayName])) }
 }
 
 /** userId → 닉네임 — 상세 조회 멤버를 기본으로 LiveKit 참가자 이름으로 보강(뒤늦게 들어온 참가자 대응). */
@@ -137,6 +142,13 @@ const participantNames = computed<Record<string, string>>(() => {
   }
   return names
 })
+
+/** 이 방 화면에서 확인한 모든 참가자. 퇴장한 유저도 신고 목록에 남긴다. */
+const reportTargets = computed(() =>
+  Object.entries(participantNames.value)
+    .filter(([userId]) => userId !== myParticipantId.value)
+    .map(([userId, name]) => ({ userId, name })),
+)
 
 // ── 실시간 참가자 → 슬롯 매핑 ────────────────
 const connected = computed(() => lk.state.value === ConnectionState.Connected)
@@ -501,11 +513,11 @@ function closeUserReport() {
 async function submitUserReport() {
   if (!canSubmitUserReport.value || reportSubmitting.value) return
   const content = userReportText.value.trim()
-  const target = remotes.value.find((p) => p.identity === userReportSelection.value)
+  const target = reportTargets.value.find((p) => p.userId === userReportSelection.value)
   // 목록의 참가자는 identity(userId)를 알지만, 직접 입력한 닉네임은 신고 대상 ID를 알 수 없어(닉네임→ID 조회 API 미제공)
   // reasonText에 닉네임을 함께 담아 보낸다.
   const nickname = target ? target.name : userReportNickname.value.trim()
-  const reportedUserId = target ? Number(target.identity) : 0
+  const reportedUserId = target ? Number(target.userId) : 0
   reportSubmitting.value = true
   try {
     await reportsApi.report({
@@ -653,19 +665,21 @@ watch(hostAway, (away) => {
 }, { immediate: true })
 
 /**
- * 게임④는 자체 사운드(S15P11A706-138)를 가지므로 로비 BGM을 내린다.
- * useBgm의 suspendForGame/resumeAfterGame은 만들어져만 있고 호출부가 없었다 — 여기서 연결한다.
- * 게임④에만 거는 이유: 다른 게임은 자체 사운드가 없거나 담당이 달라, 임의로 BGM을 끄면 그쪽
- * 체감이 바뀐다. 전체에 걸려면 조건만 `!!activeGame.value`로 넓히면 된다.
+ * 자체 사운드를 가진 게임은 로비 BGM을 내린다 — 안 내리면 테마와 게임 음악이 겹쳐 들린다.
+ * 게임④(shape, -138)로 시작했고, 핑거 스타(finger)·그림 릴레이(draw)가 인게임 루프를 받으면서
+ * 함께 들어왔다. 캐치캐치리듬(rhythm)은 서버가 준 곡을 자체 재생하므로 담당과 합의 후 넣는다.
  *
  * 반드시 activeGame 선언 아래에 둔다 — watch는 초기값을 잡으려고 getter를 setup 중 즉시
  * 실행하므로, 위에 두면 const TDZ에 걸려 setup 전체가 죽는다(빌드는 통과한다: TS는 화살표
  * 함수 안의 선언 전 참조를 잡지 않는다).
  */
+const AUDIO_OWNING_GAMES = ['shape', 'finger', 'draw']
 watch(
   // 설정 창(-9)도 인게임 베드를 직접 깔기 때문에 같이 내린다 — 소유 판정을 여기 한 곳에 모아두면
   // 창을 닫고 게임으로 넘어가는 사이에 테마가 잠깐 살아나는 일이 없다.
-  () => activeGame.value?.id === 'shape' || setupGame.value?.id === 'shape',
+  () =>
+    AUDIO_OWNING_GAMES.includes(activeGame.value?.id ?? '') ||
+    AUDIO_OWNING_GAMES.includes(setupGame.value?.id ?? ''),
   (ownsAudio) => (ownsAudio ? bgm.suspendForGame() : bgm.resumeAfterGame()),
 )
 
@@ -748,7 +762,7 @@ interface LiveScoreRow {
   nickname: string
   starsLit: number
   holdProgress: number
-  /** 핑거 스타(게임①) 90초 매치 완성 개수 — 1순위 정렬 기준. 다른 게임은 0 */
+  /** 핑거 스타(게임①) 60초 매치 완성 개수 — 1순위 정렬 기준. 다른 게임은 0 */
   completedCount: number
   finished: boolean
   score: number | null
@@ -897,6 +911,7 @@ function applyGameEvent(e: GameEvent) {
   }
   if (e.type === 'GAME_END') {
     gameResults.value = e.results
+    applyEarnedPoints(e.results)
     // 라운드가 끝났으니 게임 화면 송출을 즉시 내린다(-164) — 결과 화면까지 송출하면 각자
     // 결과를 닫을 때까지 다른 참가자 타일이 멈춘 게임 화면(검은 화면)으로 남는다.
     void lk.unpublishGameScreen()
@@ -918,6 +933,27 @@ useRhythmAutoJoin(roomChat, roomCode, () => {
 function openPicker() {
   picker.value = true
 }
+
+/**
+ * 관리자가 닫은 게임(-106) — 서버 카탈로그의 `active=false`.
+ *
+ * <p>방 안 게임 목록(GAME_CATALOG)은 하드코딩이라 서버 상태를 모른다. 그대로 두면 관리자가
+ * 게임을 닫아도 목록에 멀쩡히 보이고, 방장이 고른 뒤 시작 시점에야 서버 에러를 받는다.
+ * 여기서 한 번 받아 두고 선택창·자동 시작 양쪽에 같은 집합을 쓴다.</p>
+ *
+ * <p>조회 실패는 <b>조용히 넘긴다</b> — 이 값은 안내용이고 강제는 서버가 한다(닫힌 게임을
+ * 시작하면 GAME_CLOSED로 거부된다). 실패했다고 게임 선택 자체를 막으면 관리자가 아무것도
+ * 닫지 않은 평시에 방이 못 놀게 된다.</p>
+ */
+const closedGameIds = ref<Set<number>>(new Set())
+onMounted(async () => {
+  try {
+    const catalog = await gamesApi.list()
+    closedGameIds.value = new Set(catalog.filter((g) => !g.active).map((g) => g.id))
+  } catch {
+    closedGameIds.value = new Set()
+  }
+})
 
 /**
  * 게임 목록에서 고른 게임 자동 시작 — 헤더 ▸ 게임 ▸ 게임 선택 ▸ 대기실 ▸ 입장하면
@@ -949,6 +985,9 @@ function autostartBlocker(): string | null {
   if (!detailLoaded.value) return '방 정보를 불러오지 못해'
   if (!captureOn.value) return '카메라를 켤 수 없어'
   if (!GAME_CATALOG.some((g) => g.gameId === autostartGameId.value)) return '게임을 찾지 못해'
+  // 관리자가 닫은 게임(-106)이면 서버가 시작을 거부한다. 먼저 걸러야 8초를 기다린 끝에
+  // "응답을 받지 못해"라는 엉뚱한 이유가 뜨지 않는다.
+  if (closedGameIds.value.has(autostartGameId.value!)) return '점검 중인 게임이라'
   return null
 }
 
@@ -983,7 +1022,11 @@ if (autostartGameId.value) {
   autostartTimer = window.setTimeout(() => {
     if (activeGame.value) return
     // 발신까지는 갔는데 화면이 안 열렸다면 GAME_START를 못 받은 것이다(막고 있는 조건은 이미 없다).
-    const reason = autostarted ? '게임 시작 응답을 받지 못해' : autostartBlocker() ?? '알 수 없는 이유로'
+    // 닫힌 게임을 먼저 보는 이유 — 카탈로그 조회가 시작 조건보다 늦게 도착하면 발신이 먼저
+    // 나가고 서버가 거부한다. 그때 "응답을 받지 못해"라고 하면 원인을 반대로 알려 주게 된다.
+    const reason = closedGameIds.value.has(autostartGameId.value!)
+      ? '점검 중인 게임이라'
+      : autostarted ? '게임 시작 응답을 받지 못해' : autostartBlocker() ?? '알 수 없는 이유로'
     flash(`${reason} 자동 시작하지 못했어요 — 직접 골라 주세요`)
     picker.value = true
   }, AUTOSTART_TIMEOUT_MS)
@@ -1000,6 +1043,12 @@ function roomPlayerCount(): number {
  * 설정할 게 없으므로(게임 제안·로컬 폴백 경로) 지금처럼 곧바로 launch로 보낸다.</p>
  */
 function pick(g: GameEntry) {
+  // 선택창이 이미 잠긴 게임의 시작 버튼을 감추지만, 여기서도 막는다 — 게임 제안(비방장) 경로도
+  // 이 함수를 지나가고, 카탈로그 조회가 늦게 도착했으면 선택창은 잠기지 않은 상태로 열려 있다.
+  if (closedGameIds.value.has(g.gameId)) {
+    flash(`${g.name}은(는) 점검 중이라 지금은 시작할 수 없어요`)
+    return
+  }
   if (g.id === 'shape' && g.playable && roomChat.connected.value && selfIsHost.value) {
     picker.value = false
     setupGame.value = g
@@ -1095,7 +1144,7 @@ function onGameProgress(starsLit: number, holdProgress: number, completedCount =
   }
 }
 
-/** 핑거 스타 90초 매치 집계 — score 자리에 총점, completedCount가 1순위 승부 기준 */
+/** 핑거 스타 60초 매치 집계 — score 자리에 총점, completedCount가 1순위 승부 기준 */
 function onGameFinished(r: { completedCount: number; totalScore: number; avgScore: number }) {
   if (activeSession.value) {
     // 서버가 최초 1회만 수리하고 PLAYER_FINISHED → (전원 완주 시) GAME_END를 배포한다.
@@ -1155,6 +1204,33 @@ function rejoinGame() {
 /** 진행 중 세션의 게임 항목 — 비방장 중간 이탈 후 복귀 버튼이 쓴다(-164). */
 const sessionEntry = ref<GameEntry | null>(null)
 
+/**
+ * 방송받은 내 획득 포인트를 헤더 잔액에 즉시 얹는다.
+ *
+ * <p>지갑 반영은 서버가 비동기로 한다(GameRewardListener) — 기다리면 게임이 끝나도 잔액이
+ * 그대로여서 "보상을 못 받았다"로 보인다. 그래서 낙관적으로 올려 두고, 결과 화면을 닫을 때
+ * {@code refreshProfile}이 서버 값으로 정정한다.</p>
+ *
+ * <p>results의 userId는 문자열(LiveKit identity와 같은 값)이고 프로필 id는 숫자라 변환해 맞춘다.
+ * 게스트는 프로필이 없어 아무 일도 하지 않는다.</p>
+ */
+function applyEarnedPoints(results: GameResultEntry[]) {
+  const myId = session.profile?.id
+  if (myId === undefined) return
+  const mine = results.find((r) => r.userId === String(myId))
+  if (mine?.pointsEarned) session.addPoints(mine.pointsEarned)
+}
+
+/**
+ * 캐치캐치리듬 정산 — 전용 채널(RHYTHM_END)이라 위 GAME_END 경로를 타지 않는다.
+ * 컴포넌트가 내 획득분을 계산해 넘겨 주므로 여기서는 잔액에만 얹는다.
+ * 서버는 같은 GameSettledEvent 경로로 지급하므로 정정은 closeGame의 refreshProfile이 맡는다.
+ */
+function onRhythmEnded(pointsEarned: number) {
+  rhythmEnded.value = true
+  if (pointsEarned > 0) session.addPoints(pointsEarned)
+}
+
 function closeGame() {
   // 방장이 게임 도중 닫으면 방 전체 세션을 종료한다(-164) — 예전에는 본인 화면만 닫혀
   // 남은 사람끼리 라운드가 돌고 방은 endAt까지 잠겨 있었다. 정산 후(gameResults 존재)나
@@ -1171,6 +1247,8 @@ function closeGame() {
   poseChallenge.value = null
   rhythmEnded.value = false
   drawFeed.value = []
+  // 낙관적으로 얹은 획득 포인트를 서버 값으로 정정한다(비동기 지급이 끝났을 시점).
+  void session.refreshProfile()
 }
 
 function copyCode() {
@@ -1290,6 +1368,10 @@ watch(
     // 서버에서만 빠진 상태다. 그대로 두면 STOMP만 살아 있는 유령 멤버(게임 시작은 전파되는데
     // 방 명단엔 없음)가 되므로 즉시 재입장해 명단과 화면을 다시 맞춘다.
     if (e.userId === myParticipantId.value && !leavingIntentionally) {
+      // 세션이 끝나서 서버가 나를 뺀 경우(다른 곳에서 로그인)는 예외다 — 토큰이 없어 재입장은
+      // 401이고, 그 실패로 로비로 보내면 회원 가드가 "로그인이 필요해요"를 안내 위에 겹쳐 띄운다.
+      // 어디로 갈지는 세션 종료 안내(App.vue)가 정한다.
+      if (!session.isAuthenticated) return
       try {
         applyDetail(await roomsApi.join(roomCode.value))
       } catch {
@@ -1320,6 +1402,11 @@ let resolveLeave: ((ok: boolean) => void) | null = null
 let leaveToLobbyAfterConfirm = false
 onBeforeRouteLeave(() => {
   if (leavingIntentionally) return true
+  // 세션이 끝나서 밀려나는 이탈(다른 곳에서 로그인·만료)은 선택이 아니다 — 안내 모달의
+  // "로그인하러 가기"를 눌렀는데 "계속 놀기"를 다시 묻는 꼴이 된다. 이미 App.vue가 토큰을
+  // 지웠으므로 방에 남아도 서버와 아무것도 할 수 없다: 확인 없이 통과시킨다.
+  // (카메라·LiveKit 정리는 언마운트 시 각 컴포저블이 맡는다. 퇴장 통보는 토큰이 없어 불가능하다.)
+  if (!session.isAuthenticated) return true
   showLeaveConfirm.value = true
   return new Promise<boolean>((resolve) => (resolveLeave = resolve))
 })
@@ -1374,6 +1461,16 @@ async function openInvite() {
   inviteOpen.value = true
 }
 
+async function addFriend(target: ParticipantView | null) {
+  if (!target?.name) return
+  try {
+    await friendsApi.sendRequest(target.name)
+    flash(`${target.name}님에게 친구 요청을 보냈어요`)
+  } catch (e) {
+    flash(e instanceof ApiError ? e.message : '친구 요청을 보내지 못했어요')
+  }
+}
+
 const startLabel = computed(() => (amRoomHost.value ? 'START' : '제안'))
 /**
  * 게임 선택 버튼 잠금 — 서버 연결 중에는 방장 여부를 알기 전까지 잠근다(제안 오발신 방지).
@@ -1405,6 +1502,9 @@ const startHint = computed(() =>
         <ReportIcon :width="16" :height="20" />
       </button>
 
+      <!-- 게임 BGM 볼륨. 로비 음악은 설정 › 소리에서 따로 조절한다 -->
+      <MusicVolumeButton />
+
       <!-- 친구 초대 (-100) — 참가자 누구나, 대기실에서만. 게임 중엔 서버도 409로 거부한다. -->
       <button v-if="!activeGame" class="ribbon-invite" title="친구 초대" @click="openInvite">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">
@@ -1414,7 +1514,7 @@ const startHint = computed(() =>
 
       <!-- 방 설정 (-130) — 방장만, 대기실에서만. 게임 중엔 서버도 거부하므로 버튼을 숨긴다. -->
       <button
-        v-if="amRoomHost && !activeGame"
+        v-if="selfIsHost && !activeGame"
         class="ribbon-settings"
         title="방 설정"
         @click="openSettings"
@@ -1466,7 +1566,9 @@ const startHint = computed(() =>
             play-audio
             compact
             :can-kick="amRoomHost && !!slot.view"
+            :can-invite="!activeGame"
             @kick="openKick(slot.view)"
+            @friend="addFriend(slot.view)"
             @volume="changeVolume(slot, $event)"
           />
         </div>
@@ -1553,7 +1655,7 @@ const startHint = computed(() =>
             :room-chat="roomChat"
             @close="requestCloseGame"
             @started="rhythmEnded = false"
-            @ended="rhythmEnded = true"
+            @ended="onRhythmEnded"
           />
           <!-- 비방장 중간 이탈 후 복귀(-164) — 라운드가 살아 있는 동안만 노출 -->
           <button
@@ -1609,7 +1711,9 @@ const startHint = computed(() =>
             play-audio
             compact
             :can-kick="amRoomHost && !!slot.view"
+            :can-invite="!activeGame"
             @kick="openKick(slot.view)"
+            @friend="addFriend(slot.view)"
             @volume="changeVolume(slot, $event)"
           />
         </div>
@@ -1625,7 +1729,9 @@ const startHint = computed(() =>
             :sprites="spritesFor(slot)"
             play-audio
             :can-kick="amRoomHost && !!slot.view"
+            :can-invite="!activeGame"
             @kick="openKick(slot.view)"
+            @friend="addFriend(slot.view)"
             @volume="changeVolume(slot, $event)"
           />
         </div>
@@ -1740,17 +1846,13 @@ const startHint = computed(() =>
         />
         <span class="chat-count" :class="{ over: draft.length > 500 }">{{ draft.length }}/500</span>
         <button class="chat-send" @click="send">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
+          <svg class="send-icon" viewBox="0 0 24 24" aria-label="전송"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
         </button>
 
         <!-- 채팅 전체보기: 반투명 패널로 입장 이후 전체 대화 표시 -->
         <template v-if="chatExpanded">
           <div class="chat-full-backdrop" @click="chatExpanded = false" />
           <div class="chat-full">
-            <div class="chat-full-head">
-              <span>채팅 전체보기</span>
-              <button class="chat-full-close" @click="chatExpanded = false">✕</button>
-            </div>
             <div class="chat-full-body">
               <p v-if="!allBubbles.length" class="chat-full-empty">아직 대화가 없어요</p>
               <div
@@ -1783,7 +1885,7 @@ const startHint = computed(() =>
     </footer>
 
     <!-- 게임 선택 모달 -->
-    <GamePicker v-if="picker" @close="picker = false" @launch="pick" />
+    <GamePicker v-if="picker" :closed-game-ids="closedGameIds" @close="picker = false" @launch="pick" />
 
     <!-- 게임④(-9) 설정 창 — 모드·벽 수·난이도. 옵션이 있는 게임만 이 단계를 거친다 -->
     <GameSetupModal
@@ -1870,7 +1972,7 @@ const startHint = computed(() =>
 
 
     <!-- 채팅 메시지 신고 -->
-    <PixelModal v-if="reportTarget" @close="closeReport">
+    <PixelModal v-if="reportTarget" variant="lobby" @close="closeReport">
       <h3 class="report-title">🚩 메시지 신고</h3>
       <div class="report-target">
         <span class="report-target-name">{{ reportTarget.nickname }}</span>
@@ -1913,17 +2015,17 @@ const startHint = computed(() =>
     </PixelModal>
 
     <!-- 유저 신고 (방 코드 왼쪽 버튼) -->
-    <PixelModal v-if="userReportOpen" @close="closeUserReport">
+    <PixelModal v-if="userReportOpen" variant="lobby" @close="closeUserReport">
       <h3 class="report-title">🚩 유저 신고</h3>
       <p class="report-field-label">신고할 유저를 선택해 주세요</p>
       <ul class="report-reasons">
-        <li v-for="p in remotes" :key="p.identity">
+        <li v-for="p in reportTargets" :key="p.userId">
           <label class="report-option">
-            <input type="radio" name="user-report-target" :value="p.identity" v-model="userReportSelection" />
+            <input type="radio" name="user-report-target" :value="p.userId" v-model="userReportSelection" />
             {{ p.name }}
           </label>
         </li>
-        <li v-if="!remotes.length" class="report-user-empty">현재 접속한 다른 참가자가 없어요</li>
+        <li v-if="!reportTargets.length" class="report-user-empty">신고할 다른 참가자가 없어요</li>
         <li>
           <label class="report-option">
             <input type="radio" name="user-report-target" :value="USER_REPORT_OTHER" v-model="userReportSelection" />
@@ -2204,12 +2306,12 @@ const startHint = computed(() =>
   overflow: visible;
 }
 .chat-log-list { display: flex; flex-direction: column; gap: 8px; }
-.bubble { position: relative; max-width: 100%; padding: 9px 22px 9px 12px; font-size: 9px; line-height: 1.7; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); word-break: break-word; overflow-wrap: anywhere; transition: opacity 0.4s ease; }
+.bubble { position: relative; max-width: 100%; padding: 10px 24px 10px 13px; font-size: 12px; line-height: 1.65; border: 2px solid var(--c-ink-soft); background: #fff; box-shadow: 2px 2px 0 rgba(43, 35, 51, 0.2); animation: px-bubble 0.2s steps(3); word-break: break-word; overflow-wrap: anywhere; transition: opacity 0.4s ease; }
 /* 6개 초과로 밀려날 땐 그대로 바로 사라지고, 시간이 지나 사라질 때만(.fading) 흐려지며 사라진다 */
 .bubble.fading { opacity: 0; }
 .bubble.me { background: #fff4cc; }
 .bubble.suggest { background: var(--c-mint-soft); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
-.bubble-name { display: block; margin-bottom: 3px; font-size: 10px; font-weight: 800; color: #2f9e3d; }
+.bubble-name { display: block; margin-bottom: 4px; font-size: 11px; font-weight: 800; color: #2f9e3d; }
 .bubble-name.me { color: #c97e00; }
 .suggest-pick { align-self: flex-end; border: 2px solid var(--c-ink-soft); border-radius: 8px; background: var(--c-yellow); padding: 5px 8px; font-size: 8px; font-weight: 700; }
 
@@ -2223,10 +2325,10 @@ const startHint = computed(() =>
 .bubble-report:hover { opacity: 0.75; }
 
 /* 신고 모달 */
-.report-title { margin: 0 0 12px; font-size: 15px; }
-.report-target { margin-bottom: 14px; padding: 10px 12px; border: 2px solid #eaddea; border-radius: 11px; background: #fdfaf3; }
-.report-target-name { font-size: 10px; font-weight: 800; color: #2f9e3d; }
-.report-target-text { margin: 5px 0 0; font-size: 11px; color: var(--c-ink-soft); line-height: 1.6; word-break: break-word; overflow-wrap: anywhere; }
+.report-title { margin: 0 0 14px; color: #3d2c22; font-family: var(--font-pixel); font-size: 20px; font-weight: 400; }.report-title::before { display: block; margin-bottom: 5px; color: #b17b51; content: 'REPORT'; font-family: inherit; font-size: 9px; letter-spacing: 1px; }
+.report-target { margin-bottom: 14px; padding: 12px; border: 2px solid #dec59e; border-radius: 7px; background: #fff7e8; }
+.report-target-name { font-size: 11px; font-weight: 800; color: #8c5a42; }
+.report-target-text { display: -webkit-box; margin: 5px 0 0; overflow: hidden; color: var(--c-ink-soft); font-size: 11px; line-height: 1.45; word-break: break-word; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .report-label { margin: 0 0 8px; font-size: 10px; color: var(--c-muted); }
 .report-reasons { list-style: none; margin: 0 0 18px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .report-option { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--c-ink-soft); cursor: pointer; }
@@ -2244,8 +2346,9 @@ const startHint = computed(() =>
   font-size: 11px; color: var(--c-ink-soft);
   font-family: inherit; resize: vertical;
 }
-.chat-dock input { position: relative; z-index: 47; flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 13px; }
-.chat-count { flex: none; font-size: 7px; color: #a99f86; }
+.report-title ~ .leave-actions { margin-top: 20px; }.report-title ~ .leave-actions :deep(.px-btn) { border: 2px solid #9a674b; border-radius: 7px; box-shadow: 3px 3px 0 #c6a47d; font-size: 14px; }.report-title ~ .leave-actions :deep(.v-secondary) { background: #fffaf0; color: #6e5646; }.report-title ~ .leave-actions :deep(.v-primary) { background: #e97872; color: #fff; }
+.chat-dock input { position: relative; z-index: 47; flex: 1; min-width: 0; margin-left: -5px; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 15px; }
+.chat-count { flex: none; font-size: 9px; color: #a99f86; }
 .chat-count.over { color: var(--c-coral); }
 .chat-send { position: relative; z-index: 47; flex: none; width: 38px; height: 38px; border: 2px solid var(--c-ink-soft); border-radius: 10px; background: var(--c-yellow); color: var(--c-ink-soft); display: flex; align-items: center; justify-content: center; }
 
@@ -2254,7 +2357,13 @@ const startHint = computed(() =>
 .chat-expand.active { background: var(--c-yellow); color: var(--c-ink-soft); }
 
 /* 채팅 전체보기 패널 — 입장 이후 전체 대화를 반투명하게 보여준다 */
-.chat-full-backdrop { position: fixed; inset: 0; z-index: 45; background: transparent; }
+/*
+ * 백드롭은 헤더(AppHeader z-index:20)보다 아래에 둔다. 45로 두면 화면 전체를 덮는 투명 레이어가
+ * 헤더 위에 깔려서, 전체보기가 열린 동안 헤더 클릭이 이 백드롭에 먹힌다("한 번 눌렀는데 아무 일도
+ * 안 일어남" — 첫 클릭은 패널만 닫고 끝난다). 바깥 클릭 감지에는 19로도 충분하고,
+ * 패널 자신은 z-index:46이라 여전히 백드롭 위에 뜬다.
+ */
+.chat-full-backdrop { position: fixed; inset: 0; z-index: 19; background: transparent; }
 .chat-full {
   position: absolute; z-index: 46; bottom: 62px; left: 0;
   width: 100%; min-width: 260px; max-height: min(65vh, 520px);
@@ -2276,7 +2385,7 @@ const startHint = computed(() =>
   -ms-overflow-style: none;
 }
 .chat-full-body::-webkit-scrollbar { display: none; }
-.chat-full-empty { align-self: center; margin: 20px 0; font-size: 9px; color: #a99f86; }
+.chat-full-empty { align-self: center; margin: 20px 0; font-size: 13px; color: #a99f86; }
 .bubble.full { max-width: none; background: rgba(255, 255, 255, 0.9); }
 .bubble.full.me { background: rgba(255, 244, 204, 0.9); }
 .bubble.full.suggest { background: rgba(214, 244, 233, 0.9); }
@@ -2333,21 +2442,43 @@ const startHint = computed(() =>
   background: transparent;
   box-shadow: none;
 }
-.ribbon-report:hover { background: #ffe2e3; }
-.ribbon-invite:hover, .ribbon-settings:hover { background: #d8f4ec; }
+.ribbon-report:hover { background: transparent; color: #c15d5a; }
+.ribbon-invite:hover, .ribbon-settings:hover { background: transparent; color: #5b8d45; }
+/* 음악 버튼도 이웃과 같은 아이콘 형태로 — 컴포넌트 자체 스타일은 박스라 여기서 벗긴다.
+   열려 있을 때만 배경으로 표시한다(팝오버가 떠 있다는 신호). */
+.ribbon-music-wrap :deep(.ribbon-music) {
+  width: auto;
+  height: auto;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--room-ink);
+}
+.ribbon-music-wrap :deep(.ribbon-music:hover) { background: transparent; color: #5b8d45; }
+.ribbon-music-wrap :deep(.ribbon-music.open) { background: rgba(183, 141, 93, .18); color: #5b8d45; box-shadow: none; }
+.ribbon-music-wrap :deep(.ribbon-music.silent) { color: #c15d5a; }
 .code-box {
+  display: grid;
+  gap: 2px;
+  height: auto;
+  padding: 0 6px;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
-.code-cap { color: var(--room-muted); }
-.code-val { color: #bd6d45; }
+.code-cap { color: var(--room-muted); font-size: 8px; }
+.code-val { color: #bd6d45; font-size: 14px; }
+.code-line { gap: 4px; }
 .copy { border: 0; border-radius: 0; background: transparent; color: var(--room-ink); }
 .room-ribbon .px-kicker { order: 0; }
 .code-box { position: relative; order: 1; }
-.ribbon-report, .ribbon-invite, .ribbon-settings { position: relative; order: 2; }
-.ribbon-report::before, .ribbon-invite::before, .ribbon-settings::before {
+/* 음악 버튼도 버튼 그룹(order 2)에 넣는다 — 기본 order 0으로 두면 방 코드 앞으로 튄다.
+   같은 order 안에서는 DOM 순서를 따르므로 신고 버튼 왼쪽에 선다. */
+.ribbon-report, .ribbon-invite, .ribbon-settings, .ribbon-music-wrap { position: relative; order: 2; }
+.ribbon-report::before, .ribbon-invite::before, .ribbon-settings::before, .ribbon-music-wrap::before {
   position: absolute;
   top: 50%;
   left: -12px;
@@ -2374,7 +2505,7 @@ const startHint = computed(() =>
   white-space: nowrap;
 }
 
-.room-main { gap: 18px; padding: 26px 46px; }
+.room-main { gap: 18px; padding: clamp(20px, 2vw, 26px) clamp(28px, 3.6vw, 46px); }
 .cam-stage {
   padding: 12px;
   gap: 16px;
@@ -2517,7 +2648,7 @@ const startHint = computed(() =>
   align-self: center;
   place-self: center;
 }
-.self-video { object-fit: contain; background: var(--c-letterbox); }
+.self-video { object-fit: cover; background: var(--c-letterbox); }
 .cam-off { background: linear-gradient(135deg, #bfe9ff, #d7e7ad); color: var(--room-muted); }
 .cam-on-btn { border-color: #925c47; border-radius: 7px; background: #4078cf; box-shadow: 3px 3px 0 #a66b50; }
 .self-label {
@@ -2553,12 +2684,12 @@ const startHint = computed(() =>
 .ctrl.off { background: #ffe2e3; color: #d45c63; }
 .chat-dock { background: #fffdf7; }
 .chat-dock input { color: var(--room-ink); }
-.chat-send { border-color: #925c47; border-radius: 6px; background: #e7c996; color: var(--room-ink); }
-.chat-expand { border-color: #b78d5d; border-radius: 6px; background: #fff7e5; color: var(--room-muted); }
-.chat-expand.active { background: #d7e7ad; color: var(--room-ink); }
-.bubble { border-color: #dfc9a6; border-radius: 9px; background: #fffdf7; box-shadow: 2px 2px 0 #e2d0b5; }
-.bubble.me { background: #fff0b9; }
-.bubble.suggest { background: #d8f4ec; }
+.chat-send { margin-left: -5px; border: 0; border-radius: 0; background: transparent; color: #bd6d45; box-shadow: none; }.send-icon { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-linecap: square; stroke-linejoin: round; stroke-width: 2.4; transform: translate(1px, 1px); }.chat-send:hover { background: transparent; color: #8e4d32; transform: translateY(-1px); }
+.chat-expand { border: 0; border-radius: 0; background: transparent; color: #a9836c; box-shadow: none; }
+.chat-expand.active { background: transparent; color: #6c9b54; }
+.bubble { border-color: #dfc9a6; border-radius: 9px; background: rgba(255, 253, 247, .78); box-shadow: 2px 2px 0 rgba(226, 208, 181, .65); }
+.bubble.me { background: rgba(255, 240, 185, .78); }
+.bubble.suggest { background: rgba(216, 244, 236, .78); }
 .bubble-name { color: #5b8d45; }
 .bubble-name.me { color: #bd6d45; }
 .suggest-pick { border-color: #925c47; border-radius: 6px; background: #e7c996; color: var(--room-ink); }
@@ -2644,7 +2775,6 @@ const startHint = computed(() =>
 
 @media (max-width: 1280px) {
   .room-ribbon { padding: 0 28px; }
-  .room-main { padding: 20px 28px; }
   .room-footer { padding: 14px 26px; }
 }
 </style>

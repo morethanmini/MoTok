@@ -95,6 +95,41 @@ class PresenceRepositoryIntegrationTest {
     }
 
     @Test
+    @DisplayName("스캔이 접속자를 훑되 세션 원장 키(presence:{id}:sessions)는 걸러 낸다")
+    void scanOnlineSkipsSessionLedgerKeys() {
+        long now = System.currentTimeMillis();
+        presenceRepository.touch(USER_A, "ROOM-A", now);
+        presenceRepository.touch(USER_B, null, now);
+        // 세션 원장은 같은 접두사를 쓴다 — 함께 걸리면 userId 파싱이 깨지거나 유령 접속자가 생긴다.
+        redis.opsForHash().put("presence:" + USER_B + ":sessions", "sess-1", now + "|");
+
+        List<PresenceRepository.OnlinePresence> online = presenceRepository.scanOnline(500);
+
+        assertThat(online).extracting(PresenceRepository.OnlinePresence::userId)
+                .contains(USER_A, USER_B)
+                .doesNotContainNull();
+        PresenceRepository.OnlinePresence a = online.stream()
+                .filter(p -> p.userId().equals(USER_A)).findFirst().orElseThrow();
+        assertThat(a.roomId()).isEqualTo("ROOM-A");
+        assertThat(a.heartbeatAt()).isEqualTo(now);
+        // 방 밖은 roomId가 비어 있어야 한다(화면이 '로비'로 그린다).
+        assertThat(online.stream().filter(p -> p.userId().equals(USER_B)).findFirst().orElseThrow().roomId())
+                .isNull();
+
+        redis.delete("presence:" + USER_B + ":sessions");
+    }
+
+    @Test
+    @DisplayName("상한을 넘겨 훑지 않는다 — 응답 크기가 접속자 수에 끌려가지 않아야 한다")
+    void scanOnlineRespectsLimit() {
+        long now = System.currentTimeMillis();
+        presenceRepository.touch(USER_A, null, now);
+        presenceRepository.touch(USER_B, null, now);
+
+        assertThat(presenceRepository.scanOnline(1)).hasSize(1);
+    }
+
+    @Test
     @DisplayName("하트비트가 TTL을 다시 늘린다 — 갱신이 안 되면 결국 사라진다")
     void heartbeatRefreshesTtl() {
         presenceRepository.touch(USER_A, null, System.currentTimeMillis());

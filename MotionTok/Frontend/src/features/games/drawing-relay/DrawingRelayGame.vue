@@ -8,7 +8,9 @@
  *
  * 조작(MediaPipe): 펜 손(기본 오른손)은 엄지+검지 핀치로 그리고 손을 펴면 이동,
  * 지우개 손(기본 왼손)은 주먹을 쥐고 문지르면 지운다 — 왼손잡이 모드로 역할 스왑.
- * 두 손은 각자 상태(스무딩·히스테리시스·진행 중 획)를 갖고 동시에 동작할 수 있다.
+ * 두 손은 각자 상태(스무딩·히스테리시스)를 갖지만 <b>획은 한 번에 하나만</b> 연다 — 획
+ * 릴레이(DrawOp)에 소스 구분이 없어 수신 측은 화가당 진행 중 획 하나만 재생하므로, 두 획이
+ * 동시에 열리면 원격에서 한 획으로 합쳐져 두 손 사이를 잇는 선/지움이 그쪽 캔버스에만 남는다.
  * 펜 끝은 엄지·검지 중점을 써 손을 펴는 순간의 이동을 줄이고, 전환 프레임 동안
  * 그려지는 꼬리는 획을 점 목록으로 보관했다가 펜 업 시점에 소급 삭제한다(trimStrokeTail).
  * 입력은 손 인식뿐 — 카메라 영상이 있어야 시작할 수 있다(마우스 폴백은 로컬 테스트
@@ -42,6 +44,8 @@ import {
   type NormalizedPoint,
   type StrokePoint,
 } from './logic'
+import { GameBgm } from '../gameBgm'
+import EarnedPoints from '../EarnedPoints.vue'
 import { requestJudge } from './scoring'
 
 const props = defineProps<{
@@ -112,7 +116,7 @@ interface PainterLayer {
 }
 const layers = new Map<string, PainterLayer>()
 
-/** 진행 중인 획의 소유자 — 펜 손·지우개 손·원격 화가가 각자 하나씩 갖는다(동시 사용 가능) */
+/** 진행 중인 획의 소유자 — 펜 손·지우개 손·원격 화가가 각자 하나씩 갖는다. 로컬 두 손은 한 번에 한 획만 연다(파일 상단 주석) */
 interface StrokeSource {
   stroke: Stroke | null
 }
@@ -328,7 +332,9 @@ watch(
 // 전환은 인터벌로 구동하고 RAF는 화면 갱신만 맡는다(핑거 스타 멀티 타이머와 같은 구조).
 let rafId = 0
 let phaseTicker = 0
+const bgm = new GameBgm('/assets/sfx/draw-relay/ingame-loop.mp3')
 onMounted(() => {
+  bgm.start()
   phaseTicker = window.setInterval(() => {
     mpTick()
     flushOutbox()
@@ -341,6 +347,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   hand.stop()
+  bgm.dispose()
   clearInterval(phaseTicker)
   cancelAnimationFrame(rafId)
 })
@@ -706,14 +713,18 @@ function updatePenHand(lm: NormalizedPoint[] | null) {
   // 주먹은 엄지·검지 끝도 가까워 핀치로 읽히므로, 펜 손이 주먹인 동안은 펜을 잠근다
   const down = !penHand.fist && applyPinchHysteresis(penHand.active, pinchRatio(lm))
   const canAct = phase.value === 'drawing' && inputAllowed()
-  if (down && canAct) {
+  // 지우개 획이 열려 있는 동안은 펜 획을 시작하지 않는다(한 번에 한 획 — 파일 상단 주석).
+  // 늘어진 왼손이 주먹으로 오인돼 지우개 획이 열린 채 펜을 시작하면, 수신 측이 두 손의
+  // point를 한 획으로 합쳐 두 손 사이를 잇는 검은 선이 원격 캔버스에만 남는다.
+  const drawing = down && canAct && !eraseHand.stroke
+  if (drawing) {
     drawTo(myLayer(), penHand, penHand.x, penHand.y, 'pen')
   } else {
     // 펜을 놓는 순간 — 손을 펴는 동안 그려진 꼬리를 소급 삭제
     endStroke(myLayer(), penHand, true)
   }
   penHand.active = down
-  penDrawing.value = down && canAct
+  penDrawing.value = drawing
 }
 
 function updateEraseHand(lm: NormalizedPoint[] | null) {
@@ -729,10 +740,12 @@ function updateEraseHand(lm: NormalizedPoint[] | null) {
   updateFist(eraseHand, lm)
 
   const canAct = phase.value === 'drawing' && inputAllowed()
-  if (eraseHand.fist && canAct) drawTo(myLayer(), eraseHand, eraseHand.x, eraseHand.y, 'erase')
+  // 펜 획이 열려 있는 동안은 지우개 획을 시작하지 않는다(한 번에 한 획 — 파일 상단 주석)
+  const active = eraseHand.fist && canAct && !penHand.stroke
+  if (active) drawTo(myLayer(), eraseHand, eraseHand.x, eraseHand.y, 'erase')
   else endStroke(myLayer(), eraseHand)
   eraseHand.active = eraseHand.fist
-  erasing.value = eraseHand.fist && canAct
+  erasing.value = active
 }
 
 // ── 렌더링 (도화지 + 펜/지우개 커서) ──────────
@@ -931,6 +944,7 @@ function beep(freq = 660, dur = 0.08) {
         </ol>
       </div>
       <!-- 새 판은 방장이 게임 선택으로 다시 시작한다 -->
+      <EarnedPoints :results="results" :my-user-id="myUserId" />
       <div class="dr-actions">
         <button class="dr-quit" @click="emit('close')">대기실로 돌아가기</button>
       </div>

@@ -17,9 +17,9 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserProfileModal from '@/components/common/UserProfileModal.vue'
 
 const MOCK_GAMES: Game[] = [
-  { id: 1, name: '손가락 별', description: '', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '모션', thumbnailUrl: '', playable: true },
-  { id: 3, name: '리듬 터치', description: '', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '리듬', thumbnailUrl: '', playable: true },
-  { id: 5, name: '자세 매치', description: '', mode: 'VERSUS', minPlayers: 2, maxPlayers: 8, supportsBot: true, category: '피트니스', thumbnailUrl: '', playable: true },
+  { id: 1, name: '손가락 별', description: '', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '모션', thumbnailUrl: '', playable: true, active: true },
+  { id: 3, name: '리듬 터치', description: '', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '리듬', thumbnailUrl: '', playable: true, active: true },
+  { id: 5, name: '자세 매치', description: '', mode: 'VERSUS', minPlayers: 2, maxPlayers: 8, supportsBot: true, category: '피트니스', thumbnailUrl: '', playable: true, active: true },
 ]
 const MOCK_BOARD: LeaderboardResponse = {
   gameId: 1,

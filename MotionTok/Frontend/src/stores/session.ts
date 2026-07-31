@@ -129,6 +129,27 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  /**
+   * 잔액이 늘어난 것을 즉시 화면에 반영한다(게임 보상·포인트 충전).
+   *
+   * <p>서버가 진실이지만 게임 보상 지급은 비동기라, 방송받은 액수를 먼저 얹어 두고
+   * {@link refreshProfile}이 나중에 정정한다. 안 하면 게임을 이겨도 잔액이 그대로라
+   * "보상을 못 받았다"로 보인다.</p>
+   */
+  function addPoints(delta: number) {
+    if (profile.value) profile.value.pointBalance += delta
+  }
+
+  /** 서버 기준으로 프로필을 다시 읽는다. 실패는 삼킨다 — 잔액 표시가 앱을 막을 이유는 없다. */
+  async function refreshProfile() {
+    if (!isMember.value) return
+    try {
+      profile.value = await usersApi.getMe()
+    } catch {
+      /* 다음 기회에 맞춰진다 */
+    }
+  }
+
   /** 라우터 가드·화면에서 부담 없이 부를 수 있는 단일 비행 복원. */
   function ensureRestored(): Promise<void> {
     if (restored.value) return Promise.resolve()
@@ -191,6 +212,8 @@ export const useSessionStore = defineStore('session', () => {
     applyToken,
     loginAsGuest,
     ensureRestored,
+    addPoints,
+    refreshProfile,
     logout,
     clear,
   }

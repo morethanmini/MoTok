@@ -4,6 +4,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.socket.CloseStatus;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
@@ -503,5 +507,30 @@ class UserSanctionServiceTest {
         assertThat(status.releaseAt()).isNull();
         // TTL은 사라져도 "과거에 두 번 정지당했다"는 사실은 남아야 한다 — 이게 테이블을 따로 둔 이유다.
         assertThat(status.suspendCount()).isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("전체 내역 조회는 대상을 정하지 않는다 — 회원 id를 몰라도 최근 제재를 훑을 수 있어야 한다")
+    void searchHistoryWithoutTarget() {
+        given(sanctionHistoryRepository.search(eq(null), eq(null), any(Pageable.class)))
+                .willReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+        assertThat(service.searchHistory(null, null, 0, 20).sanctions()).isEmpty();
+
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.captor();
+        verify(sanctionHistoryRepository).search(eq(null), eq(null), pageable.capture());
+        // 최신순이어야 한다 — 운영 점검은 방금 나간 제재부터 본다.
+        assertThat(pageable.getValue().getSort()).isEqualTo(Sort.by(Sort.Direction.DESC, "id"));
+    }
+
+    @Test
+    @DisplayName("전체 내역에도 회원·유형 필터를 그대로 넘긴다")
+    void searchHistoryPassesFilters() {
+        given(sanctionHistoryRepository.search(eq(TARGET_ID), eq(SanctionType.BAN), any(Pageable.class)))
+                .willReturn(new PageImpl<>(List.of(), PageRequest.of(1, 20), 0));
+
+        service.searchHistory(TARGET_ID, SanctionType.BAN, 1, 20);
+
+        verify(sanctionHistoryRepository).search(eq(TARGET_ID), eq(SanctionType.BAN), any(Pageable.class));
     }
 }

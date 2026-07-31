@@ -16,7 +16,7 @@ import java.util.List;
  *       각 클라이언트가 이 랜드마크로 같은 벽을 렌더한다.</li>
  *   <li>PROGRESS — 참가자 진행 상황 중계(비영속). userId·starsLit·holdProgress·completedCount 유효.</li>
  *   <li>PLAYER_FINISHED — 참가자 최초 제출 수리. score·starsHit·completedCount 유효.
- *       게임①은 score=90초 매치 총점, completedCount=완성 개수(1순위 승부 기준).</li>
+ *       게임①은 score=60초 매치 총점, completedCount=완성 개수(1순위 승부 기준).</li>
  *   <li>GAME_END — 서버 정산. results(순위 내림차순) 유효. 이후 방 상태는 WAITING 복귀.</li>
  *   <li>DRAW — 그리기 릴레이(게임 10, 비영속). userId(화가)·seq·ops 유효. 발신자는 자기 에코 무시.</li>
  *   <li>TURN_SKIPPED — 조기 차례 넘기기(게임 10). userId·turnIndex·remainingMs 유효 —
@@ -68,7 +68,7 @@ public record GameEventResponse(
         Integer answerRank,
         Integer turnIndex,
         Long remainingMs,
-        // 30 게임① 90초 매치(완성 개수) — PROGRESS·PLAYER_FINISHED에서만 유효
+        // 30 게임① 60초 매치(완성 개수) — PROGRESS·PLAYER_FINISHED에서만 유효
         Integer completedCount,
         // 31~32 게임④ 모드(-9)
         /** 게임④ 모드 — pose(출제 대결) | chain(연속 서바이벌). 다른 게임은 null */

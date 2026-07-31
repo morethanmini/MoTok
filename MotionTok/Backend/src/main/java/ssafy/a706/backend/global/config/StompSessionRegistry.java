@@ -65,11 +65,25 @@ public class StompSessionRegistry {
      * 실어 보내면 그 프레임만으로 안내를 띄울 수 있다.</p>
      */
     public void closeAllOf(Long userId, CloseStatus status) {
+        close(detachSessionsOf(userId), status);
+    }
+
+    /**
+     * 지금 열려 있는 이 사용자의 연결을 원장에서 떼어 내 돌려준다(스냅샷).
+     *
+     * <p><b>끊기를 뒤로 미뤄야 할 때</b> 쓴다. 원장은 sid가 아니라 userId로만 묶여 있어 옛 세션과
+     * 새 세션을 구분하지 못하므로, 미뤄 둔 시점에 목록을 읽으면 그 사이 새로 붙은 연결까지 함께
+     * 끊긴다 — 밀어내기의 유예(2초) 안에 새 로그인의 소켓이 붙는 것이 정확히 그 경우다.
+     * 대상을 "지금 열려 있는 것"으로 먼저 고정해 두면 나중에 닫아도 새 연결은 무사하다.</p>
+     */
+    public Set<String> detachSessionsOf(Long userId) {
         Set<String> ids = byUser.remove(userId);
-        if (ids == null) {
-            return;
-        }
-        for (String sessionId : ids) {
+        return ids == null ? Set.of() : ids;
+    }
+
+    /** {@link #detachSessionsOf}로 고정해 둔 연결들을 닫는다. */
+    public void close(Set<String> sessionIds, CloseStatus status) {
+        for (String sessionId : sessionIds) {
             WebSocketSession session = sessions.remove(sessionId);
             if (session == null || !session.isOpen()) {
                 continue;
