@@ -34,6 +34,7 @@ import WhisperModal from '@/components/common/WhisperModal.vue'
 import { useWarningNotice, currentWarning } from '@/composables/useWarningNotice'
 import { useToast } from '@/composables/useToast'
 import { loadRemoteWordlist } from '@/utils/profanity'
+import { startRum } from '@/composables/useRum'
 
 const router = useRouter()
 const session = useSessionStore()
@@ -93,6 +94,10 @@ const accountBlocked = ref<AccountBlockKind | null>(null)
 let unsubscribeBlocked: (() => void) | undefined
 
 onMounted(() => {
+  // 베타 관측(RUM) — 서버 로그가 못 보는 것(접속 거부·모델 이탈·재연결 횟수·체감 지연)을 남긴다.
+  // 수신은 nginx가 return 204로 끝내므로 앱을 거치지 않는다. 실패해도 앱에 영향이 없다.
+  startRum()
+
   unsubscribe = onSessionExpired((reason) => {
     if (sessionExpired.value) return // 동시 요청이 함께 실패해도 한 번만 안내
     // 토큰을 지우기 전에 읽어 둔다 — clear() 뒤에는 이용 시간을 알 길이 없다.
@@ -128,10 +133,31 @@ function guestPromptTo(mode: 'login' | 'signup') {
   closeGuestPrompt()
   router.push({ name: RouteName.Auth, query: { mode } })
 }
+// 도배 선차단 — 방 채팅(-159, GameRoomView)과 같은 형식·같은 기준(5초 5건)이다.
+//
+// 다만 방 채팅과 결정적으로 다른 점이 하나 있다. 채팅은 서버의 ChatRateLimiter가 최종 방어선이고
+// 클라 가드는 소용없는 프레임을 줄이는 역할이지만, 귓속말에는 아직 서버 가드가 없어
+// 지금은 여기가 유일한 방어선이다. 즉 devtools로 직접 발행하면 그대로 뚫린다 —
+// 이 가드의 목적은 어디까지나 정상 사용자의 연타 방지이고, 서버 레이트리밋은 별도로 필요하다.
+const WHISPER_BURST_MAX = 5
+const WHISPER_BURST_WINDOW_MS = 5000
+let whisperSentTimes: number[] = []
+
 function sendWhisper(text: string) {
+  const now = Date.now()
+  whisperSentTimes = whisperSentTimes.filter((ts) => now - ts < WHISPER_BURST_WINDOW_MS)
+  if (whisperSentTimes.length >= WHISPER_BURST_MAX) {
+    flashWhisper('귓속말을 너무 자주 보냈어요 · 잠시 후 다시 보내 주세요')
+    return
+  }
+
   if (!whisper.openWith.value || !whisper.send(whisper.openWith.value, text)) {
     flashWhisper('실시간 연결이 끊겨 있어요. 잠시 후 다시 시도해 주세요')
+    return
   }
+  // 성공한 발신만 센다 — 미연결로 실패한 시도까지 카운터에 얹으면, 연결이 돌아온 직후
+  // 멀쩡한 메시지가 막힌다. 서버 ChatService가 참가 검증 뒤에 세는 것과 같은 이유다(-159).
+  whisperSentTimes.push(now)
 }
 </script>
 
