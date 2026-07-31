@@ -23,9 +23,11 @@ import {
   RingLogic,
   holdBearingDeg,
   laneAngleDeg,
+  type RingBeatmap,
   type RingEvent,
   type TrackedRingNote,
 } from './ring/ringLogic'
+import type { Beatmap } from './core/beatmap'
 import { generateRingChart } from './ring/ringChart'
 import { RingRenderer } from './ring/ringRenderer'
 import { RING_RADIUS } from './ring/ringConfig'
@@ -85,8 +87,26 @@ const props = withDefaults(
     epochZeroMs?: number | null
     /** 'catch' = 자유 좌표 잡기, 'ring' = 마이마이 레인 */
     mode?: GameMode
+    /**
+     * 외부에서 만든 채보(채보 랩의 곡 분석 초안). 있으면 시드 생성 대신 이걸 쓴다 —
+     * mode와 맞는 스키마여야 한다(catch=Beatmap, ring=RingBeatmap).
+     */
+    chart?: Beatmap | RingBeatmap | null
+    /**
+     * 커스텀 곡. src는 objectURL도 된다. gridOriginMs = 파일 안 박자 격자 원점(분석 실측),
+     * startMs = 그 원점이 놓일 게임 시각(채보의 offsetMs와 같아야 노트와 소리가 맞는다).
+     */
+    song?: { src: string; gridOriginMs: number; startMs: number } | null
   }>(),
-  { durationMs: 90_000, skinId: 'cat-candy', video: null, epochZeroMs: null, mode: 'catch' },
+  {
+    durationMs: 90_000,
+    skinId: 'cat-candy',
+    video: null,
+    epochZeroMs: null,
+    mode: 'catch',
+    chart: null,
+    song: null,
+  },
 )
 
 const emit = defineEmits<{
@@ -117,9 +137,10 @@ const lateStart = ref(0)
 const landmarker = useHandLandmarker()
 const isRing = props.mode === 'ring' || props.mode === 'ringTap'
 const chart = shallowRef(
-  isRing
-    ? generateRingChart(props.seed, props.difficulty, props.durationMs, props.mode === 'ring')
-    : generateBattleChart(props.seed, props.difficulty, props.durationMs),
+  props.chart ??
+    (isRing
+      ? generateRingChart(props.seed, props.difficulty, props.durationMs, props.mode === 'ring')
+      : generateBattleChart(props.seed, props.difficulty, props.durationMs)),
 )
 
 let flashTimer = 0
@@ -339,7 +360,7 @@ async function boot() {
     sfx = new SfxPlayer(audioCtx)
     // 곡 로드·디코드는 손 인식 모델(7.5MB)과 **병렬**로 돌린다. 순서대로 기다리면 카운트다운을
     // 잡아먹고, 늦게 끝나도 아래 예약이 파일 안쪽 offset에서 시작해 위상을 지킨다.
-    music = new RhythmMusic(audioCtx, BGM_SRC)
+    music = new RhythmMusic(audioCtx, props.song?.src ?? BGM_SRC, props.song?.gridOriginMs ?? null)
     const musicReady = music.load()
 
     const skin = resolveSkin(props.skinId)
@@ -382,7 +403,9 @@ async function boot() {
     const musicClock = clock
     void musicReady.then((ok) => {
       if (!ok || disposed || phase.value === 'result') return
-      music?.start(musicClock.ctxTimeAt(slotTimeMs(SONG_START_SLOT) + SONG_NUDGE_MS))
+      // 커스텀 곡이면 채보 랩이 정한 시각(채보 offsetMs)에, 아니면 기본 곡 슬롯에 건다
+      const startMs = props.song?.startMs ?? slotTimeMs(SONG_START_SLOT)
+      music?.start(musicClock.ctxTimeAt(startMs + SONG_NUDGE_MS))
     })
 
     // ★ 늦게 시작한 참가자 보정.
