@@ -6,10 +6,12 @@
  *  - pagehide: keepalive 퇴장 통보(roomsApi.leaveOnUnload) — {@link Options.unloadLeave} 참고.
  *  - pageshow(persisted): bfcache로 방 화면이 그대로 복원된 경우 — 복원된 화면은 소켓·SFU 연결이
  *    모두 끊겨 있어 그대로 쓸 수 없으므로 방으로 되돌리지 않고 로비로 보낸다(뒤로가기 복귀 차단).
+ *    단 게스트는 로비가 회원 전용(requiresMember)이라 "로그인이 필요해요"가 뜨므로 1인 게임 목록으로 보낸다.
  */
 import { onBeforeUnmount, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
+import { useSessionStore } from '@/stores/session'
 import { roomsApi } from '@/api'
 
 interface Options {
@@ -33,6 +35,7 @@ export function useRoomUnloadLeave(
   { unloadLeave = true }: Options = {},
 ) {
   const router = useRouter()
+  const session = useSessionStore()
 
   function onPageHide() {
     if (!unloadLeave) return
@@ -41,7 +44,9 @@ export function useRoomUnloadLeave(
   }
 
   function onPageShow(e: PageTransitionEvent) {
-    if (e.persisted) void router.replace({ name: RouteName.Lobby })
+    if (e.persisted) {
+      void router.replace({ name: session.isGuest ? RouteName.GamesCatalog : RouteName.Lobby })
+    }
   }
 
   onMounted(() => {

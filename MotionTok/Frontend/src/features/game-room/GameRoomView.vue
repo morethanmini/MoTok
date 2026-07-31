@@ -327,6 +327,15 @@ const setupGame = ref<GameEntry | null>(null)
 // 새로고침도 pagehide라, 여기서 통보하면 끊긴 사람이 새로고침으로 복구할 길이 막힌다.
 useRoomUnloadLeave(() => route.query.room as string | undefined, { unloadLeave: false })
 
+/**
+ * 방을 벗어날 때 돌아갈 화면. 게스트를 로비로 보내면 안 된다 — 로비는 회원 전용(requiresMember)이라
+ * 라우터 가드가 "로그인이 필요해요"를 띄운다. 방에서 난 오류가 로그인 요구로 둔갑하는 경로가 이것이다.
+ * 게스트는 들어온 곳(1인 게임 목록)으로 돌려보낸다.
+ */
+function exitRoute() {
+  return { name: session.isGuest ? RouteName.GamesCatalog : RouteName.Lobby }
+}
+
 
 onMounted(async () => {
   bgm.setVolume(0.2)
@@ -335,7 +344,7 @@ onMounted(async () => {
   // ('MP-4X9K')로 존재하지 않는 방 화면("LIVE PARTY ROOM")을 그리는 대신 로비로 보낸다(-164).
   if (!route.query.room) {
     leavingIntentionally = true
-    void router.replace({ name: RouteName.Lobby })
+    void router.replace(exitRoute())
     return
   }
 
@@ -354,7 +363,7 @@ onMounted(async () => {
     console.error('[game-room] 방 입장 실패', e)
     flash(e instanceof ApiError ? e.message : '방에 입장하지 못했어요')
     leavingIntentionally = true
-    void router.replace({ name: RouteName.Lobby })
+    void router.replace(exitRoute())
     return
   }
   // 방 토픽 구독 — 카메라·LiveKit보다 먼저 건다.
@@ -385,10 +394,10 @@ onMounted(async () => {
     })
   }
   if (!ok) {
-    flash('실시간 서버에 연결하지 못했어요 · 로비로 돌아가요')
+    flash('실시간 서버에 연결하지 못했어요 · 이전 화면으로 돌아가요')
     await notifyLeave()
     leavingIntentionally = true
-    void router.replace({ name: RouteName.Lobby })
+    void router.replace(exitRoute())
     return
   }
   // 이미 있던 사람들에게 내 꾸미기를 알린다(늦게 들어오는 사람은 useDecorSync가 따로 챙긴다).
@@ -1505,7 +1514,7 @@ watch(
         applyDetail(await roomsApi.join(roomCode.value))
       } catch {
         leavingIntentionally = true
-        void router.replace({ name: RouteName.Lobby })
+        void router.replace(exitRoute())
       }
     }
   },
@@ -1548,7 +1557,7 @@ async function answerLeave(ok: boolean) {
     if (leaveToLobbyAfterConfirm) {
       leavingIntentionally = true
       leaveToLobbyAfterConfirm = false
-      await router.push({ name: RouteName.Lobby })
+      await router.push(exitRoute())
     }
   }
   leaveToLobbyAfterConfirm = false
