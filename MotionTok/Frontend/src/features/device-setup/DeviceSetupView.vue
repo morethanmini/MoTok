@@ -8,6 +8,7 @@ import { useCamera } from '@/composables/useCamera'
 import { useMicLevel } from '@/composables/useMicLevel'
 import { EQUIP_LIMIT, useDecoration } from '@/composables/useDecoration'
 import { useMediaPermissionStore } from '@/stores/mediaPermission'
+import { useSessionStore } from '@/stores/session'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 
@@ -17,6 +18,7 @@ import inventoryChest from '@/assets/device-setup/inventory-chest.png'
 
 const route = useRoute()
 const router = useRouter()
+const session = useSessionStore()
 const {
   stream,
   isOn,
@@ -209,7 +211,11 @@ onBeforeRouteLeave(async () => {
   await notifyLeave()
   return true
 })
-async function cancel() { await notifyLeave(); router.push({ name: RouteName.Lobby }) }
+// 게스트는 로비(회원 전용)로 보내면 "로그인이 필요해요"가 뜬다 — 들어온 곳(1인 게임 목록)으로 돌린다.
+async function cancel() {
+  await notifyLeave()
+  router.push({ name: session.isGuest ? RouteName.GamesCatalog : RouteName.Lobby })
+}
 </script>
 
 <template>

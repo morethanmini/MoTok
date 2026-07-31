@@ -115,14 +115,15 @@ public class SecurityConfig {
                             // 비속어 사전(-152) — 가입 폼(비로그인) 선검사용. 강제는 서버 검증이라 공개해도 무해
                             .requestMatchers(HttpMethod.GET, "/api/v1/profanity/wordlist").permitAll()
                             // 회원 전용 로비·멀티방 플로우 — 게스트는 1인방만 쓴다(-109).
-                            // 목록·생성·빠른시작·초대코드/직접 입장·강퇴는 전부 멀티 플로우라 ROLE_USER로 좁힌다.
-                            // (개별 방 조회·나가기·화상 접속은 게스트 1인방에도 필요해 아래 anyRequest 인증으로 통과)
+                            // 목록·생성·빠른시작·초대코드 입장·강퇴는 전부 멀티 플로우라 ROLE_USER로 좁힌다.
+                            // (개별 방 조회·입장·나가기·화상 접속은 게스트 1인방에도 필요해 아래 anyRequest 인증으로 통과.
+                            //  roomId 직접 입장을 여기 넣으면 게스트가 제 1인방에도 못 들어간다 — 방 화면이 detail이
+                            //  아니라 join으로 입장을 확정하므로(-164) 403이 나고, 명세도 "입장은 인증만"으로 적혀 있다.)
                             .requestMatchers(HttpMethod.GET, "/api/v1/live-rooms").hasRole("USER")
                             .requestMatchers(HttpMethod.POST,
                                     "/api/v1/live-rooms",
                                     "/api/v1/live-rooms/quick-start",
                                     "/api/v1/live-rooms/join-by-invite-code",
-                                    "/api/v1/live-rooms/*/join",
                                     "/api/v1/live-rooms/*/members/*/kick",
                                     "/api/v1/live-rooms/*/invitations").hasRole("USER")
                             // 회원 전용 — 게스트 토큰(ROLE_GUEST)의 /users/me 접근을 403으로 차단한다
