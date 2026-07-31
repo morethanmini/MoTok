@@ -165,6 +165,24 @@ function applyDetail(d: LiveRoomDetail) {
   memberNames.value = { ...memberNames.value, ...Object.fromEntries(d.members.map((m) => [m.userId, m.displayName])) }
 }
 
+/**
+ * 방을 로비 목록에 공개한다 — 방장이 이 화면에 도달한 것이 곧 "이 방은 굴러간다"는 신호다.
+ *
+ * 방 생성 시점에 공개하면 방장이 기기 점검 화면에 머무는 동안 시작 권한을 가진 사람이 없는 방이
+ * 목록에 떠 있게 되고, 거기 들어간 사람은 방장을 부를 수단도 없이 기다리기만 한다.
+ * 서버는 방장 여부를 다시 검증하고 멱등하게 처리하므로(이미 공개된 방이면 아무 일도 없다)
+ * 새로고침·재입장으로 여러 번 불려도 괜찮다.
+ *
+ * 실패해도 방 이용에는 지장이 없다(로비 노출만 늦어진다) — 조용히 넘긴다.
+ */
+async function publishRoom() {
+  try {
+    await roomsApi.open(roomCode.value)
+  } catch {
+    /* 목록 노출 실패가 방 이용을 막을 이유는 없다 */
+  }
+}
+
 /** userId → 닉네임 — 상세 조회 멤버를 기본으로 LiveKit 참가자 이름으로 보강(뒤늦게 들어온 참가자 대응). */
 const participantNames = computed<Record<string, string>>(() => {
   const names = { ...memberNames.value }
@@ -315,6 +333,9 @@ onMounted(async () => {
   // 오면 퇴장을 없던 일로 한다. 이미 멤버면 멱등이고 재입장은 비밀번호를 다시 묻지 않는다.
   try {
     applyDetail(await roomsApi.join(roomCode.value))
+    // 방장이 도착했으니 이제 로비에 내놓는다. LiveKit 접속을 기다리지 않는다 —
+    // 접속에 실패해도 방장은 이 화면에 있고, 그때까지 방이 목록에서 빠져 있을 이유가 없다.
+    if (amRoomHost.value) void publishRoom()
   } catch (e) {
     // 방이 사라졌거나(ROOM_NOT_FOUND) 게임 중·정원 초과·강퇴 등 — 들어갈 수 없는 방 화면에
     // 유령으로 머무느니 이유를 알리고 로비로 보낸다(-164). main의 ROOM_NOT_FOUND 분기를
@@ -1402,6 +1423,9 @@ watch(
     if (!e) return
     hostId.value = e.hostUserId
     hostName.value = e.hostDisplayName
+    // 아직 공개되지 않은 방(방장이 기기 점검 중에 나가 버린 경우)이라면 여기서 목록에 올린다 —
+    // 내가 방장이 됐고 나는 이 화면에 있으니 공개 조건을 그대로 만족한다. 이미 공개된 방이면 서버가 무시한다.
+    if (e.hostUserId === myParticipantId.value) void publishRoom()
     // 결과만 알리면 "왜 갑자기?"가 되므로 원인(방장 퇴장)을 함께 붙인다.
     flash(
       e.hostUserId === myParticipantId.value
