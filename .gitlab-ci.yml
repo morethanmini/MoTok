@@ -118,7 +118,16 @@ deploy-frontend:
         -e VITE_KAKAO_REST_KEY="$VITE_KAKAO_REST_KEY" \
         node:22-alpine \
         sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm build"
-    # ── 빌드 결과(dist)를 nginx 서빙 폴더로 교체 배치 (nginx bind mount 라 재시작 불필요) ──
+    # ── 빌드 결과(dist)를 nginx 서빙 폴더에 덮어쓴다 (nginx bind mount 라 재시작 불필요) ──
+    #    지우지 않고 덮어쓰는 이유 — Vite 청크는 해시 파일명이라 배포마다 이름이 바뀐다.
+    #    통째로 지우면 배포 전부터 열려 있던 탭이 아는 청크가 서버에서 사라지고,
+    #    그 탭은 지연 로딩되는 화면(상점·게임)에 들어가는 순간 404가 난다.
+    #    화면에는 아무 일도 일어나지 않고 콘솔에만 남아서
+    #    "게임 시작을 눌렀는데 카메라만 보인다"로 나타난다.
+    #    새 파일과 옛 파일은 이름이 달라 충돌하지 않으므로 그냥 같이 두면 된다.
     - mkdir -p /srv/motok/frontend
-    - rm -rf /srv/motok/frontend/*
     - cp -r dist/. /srv/motok/frontend/
+    #    옛 청크를 영원히 쌓아 둘 수는 없으니 오래된 것만 정리한다. cp 가 이번 배포에 포함된 파일의
+    #    mtime 을 갱신하므로, 7일 넘게 어느 배포에도 없었던 파일만 지워진다.
+    #    (열어 둔 탭의 현실적인 수명보다 넉넉하게 잡은 값)
+    - find /srv/motok/frontend/assets -type f -mtime +7 -delete || true

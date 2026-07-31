@@ -60,10 +60,31 @@ public class LobbyBroadcaster {
     }
 
     private void enqueue(LobbyRoomEvent event) {
-        // 같은 창 안에서 생겼다가 사라진 방은 통째로 버린다(remap이 null이면 항목이 제거된다) —
-        // 로비 화면에 뜬 적도 없는 방의 폐쇄 알림은 받는 쪽에서 버릴 정보다.
-        pending.merge(event.roomId(), event,
-                (previous, next) -> previous.isCreated() && next.isClosed() ? null : next);
+        pending.merge(event.roomId(), event, LobbyBroadcaster::fold);
+    }
+
+    /**
+     * 같은 창에서 같은 방의 변화가 겹쳤을 때 무엇 하나를 남길지.
+     *
+     * <p>기본은 "나중 것이 이긴다"다. 예외가 둘 있고, 둘 다 <b>CREATED가 먼저 온 경우</b>다.</p>
+     *
+     * <ul>
+     *   <li>CREATED → CLOSED: 통째로 버린다(remap이 null이면 항목이 제거된다). 로비 화면에
+     *       뜬 적도 없는 방의 폐쇄 알림은 받는 쪽에서 버릴 정보다.</li>
+     *   <li>CREATED → UPDATED: 최신 상태는 나중 것이 갖고 있지만 <b>"새 방"이라는 사실은 먼저 것만</b>
+     *       안다. UPDATED로 접히면 로비 클라이언트는 자기 목록에 없는 방의 갱신으로 보고 버리므로
+     *       (목록에 없는 방을 UPDATED만으로 끼워 넣지 않는다) 그 방은 다음 전체 조회 전까지 아예
+     *       뜨지 않는다. 최신 요약을 CREATED로 다시 싸서 내보낸다.</li>
+     * </ul>
+     */
+    private static LobbyRoomEvent fold(LobbyRoomEvent previous, LobbyRoomEvent next) {
+        if (!previous.isCreated()) {
+            return next;
+        }
+        if (next.isClosed()) {
+            return null;
+        }
+        return LobbyRoomEvent.created(next.room());
     }
 
     @Scheduled(fixedDelay = FLUSH_INTERVAL_MS)
