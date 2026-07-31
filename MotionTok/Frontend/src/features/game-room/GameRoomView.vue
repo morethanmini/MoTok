@@ -48,9 +48,9 @@ const CatchRhythmGame = defineAsyncComponent(
   () => import('@/features/games/catch-rhythm/CatchRhythmGame.vue'),
 )
 import { useRhythmAutoJoin } from '@/features/games/catch-rhythm/useRhythmAutoJoin'
-import AppHeader from '@/components/common/AppHeader.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
+import BrandLogo from '@/components/common/BrandLogo.vue'
 import { useSessionStore } from '@/stores/session'
 
 const route = useRoute()
@@ -59,6 +59,11 @@ const router = useRouter()
 const session = useSessionStore()
 const bgm = useBgm()
 const { message: toast, flash } = useToast(2600)
+const soundSettingsOpen = ref(false)
+const gameMusicPercent = computed(() => Math.round(bgm.gameMusic.value * 100))
+function setGameMusicVolume(e: Event) {
+  bgm.setGameMusic(Number((e.target as HTMLInputElement).value) / 100)
+}
 
 // LiveKit 실시간 방 + 로컬 카메라 캡처. 프리뷰·모션 인식 게임 입력은 항상 로컬 캡처 스트림을
 // 쓰고, LiveKit에는 복제본을 발행한다 — "카메라 끄기"는 발행만 끊어서 다른 사람에게만 꺼져
@@ -74,13 +79,26 @@ const decor = useDecoration()
 const decorSync = useDecorSync(lk, () => decor.sprites.value)
 const showDecorInventory = ref(false)
 const decorBusyItemId = ref<number | null>(null)
+const selectedDecorId = ref<number | null>(null)
 
 async function toggleDecorItem(item: InventoryItem) {
   if (decorBusyItemId.value !== null) return
   decorBusyItemId.value = item.itemId
-  const ok = await decor.setEquipped(item.itemId, !item.equipped)
+  const equipped = !item.equipped
+  const ok = await decor.setEquipped(item.itemId, equipped)
+  if (ok) selectedDecorId.value = equipped ? item.itemId : null
   if (!ok && decor.error.value) flash(decor.error.value)
   decorBusyItemId.value = null
+}
+
+async function removeDecorSticker(itemId: number) {
+  if (await decor.setEquipped(itemId, false)) selectedDecorId.value = null
+  else if (decor.error.value) flash(decor.error.value)
+}
+
+async function saveGameDecor() {
+  if (await decor.save()) flash('카메라 꾸미기를 저장했어요')
+  else if (decor.error.value) flash(decor.error.value)
 }
 
 /** 발행에 쓸 카메라 트랙 — 원본 캡처 그대로(발행 시점에 복제된다). */
@@ -250,6 +268,7 @@ async function confirmKick() {
   }
 }
 const selfVideoAspect = ref(8 / 5)
+const selfFramePixels = computed(() => ({ w: 640, h: 640 / selfVideoAspect.value }))
 function syncSelfVideoAspect() {
   const video = selfVideoEl.value
   if (!video?.videoWidth || !video.videoHeight) return
@@ -1488,7 +1507,7 @@ async function addFriend(target: ParticipantView | null) {
   }
 }
 
-const startLabel = computed(() => (amRoomHost.value ? 'START' : '제안'))
+const startLabel = computed(() => (amRoomHost.value ? 'START' : 'GAME'))
 /**
  * 게임 선택 버튼 잠금 — 서버 연결 중에는 방장 여부를 알기 전까지 잠근다(제안 오발신 방지).
  * STOMP 미연결(백엔드 미연동 로컬 데모)에서는 상세 조회가 영영 안 끝나므로 잠그지 않는다 —
@@ -1509,31 +1528,40 @@ const startHint = computed(() =>
 <template>
   <div class="room-shell">
     <!-- 상단 바 -->
-    <AppHeader />
-
     <div class="room-ribbon">
-      <span class="px-kicker"><i /> {{ roomTitle ?? 'LIVE PARTY ROOM' }}</span>
+      <div class="px-kicker"><button type="button" class="room-logo-btn" title="방 나가기" @click="leave"><BrandLogo class="room-brand" title="" size="sm" /></button>{{ roomTitle ?? 'LIVE PARTY ROOM' }}</div>
+
+      <div class="ribbon-sound">
+        <button class="ribbon-sound-btn" :class="{ active: soundSettingsOpen }" @click="soundSettingsOpen = !soundSettingsOpen">소리 설정</button>
+        <div v-if="soundSettingsOpen" class="sound-settings-pop">
+          <label>
+            <span>게임 음악</span>
+            <input type="range" min="0" max="100" step="5" :value="gameMusicPercent" aria-label="게임 음악 볼륨" @input="setGameMusicVolume" />
+          </label>
+        </div>
+      </div>
+      <span class="ribbon-divider" aria-hidden="true">|</span>
 
       <!-- 유저 신고 (방 코드 왼쪽) -->
       <button class="ribbon-report" title="유저 신고" @click="openUserReport">
-        <ReportIcon :width="16" :height="20" />
+        신고
       </button>
 
       <!-- 친구 초대 (-100) — 참가자 누구나, 대기실에서만. 게임 중엔 서버도 409로 거부한다. -->
+      <span v-if="!activeGame" class="ribbon-divider" aria-hidden="true">|</span>
       <button v-if="!activeGame" class="ribbon-invite" title="친구 초대" @click="openInvite">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">
-          <circle cx="9" cy="8" r="3.6" /><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" /><path d="M18.5 8v6M15.5 11h6" />
-        </svg>
+        친구 초대
       </button>
 
       <!-- 방 설정 (-130) — 방장만, 대기실에서만. 게임 중엔 서버도 거부하므로 버튼을 숨긴다. -->
+      <span v-if="selfIsHost && !activeGame" class="ribbon-divider" aria-hidden="true">|</span>
       <button
         v-if="selfIsHost && !activeGame"
         class="ribbon-settings"
         title="방 설정"
         @click="openSettings"
       >
-        ⚙
+        설정
       </button>
 
       <!-- 방 코드 (하단 바에서 이동) -->
@@ -1601,10 +1629,18 @@ const startHint = computed(() =>
                fit은 <video>의 object-fit과 같아야 영상 안 같은 자리에 얹힌다. -->
           <StickerOverlay
             v-if="selfCamOn"
+            class="self-sticker-layer"
             :sprites="decor.sprites.value"
             mirrored
+            :editable="showDecorInventory"
             fit="contain"
             :frame-aspect="selfVideoAspect"
+            :frame-pixels="selfFramePixels"
+            :selected-id="selectedDecorId"
+            @move="decor.move"
+            @scale="decor.setScale"
+            @remove="removeDecorSticker"
+            @select="selectedDecorId = $event"
           />
           <section v-if="showDecorInventory" class="game-decor-inventory" aria-label="카메라 꾸미기 인벤토리">
             <div class="game-decor-head">
@@ -1627,6 +1663,9 @@ const startHint = computed(() =>
               </button>
             </div>
             <p v-else class="game-decor-empty">{{ decor.loading.value ? '불러오는 중…' : '보유한 꾸미기 아이템이 없어요' }}</p>
+            <button v-if="decor.placements.value.length" type="button" class="game-decor-save" :disabled="decor.saving.value" @click="saveGameDecor">
+              {{ decor.saving.value ? '저장 중…' : decor.dirty.value ? '꾸미기 저장 *' : '꾸미기 저장' }}
+            </button>
           </section>
           <button
             type="button"
@@ -1834,28 +1873,19 @@ const startHint = computed(() =>
     <!-- 하단 바 -->
     <footer class="room-footer">
       <div class="controls">
-        <button class="ctrl" :class="{ off: !speakerOn }" title="스피커" @click="speakerOn = !speakerOn">
+        <button class="ctrl" :class="{ on: speakerOn, off: !speakerOn }" title="스피커" @click="speakerOn = !speakerOn">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 9a3.5 3.5 0 010 6" /></svg>
         </button>
-        <button class="ctrl" :class="{ off: !selfMicOn }" title="마이크" @click="toggleMic">
+        <button class="ctrl" :class="{ on: selfMicOn, off: !selfMicOn }" title="마이크" @click="toggleMic">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="9" y="3" width="6" height="11" /><path d="M5 11a7 7 0 0014 0M12 18v3" /></svg>
         </button>
-        <button class="ctrl" :class="{ on: selfCamOn }" title="카메라" @click="toggleCam">
+        <button class="ctrl" :class="{ on: selfCamOn, off: !selfCamOn }" title="카메라" @click="toggleCam">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="2" y="6" width="14" height="12" /><path d="M16 10l6-4v12l-6-4" /></svg>
-        </button>
-        <button
-          class="px start-btn"
-          :class="{ suggest: !amRoomHost }"
-          :disabled="pickerLocked || (detailLoaded && !amRoomHost && suggestCooldown)"
-          :title="startHint"
-          @click="openPicker"
-        >
-          <span class="play-ico">▶</span>
-          <span class="start-title">{{ startLabel }}</span>
         </button>
       </div>
 
       <!-- 채팅 독 -->
+      <div class="footer-chat-actions">
       <div class="chat-dock">
         <div class="chat-log">
           <div class="chat-log-list">
@@ -1926,6 +1956,17 @@ const startHint = computed(() =>
             </div>
           </div>
         </template>
+      </div>
+      <button
+        class="px start-btn footer-start-btn"
+        :class="{ suggest: !amRoomHost }"
+        :disabled="pickerLocked || (detailLoaded && !amRoomHost && suggestCooldown)"
+        :title="startHint"
+        @click="openPicker"
+      >
+        <span class="play-ico">▶</span>
+        <span class="start-title">{{ startLabel }}</span>
+      </button>
       </div>
 
       <div class="footer-right">
@@ -2068,6 +2109,7 @@ const startHint = computed(() =>
 
     <!-- 유저 신고 (방 코드 왼쪽 버튼) -->
     <PixelModal v-if="userReportOpen" variant="lobby" @close="closeUserReport">
+      <button type="button" class="report-close" aria-label="유저 신고 닫기" @click="closeUserReport">×</button>
       <h3 class="report-title">🚩 유저 신고</h3>
       <p class="report-field-label">신고할 유저를 선택해 주세요</p>
       <ul class="report-reasons">
@@ -2100,8 +2142,7 @@ const startHint = computed(() =>
         maxlength="500"
         rows="4"
       />
-      <div class="leave-actions">
-        <PixelButton block @click="closeUserReport">취소</PixelButton>
+      <div class="leave-actions user-report-actions">
         <PixelButton
           variant="primary"
           block
@@ -2171,7 +2212,7 @@ const startHint = computed(() =>
   border: 3px solid #925c47;
   border-radius: 7px;
   box-shadow: inset 2px 2px 0 rgba(255, 255, 255, .42), inset -2px -3px 0 rgba(120, 58, 47, .18), 3px 3px 0 #a66b50;
-  font-size: 12px;
+  font-size: 19px;
 }
 .leave-confirm-actions :deep(.leave-cancel) { background: #fff7e5; color: #4b372b; }
 .leave-confirm-actions :deep(.leave-submit) { background: #ef7775; color: #fff; }
@@ -2251,6 +2292,8 @@ const startHint = computed(() =>
 .game-decor-item:disabled:not(.on) { opacity: .45; }
 .game-decor-item img { width: 100%; height: 100%; object-fit: contain; }
 .game-decor-empty { margin: 0; padding: 18px 10px; color: #8f7868; font-size: 10px; text-align: center; }
+.game-decor-save { width: calc(100% - 20px); height: 30px; margin: 0 10px 10px; border: 2px solid #9a694d; border-radius: 6px; background: #edc66e; color: #543a29; font-size: 10px; font-weight: 700; }
+.game-decor-save:disabled { opacity: .7; }
 .cam-off { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; background: #f3ead2; color: #a99f86; }
 .cam-off { background: linear-gradient(135deg, var(--c-mint-soft), #fff0c4); }
 .cam-on-btn { padding: 10px 16px; border: 3px solid var(--c-ink-soft); border-radius: 11px; background: var(--c-mint); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
@@ -2363,7 +2406,8 @@ const startHint = computed(() =>
 .ctrl.on { background: #d9f2cf; color: #5cbf4a; }
 .ctrl.off { background: #fbdbe0; color: #e85d6e; }
 
-.chat-dock { grid-row: 1; grid-column: 1; position: relative; justify-self: start; width: 100%; min-width: 0; max-width: 420px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; height: 52px; background: #fff; border: 3px solid var(--c-ink-soft); border-radius: 14px; box-shadow: var(--shadow-sm); }
+.footer-chat-actions { grid-row: 1; grid-column: 1; display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; }
+.chat-dock { position: relative; flex: 0 1 420px; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; height: 52px; background: #fff; border: 3px solid var(--c-ink-soft); border-radius: 14px; box-shadow: var(--shadow-sm); }
 .chat-log {
   position: absolute; bottom: 62px; left: 0; width: 100%;
   display: flex; flex-direction: column; gap: 8px;
@@ -2389,6 +2433,9 @@ const startHint = computed(() =>
 .bubble-report:hover { opacity: 0.75; }
 
 /* 신고 모달 */
+:deep(.modal.lobby) { position: relative; }
+.report-close { position: absolute; top: 21px; right: 22px; display: grid; width: 24px; height: 24px; place-items: center; padding: 0; border: 0; background: transparent; color: #79553d; font-size: 23px; line-height: 1; }
+.report-close:hover { color: #c15d5a; }
 .report-title { margin: 0 0 14px; color: #3d2c22; font-family: var(--font-pixel); font-size: 20px; font-weight: 400; }.report-title::before { display: block; margin-bottom: 5px; color: #b17b51; content: 'REPORT'; font-family: inherit; font-size: 9px; letter-spacing: 1px; }
 .report-target { margin-bottom: 14px; padding: 12px; border: 2px solid #dec59e; border-radius: 7px; background: #fff7e8; }
 .report-target-name { font-size: 11px; font-weight: 800; color: #8c5a42; }
@@ -2404,6 +2451,7 @@ const startHint = computed(() =>
 }
 .report-field-label { margin: 14px 0 0; font-size: 10px; color: var(--c-muted); }
 .report-field-label:first-of-type { margin-top: 0; }
+.report-field-label + .report-reasons { margin-top: 12px; }
 .report-textarea {
   width: 100%; margin: 8px 0 18px; padding: 8px 10px;
   border: 2px solid var(--c-ink-soft); border-radius: 9px;
@@ -2411,6 +2459,7 @@ const startHint = computed(() =>
   font-family: inherit; resize: vertical;
 }
 .report-title ~ .leave-actions { margin-top: 20px; }.report-title ~ .leave-actions :deep(.px-btn) { border: 2px solid #9a674b; border-radius: 7px; box-shadow: 3px 3px 0 #c6a47d; font-size: 14px; }.report-title ~ .leave-actions :deep(.v-secondary) { background: #fffaf0; color: #6e5646; }.report-title ~ .leave-actions :deep(.v-primary) { background: #e97872; color: #fff; }
+.user-report-actions { grid-template-columns: 1fr; margin-top: 8px !important; }
 .chat-dock input { position: relative; z-index: 47; flex: 1; min-width: 0; margin-left: -5px; background: transparent; border: none; outline: none; color: var(--c-ink-soft); font-size: 15px; }
 .chat-count { flex: none; font-size: 9px; color: #a99f86; }
 .chat-count.over { color: var(--c-coral); }
@@ -2485,27 +2534,50 @@ const startHint = computed(() =>
 }
 
 .room-ribbon {
-  height: 68px;
+  height: 80px;
   padding: 0 42px;
   border-bottom: 3px solid var(--room-wood);
   background: rgba(255, 250, 240, .94);
   box-shadow: 0 4px 0 rgba(217, 183, 127, .2);
 }
 .room-ribbon .px-kicker {
-  padding: 9px 13px;
-  border: 2px solid #b78d5d;
-  border-radius: 7px;
-  background: #d7e7ad;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--room-ink);
-  box-shadow: 2px 2px 0 #e2d0b5;
+  box-shadow: none;
+  font-size: 32px;
 }
 .room-ribbon .px-kicker i { background: #ef7775; }
-.ribbon-report, .ribbon-invite, .ribbon-settings {
+.room-brand { margin-right: 10px; }
+.room-brand :deep(.mark) { width: 48px; height: 48px; font-size: 24px; transform: none; box-shadow: none; }
+.room-logo-btn { display: flex; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.ribbon-report, .ribbon-invite, .ribbon-settings, .ribbon-sound-btn {
+  width: auto;
+  height: 22px;
+  min-width: 32px;
+  padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+  color: var(--room-ink);
+  font-family: var(--font-pixel);
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
 }
+.ribbon-invite { min-width: 58px; }
+.ribbon-sound { position: relative; }
+.ribbon-sound-btn { min-width: 58px; cursor: pointer; }
+.ribbon-sound-btn.active, .ribbon-sound-btn:hover { color: #5b8d45; }
+.sound-settings-pop { position: absolute; z-index: 30; top: 30px; right: 0; width: 188px; padding: 12px; border: 2px solid #8d6048; border-radius: 9px; background: #fff8e9; color: #5a3e30; box-shadow: 3px 3px 0 rgba(92, 63, 44, .22); }
+.sound-settings-pop label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; font-size: 11px; }
+.sound-settings-pop input { width: 100%; min-width: 0; accent-color: #6c9b54; }
 .ribbon-report:hover { background: transparent; color: #c15d5a; }
 .ribbon-invite:hover, .ribbon-settings:hover { background: transparent; color: #5b8d45; }
 /* 음악 버튼도 이웃과 같은 아이콘 형태로 — 컴포넌트 자체 스타일은 박스라 여기서 벗긴다.
@@ -2533,25 +2605,25 @@ const startHint = computed(() =>
   background: transparent;
   box-shadow: none;
 }
-.code-cap { color: var(--room-muted); font-size: 8px; }
-.code-val { color: #bd6d45; font-size: 14px; }
+.code-cap { color: var(--room-muted); font-size: 9px; }
+.code-val { color: #bd6d45; font-size: 18px; }
 .code-line { gap: 4px; }
 .copy { border: 0; border-radius: 0; background: transparent; color: var(--room-ink); }
 .room-ribbon .px-kicker { order: 0; }
 .code-box { position: relative; order: 1; }
+.code-box { margin-right: auto; }
+.ribbon-report { margin-left: 0; }
 /* 음악 버튼도 버튼 그룹(order 2)에 넣는다 — 기본 order 0으로 두면 방 코드 앞으로 튄다.
    같은 order 안에서는 DOM 순서를 따르므로 신고 버튼 왼쪽에 선다. */
-.ribbon-report, .ribbon-invite, .ribbon-settings, .ribbon-music-wrap { position: relative; order: 2; }
-.ribbon-report::before, .ribbon-invite::before, .ribbon-settings::before, .ribbon-music-wrap::before {
-  position: absolute;
-  top: 50%;
-  left: -12px;
+.ribbon-report, .ribbon-invite, .ribbon-settings, .ribbon-music-wrap, .ribbon-sound, .ribbon-divider { position: relative; order: 2; }
+.ribbon-divider {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
   color: #b78d5d;
-  content: '|';
   font-size: 12px;
   font-weight: 300;
   line-height: 1;
-  transform: translateY(-50%);
 }
 
 .start-btn {
@@ -2568,6 +2640,8 @@ const startHint = computed(() =>
   padding: 0 16px;
   white-space: nowrap;
 }
+.footer-start-btn, .footer-start-btn.suggest { position: static; flex: none; height: 50px; padding: 0 12px; border: 3px solid #4e67a3; border-radius: 7px; background: #7195df; color: #fff; box-shadow: 3px 3px 0 #4e67a3; white-space: nowrap; transform: none; }
+.footer-start-btn .start-title { font-size: 10px; }
 
 .room-main { gap: 18px; padding: clamp(20px, 2vw, 26px) clamp(28px, 3.6vw, 46px); }
 .cam-stage {
@@ -2746,11 +2820,13 @@ const startHint = computed(() =>
 .ctrl { background: #fffdf7; color: var(--room-ink); }
 .ctrl.on { background: #d7e7ad; color: #5b8d45; }
 .ctrl.off { background: #ffe2e3; color: #d45c63; }
+.ctrl, .ctrl.on, .ctrl.off { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .chat-dock { background: #fffdf7; }
 .chat-dock input { color: var(--room-ink); }
 .chat-send { margin-left: -5px; border: 0; border-radius: 0; background: transparent; color: #bd6d45; box-shadow: none; }.send-icon { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-linecap: square; stroke-linejoin: round; stroke-width: 2.4; transform: translate(1px, 1px); }.chat-send:hover { background: transparent; color: #8e4d32; transform: translateY(-1px); }
-.chat-expand { border: 0; border-radius: 0; background: transparent; color: #a9836c; box-shadow: none; }
-.chat-expand.active { background: transparent; color: #6c9b54; }
+.chat-expand { margin-left: -7px; border: 0; border-radius: 0; background: transparent; color: #bd6d45; box-shadow: none; }
+.chat-expand.active { background: transparent; color: #bd6d45; }
+.chat-expand:hover { color: #8e4d32; }
 .bubble { border-color: #dfc9a6; border-radius: 9px; background: rgba(255, 253, 247, .78); box-shadow: 2px 2px 0 rgba(226, 208, 181, .65); }
 .bubble.me { background: rgba(255, 240, 185, .78); }
 .bubble.suggest { background: rgba(216, 244, 236, .78); }
@@ -2760,7 +2836,7 @@ const startHint = computed(() =>
 .chat-full { border-color: var(--room-wood); border-radius: 12px; background: rgba(255, 253, 247, .95); box-shadow: 4px 4px 0 var(--room-shadow); }
 .chat-full-head { color: var(--room-ink); border-bottom-color: #ead9bd; }
 .chat-full-close { border-color: #b78d5d; border-radius: 5px; background: #fff7e5; color: var(--room-ink); }
-.leave { border-color: #925c47; border-radius: 7px; background: #ef7775; box-shadow: 3px 3px 0 #a66b50; }
+.leave { border-color: #925c47; border-radius: 7px; background: #ef7775; box-shadow: 3px 3px 0 #a66b50; font-size: 10px; font-weight: 700; }
 
 /* 비방장 중간 이탈 후 게임 복귀 버튼(-164) — 셀프 타일 우상단 */
 .game-rejoin {
