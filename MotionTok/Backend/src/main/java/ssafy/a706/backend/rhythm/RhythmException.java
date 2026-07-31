@@ -44,6 +44,15 @@ public class RhythmException extends RuntimeException {
         return new RhythmException("RHYTHM_GAME_NOT_FOUND", "게임을 찾을 수 없어요.");
     }
 
+    /**
+     * 관리자가 카탈로그에서 닫은 상태(games.is_active=false)로 시작을 시도했을 때.
+     * gameNotFound와 나누는 이유 — 다시 열리면 플레이되는 게임이라 "찾을 수 없다"는 거짓말이고,
+     * 방장이 자기 방이 고장 났다고 읽는다.
+     */
+    public static RhythmException gameClosed() {
+        return new RhythmException("RHYTHM_GAME_CLOSED", "지금은 플레이할 수 없는 게임이에요.");
+    }
+
     public static RhythmException unauthorized() {
         return new RhythmException("RHYTHM_UNAUTHORIZED", "인증이 필요해요.");
     }

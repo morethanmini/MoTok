@@ -205,22 +205,54 @@ class GameQueryServiceTest {
                 .myRank()).isNull();
     }
 
+    /**
+     * 관리자가 닫은 게임(-106)은 목록에서 <b>사라지지 않는다</b>. 지워 버리면 어제까지 있던 게임이
+     * 흔적 없이 없어져 사용자가 이유를 알 수 없다 — 대신 playable=false로 잠긴 카드가 된다.
+     */
     @Test
-    void 목록은_활성_게임만_담고_인원_큐레이션을_계산한다() {
-        Game active = Game.builder()
+    void 목록은_닫힌_게임도_담고_playable로_구분한다() {
+        Game open = Game.builder()
                 .id(1L).name("핑거 스타").mode("VERSUS").minPlayers(1).maxPlayers(8)
                 .roundDurationSec(30).countdownSec(3).active(true).build();
-        Game inactive = Game.builder()
-                .id(2L).name("숨김 게임").minPlayers(1).maxPlayers(8)
+        Game closed = Game.builder()
+                .id(2L).name("점검 중 게임").minPlayers(1).maxPlayers(8)
                 .roundDurationSec(30).countdownSec(3).active(false).build();
-        when(gameRepository.findAll()).thenReturn(List.of(active, inactive));
+        when(gameRepository.findAll()).thenReturn(List.of(open, closed));
 
         List<GameSummaryResponse> all = service.list(null);
-        assertThat(all).hasSize(1);
+        assertThat(all).hasSize(2);
         assertThat(all.get(0).name()).isEqualTo("핑거 스타");
         assertThat(all.get(0).playable()).isTrue();
+        assertThat(all.get(0).active()).isTrue();
+        // 닫힌 게임은 인원과 무관하게 시작할 수 없다 — active와 playable이 함께 false여야
+        // 화면이 "점검 중"과 "인원 부족"을 구분해 안내할 수 있다.
+        assertThat(all.get(1).name()).isEqualTo("점검 중 게임");
+        assertThat(all.get(1).playable()).isFalse();
+        assertThat(all.get(1).active()).isFalse();
 
         List<GameSummaryResponse> tooMany = service.list(10);
         assertThat(tooMany.get(0).playable()).isFalse(); // 정원 8 초과 인원
+        assertThat(tooMany.get(0).active()).isTrue();    // 닫힌 건 아니다
+    }
+
+    /** 목록에 남아 눌릴 수 있는 카드라 상세도 열려야 한다 — 404면 화면이 앞뒤가 안 맞는다. */
+    @Test
+    void 닫힌_게임도_상세는_조회된다() {
+        Game closed = Game.builder()
+                .id(2L).name("점검 중 게임").minPlayers(1).maxPlayers(8)
+                .roundDurationSec(30).countdownSec(3).active(false).build();
+        when(gameRepository.findById(2L)).thenReturn(Optional.of(closed));
+
+        assertThat(service.detail(2L).name()).isEqualTo("점검 중 게임");
+    }
+
+    @Test
+    void 없는_게임_상세는_GAME_NOT_FOUND() {
+        when(gameRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.detail(99L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.GAME_NOT_FOUND);
     }
 }

@@ -16,11 +16,25 @@ import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import PixelModal from '@/components/common/PixelModal.vue'
 import { useToast } from '@/composables/useToast'
+import { useBgm } from '@/composables/useBgm'
+import { useSpeakerGain } from '@/composables/useSpeakerGain'
 import { containsProfanity } from '@/utils/profanity'
 
 const router = useRouter()
 const session = useSessionStore()
 const { message: toast, flash } = useToast()
+
+// ── 소리 ─────────────────────────────────────────────────────
+// 셋 다 50%가 기본이고 100%가 2배다. 로비·게임 음악은 오디오 요소 볼륨을(기준 레벨이 낮아
+// 2배도 상한 1.0에 안 닿는다), 상대 소리는 Web Audio 게인을 쓴다(요소 볼륨만으론 1.0이 상한).
+// 마이크는 발행 경로를 교정해야 해서 이번 범위에 없다.
+const { lobbyMusic, gameMusic, setLobbyMusic, setGameMusic } = useBgm()
+const { speakerLevel, setSpeakerLevel } = useSpeakerGain()
+const soundSliders = computed(() => [
+  { name: '로비 음악', percent: Math.round(lobbyMusic.value * 100), set: setLobbyMusic },
+  { name: '게임 음악', percent: Math.round(gameMusic.value * 100), set: setGameMusic },
+  { name: '상대 소리', percent: Math.round(speakerLevel.value * 100), set: setSpeakerLevel },
+])
 
 const nickname = ref('')
 const currentPassword = ref('')
@@ -284,6 +298,23 @@ onMounted(() => {
         <PixelButton variant="primary" block @click="savePassword">변경</PixelButton>
       </PixelCard>
 
+      <PixelCard title="소리">
+        <label v-for="s in soundSliders" :key="s.name" class="sound-row">
+          <span class="sound-name">{{ s.name }}</span>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="5"
+            :value="s.percent"
+            :aria-label="s.name"
+            @input="s.set(Number(($event.target as HTMLInputElement).value) / 100)"
+          />
+          <span class="sound-val" :class="{ boost: s.percent > 50 }">{{ s.percent }}%</span>
+        </label>
+        <p class="sound-hint">50%가 기본이고, 100%까지 올리면 두 배로 커져요.</p>
+      </PixelCard>
+
       <PixelButton variant="primary" block @click="openWithdraw">회원 탈퇴</PixelButton>
     </div>
     <PixelToast :message="toast" />
@@ -339,6 +370,21 @@ onMounted(() => {
 .stack { display: grid; gap: 16px; }
 .settings-page { background: #fff8e9; }.settings-page :deep(.app-page) { padding-top: 34px; }.settings-titlebar { margin: 0 auto 18px; padding: 0 6px; }.settings-titlebar p { margin: 0 0 8px; color: #a8704f; font-size: 9px; letter-spacing: 1px; }.settings-titlebar h1 { margin: 0; color: #4b3429; font-family: var(--font-pixel); font-size: 22px; font-weight: 400; }.settings-titlebar span { display: block; margin-top: 9px; color: #856957; font-size: 10px; }.stack :deep(.card) { border: 3px solid #9a6b4f; border-radius: 13px; background: #fffaf0; box-shadow: 5px 5px 0 #d5b28c; }.stack :deep(.card-head) { padding-bottom: 11px; border-bottom: 2px solid #ead5b8; }.stack :deep(.card-head h2) { color: #4b3429; font-size: 17px; }
 .field { display: block; margin-bottom: 14px; font-size: 9px; font-weight: 700; }
+.sound-row {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-size: 9px;
+  font-weight: 700;
+}
+.sound-name { color: #664737; }
+.sound-row input { width: 100%; min-width: 0; margin: 0; accent-color: #6c9b54; }
+.sound-val { color: #8a7361; text-align: right; }
+/* 기본(50%)을 넘긴 구간은 증폭이라 눈에 띄게 — 되돌릴 기준을 알 수 있게 한다 */
+.sound-val.boost { color: #c07a3e; }
+.sound-hint { margin: 4px 0 0; color: #9b8471; font-size: 9px; line-height: 1.6; }
 .field input {
   width: 100%; height: 44px; margin-top: 6px; padding: 0 12px;
   border: 2px solid var(--c-ink); border-radius: var(--radius-sm); background: #fff; outline: 0;

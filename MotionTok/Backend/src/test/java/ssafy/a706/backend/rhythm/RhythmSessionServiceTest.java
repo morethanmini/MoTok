@@ -12,6 +12,9 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
 import ssafy.a706.backend.game.GameSettledEvent;
+import ssafy.a706.backend.game.PointCalculator;
+import ssafy.a706.backend.game.entity.Game;
+import ssafy.a706.backend.game.repository.GameRepository;
 import ssafy.a706.backend.liveroom.model.LiveRoomMemberValue;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
 import ssafy.a706.backend.liveroom.service.LiveRoomService;
@@ -49,6 +52,8 @@ class RhythmSessionServiceTest {
     @Mock RoomMembershipReader membershipReader;
     @Mock LiveRoomRepository liveRoomRepository;
     @Mock RhythmSessionRepository sessionRepository;
+    /** 카탈로그 노출 제어(-106) — 관리자가 닫은 게임은 리듬 채널로도 시작되지 않아야 한다 */
+    @Mock GameRepository gameRepository;
     /** 교차 중복 시작 차단(-164) — 기본 모킹은 "공용 게임 세션 없음"이라 기존 시나리오 불변 */
     @Mock ssafy.a706.backend.game.GameSessionService gameSessionService;
     @Mock SimpMessagingTemplate messagingTemplate;
@@ -78,6 +83,16 @@ class RhythmSessionServiceTest {
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.empty());
         when(rhythmTaskScheduler.schedule(any(Runnable.class), any(java.time.Instant.class)))
                 .thenReturn(mock(ScheduledFuture.class));
+        givenGameOpen(true);
+    }
+
+    /** 카탈로그 노출 제어(-106) — 전용 채널도 games 테이블을 본다. */
+    private void givenGameOpen(boolean active) {
+        when(gameRepository.findById(RhythmGameSeeder.GAME_ID)).thenReturn(Optional.of(Game.builder()
+                .id(RhythmGameSeeder.GAME_ID).name("캐치캐치리듬")
+                .roundDurationSec(RhythmGameSeeder.ROUND_DURATION_SEC)
+                .countdownSec(RhythmGameSeeder.COUNTDOWN_SEC)
+                .minPlayers(1).maxPlayers(8).active(active).build()));
     }
 
     private RhythmSession playingSession() {
@@ -164,6 +179,23 @@ class RhythmSessionServiceTest {
         assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("EASY", "catch"), host))
                 .isInstanceOf(RhythmException.class)
                 .hasFieldOrPropertyWithValue("code", "RHYTHM_ALREADY_ACTIVE");
+    }
+
+    /**
+     * 전용 채널이라 games 테이블을 안 보고 있었다 — 그대로 두면 관리자가 캐치캐치리듬을 닫아도
+     * 리듬만 계속 시작된다(공용 게임은 GameSessionService가 막는다).
+     */
+    @Test
+    void 관리자가_닫은_게임이면_리듬도_시작할_수_없다() {
+        givenRoomWithHost();
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.empty());
+        givenGameOpen(false);
+
+        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch"), host))
+                .isInstanceOf(RhythmException.class)
+                .hasFieldOrPropertyWithValue("code", "RHYTHM_GAME_CLOSED");
+        verify(sessionRepository, never()).saveSession(anyString(), any(RhythmSession.class));
+        verify(liveRoomService, never()).changeStatus(anyString(), anyString());
     }
 
     // ── 진행·제출 ─────────────────────────────────────────
@@ -274,11 +306,27 @@ class RhythmSessionServiceTest {
 
     @Test
     void 포인트는_실력과_순위를_비슷한_무게로_준다() {
-        // HARD 전퍼펙트(~19,000) 8인 1등
-        assertThat(RhythmPointCalculator.calc(1, 19_000, 8)).isEqualTo(48 + 70);
-        // 꼴찌는 순위 보상 없음
+        // HARD 전퍼펙트(~19,000) 8인 1등 — 실력 48 대 순위 42
+        assertThat(RhythmPointCalculator.calc(1, 19_000, 8)).isEqualTo(48 + 42);
+        // 꼴찌는 순위 보상 없음 — 실력분만
         assertThat(RhythmPointCalculator.calc(8, 19_000, 8)).isEqualTo(48);
+        // 중간 순위 — 실력 + 순위
+        assertThat(RhythmPointCalculator.calc(4, 8_000, 8)).isEqualTo(20 + 24);
         // 미제출 0점
         assertThat(RhythmPointCalculator.calc(8, 0, 8)).isZero();
+    }
+
+    @Test
+    void 정상_최고_기록은_상한에_걸리지_않는다() {
+        // 8인 1등 전퍼펙트 90 < 상한 100 — 상한이 정상 플레이를 자르면 계수를 다시 잡아야 한다
+        assertThat(RhythmPointCalculator.calc(1, 19_000, 8))
+                .isLessThan(PointCalculator.MAX_PER_ROUND);
+    }
+
+    @Test
+    void 점수를_위조하면_상한에서_막힌다() {
+        // 클램프 상한(91,200)까지 올리면 실력분이 228이 되지만 지급은 상한까지만
+        assertThat(RhythmPointCalculator.calc(1, 91_200, 8))
+                .isEqualTo(PointCalculator.MAX_PER_ROUND);
     }
 }

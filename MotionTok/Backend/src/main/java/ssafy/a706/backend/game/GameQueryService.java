@@ -9,7 +9,6 @@ import ssafy.a706.backend.game.dto.GameDetailResponse;
 import ssafy.a706.backend.game.dto.GameSummaryResponse;
 import ssafy.a706.backend.game.dto.LeaderboardEntryResponse;
 import ssafy.a706.backend.game.dto.LeaderboardResponse;
-import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.entity.Leaderboard;
 import ssafy.a706.backend.game.model.LeaderboardMode;
 import ssafy.a706.backend.game.repository.GameRankRedisRepository;
@@ -50,20 +49,29 @@ public class GameQueryService {
     private final GameRankRedisRepository rankRepository;
     private final UserRepository userRepository;
 
-    /** GET /games — 활성 게임 목록. playerCount가 오면 인원 큐레이션 결과(playable)를 계산한다. */
+    /**
+     * GET /games — 게임 목록. playerCount가 오면 인원 조건도 playable에 반영한다.
+     *
+     * <p>관리자가 닫은 게임(is_active=false)을 <b>걸러내지 않는다</b> — 목록에서 지워 버리면
+     * 어제까지 있던 게임이 흔적 없이 사라져 사용자가 "왜 없어졌나"를 알 수 없다. 대신
+     * playable=false·active=false로 내려보내 화면이 잠긴 카드로 그리게 한다(-106).</p>
+     */
     @Transactional(readOnly = true)
     public List<GameSummaryResponse> list(Integer playerCount) {
         return gameRepository.findAll().stream()
-                .filter(Game::isActive)
                 .map(game -> GameSummaryResponse.of(game, playerCount))
                 .toList();
     }
 
-    /** GET /games/{gameId} — 게임 상세(규칙·조작 안내, -75). 없는 게임·비활성 게임은 404. */
+    /**
+     * GET /games/{gameId} — 게임 상세(규칙·조작 안내, -75). 없는 게임은 404.
+     *
+     * <p>닫힌 게임도 내려준다 — 목록에 남아 있어 눌릴 수 있는 카드라 상세가 404면 화면이
+     * 앞뒤가 안 맞는다. 시작을 막는 건 세션 시작 경로의 일이다.</p>
+     */
     @Transactional(readOnly = true)
     public GameDetailResponse detail(long gameId) {
         return gameRepository.findById(gameId)
-                .filter(Game::isActive)
                 .map(GameDetailResponse::of)
                 .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
     }

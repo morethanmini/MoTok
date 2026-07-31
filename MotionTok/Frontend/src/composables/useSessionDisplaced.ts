@@ -9,27 +9,11 @@
  * (로비도 같은 큐를 구독하지만 초대·친구 요청만 본다. subscribeGlobal은 목적지 하나에
  * 여러 구독자를 허용하므로 서로를 밀어내지 않는다.)
  */
-import { emitSessionExpired } from '@/api/authEvents'
-import { readAnyAccessClaims } from '@/api/token'
+import { emitSessionExpired, isOwnLoginRecent } from '@/api/authEvents'
 import type { UserNotification } from '@/api/types'
 import { isMemberSession, subscribeGlobal } from './useGlobalStomp'
 
 const NOTIFICATIONS_QUEUE = '/user/queue/notifications'
-
-/**
- * 내 액세스 토큰이 방금 발급된 것이라면, 나를 밀어낸 로그인이 곧 나다.
- *
- * 이미 로그인한 채로 같은 탭에서 다시 로그인하면(로그인 화면으로 되돌아가 재로그인) 서버는
- * 아직 열려 있는 내 소켓에도 알림을 보낸다. 그대로 받으면 로그인하자마자 "다른 곳에서
- * 로그인했어요"를 보고 튕기는 자기 발등 찍기가 된다. 방금 받은 토큰이면 무시한다.
- */
-const OWN_LOGIN_WINDOW_MS = 10_000
-
-function displacedByMyself(): boolean {
-  const issuedAt = readAnyAccessClaims()?.iat
-  if (typeof issuedAt !== 'number') return false
-  return Date.now() - issuedAt * 1000 < OWN_LOGIN_WINDOW_MS
-}
 
 export function useSessionDisplaced() {
   return subscribeGlobal(NOTIFICATIONS_QUEUE, (body) => {
@@ -38,7 +22,8 @@ export function useSessionDisplaced() {
     try {
       const notification = JSON.parse(body) as UserNotification
       if (notification.type !== 'SESSION_DISPLACED') return
-      if (displacedByMyself()) return
+      // 나를 밀어낸 로그인이 곧 나라면 무시한다 — 판단 근거는 authEvents가 갖고 있다.
+      if (isOwnLoginRecent()) return
       emitSessionExpired('displaced')
     } catch {
       // 형식 오류 프레임은 무시 — 같은 큐로 다른 도메인 알림도 흐른다.

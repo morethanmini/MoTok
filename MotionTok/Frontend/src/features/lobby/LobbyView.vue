@@ -348,18 +348,27 @@ useLobbyLive({
  * 초대 수락 (-100) — 초대에 실린 초대코드로 기존 입장 흐름을 탄다.
  * 초대받아 들어가는 경로라 비밀방이어도 비밀번호를 묻지 않는다(방 안 사람이 허락한 입장이다).
  *
- * 초대를 치우는 건 입장에 성공한 <b>뒤</b>다 — 먼저 지우면 그 사이 정원이 찼거나 게임이 시작돼
- * 입장이 막혔을 때 다시 눌러 볼 카드가 사라진다.
+ * <b>카드는 일회용</b>이다 — 참가든 거절이든 누른 순간 사라진다. 종전에는 입장이 실패하면
+ * 카드를 남겨 다시 눌러 볼 수 있게 했는데, 그러면 실패 사유마다 "남길 것/치울 것"을 따져야 하고
+ * (방이 사라진 초대는 영영 성공하지 못하면서 계속 남았다) 사용자도 카드가 언제 사라지는지 알 수 없다.
+ * 입장이 막혔으면 초대를 다시 받으면 된다 — 방 안에서 다시 부르는 건 한 번의 클릭이다.
+ *
+ * 입장 요청보다 치우기가 먼저다 — 응답을 기다렸다 지우면 그 사이 카드가 눌린 채 남아 있다.
+ * 서버 정리(DELETE)는 기다리지 않는다: 화면에서 사라지는 것이 이 동작의 본체다.
  */
 async function acceptInvitation(invitation: InvitationItem) {
-  let roomId: string
+  void dismissInvitation(invitation)
   try {
-    roomId = (await roomsApi.joinByInviteCode(invitation.inviteCode)).roomId
+    const { roomId } = await roomsApi.joinByInviteCode(invitation.inviteCode)
+    goDevice('친구의 게임', roomId)
   } catch (e) {
-    return flash(e instanceof ApiError ? e.message : '입장하지 못했어요')
+    // 카드가 이미 사라졌으므로 "다시 누르면 된다"가 성립하지 않는다 — 다음 행동까지 알려 준다.
+    // 강퇴만 예외다: 그 방이 유지되는 동안 어떤 경로로도 막히므로(LiveRoomService.kick)
+    // 다시 초대받아도 같은 실패다. 할 수 없는 일을 권하지 않는다.
+    const reason = e instanceof ApiError ? e.message : '방에 입장하지 못했어요'
+    const kicked = e instanceof ApiError && e.code === 'ROOM_KICKED'
+    flash(kicked ? reason : `${reason} · 초대를 다시 받아 주세요`)
   }
-  await dismissInvitation(invitation)
-  goDevice('친구의 게임', roomId)
 }
 
 /** 초대를 서버와 화면에서 치운다. 이미 만료됐으면 404가 나는데, 사라지는 게 목적이라 그대로 둔다. */

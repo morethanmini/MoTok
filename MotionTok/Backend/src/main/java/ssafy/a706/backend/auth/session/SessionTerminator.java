@@ -3,6 +3,7 @@ package ssafy.a706.backend.auth.session;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.web.socket.CloseStatus;
 import ssafy.a706.backend.auth.store.RefreshTokenStore;
 import ssafy.a706.backend.global.config.StompSessionRegistry;
 import ssafy.a706.backend.global.notification.UserNotification;
@@ -12,6 +13,7 @@ import ssafy.a706.backend.presence.service.PresenceService;
 import ssafy.a706.backend.video.provider.SfuParticipantEjector;
 
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -101,16 +103,61 @@ public class SessionTerminator {
      *       Refresh는 새 로그인이 덮어쓰고, 프레즌스를 지우면 친구 목록에 오프라인→온라인이
      *       한 번 깜빡이며 접속시간이 로그인마다 끊겨 정산된다.</li>
      * </ul>
-     * 방 상태 정리도 하지 않는다 — 소켓 종료가 {@link RoomPresenceTracker}를 거쳐 퇴장으로 이어진다.
+     *
+     * <p><b>방 퇴장은 {@link #terminate}와 똑같이 즉시 한다.</b> 종전에는 소켓 종료가
+     * {@link RoomPresenceTracker}의 유예 경로를 거쳐 알아서 퇴장으로 이어지도록 맡겼는데, 그 길은
+     * {@value #CLOSE_DELAY_SECONDS}초(소켓 종료) + 15초(재연결 유예) = <b>17초</b>가 걸린다.
+     * 밀려난 사람이 방장이었다면 그 17초 동안 아무에게도 시작 권한이 없고, SFU 강제 퇴장은 즉시라
+     * 남은 참가자 화면에서는 방장이 이미 사라진 상태다 — 프론트는 이걸 "방장이 아직 기기 점검 중"으로
+     * 읽어 10초 뒤 입장 대기 오버레이를 띄운다. 유예는 <b>돌아올 수 있는 세션</b>을 위한 것이고
+     * 밀려난 세션은 sid가 폐기돼 돌아오지 못하므로, 기다릴 이유가 없다.</p>
+     *
+     * <p><b>밀어낼 세션이 없으면 아무것도 하지 않는다.</b> 종전에는 이전 세션의 유무와 무관하게
+     * 알림을 쏘고 소켓을 닫았다. 그런데 알림·종료는 sid가 아니라 <b>userId로</b> 나가므로, 받는 쪽에는
+     * 밀려난 세션과 방금 로그인한 세션이 섞여 있다 — 첫 로그인인데도 "다른 곳에서 로그인했어요"가
+     * 뜨고 로그인하자마자 튕기는 자기 발등 찍기가 됐다(로컬에서 Refresh 토큰을 비우고 테스트할 때
+     * 특히 잘 재현된다: 밀어낼 세션이 하나도 없는데 알림만 나갔다).
+     * 이전 세션의 sid를 먼저 확인하고, 없으면 알릴 대상도 끊을 대상도 없으므로 그대로 돌아간다.</p>
+     *
+     * <p>sid를 기준으로 삼는 것은 "밀어낸다 = 그 세션을 식별해 폐기한다"이기 때문이다. sid 도입
+     * (v0.2.25) 이전에 열린 세션은 폐기할 수단이 없어 알림만 보내는 반쪽 처리가 되므로 대상에서 빠진다 —
+     * 그 세션들은 Refresh가 새 로그인에 덮여 죽고 Access는 만료를 기다린다(v0.2.24와 같은 동작).</p>
+     *
+     * <p><b>같은 브라우저의 재로그인은 밀어내기가 아니다.</b> 로그아웃 없이 탭·브라우저를 닫으면
+     * 서버측 세션은 Redis에 14일 그대로 남는다. 그 상태로 다시 로그인하면 이전 세션이 <b>있으므로</b>
+     * 위 null 가드에 걸리지 않아, 자기 자신을 "다른 곳"으로 오판하고 방금 로그인한 사람에게
+     * "다른 곳에서 로그인했어요"를 띄웠다. Refresh 쿠키의 Path가 {@code /api/auth}라 로그인 요청에도
+     * 옛 쿠키가 함께 실려 오므로, 그 sid가 이전 세션과 같으면 같은 브라우저임을 알 수 있다 —
+     * 이때는 조용히 폐기만 하고 알림·방 퇴장·소켓 종료를 건너뛴다.</p>
+     *
+     * @param presentedSid 로그인 요청에 실려 온 옛 Refresh 쿠키의 sid. 쿠키가 없거나 읽을 수 없으면 null
      */
-    public void displacePrevious(Long userId) {
-        sessionRevocationStore.revokeCurrent(userId, SessionRevocationStore.Reason.DISPLACED);
+    public void displacePrevious(Long userId, String presentedSid) {
+        String previousSid = refreshTokenStore.sessionId(userId);
+        if (previousSid == null) {
+            return;
+        }
+        if (previousSid.equals(presentedSid)) {
+            // 같은 브라우저가 옛 쿠키를 든 채 다시 로그인했다 — 끝난 것은 자기 세션이므로 사유도 로그아웃이다.
+            // DISPLACED로 찍으면 남아 있던 옛 소켓이 재연결할 때 또 "다른 곳에서 로그인" 안내가 뜬다.
+            sessionRevocationStore.revoke(previousSid, SessionRevocationStore.Reason.LOGGED_OUT);
+            return;
+        }
+        sessionRevocationStore.revoke(previousSid, SessionRevocationStore.Reason.DISPLACED);
         userNotifier.notify(userId, UserNotification.sessionDisplaced());
-        ejectFromSfu(userId, roomPresenceTracker.roomsOfMember(userId));
 
+        // 재실 목록은 방을 비우기 전에 읽는다 — terminate와 같은 이유(비운 뒤엔 끊을 대상을 잃는다).
+        List<String> rooms = roomPresenceTracker.roomsOfMember(userId);
+        roomPresenceTracker.evictFromRooms(userId);
+        ejectFromSfu(userId, rooms);
+
+        // 끊을 대상은 지금 열려 있는 것으로 고정한다. 원장은 userId로만 묶여 있어, 유예가 끝난 뒤에
+        // 목록을 읽으면 그 사이 붙은 <b>새 로그인의 소켓</b>까지 끊긴다 — 쿠키가 없는 경우(브라우저를
+        // 완전히 껐다 켠 재로그인)는 위 sid 비교로 걸러지지 않아 여기서 막아야 한다.
+        Set<String> doomed = stompSessionRegistry.detachSessionsOf(userId);
         CompletableFuture.runAsync(() -> {
             try {
-                stompSessionRegistry.closeAllOf(userId);
+                stompSessionRegistry.close(doomed, CloseStatus.NORMAL);
             } catch (RuntimeException e) {
                 // 끊기에 실패해도 로그인 자체는 이미 끝났다 — 흔적만 남긴다.
                 log.warn("이전 세션 연결 종료 실패 (userId={})", userId, e);

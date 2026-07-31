@@ -7,21 +7,23 @@
  * (게임룸의 로컬 캡처 스트림을 재사용 — S15P11A706-33). 카메라 원본을 그리지 않으므로
  * 카메라 발행을 끈(숨김) 상태에서 캔버스를 송출해도 얼굴은 노출되지 않는다.
  *
- * 매치 룰(개선안): 90초 동안 별자리를 연속으로 완성한다 — 모든 별을 켠 채 3초 유지하면
+ * 매치 룰(개선안): 60초 동안 별자리를 연속으로 완성한다 — 모든 별을 켠 채 3초 유지하면
  * 그 즉시 점수를 확정하고 다음 별자리가 나온다. 승부는 완성 개수(1순위) → 평균 점수(2순위).
  * 처음 3개는 쉬움·보통에서만 출제된다(StarSequence).
  *
  * 모드:
  * - 솔로 연습(session=null): 별자리를 골라 한 판(30초) — 서버 미연동 폴백 겸 연습.
- * - 솔로 도전(session=null): 위 매치 룰 그대로 90초, 로컬 최고 기록(개수·평균).
+ * - 솔로 도전(session=null): 위 매치 룰 그대로 60초, 로컬 최고 기록(개수·평균).
  * - 멀티(session 제공): 서버 권위 타이머(S15P11A706-116) + GAME_START의 공유 시드로
  *   전원이 같은 별자리 순서를 뽑는다. 진행 상황은 progress 이벤트로(스로틀 300ms),
  *   최종 집계는 finished 이벤트로 부모가 STOMP 발신한다. 순위는 results prop(GAME_END)으로 표시.
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { GameResultEntry } from '@/api/types'
 import { useHandLandmarker, type HandLandmarkerResult } from '@/composables/useHandLandmarker'
 import type { ActiveGameSession } from '../session'
+import { GameBgm } from '../gameBgm'
+import EarnedPoints from '../EarnedPoints.vue'
 import { CONSTELLATIONS, constellationByKey } from './constellations'
 import {
   StarSequence,
@@ -64,7 +66,7 @@ const emit = defineEmits<{
 }>()
 
 /** 매치(도전·멀티) 총 시간 — 멀티는 서버 endAt이 권위이고 이 값은 games 테이블과 동기화된 표시 기본값 */
-const MATCH_SECONDS = 90
+const MATCH_SECONDS = 60
 /** 솔로 연습 한 판 시간 */
 const PRACTICE_SECONDS = 30
 const HOLD_SECONDS = 3
@@ -108,7 +110,7 @@ function serverNow(): number {
   return Date.now() + (props.session?.clockOffset ?? 0)
 }
 
-// ── 90초 매치 상태 (솔로 도전·멀티 공용) ─────
+// ── 60초 매치 상태 (솔로 도전·멀티 공용) ─────
 const soloMode = ref<'practice' | 'challenge'>('practice')
 /** 이번 매치 집계 — 완성 개수·점수 합(평균은 표시 시점 계산) */
 const match = ref<MatchRecord>({ count: 0, sum: 0 })
@@ -223,8 +225,11 @@ watch(
     phase.value = 'result'
   },
 )
+const bgm = new GameBgm('/assets/sfx/finger-star/ingame-loop.mp3')
+onMounted(() => bgm.start())
 onBeforeUnmount(() => {
   hand.stop()
+  bgm.dispose()
   clearInterval(mpTicker)
   clearTimeout(flashTimer)
 })
@@ -260,7 +265,7 @@ function startSoloRound() {
   phase.value = 'playing'
 }
 
-/** 솔로 도전: 90초 매치 시작 / 다시 도전 */
+/** 솔로 도전: 60초 매치 시작 / 다시 도전 */
 function startChallengeRun() {
   soloMode.value = 'challenge'
   startMatch(mulberry32(Math.floor(Math.random() * 0xffffffff)))
@@ -660,6 +665,7 @@ function entryAvg(r: GameResultEntry): number {
               }}</span>
             </li>
           </ol>
+          <EarnedPoints :results="results" :my-user-id="myUserId" />
           <button class="fs-quit" @click="emit('close')">대기실로 돌아가기</button>
         </template>
         <template v-else>
@@ -671,7 +677,7 @@ function entryAvg(r: GameResultEntry): number {
 
       <!-- 솔로 -->
       <template v-else>
-        <!-- 도전: 90초 매치 종료 -->
+        <!-- 도전: 60초 매치 종료 -->
         <template v-if="soloMode === 'challenge'">
           <p class="fs-tier">⏱ {{ MATCH_SECONDS }}초 종료!</p>
           <p class="fs-score">{{ match.count }}<small>개</small></p>
