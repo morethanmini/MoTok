@@ -5,12 +5,15 @@
  *             → FIGHTING(힘겨루기) → RESULT → IDLE
  *
  * ── 공간 모델: 물속 단면도 (2026-07-31 전환) ──
- * x = 앵글러(좌상단 수면 위)로부터의 거리 — 파워가 결정한다.
+ * x = 앵글러(좌상단 수면 위)로부터의 거리 — **좌우 조준**(aimFromHands)이 결정한다.
  * y = 깊이 — WAITING 중 양손 높이(depth.ts)로 미끼를 올리고 내린다.
  *
- * 이전에는 원근(위=멀리, 아래=가까이)이었고 좌우 조준이 착수 x를 정했다. 단면도로 바꾸면서
- * 조준 신호는 깊이 제어로 옮겼다 — 어종마다 깊이 층이 달라(bandIndexOf) 노리는 층을 고르는
- * 것이 waiting의 조작이 된다. 팀 회의 결정(단면도 반응이 더 좋았다).
+ * 이전에는 원근(위=멀리, 아래=가까이)이었다. 단면도 전환 직후엔 스윙 파워가 착수 x를 정했지만
+ * 같은 날 조준으로 교체했다 — 파워는 사후 확정이라 예측이 안 되고 사실상 약/강 2대역인 반면,
+ * 조준은 연속·정밀하고 던지기 전에 착수점을 미리 보여줄 수 있다(사용자 결정, 2026-07-31).
+ * 파워는 착수 연출(물튀김 크기)로만 소비되고, 스윙 낙하 문턱(cast.ts dropMinSw)은 발사
+ * 게이트로 살아 있다 — 조준만 하고 팔을 내리는 동작으로는 던져지지 않는다.
+ * 어종마다 깊이 층이 달라(bandIndexOf) 노리는 층을 고르는 것이 waiting의 조작이 된다.
  *
  * 렌더링과 입력을 뺀 순수 로직이다 — 캔버스 없이 테스트할 수 있어야 밸런스를 코드로 고정할 수
  * 있다. 데모는 이 전부가 하나의 전역 객체에 렌더와 섞여 있어 판정 하나도 테스트할 수 없었다.
@@ -53,9 +56,9 @@ export interface LoopConfig {
   biteDistPx: number
   /** 관심을 보인 물고기가 찌로 접근하는 속도(px/s) */
   approachPxS: number
-  /** 가장 약하게 던졌을 때(power 0) 착수 x — 앵글러 바로 앞(px) */
+  /** 조준 최좌(0)일 때 착수 x — 앵글러 바로 앞(px) */
   landNearXPx: number
-  /** 가장 멀리 던졌을 때(power 1) 착수 x — 오른쪽 끝에서 이만큼 안(px) */
+  /** 조준 최우(width)일 때 착수 x — 오른쪽 끝에서 이만큼 안(px) */
   landFarMarginPx: number
   /** 미끼가 오를 수 있는 최소 깊이 — 수면에서 이만큼 아래(px) */
   depthMinMarginPx: number
@@ -113,6 +116,21 @@ export function bandYRange(cfg: LoopConfig, i: number): { top: number; bottom: n
   return { top: top0 + i * h, bottom: top0 + (i + 1) * h }
 }
 
+/**
+ * 조준 x(캔버스 px, 0~width) → 착수 x.
+ *
+ * 클램프가 아니라 **선형 리매핑**이다 — 조준 전 구간(0~width)이 착수 전 구간(nearX~farX)에
+ * 대응돼야 한다. 클램프로 하면 왼쪽 1/4 조준이 전부 같은 지점(nearX)에 떨어져서, 어제 화면
+ * 95%까지 넓혀놓은 조준 범위(normalize.ts AIM_SPAN_SW)의 왼쪽이 죽는다.
+ * 스킨의 착수점 미리보기도 이 함수를 써야 예고와 실제 착수가 일치한다.
+ */
+export function landingXFromAim(cfg: LoopConfig, aimX: number): number {
+  const nearX = cfg.landNearXPx
+  const farX = cfg.width - cfg.landFarMarginPx
+  const t = Math.min(1, Math.max(0, aimX / cfg.width))
+  return nearX + t * (farX - nearX)
+}
+
 export interface SceneFish {
   id: number
   spec: FishSpec
@@ -154,10 +172,10 @@ export interface Loop {
   state(): LoopState
   /**
    * IDLE에서만 유효.
-   * @param power 0~1 — 착수 거리(0 앵글러 앞 ~ 1 오른쪽 끝, cast.ts 주석 ③).
-   *              단면도 전환으로 조준 x 인자가 사라졌다 — 좌우 조준 신호는 깊이 제어(steer)로 갔다
+   * @param aimX 조준 x(캔버스 px, cast.ts의 firedAimX) — landingXFromAim으로 착수 x가 된다.
+   *             스윙 파워는 착수에 관여하지 않는다(연출 전용) — 헤더 주석 참고
    */
-  cast(power: number): boolean
+  cast(aimX: number): boolean
   /**
    * WAITING에서만 유효 — 미끼 목표 깊이 0~1(depth.ts). 미끼는 steerPxS 속도로 따라간다.
    * 다른 페이즈에서는 무시된다(입질·힘겨루기 중 깊이가 움직이면 판정이 흔들린다).
@@ -284,15 +302,12 @@ export function createLoop(config: LoopConfig = DEFAULT_LOOP, seed = 1): Loop {
       toIdle()
     },
 
-    cast(power) {
+    cast(aimX) {
       if (phase !== 'idle') return false
-      // 단면도: 세게 던지면 **오른쪽(멀리)**으로 간다. 앵글러가 좌상단 수면 위에 있다.
-      const nearX = config.landNearXPx
-      const farX = config.width - config.landFarMarginPx
-      const p = Math.min(1, Math.max(0, power))
+      // 단면도: 오른쪽으로 조준할수록 **멀리** 떨어진다. 앵글러가 좌상단 수면 위에 있다.
       // 낚싯대 끝 근처에서 출발 — 렌더의 rodTip과 정확히 일치할 필요는 없다(줄은 스킨이 긋는다)
       castFrom = { x: config.width * 0.27, y: config.waterY * 0.5 }
-      castTo = { x: nearX + p * (farX - nearX), y: config.waterY + config.depthMinMarginPx }
+      castTo = { x: landingXFromAim(config, aimX), y: config.waterY + config.depthMinMarginPx }
       castT = 0
       bobber = { ...castFrom, visible: true }
       phase = 'casting'

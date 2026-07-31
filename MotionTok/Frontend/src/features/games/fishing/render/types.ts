@@ -30,11 +30,11 @@ export interface Splash {
 export interface FishingView {
   state: LoopState
   /**
-   * locked면 백스윙 중 — 착수 범위 미리보기를 띄운다.
-   * 단면도 전환으로 조준 x가 사라졌다(파워가 착수 x를 정한다). 좌우 조준 신호는 WAITING의
-   * 깊이 제어(depth.ts → loop.steer)로 갔고, 그 피드백은 찌 위치 자체다.
+   * 조준 — locked면 백스윙 중이고 x(캔버스 px)가 착수점 미리보기의 입력이다.
+   * 단면도에서 조준은 착수 **거리**를 정한다(loop.ts landingXFromAim). 깊이는 WAITING에서
+   * 양손 높이(depth.ts → loop.steer)로 따로 조작하고, 그 피드백은 찌 위치 자체다.
    */
-  aim: { locked: boolean }
+  aim: { locked: boolean; x: number }
   /** 지금 판정에 쓰이는 점. null이면 손을 놓친 프레임이다 */
   marker: { x: number; y: number } | null
   splashes: Splash[]
@@ -81,8 +81,11 @@ export interface FishingSkin {
 
   drawBobber(ctx: CanvasRenderingContext2D, state: LoopState, cfg: LoopConfig, tMs: number): void
 
-  /** 착수 범위 미리보기 — IDLE + 백스윙 중에만 불린다. 파워 0~1이 어디 떨어지는지 보여준다 */
-  drawAim(ctx: CanvasRenderingContext2D, cfg: LoopConfig, tMs: number): void
+  /**
+   * 착수점 미리보기 — IDLE + 백스윙 중에만 불린다.
+   * aimX(캔버스 px)를 landingXFromAim으로 옮겨 "여기 떨어진다"를 손 따라 실시간으로 보여준다.
+   */
+  drawAim(ctx: CanvasRenderingContext2D, aimX: number, cfg: LoopConfig, tMs: number): void
 
   /**
    * 전경 — 물고기·찌 **앞**에 그린다(근경 해초 등). 무대와 함께 흔들린다.

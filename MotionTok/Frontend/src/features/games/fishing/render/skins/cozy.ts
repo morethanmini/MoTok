@@ -26,6 +26,7 @@ import { FISH, type FishSpec } from '../../fight'
 import {
   bandYRange,
   DEPTH_BANDS,
+  landingXFromAim,
   type LoopConfig,
   type LoopState,
   type Phase,
@@ -365,16 +366,14 @@ export const cozySkin: FishingSkin = {
     ctx.fill()
     ctx.restore()
 
-    // ── 캠 — 물 위에 아주 옅게(기획 §게임 화면 구성: 내 캠은 반투명)
-    const video = view.video
-    if (video && video.readyState >= 2) {
-      ctx.save()
-      ctx.globalAlpha = 0.1
-      ctx.translate(W, 0)
-      ctx.scale(-1, 1)
-      ctx.drawImage(video, 0, 0, W, H)
-      ctx.restore()
-    }
+    /*
+     * 캠은 여기서 그리지 않는다 (2026-07-31 분리 결정).
+     *
+     * 이전엔 alpha 0.1 전체 워시로 겹쳤는데 프레이밍 확인엔 쓸모없고 배경 팔레트만 더럽혔다.
+     * 캠은 FishingGame.vue의 DOM PiP로 나갔다 — 게임룸이 송출하는 건 캔버스뿐이라, DOM에 두면
+     * 내 얼굴은 나한테만 보이고 다른 참가자에겐 순수 게임 화면만 나간다.
+     * ⚠ 기획 §게임 화면 구성 "내 캠은 반투명"과 어긋나는 변경 — 팀 공유 필요.
+     */
 
     // ── 빛줄기 — 수면에서 비스듬히 내려온다. "물속"임을 알리는 가장 싼 장치
     ctx.save()
@@ -659,24 +658,38 @@ export const cozySkin: FishingSkin = {
     inkStroke(ctx, 3)
   },
 
-  drawAim(ctx: CanvasRenderingContext2D, cfg: LoopConfig, tMs: number) {
-    // 단면도: 파워가 정하는 건 좌우 거리다 — 수면 아래 가로 캡슐로 착수 범위를 보여준다
+  drawAim(ctx: CanvasRenderingContext2D, aimX: number, cfg: LoopConfig, tMs: number) {
+    // 조준이 착수 거리를 정한다 — 범위 캡슐 위에 손을 따라다니는 착수점 마커를 띄운다.
+    // 던지기 전에 "여기 떨어진다"가 보이는 것이 파워 방식 대비 조준 방식의 존재 이유다.
     const nearX = cfg.landNearXPx
     const farX = cfg.width - cfg.landFarMarginPx
     const y = q(cfg.waterY + cfg.depthMinMarginPx)
+    const lx = q(landingXFromAim(cfg, aimX))
 
-    // 착수 범위 — 얇은 캡슐. 굵으면 물을 다 가린다
+    // 착수 가능 범위 — 얇은 캡슐. 굵으면 물을 다 가린다
     badge(ctx, nearX, y - 5, farX - nearX, 10, MINT, 2)
 
-    // 양 끝 — 왼쪽이 가까이(약하게), 오른쪽이 멀리(세게)
-    const pulse = 6 + Math.sin(tMs / 160) * 2
-    for (const x of [nearX, farX]) {
-      ctx.beginPath()
-      ctx.arc(q(x), y, pulse, 0, Math.PI * 2)
-      ctx.fillStyle = PAPER
-      ctx.fill()
-      inkStroke(ctx, 2)
-    }
+    // 착수점 마커 — 맥동하는 표적. 낚싯대 끝에서 점선이 이어져 "던지면 이 줄로 간다"를 만든다
+    const tip = rodTip(cfg)
+    ctx.save()
+    ctx.setLineDash([9, 9])
+    ctx.beginPath()
+    ctx.moveTo(tip.x, tip.y)
+    ctx.lineTo(lx, y)
+    inkStroke(ctx, 2)
+    ctx.restore()
+
+    const pulse = 8 + Math.sin(tMs / 160) * 2
+    ctx.beginPath()
+    ctx.arc(lx, y, pulse, 0, Math.PI * 2)
+    ctx.fillStyle = PAPER
+    ctx.fill()
+    inkStroke(ctx, 3)
+    ctx.beginPath()
+    ctx.arc(lx, y, 3, 0, Math.PI * 2)
+    ctx.fillStyle = CORAL
+    ctx.fill()
+
     floatText(ctx, '가까이', nearX, y + 26, 15, PAPER)
     floatText(ctx, '멀리', farX, y + 26, 15, PAPER)
   },
