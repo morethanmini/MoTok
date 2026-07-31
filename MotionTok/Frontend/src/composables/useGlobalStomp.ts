@@ -48,6 +48,21 @@ const CLOSE_REASONS: Record<string, AccountBlockKind> = {
   ACCOUNT_BANNED: 'BANNED',
 }
 
+/**
+ * 탭이 이만큼 넘게 숨어 있었다면, 돌아올 때 소켓을 <b>믿지 않고</b> 강제로 다시 붙인다.
+ *
+ * <p>절전·백그라운드에서는 타이머가 멈추고 하트비트도 같이 멈춘다. 그 사이 소켓이 죽어도
+ * 클라이언트와 서버 <b>양쪽 다 살아 있다고 믿는</b> 상태(반열림)가 되고, 하트비트가 다시 돌아
+ * 감지될 때까지 수십 초가 빈다. 그 창에 발행하면 프레임이 죽은 소켓으로 사라지는데,
+ * 서버는 받은 적이 없으니 에러조차 돌아오지 않는다 — "게임 시작을 눌렀는데 아무 일도 없음"이
+ * 그렇게 나타났다.</p>
+ *
+ * <p>멀쩡한 소켓을 끊어도 비용은 핸드셰이크 한 번이다. 의심되면 그냥 다시 붙이는 편이 싸다.</p>
+ */
+const HIDDEN_FORCE_RECONNECT_MS = 10_000
+/** 탭이 숨은 시각(벽시계). 절전 중에는 타이머가 멈춰 경과를 셀 수 없어 Date.now()로 잰다. */
+let hiddenAt = 0
+
 type FrameHandler = (body: string) => void
 
 let client: Client | null = null
@@ -173,6 +188,19 @@ function backoffWithJitter(failures: number): number {
   return Math.round(base * (0.5 + Math.random()))
 }
 
+/** 오래 숨어 있다 돌아온 탭의 소켓을 강제로 갈아 끼운다({@link HIDDEN_FORCE_RECONNECT_MS} 참고). */
+function onVisibilityChange() {
+  if (document.visibilityState === 'hidden') {
+    hiddenAt = Date.now()
+    return
+  }
+  const away = hiddenAt ? Date.now() - hiddenAt : 0
+  hiddenAt = 0
+  // 이미 끊긴 상태라면 stompjs가 알아서 재시도 중이다 — 여기서 건드릴 것은 '살아 있다고 믿는' 소켓뿐이다.
+  if (away < HIDDEN_FORCE_RECONNECT_MS || !client?.connected) return
+  client.forceDisconnect() // 닫히면 onWebSocketClose를 거쳐 평소 경로로 다시 붙는다
+}
+
 function activate() {
   if (client) return
   const c = new Client({
@@ -227,13 +255,16 @@ function activate() {
     },
   })
   client = c
+  document.addEventListener('visibilitychange', onVisibilityChange)
   c.activate()
 }
 
 function deactivate() {
   connected.value = false
   everConnected = false // 로그아웃 후 다시 로그인하면 그건 '첫 연결'이다
+  hiddenAt = 0
   subscriptions.clear()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   const c = client
   client = null
   void c?.deactivate()
