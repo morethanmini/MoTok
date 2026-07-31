@@ -8,7 +8,17 @@
  */
 
 import { mulberry32, foldSeed, type Rng } from '../core/rng'
-import { LEAD_IN_MS, SLOT_MS, type Difficulty } from '../generator/presets'
+import {
+  LEAD_IN_MS,
+  MAX_GAP_BEATS,
+  SLOT_MS,
+  beats,
+  slotTimeMs,
+  snapToSixteenth,
+  snapToSlot,
+  type Difficulty,
+} from '../generator/presets'
+import { isOnBeat, slotAccent } from '../generator/songAccents'
 import type { Hand, NoteHand } from '../core/types'
 import type { RingBeatmap, RingNote } from './ringLogic'
 import {
@@ -140,8 +150,20 @@ export function generateRingChart(
   /** 손 상관없이 직전 노트 — 짧은 간격 판정용 */
   let lastAny: GeneratedRingNote | null = null
 
-  for (let timeMs = LEAD_IN_MS; timeMs <= durationMs; timeMs += SLOT_MS) {
-    if (rng() >= preset.density) continue
+  const maxGapMs = beats(MAX_GAP_BEATS[difficulty])
+  let lastPlacedMs = LEAD_IN_MS
+
+  // 캐치 생성기와 같은 규칙 — 슬롯 번호로 돌아 소수점 누적을 피하고, 곡의 악센트를 따른다.
+  // 공백 상한도 같다(MAX_GAP_BEATS) — 오래 비면 박 위에 하나 놓는다.
+  for (let slot = 0; ; slot++) {
+    const timeMs = slotTimeMs(slot)
+    if (timeMs > durationMs) break
+    const roll = rng()
+    const wanted = roll < preset.density * slotAccent(slot)
+    const gapMs = timeMs - lastPlacedMs
+    const forced = gapMs >= maxGapMs && (isOnBeat(slot) || gapMs >= maxGapMs * 1.5)
+    if (!wanted && !forced) continue
+    const before = notes.length
 
     const simultaneous = rng() < preset.simultaneous
     const owners: Hand[] = simultaneous ? ['left', 'right'] : [nextHand]
@@ -208,6 +230,7 @@ export function generateRingChart(
       lastAny = note
       takenLanes.push(lane)
     }
+    if (notes.length > before) lastPlacedMs = timeMs
 
     nextHand = other(nextHand)
   }
@@ -239,13 +262,23 @@ export interface RingTapPreset {
   minSameHandGapMs: number
   /** 여유 있는 노트가 아무 손이나 가능(any)일 확률. 빠른 구간은 무조건 any */
   anyRate: number
-  /** 프레이즈 사이 쉼(ms) — 숨 돌릴 틈이자 밀도 조절 손잡이 */
+  /**
+   * 프레이즈 사이 쉼(ms) — 숨 돌릴 틈이자 밀도 조절 손잡이.
+   * 이 값 그대로 쉬는 게 아니라 **8분 격자에 붙여서** 다음 프레이즈가 박자에서 출발한다.
+   */
   restMs: readonly [number, number]
-  /** 계단·트릴·점프 노트 간격(ms) */
+  /** 계단·트릴·점프 노트 간격 — {@link beats}로 곡의 박자 분할을 쓴다 */
   stepMs: number
   /** 계단·트릴 프레이즈 길이(노트 수) 범위 */
   phraseLen: readonly [number, number]
-  /** 버스트 노트 간격(ms). 손이 번갈아 맡아 한 손 기준은 2배가 된다. 0이면 버스트 없음 */
+  /**
+   * 버스트 노트 간격(ms). 손이 번갈아 맡아 한 손 기준은 2배가 된다. 0이면 버스트 없음.
+   *
+   * <p>여기만 16분 격자에서 벗어난다 — 16분(116ms) 버스트는 같은 손 연타가 232ms가 되어
+   * {@link RingTapPreset.minSameHandGapMs}에 전부 걸려 절반이 버려진다. 그래서 한 손 기준이
+   * 한계를 넘는 가장 촘촘한 리듬 도형(3연음 / 점16분)을 쓴다. 버스트는 귀가 롤로 듣는 구간이라
+   * 격자에서 반 칸 벗어나도 어긋난 것으로 들리지 않는다.</p>
+   */
   burstGapMs: number
   /** 프레이즈 종류 가중치 (합이 1이 아니어도 비율로 동작) */
   weights: {
@@ -258,13 +291,21 @@ export interface RingTapPreset {
   }
 }
 
+/**
+ * 탭 전용 프레이즈 프리셋.
+ *
+ * <p>간격은 전부 곡의 박자 분할로 적는다 — 이 모드는 슬롯 격자를 쓰지 않고 프레이즈가 자기
+ * 간격으로 노트를 뿌리므로, ms 숫자로 두면 곡과 아무 관계 없는 리듬이 된다. 예전 값(600·375·250,
+ * 버스트 175·150)은 BPM 120 기준의 어림수였고 곡이 129라 어디에도 걸리지 않았다.</p>
+ */
 export const RING_TAP_PRESETS: Record<Difficulty, RingTapPreset> = {
   EASY: {
     approachTimeMs: 1500,
     minSameHandGapMs: 400,
     anyRate: 0.8,
     restMs: [800, 1300],
-    stepMs: 600,
+    // 한 박에 하나 — 곡의 비트를 그대로 따라 치게 되어 제일 읽기 쉽다(예전 600ms ≈ 1.29박)
+    stepMs: beats(1),
     phraseLen: [3, 4],
     burstGapMs: 0,
     weights: { stream: 0.55, trill: 0.15, burst: 0, jump: 0.1, gallop: 0, doubles: 0.2 },
@@ -274,9 +315,11 @@ export const RING_TAP_PRESETS: Record<Difficulty, RingTapPreset> = {
     minSameHandGapMs: 320,
     anyRate: 0.65,
     restMs: [500, 850],
-    stepMs: 375,
+    // 점8분 — 곡 자체가 점8분 싱코페이션(점4분 697ms 간격이 온셋 히스토그램 3위)이라 잘 맞는다
+    stepMs: beats(0.75),
     phraseLen: [3, 5],
-    burstGapMs: 175,
+    // 점16분(174.4ms). 3연음(155ms)은 한 손 310ms가 되어 위 한계 320ms에 걸린다. 예전 175와 거의 같다
+    burstGapMs: beats(0.375),
     weights: { stream: 0.3, trill: 0.15, burst: 0.1, jump: 0.2, gallop: 0.15, doubles: 0.1 },
   },
   HARD: {
@@ -284,9 +327,11 @@ export const RING_TAP_PRESETS: Record<Difficulty, RingTapPreset> = {
     minSameHandGapMs: 256,
     anyRate: 0.5,
     restMs: [400, 850],
-    stepMs: 250,
+    // 8분 — 곡의 최소 격자와 같다(예전 250ms)
+    stepMs: beats(0.5),
     phraseLen: [4, 6],
-    burstGapMs: 150,
+    // 8분 3연음(155ms). 한 손 310ms로 한계 256ms를 넘고, 예전 150ms와 거의 같아 난이도가 유지된다
+    burstGapMs: beats(1 / 3),
     weights: { stream: 0.2, trill: 0.15, burst: 0.2, jump: 0.25, gallop: 0.15, doubles: 0.05 },
   },
 }
@@ -409,7 +454,9 @@ export function generateRingTapChart(
   /** 갤럽 — "다-닥" 싱코페이션. 반 박을 밀어 두드리는 엇박이 여기서 나온다 */
   const gallop = (t: number): number => {
     const cycles = randInt(2, 4)
-    const longGap = Math.round(preset.stepMs * 1.5)
+    // 1.5배를 16분에 붙인다 — 안 붙이면 점8분 간격(NORMAL)에서 반 칸(58ms) 빗나간다.
+    // 두 칸의 합은 stepMs 두 칸이라 프레이즈 전체 길이는 그대로 격자 위에 남는다.
+    const longGap = snapToSixteenth(preset.stepMs * 1.5)
     const shortGap = preset.stepMs * 2 - longGap
     const dir = dirOf()
     let lane = lastNote ? lastNote.lane : Math.floor(rng() * LANE_COUNT)
@@ -468,7 +515,10 @@ export function generateRingTapChart(
       }
     }
     const end = phrase(cursor)
-    cursor = end + preset.restMs[0] + Math.round(rng() * (preset.restMs[1] - preset.restMs[0]))
+    // 쉼을 그대로 더하면 다음 프레이즈가 박자 밖에서 출발해, 안에서 아무리 격자를 지켜도
+    // 프레이즈마다 곡과의 위상이 달라진다. 8분 격자에 붙여 매번 박자에서 다시 시작한다.
+    const rest = preset.restMs[0] + rng() * (preset.restMs[1] - preset.restMs[0])
+    cursor = snapToSlot(end + rest)
   }
 
   notes.sort((a, b) => a.timeMs - b.timeMs)

@@ -235,7 +235,9 @@ describe('링 채보 생성기', () => {
         expect(n.lane).toBeGreaterThanOrEqual(0)
         expect(n.lane).toBeLessThan(LANE_COUNT)
         expect(n.timeMs).toBeGreaterThanOrEqual(LEAD_IN_MS)
-        expect((n.timeMs - LEAD_IN_MS) % SLOT_MS).toBe(0)
+        // 슬롯 232.56ms — ms 반올림만큼(±0.5ms) 벗어날 수 있다(battleChart.spec 참고)
+        const slot = (n.timeMs - LEAD_IN_MS) / SLOT_MS
+        expect(Math.abs(slot - Math.round(slot))).toBeLessThan(0.5 / SLOT_MS + 1e-9)
       }
     }
   })
