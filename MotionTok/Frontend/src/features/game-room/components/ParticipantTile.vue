@@ -17,7 +17,12 @@ const props = withDefaults(
     host?: boolean
     /** 원격 참가자면 true — 오디오를 재생한다(로컬은 에코 방지로 false) */
     playAudio?: boolean
-    /** 로컬 프리뷰 등 좌우 반전 표시 */
+    /**
+     * 카메라 영상을 좌우 반전해 보여준다.
+     * 발행자는 거울(scaleX(-1))로 자기 화면을 보면서 꾸미므로, 보는 쪽도 똑같이 뒤집어야
+     * "꾸민 대로" 보인다. 게임 화면 트랙에는 걸지 않는다 — 글자·UI가 뒤집힌다.
+     * 스티커는 영상 밖 오버레이라 이 반전에 휩쓸리지 않고, 자리만 mirrored로 따라간다.
+     */
     mirror?: boolean
     compact?: boolean
     canKick?: boolean
@@ -145,7 +150,7 @@ function onVolumeInput(e: Event) {
         playsinline
         muted
         class="tile-video"
-        :class="{ mirror, game: showingGame }"
+        :class="{ mirror: mirror && !showingGame, game: showingGame }"
         @loadedmetadata="syncVideoAspect"
       />
       <audio v-if="playAudio" ref="audioEl" autoplay />

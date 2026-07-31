@@ -1564,6 +1564,7 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             play-audio
+            mirror
             compact
             :can-kick="amRoomHost && !!slot.view"
             :can-invite="!activeGame"
@@ -1709,6 +1710,7 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             play-audio
+            mirror
             compact
             :can-kick="amRoomHost && !!slot.view"
             :can-invite="!activeGame"
@@ -1728,6 +1730,7 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             play-audio
+            mirror
             :can-kick="amRoomHost && !!slot.view"
             :can-invite="!activeGame"
             @kick="openKick(slot.view)"
