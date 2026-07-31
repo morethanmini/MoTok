@@ -12,13 +12,21 @@
  *
  * 게임룸은 이 컴포넌트의 **캔버스만** 화면공유로 송출한다. 그래서 HUD·점수를 DOM이 아니라
  * 캔버스에 그린다(cozy 스킨의 drawHud) — DOM에 두면 다른 참가자 타일에서 사라진다.
+ *
+ * 두 가지 생명주기로 돈다(게임①과 같은 계약):
+ *   솔로(session=null)   — 시간 제한 없이 계속. dev 라우트·서버 미연동 폴백
+ *   멀티(session 제공)   — 서버 권위 타이머(S15P11A706-116). startAt까지 입력을 막고,
+ *                          endAt에 총점을 제출하며(finished), 순위는 results prop으로 받는다
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   preloadPoseLandmarker,
   usePoseLandmarker,
   type PoseLandmarkerResult,
 } from '@/composables/usePoseLandmarker'
+import type { GameResultEntry } from '@/api/types'
+import EarnedPoints from '../EarnedPoints.vue'
+import type { ActiveGameSession } from '../session'
 import { createCast, DEFAULT_CAST } from './cast'
 import { createHook, DEFAULT_HOOK } from './hook'
 import { createPump, DEFAULT_PUMP } from './pump'
@@ -39,12 +47,25 @@ const props = defineProps<{
    * 대를 잡은 손도 함께 움직이고, 왼손 세션에서는 반대 손이 오히려 더 움직였다.
    */
   crankSide?: 'right' | 'left'
+  /** 멀티플레이 세션(GAME_START). null이면 솔로 — 시간 제한 없이 계속 낚는다 */
+  session?: ActiveGameSession | null
+  /** GAME_END 순위 — 도착 전까지 "집계 중" 표시 */
+  results?: GameResultEntry[] | null
+  /** 순위에서 내 행을 강조하기 위한 참가자 id */
+  myUserId?: string | null
 }>()
 
 const emit = defineEmits<{
   close: []
-  /** 점수가 바뀔 때마다 — 게임룸 스코어보드가 쓴다 */
-  progress: [score: number]
+  /**
+   * 물고기를 낚을 때마다 — 게임룸 스코어보드가 쓴다.
+   *
+   * 점수는 누적이라 서버 progress의 starsLit(0~10 클램프)에 실을 수 없다. 그래서 부모는
+   * 마리 수만 중계하고(completedCount 자리), 총점은 종료 시 finished로 한 번 제출한다.
+   */
+  progress: [score: number, caught: number]
+  /** 멀티 종료 집계 — totalScore가 서버 순위 입력이고 caught는 점수 상한의 근거다 */
+  finished: [payload: { totalScore: number; caught: number }]
 }>()
 
 const W = DEFAULT_LOOP.width
@@ -103,28 +124,104 @@ function splash(x: number, y: number, radii: number[]) {
 
 const crank = computed(() => props.crankSide ?? 'right')
 
+// ── 멀티플레이: 서버 권위 타이머 (S15P11A706-116) ──────────
+/** 멀티 진행 단계. 솔로(session=null)는 항상 'playing' — 총 시간이 없다 */
+const mpPhase = ref<'countdown' | 'playing' | 'result'>('playing')
+const countdownLeft = ref(0)
+const timeLeftSec = ref(0)
+let finishEmitted = false
+let mpTicker = 0
+
+/** 서버 보정 시각 — 솔로에서는 쓰지 않는다 */
+function serverNow(): number {
+  return Date.now() + (props.session?.clockOffset ?? 0)
+}
+
+watch(
+  () => props.session,
+  (session) => {
+    clearInterval(mpTicker)
+    finishEmitted = false
+    if (!session) {
+      mpPhase.value = 'playing'
+      return
+    }
+    // 이전 판의 점수·낚은 목록이 남아 있으면 그대로 제출된다 — 세션마다 초기화한다
+    loop.reset()
+    mpPhase.value = serverNow() >= session.startAt ? 'playing' : 'countdown'
+    timeLeftSec.value = Math.max(0, (session.endAt - serverNow()) / 1000)
+    mpTicker = window.setInterval(mpTick, 100)
+  },
+  { immediate: true },
+)
+
+function mpTick() {
+  const session = props.session
+  if (!session) return
+  const now = serverNow()
+  if (mpPhase.value === 'countdown') {
+    countdownLeft.value = Math.max(1, Math.ceil((session.startAt - now) / 1000))
+    if (now >= session.startAt) mpPhase.value = 'playing'
+    return
+  }
+  if (mpPhase.value === 'playing') {
+    timeLeftSec.value = Math.max(0, (session.endAt - now) / 1000)
+    if (now >= session.endAt) finalizeRound()
+  }
+}
+
+/** 시간 종료(또는 서버 조기 정산) — 총점을 한 번만 제출하고 결과 화면으로 넘긴다 */
+function finalizeRound() {
+  mpPhase.value = 'result'
+  if (finishEmitted) return
+  finishEmitted = true
+  const s = loop.state()
+  emit('finished', { totalScore: s.score, caught: s.caught.length })
+}
+
+// GAME_END 순위 도착(전원 제출로 인한 조기 정산 포함) → 결과 화면
+watch(
+  () => props.results,
+  (results) => {
+    if (results) finalizeRound()
+  },
+)
+
+/** 판정을 돌리는 구간인가 — 카운트다운 중·종료 후에는 멈춘다 */
+const inputOpen = computed(() => mpPhase.value === 'playing')
+
 /** 캔버스에 그릴 문구. 짧게 유지한다 — 2~3m에서 읽혀야 한다 */
 const hud = computed(() => {
   const s = st.value
+  // 남은 시간은 캔버스에 얹어야 한다 — 게임룸이 송출하는 건 캔버스뿐이라 DOM에 두면
+  // 관전 중인 다른 참가자 타일에서 사라진다(헤더 주석과 같은 이유)
+  const clock =
+    props.session && mpPhase.value === 'playing' ? `⏱${Math.ceil(timeLeftSec.value)} · ` : ''
   switch (s.phase) {
     case 'idle':
-      return aim.value.locked ? '좌우로 조준하고 앞으로!' : '양손으로 대를 쥐고 뒤로'
+      return clock + (aim.value.locked ? '좌우로 조준하고 앞으로!' : '양손으로 대를 쥐고 뒤로')
     case 'casting':
-      return '찌가 날아갑니다…'
+      return clock + '찌가 날아갑니다…'
     case 'waiting':
-      return s.active?.interest === 'curious'
-        ? '물고기가 미끼를 봤어요…'
-        : '손 높이로 미끼 깊이를 조절!'
+      return (
+        clock +
+        (s.active?.interest === 'curious'
+          ? '물고기가 미끼를 봤어요…'
+          : '손 높이로 미끼 깊이를 조절!')
+      )
     case 'bite':
-      return '입질! 손을 위로!'
+      return clock + '입질! 손을 위로!'
     case 'fighting':
-      return s.grace ? '걸렸다! 감으세요' : s.reeling ? '감기고 있다!' : '더 빨리!'
+      return clock + (s.grace ? '걸렸다! 감으세요' : s.reeling ? '감기고 있다!' : '더 빨리!')
     case 'result':
-      return s.last?.outcome === 'caught'
-        ? `${s.last.name} +${s.last.score}`
-        : s.last?.outcome === 'missed'
-          ? '놓쳤다…'
-          : '도망갔다…'
+      return (
+        clock +
+        (s.last?.outcome === 'caught'
+          ? `${s.last.name} +${s.last.score}`
+          : s.last?.outcome === 'missed'
+            ? '놓쳤다…'
+            : '도망갔다…')
+      )
   }
 })
 
@@ -147,6 +244,14 @@ function onPose(result: PoseLandmarkerResult) {
     bodyMidY = (sl.y * H + sr.y * H) / 2
   }
   const sw = norm.ready() ? norm.sw() : 0
+
+  // 카운트다운 중·라운드 종료 후에는 판정을 돌리지 않는다. 어깨너비(모든 문턱의 분모)는 위에서
+  // 계속 모으므로, 3초 카운트다운이 곧 정규화 워밍업 구간이 된다.
+  if (!inputOpen.value) {
+    marker = null
+    reelRate.value = 0
+    return
+  }
 
   const wl = lm?.[WRIST.left]
   const wr = lm?.[WRIST.right]
@@ -229,7 +334,7 @@ function frame(now: number) {
         // 포획 — 제일 큰 연출. 링 3겹 + 최대 세기 흔들림
         splash(s.bobber.x, s.bobber.y, [4, 12, 20])
         shake = 1
-        emit('progress', s.score)
+        emit('progress', s.score, s.caught.length)
       }
       prevPhase = s.phase
     }
@@ -299,6 +404,7 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(rafId)
   pose.stop()
   stream?.getTracks().forEach((t) => t.stop())
+  clearInterval(mpTicker)
 })
 </script>
 
@@ -313,7 +419,39 @@ onBeforeUnmount(() => {
       낚시터 준비 중… {{ Math.round(loadProgress * 100) }}%
     </p>
 
-    <button type="button" class="close" @click="emit('close')">그만하기</button>
+    <!-- 멀티 카운트다운 — 서버 startAt까지. 이 구간에는 판정이 멈춰 있다(onPose 가드) -->
+    <div v-if="session && mpPhase === 'countdown'" class="ov">
+      <p class="ov-guide">
+        양손으로 대를 쥐고 뒤로 젖혀 던지고, 기다리는 동안 손 높이로 깊이를 맞춰요 —<br />
+        깊은 층일수록 점수가 큰 물고기!
+      </p>
+      <p class="ov-count">{{ countdownLeft }}</p>
+    </div>
+
+    <!-- 멀티 결과 — GAME_END 순위가 오기 전에는 내 집계만 보여준다 -->
+    <div v-if="session && mpPhase === 'result'" class="ov">
+      <template v-if="results">
+        <p class="ov-title">🏆 최종 순위</p>
+        <ol class="ov-ranking">
+          <li v-for="r in results" :key="r.userId" :class="{ me: r.userId === myUserId }">
+            <span class="ov-rank">{{ r.rank }}</span>
+            <span class="ov-name">{{ r.nickname }}</span>
+            <span class="ov-score">{{ r.finished ? `${r.score}점` : '미제출' }}</span>
+          </li>
+        </ol>
+        <EarnedPoints :results="results" :my-user-id="myUserId" />
+        <button type="button" class="ov-quit" @click="emit('close')">대기실로 돌아가기</button>
+      </template>
+      <template v-else>
+        <p class="ov-title">⏱ 낚시 종료!</p>
+        <p class="ov-big">{{ st.score }}<small>점</small></p>
+        <p class="ov-sub">{{ st.caught.length }}마리 · 🎣 다른 참가자를 기다리는 중…</p>
+      </template>
+    </div>
+
+    <!-- 최종 순위 화면에는 자체 나가기 버튼이 있다 — 겹쳐 두면 같은 화면에 두 개가 된다.
+         순위 대기 중(results 없음)에는 남겨 둔다 — GAME_END가 유실되면 나갈 길이 사라진다 -->
+    <button v-if="!results" type="button" class="close" @click="emit('close')">그만하기</button>
   </div>
 </template>
 
@@ -397,6 +535,8 @@ canvas {
 }
 .close {
   position: absolute;
+  /* 오버레이(.ov, z-index 6) 위 — 카운트다운·순위 대기 중에도 나갈 수 있어야 한다 */
+  z-index: 7;
   top: 14px;
   left: 14px;
   padding: 7px 14px;
@@ -415,6 +555,104 @@ canvas {
   box-shadow: var(--shadow-md);
 }
 .close:focus-visible {
+  outline: 3px solid var(--c-blue);
+  outline-offset: 2px;
+}
+
+/* 멀티 오버레이 — 캔버스 위를 덮는다. 관전자에게는 안 보인다(캔버스만 송출) */
+.ov {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 20px;
+  background: rgba(56, 38, 61, 0.74);
+  color: var(--c-paper);
+  text-align: center;
+}
+.ov-guide {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.9;
+}
+.ov-count {
+  margin: 0;
+  font-size: 56px;
+  color: var(--c-yellow);
+}
+.ov-title {
+  margin: 0;
+  font-size: 16px;
+}
+.ov-big {
+  margin: 0;
+  font-size: 44px;
+  color: var(--c-yellow);
+}
+.ov-big small {
+  font-size: 16px;
+}
+.ov-sub {
+  margin: 0;
+  font-size: 12px;
+}
+.ov-ranking {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 240px;
+  max-height: 50%;
+  overflow-y: auto;
+}
+.ov-ranking li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius-sm);
+}
+.ov-ranking li.me {
+  border-color: var(--c-mint);
+  background: rgba(255, 255, 255, 0.16);
+}
+.ov-rank {
+  min-width: 18px;
+  color: var(--c-yellow);
+}
+.ov-name {
+  flex: 1;
+  text-align: left;
+}
+.ov-score {
+  color: var(--c-mint);
+}
+.ov-quit {
+  padding: 8px 16px;
+  background: var(--c-paper);
+  color: var(--c-ink);
+  border: var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: var(--t-fast);
+}
+.ov-quit:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: var(--shadow-md);
+}
+.ov-quit:focus-visible {
   outline: 3px solid var(--c-blue);
   outline-offset: 2px;
 }
