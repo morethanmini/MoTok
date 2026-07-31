@@ -93,16 +93,38 @@ export const DEFAULT_LOOP: LoopConfig = {
 }
 
 /**
- * 어종 깊이 층 — 점수가 높을수록 깊다(멸치 얕음 → 상어 깊음).
+ * 어종 깊이 층 — 점수가 높을수록 깊다(흰동가리 얕음 → 상어 깊음).
  *
- * 문턱(25/45/120)은 cozy 스킨의 fishShape와 같다 — 실루엣이 다른 어종은 사는 층도 다르다.
+ * 문턱 25/45/100으로 15종을 4층에 나눈다: 5~20 / 25~40 / 45~70 / 100~120.
+ * 가장 깊은 층이 2종뿐인 건 의도다 — 바닥까지 내려가야만 만나는 게 청새치·상어다.
  * 층이 겹치지 않아야 "깊이를 고르는" 조작이 성립한다. 스킨이 층 경계를 그릴 수 있게
  * 여기(로직)가 소유하고 렌더는 소비만 한다.
  */
 export const DEPTH_BANDS = 4
 
+/**
+ * 층 해제 히스테리시스(px) — 선택된 물고기를 놓아주는 판정에만 쓴다.
+ *
+ * 층 높이가 약 72px이라 14px은 그 20% 정도다. 미끼를 경계에 두고 손이 떨릴 때
+ * 선택↔해제가 뒤집히는 걸 막을 만큼은 크고, 옆 층을 노린 조작을 무효로 만들 만큼 크지는 않다.
+ */
+const BAND_RELEASE_MARGIN_PX = 14
+
+/**
+ * 물고기가 무대 좌우 끝에서 이만큼 안쪽까지만 온다(px).
+ *
+ * 예전에는 화면 밖으로 나가면 반대쪽으로 순환시켰다(`x < -40` → `width + 40`). 그러면 경계에서
+ * 몸이 세로로 잘린 물고기가 보이는데, 스프라이트로 바꾼 뒤로는 그 잘린 단면이 화면 오른쪽에
+ * **알록달록한 세로 줄**로 읽혔다(실기 지적 2026-07-31, 2회). 순환 대신 **가장자리에서 방향을
+ * 튼다** — 어떤 프레임에도 물고기가 무대 경계에 걸치지 않는다.
+ *
+ * 값은 가장 큰 스프라이트의 반폭보다 커야 한다: fishRadius 최대 28 → 그린 폭 28×2.6 = 73,
+ * 반폭 37. 48이면 여유가 있다.
+ */
+const EDGE_MARGIN_PX = 48
+
 export function bandIndexOf(spec: FishSpec): number {
-  if (spec.score >= 120) return 3
+  if (spec.score >= 100) return 3
   if (spec.score >= 45) return 2
   if (spec.score >= 25) return 1
   return 0
@@ -248,7 +270,12 @@ export function createLoop(config: LoopConfig = DEFAULT_LOOP, seed = 1): Loop {
     return {
       id: nextId++,
       spec,
-      x: atEdge ? (dir > 0 ? -30 : config.width + 30) : rnd() * config.width,
+      // 화면 밖에서 들어오게 두면 등장 순간 경계에 걸쳐 잘린다 — 안쪽 여백에서 시작한다
+      x: atEdge
+        ? dir > 0
+          ? EDGE_MARGIN_PX
+          : config.width - EDGE_MARGIN_PX
+        : EDGE_MARGIN_PX + rnd() * Math.max(1, config.width - EDGE_MARGIN_PX * 2),
       y: band.top + rnd() * (band.bottom - band.top),
       dir,
       // 큰 물고기가 느리다 — 요구 속도로 크기를 대신 표현한다
@@ -259,6 +286,21 @@ export function createLoop(config: LoopConfig = DEFAULT_LOOP, seed = 1): Loop {
 
   function initFishes() {
     fishes = Array.from({ length: config.fishCount }, () => spawnFish(false))
+  }
+
+  /**
+   * 미끼가 이 물고기의 깊이 층 안에 있나.
+   *
+   * 선택·해제의 유일한 기준이다. 거리(interestRadiusPx)는 "가까운 것부터"를 고르는 데만 쓰고
+   * 층 조건이 자격을 정한다 — 반경 220px이 층 높이 약 72px의 3배라, 거리만 보면 노린 층이
+   * 아닌 물고기가 먼저 걸린다.
+   *
+   * @param margin 히스테리시스(px). 해제 판정에만 준다 — 경계에 미끼를 두면 선택↔해제가
+   *               매 프레임 뒤집혀 물고기가 다가오다 멈추는 걸 반복한다.
+   */
+  function inBobberBand(f: SceneFish, margin = 0): boolean {
+    const { top, bottom } = bandYRange(config, bandIndexOf(f.spec))
+    return bobber.y >= top - margin && bobber.y <= bottom + margin
   }
 
   function releaseActive() {
@@ -353,8 +395,14 @@ export function createLoop(config: LoopConfig = DEFAULT_LOOP, seed = 1): Loop {
           continue
         }
         f.x += f.dir * f.speed * dtSec
-        if (f.x < -40) f.x = config.width + 40
-        else if (f.x > config.width + 40) f.x = -40
+        // 가장자리에서 방향을 튼다 — 경계에 걸쳐 잘린 물고기가 안 생긴다(EDGE_MARGIN_PX 주석)
+        if (f.x < EDGE_MARGIN_PX) {
+          f.x = EDGE_MARGIN_PX
+          f.dir = 1
+        } else if (f.x > config.width - EDGE_MARGIN_PX) {
+          f.x = config.width - EDGE_MARGIN_PX
+          f.dir = -1
+        }
       }
 
       switch (phase) {
@@ -384,9 +432,15 @@ export function createLoop(config: LoopConfig = DEFAULT_LOOP, seed = 1): Loop {
           bobber.y += Math.abs(dy) <= step ? dy : Math.sign(dy) * step
 
           if (!active) {
-            // 미끼 근처 물고기가 관심을 보인다 (기획: 관심 → 접근 → 입질)
+            // 미끼 근처 + **미끼와 같은 깊이 층**의 물고기가 관심을 보인다 (기획: 관심 → 접근 → 입질).
+            // 층 조건이 없으면 조작이 성립하지 않는다 — interestRadiusPx(220)가 층 높이(약 72px)의
+            // 3배라, 상어를 노리고 바닥까지 내려도 두 층 위의 멸치가 먼저 선택됐다.
             const near = fishes
-              .filter((f) => Math.hypot(f.x - bobber.x, f.y - bobber.y) <= config.interestRadiusPx)
+              .filter(
+                (f) =>
+                  inBobberBand(f) &&
+                  Math.hypot(f.x - bobber.x, f.y - bobber.y) <= config.interestRadiusPx,
+              )
               .sort(
                 (a, b) =>
                   Math.hypot(a.x - bobber.x, a.y - bobber.y) -
@@ -401,12 +455,11 @@ export function createLoop(config: LoopConfig = DEFAULT_LOOP, seed = 1): Loop {
             }
           } else {
             curiousT += dtSec
-            // 미끼를 멀리 옮기면 흥미를 잃는다 — 깊이를 다시 골라 다른 층을 노릴 수 있다.
-            // 선택 반경보다 크게 잡아(×1.25) 경계에서 선택↔해제가 떨리지 않게 한다.
-            if (
-              Math.hypot(active.x - bobber.x, active.y - bobber.y) >
-              config.interestRadiusPx * 1.25
-            ) {
+            // 미끼를 그 물고기의 층 밖으로 옮기면 흥미를 잃는다 — 이게 "다른 물고기를 노린다"의
+            // 조작이다. 거리로만 판정하면 안 된다: approaching 물고기는 approachPxS로 미끼를
+            // 쫓아오므로 거리가 좁혀져 반경을 벗어나는 일이 거의 없고, 바닥까지 따라 내려온다
+            // (실기 지적 2026-07-31: "상어를 노렸는데 딴 물고기가 끝까지 따라옴").
+            if (!inBobberBand(active, BAND_RELEASE_MARGIN_PX)) {
               releaseActive()
             } else if (active.interest === 'curious' && curiousT >= config.curiousSec) {
               // 관심 → 접근 전환. 이 지연이 없으면 미끼가 물고기 옆에 가는 즉시 입질한다.

@@ -2199,7 +2199,10 @@ const startHint = computed(() =>
 .room-shell {
   width: 100vw;
   height: 100vh;
-  min-width: 1120px;
+  /* min-width 하드 바닥을 두지 않는다 — Windows 배율 × 크롬 줌이 곱해져서 CSS 뷰포트가
+     물리 해상도보다 훨씬 좁아진다(1366@125% = 1093px, 1920@150%+줌125% = 1024px).
+     1120px 바닥이 있으면 그 아래에서 가로가 통째로 잘렸다. 아래 @media(max-width:1120px)로
+     크롬(리본·푸터·컨트롤)을 줄여 캠 영역을 지킨다 — AppHeader가 쓰는 것과 같은 브레이크포인트. */
   display: flex;
   flex-direction: column;
   position: relative;
@@ -2972,5 +2975,33 @@ const startHint = computed(() =>
     padding-top: 9px;
     padding-bottom: 9px;
   }
+}
+
+/**
+ * 배율 대응 — AppHeader·BgmToggle이 쓰는 1120px 브레이크포인트와 같은 경계.
+ *
+ * 여기서 줄이는 건 전부 **고정 px 크롬**(리본·푸터·컨트롤·패딩)이다. `.cam-stage`는
+ * `flex: 1`이라 크롬이 먹는 만큼만 남으므로, 세로가 짧아졌을 때(1366@125% = 614px) 고정
+ * 크롬을 그대로 두면 그 차이가 전부 캠에서 깎여 타일 안 내용이 `overflow: hidden`에 잘린다.
+ * 폰트도 8~12px 고정이라 같이 줄지 않으니 여기서 함께 낮춘다.
+ */
+@media (max-width: 1120px) {
+  .room-ribbon { height: 54px; padding: 0 16px; }
+  .room-ribbon b { font-size: 11px; }
+  .room-ribbon .px-kicker { padding: 4px 7px; font-size: 7px; }
+
+  .room-main { gap: 10px; padding: 12px 16px; }
+  .cam-stage { gap: 10px; }
+
+  /* 푸터 — 3열 그리드 구조는 그대로 두고 높이만 낮춘다(중앙 정렬 로직 유지) */
+  .room-footer { gap: 10px; padding: 10px 14px; }
+  .controls { gap: 7px; }
+  .ctrl { width: 42px; height: 42px; border-width: 2px; border-radius: 11px 11px 8px 11px; }
+  .chat-dock { height: 44px; padding: 0 6px 0 11px; }
+  .leave { height: 44px; padding: 0 13px; }
+  /* chat-log는 chat-dock 높이에 맞춰 띄운다 — 52+10 이었으므로 44+10 */
+  .chat-log { bottom: 54px; }
+
+  .game-scoreboard { min-width: 140px; padding: 8px 9px; }
 }
 </style>
