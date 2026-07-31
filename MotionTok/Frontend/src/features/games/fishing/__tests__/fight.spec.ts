@@ -6,7 +6,9 @@ import {
   drainSeconds,
   expectedCatchSeconds,
   FISH,
+  GAIN_BONUS_MAX,
   reactionSeconds,
+  REEL_HOLD_RATIO,
   WARMUP_SEC,
   type FishSpec,
 } from '../fight'
@@ -21,7 +23,8 @@ import {
 
 const DT = 1 / 30
 const anchovy = FISH[0]!
-const shark = FISH[6]!
+/** 가장 센 어종 — 표에 종을 추가해도 따라간다(인덱스로 집으면 종 추가에 깨진다) */
+const shark = FISH[FISH.length - 1]!
 
 /** 일정한 rate로 계속 감았을 때 결과와 소요 시간(초) */
 function fightAt(fish: FishSpec, rate: number, maxSec = 60) {
@@ -120,7 +123,10 @@ describe('힘겨루기 — 기본 동작', () => {
 
 describe('어종표 — 밸런스', () => {
   it('점수는 기획 §물고기 종류를 그대로 유지한다', () => {
-    expect(FISH.map((f) => f.score)).toEqual([5, 15, 25, 35, 45, 70, 120])
+    // 스프라이트 15칸과 1:1. 기존 7종(5·15·25·35·45·70·120)은 그대로 두고 8종을 사이에 넣었다
+    expect(FISH.map((f) => f.score)).toEqual(
+      [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 70, 100, 120],
+    )
   })
 
   it('큰 물고기일수록 요구 속도가 높고 게이지가 천천히 찬다', () => {
@@ -202,33 +208,77 @@ describe('어종표 — 밸런스', () => {
    * 이전 표는 0.30~0.75라 전 어종이 문턱의 3~7배 아래였고 DANGER가 뜰 일이 없었다.
    * 요구 속도를 실측 밴드 안에 펼쳐야 큰 물고기가 실제로 저항한다.
    */
-  it('요구 속도가 실측 지속 밴드(1.45~2.41) 안에 펼쳐진다', () => {
+  /**
+   * 요구 속도 상한을 **실측 지속 최저(1.45) 아래**로 둔다.
+   *
+   * 예전에는 상어를 1.55로 두고 "자주 문턱 아래로 떨어져야 저항이 된다"고 봤는데, 실기에서
+   * 상어가 안 잡힌다는 지적이 나왔다(2026-07-31). 요구가 지속 최저보다 높으면 저항이 아니라
+   * **운**이 된다 — 순간 속도가 문턱을 넘는 구간만 진행되므로 사람에 따라 영원히 못 잡는다.
+   * 난이도는 요구 속도가 아니라 targetSec(감는 시간)이 만든다. 그쪽은 3~15초로 그대로다.
+   */
+  it('요구 속도는 실측 지속 최저(1.45) 아래에서 단조 증가한다', () => {
     // 가장 약한 물고기는 누구나 넘는다
     expect(FISH[0]!.requiredRate).toBeLessThan(1.45 * 0.5)
-    // 가장 센 물고기는 실측 최저보다 위 — 자주 문턱 아래로 떨어져야 저항이 된다
-    expect(shark.requiredRate).toBeGreaterThan(1.45)
-    // 다만 실측 평균은 넘지 않는다. 넘으면 물리적으로 불가능해진다(이전 버전의 실패 모드)
-    expect(shark.requiredRate).toBeLessThan(2.07)
+    // 가장 센 물고기도 지속 가능한 범위 — 넘으면 못 잡는 사람이 생긴다
+    expect(shark.requiredRate).toBeLessThan(1.45)
+    // 그래도 가장 높아야 한다(깊은 층이 더 힘든 건 유지)
+    for (const f of FISH) expect(f.requiredRate).toBeLessThanOrEqual(shark.requiredRate)
   })
 
-  it('실측 최저 지속 속도(1.45)로 참치까지 잡히고, 상어는 더 빨리 감아야 한다', () => {
-    for (const f of FISH.slice(0, 6)) {
+  it('실측 최저 지속 속도(1.45)면 전 어종이 잡힌다 — 상어까지', () => {
+    // 요구 상한을 1.45 아래로 내린 목적이 이것이다. 하나라도 escaped면 그 어종은
+    // 지속 속도가 평균 이하인 사람에게 사실상 잡을 수 없는 물고기가 된다
+    for (const f of FISH) {
       expect(fightAt(f, 1.45).state).toBe('caught')
     }
-    expect(fightAt(shark, 1.45).state).toBe('escaped')
-    // 실측 평균(2.07)이면 상어도 잡힌다
-    expect(fightAt(shark, 2.07).state).toBe('caught')
+    // 감기를 아예 안 하면 전부 도망간다 — 난이도가 사라진 게 아니다
+    for (const f of FISH) {
+      expect(fightAt(f, 0).state).toBe('escaped')
+    }
   })
 })
 
 describe('힘겨루기 — 카운트 편향 흡수 (이 설계의 목적)', () => {
-  it('감기 속도가 15% 높아도 결과는 안 뒤집히고 시간만 짧아진다', () => {
+  /**
+   * 2026-07-31 설계 변경: 요구치를 넘긴 만큼 게이지를 후하게 준다(GAIN_BONUS_MAX).
+   *
+   * 이전에는 "문턱을 넘으면 채우는 속도가 같다"였고 이 테스트가 그걸 못박고 있었다. 실기에서
+   * 릴 감기가 끊긴다는 지적을 받아 바꾼 지점이다 — 제대로 빠르게 감는 게 화면에 보여야 한다.
+   *
+   * 다만 **결과가 뒤집히지 않는다**는 원래 목적은 그대로 지킨다. pump 카운트 편향(±0.75 왕복,
+   * 2026-07-29 3인 실측)이 잡힘/도망을 가르면 안 된다. 이제 편향은 시간 차이로만 나타나고
+   * 그 차이도 보너스 상한 안에 갇힌다.
+   */
+  it('감기 속도가 15% 높으면 결과는 그대로고 시간만 짧아진다', () => {
     const base = fightAt(shark, shark.requiredRate)
     const fast = fightAt(shark, shark.requiredRate * 1.15)
     expect(base.state).toBe('caught')
     expect(fast.state).toBe('caught')
-    // 속도 모델이라 요구치를 넘으면 채우는 속도는 같다 — 편향이 결과에 안 나타난다
-    expect(fast.sec).toBeCloseTo(base.sec, 1)
+    // 빠르게 감으면 빨라진다(느려지지 않는다)
+    expect(fast.sec).toBeLessThan(base.sec)
+    // 단 보너스 상한만큼만 — 편향이 시간을 무한히 줄이지 못한다
+    expect(fast.sec).toBeGreaterThan(base.sec / GAIN_BONUS_MAX)
+  })
+
+  /**
+   * 릴 감기 끊김 보정 ②: 슈미트 트리거.
+   *
+   * 손목 y로 회전을 재면 방향 전환마다 순간 속도가 내려간다. 이진 판정이면 그 프레임에
+   * drain(gain의 1.5배)으로 역주행해서, 계속 감고 있는데 게이지가 뒷걸음질친다.
+   */
+  it('감기 시작 후에는 요구치 아래로 조금 떨어져도 역주행하지 않는다', () => {
+    const f = createFight(shark)
+    // 요구치로 감아 진행도를 올린다
+    for (let t = 0; t < 1; t += DT) f.step(shark.requiredRate, DT)
+    const before = f.step(shark.requiredRate, DT).progress
+    // 유지 문턱과 요구치 사이로 떨어뜨린다 — 방향 전환 순간의 저하에 해당
+    const dip = shark.requiredRate * ((1 + REEL_HOLD_RATIO) / 2)
+    const s = f.step(dip, DT)
+    expect(s.reeling).toBe(true)
+    expect(s.progress).toBeGreaterThan(before)
+    // 유지 문턱 아래로 확실히 떨어지면 그때는 저항이 걸린다
+    const s2 = f.step(shark.requiredRate * (REEL_HOLD_RATIO - 0.1), DT)
+    expect(s2.reeling).toBe(false)
   })
 
   it('요구 속도를 넉넉히 넘기면 사람마다 편향이 있어도 전원 잡는다', () => {
