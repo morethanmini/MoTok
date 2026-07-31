@@ -20,8 +20,51 @@ services:
       # 컨테이너 기본 존은 UTC다 — 로그·JVM 존을 mysql(TZ: Asia/Seoul)과 맞춘다.
       # 저장 시각 자체는 BackendApplication이 한 번 더 고정하므로 이 설정을 빠뜨려도 안전하다.
       TZ: Asia/Seoul
+      # logback-spring.xml 이 읽는다. 호스트 볼륨으로 나가 컨테이너가 죽어도 로그가 남는다.
+      LOG_DIR: /logs
+    # 실측 결과 컨테이너 기본 nofile 이 soft 1024 였다(-153). WebSocket 하나가 FD 하나를 쓰므로
+    # 2000명은커녕 약 950 연결에서 "Too many open files" 로 막힌다 — 모든 제약 중 가장 낮은 천장이다.
+    # hard 가 524288 이라 올리는 데 제약이 없다.
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    # OOM killer 가 RSS 최대 프로세스를 임의로 죽이는 것을 막는다. Swap 이 0 이라 여유가 없다.
+    # JVM 힙은 이 값의 60%(Dockerfile MaxRAMPercentage) — 나머지는 off-heap 다이렉트 버퍼 몫.
+    mem_limit: 6g
+    # 종료 유예. 기본 10초인데, JFR dumponexit(실측 0.8초/5.3MB)은 녹화가 길어질수록 오래 걸리고
+    # WebSocket 2000개를 정리하는 시간도 필요하다. 10초에 걸려 SIGKILL 되면 <b>그 회차의 JFR 이
+    # 통째로 날아간다</b>. 여유를 준다고 배포가 느려지지 않는다 — 앱이 먼저 끝나면 바로 넘어간다.
+    stop_grace_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+        # ★ 로그가 앱을 막지 않게 한다. 기본(blocking)은 도커 로그 수집이 밀리면
+        #   컨테이너의 stdout 쓰기가 그대로 <b>블로킹</b>돼서, 부하가 몰릴 때 로깅이 요청을
+        #   기다리게 만든다. logback 쪽은 AsyncAppender+neverBlock 으로 이미 막아 뒀지만
+        #   CONSOLE 출력은 결국 stdout 을 거치므로 도커 레이어에서도 같은 원칙을 적용한다.
+        mode: "non-blocking"
+        max-buffer-size: "4m"
+    volumes:
+      # 관측 산출물(JSON 로그·JFR·힙덤프). 반드시 호스트 볼륨이어야 컨테이너가 죽어도 남는다.
+      - /srv/motok/logs:/logs
+    ports:
+      # 관리 포트(actuator). ★ 127.0.0.1 에만 묶는다 — 외부에서 직접 닿을 수 없고
+      # SSH 터널(-L 9091:localhost:9090)로만 접근한다. nginx 도 이 포트를 프록시하지 않는다.
+      - "127.0.0.1:9090:9090"
     expose:
       - "8080"          # 호스트에 직접 노출 안 함. nginx 만 내부 네트워크로 접근.
+    healthcheck:
+      # ⚠ /actuator/health(종합)가 아니라 liveness 를 본다. 종합은 메일 서버가 흔들리기만 해도
+      #   503 이 되는데, 그건 "앱이 죽었다"와 전혀 다른 상태다. liveness 는 재시작으로 고쳐지는
+      #   문제만 본다. (curl 은 eclipse-temurin:21-jdk 에 기본 포함 — 실측 확인, 추가 설치 없음)
+      test: ["CMD", "curl", "-fsS", "http://localhost:9090/actuator/health/liveness"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
     depends_on:
       mysql:
         condition: service_healthy    # DB 준비된 뒤 앱 기동 (초기 접속 실패 방지)
@@ -42,6 +85,18 @@ services:
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
+      # 기본값 128MB. 데이터가 그보다 커지면 거의 모든 쿼리가 디스크로 간다(-153, DB-13).
+      - --innodb-buffer-pool-size=1G
+      # 느린 쿼리를 남긴다. 베타 후 "무엇이 느렸나"의 1차 증거가 된다.
+      - --slow-query-log=1
+      - --slow-query-log-file=/var/lib/mysql/slow.log
+      - --long-query-time=0.5
+    mem_limit: 3g
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
     volumes:
       - mysql-data:/var/lib/mysql      # 데이터 영속화 (컨테이너 재생성돼도 유지)
     # 호스트에 포트 노출 안 함. app 이 compose 네트워크로 mysql:3306 접속.
@@ -56,9 +111,39 @@ services:
     image: redis:7.4-alpine
     container_name: motiontok-redis
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    environment:
+      TZ: Asia/Seoul
+    # alpine 이미지는 tzdata 가 없어 TZ 만으로는 안 먹는다 — 호스트 파일을 빌려 쓴다.
     volumes:
+      - /etc/localtime:/etc/localtime:ro
       - redis-data:/data
+    # maxmemory 가 없으면 무한히 자라다 OOM 으로 프로세스가 죽는다(전체 장애 + AOF 재생).
+    # 게스트 토큰 무제한 발급 같은 경로가 그대로 메모리 폭탄이 될 수 있다(-153, AU-03).
+    #
+    # ⚠ 정책은 noeviction 이다. LRU 계열을 쓰면 안 된다 —
+    #   이 Redis 는 캐시가 아니라 <b>방·게임세션·리프레시 토큰의 저장소</b>다.
+    #   allkeys-lru 는 물론이고 volatile-lru 도 답이 아니다. 우리 키는 거의 전부 TTL 이 있어서
+    #   (presence 60s, 방 24h, 세션 30m, 리프레시 14d) volatile 이 보호해 주는 대상이 사실상 없다 —
+    #   즉 volatile-lru 는 여기서 allkeys-lru 와 같은 뜻이고, 한도에 닿으면 <b>진행 중인 방과
+    #   게임 세션이 조용히 사라진다</b>. 게임 중인 사람이 영문 모르고 튕기고 로그인이 풀리는데
+    #   로그에는 아무것도 안 남는다. 조용한 데이터 손실이 최악이다.
+    #
+    #   noeviction 은 한도에 닿으면 <b>쓰기가 OOM 에러로 실패</b>한다. 앱 예외로 즉시 드러나고
+    #   읽기는 계속 성공하므로 살아 있는 방은 유지된다. 시끄럽게 터지는 편이 낫다.
+    #
+    # maxmemory 자체는 필요하다 — 없으면 무한히 자라다 프로세스가 OOM 으로 죽고(전체 장애 +
+    # AOF 재생), 게스트 토큰 무제한 발급 같은 경로가 그대로 메모리 폭탄이 된다(-153, AU-03).
+    # 512mb 는 실사용 추정(2000명 × 약 5KB + 채팅 스트림 ≒ 50MB)의 10배 여유다.
+    # mem_limit 을 maxmemory 의 2배로 둔 이유 — AOF rewrite 는 fork 를 쓰고, 쓰기가 몰리는
+    # 동안 copy-on-write 로 메모리가 일시적으로 크게 는다. 1:1 로 맞추면 그 순간 OOM 이 난다.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
+    mem_limit: 1g
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -74,6 +159,16 @@ services:
       # 키를 설정 파일에 안 박고 .env 에서 주입 (형식: "키: 시크릿").
       # Spring(app)과 같은 값 공유 — 토큰 서명·검증의 근거. GitLab Variables 등록 필수.
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+    # ⚠ mem_limit 을 일부러 걸지 않았다.
+    #   지금까지 상한이 없었으므로 여기에 숫자를 넣는 순간 <b>없던 강제 종료 경로가 새로 생긴다</b>.
+    #   SFU 는 참가자 수에 따라 메모리가 크게 변하는데 2000명 규모를 한 번도 실측한 적이 없어서,
+    #   추측으로 조이면 베타 도중 영상만 통째로 끊긴다. 관측하려다 장애를 만드는 셈이다.
+    #   node-exporter 로 컨테이너 메모리를 지켜보고, 실측값이 생긴 뒤 베타 이후에 건다.
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
     volumes:
       - ./livekit/livekit.prod.yaml:/etc/livekit.yaml:ro
     expose:
@@ -94,8 +189,24 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    environment:
+      TZ: Asia/Seoul
+    # ⚠ livekit 과 같은 이유로 mem_limit 을 걸지 않았다(위 주석 참고).
+    #   nginx 는 원래 가볍지만, 2000명이 동시에 붙는 T+0 의 버퍼 사용량을 실측한 적이 없다.
+    #   유일한 입구가 OOM 으로 죽으면 사이트 전체가 내려간다 — 추측으로 조일 자리가 아니다.
+    # nginx 는 커넥션당 FD 를 쓴다. worker_rlimit_nofile(nginx.conf)과 짝을 이뤄야 한다.
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     volumes:
+      # ★ 신규. 지금까지 이미지 기본 nginx.conf 를 그대로 써서 worker_connections 가 1024 였다.
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      # alpine 이라 TZ 만으로는 안 먹는다
+      - /etc/localtime:/etc/localtime:ro
+      # 액세스 로그(JSON·RUM)를 호스트로 뺀다 — 컨테이너가 죽어도 남아야 한다
+      - /srv/motok/logs/nginx:/var/log/nginx
       - certbot-conf:/etc/letsencrypt:ro
       - certbot-www:/var/www/certbot:ro
       - /srv/motok/frontend:/usr/share/nginx/html:ro   # deploy-frontend 가 채우는 dist
@@ -104,6 +215,34 @@ services:
       - livekit         # /livekit 프록시 대상 — 없으면 nginx 기동 시 upstream 해석 실패
     # 6시간마다 reload 해서 certbot 이 갱신한 인증서를 반영
     command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+
+  # 호스트 지표(CPU·메모리·디스크·네트워크·소켓) 노출 (-153).
+  # Netdata 같은 올인원 대신 이걸 쓰는 이유 — node_exporter 는 '노출'만 하고
+  # 저장·대시보드는 서버 밖(노트북 Prometheus)에서 한다. 20~30MB 로 매우 가볍다.
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: motiontok-node-exporter
+    restart: unless-stopped
+    pid: host
+    command:
+      - '--path.rootfs=/host'
+      - '--web.listen-address=127.0.0.1:9100'   # ★ 루프백만. SSH 터널로 접근한다
+    network_mode: host        # 호스트 네트워크 지표를 보려면 필요
+    volumes:
+      # ⚠ rslave 는 호스트의 `/` 가 shared 마운트여야 동작한다. Ubuntu(systemd)는 기본이 shared 라
+      #   문제없지만, 아니면 컨테이너가 아래 오류로 기동 실패한다:
+      #     "path / is mounted on / but it is not a shared or slave mount"
+      #   배포 전 한 줄로 확인:  findmnt -o TARGET,PROPAGATION /     → shared 여야 한다
+      #   (private 이면 `sudo mount --make-rshared /` 하거나 이 줄에서 ,rslave 를 뺀다.
+      #    빼도 지표는 다 나온다 — 배포 후 새로 생긴 마운트가 반영되지 않을 뿐이다.
+      #    실측 확인: rslave 없이 cpu·memory·filesystem·sockstat·filefd 전부 수집됨)
+      - /:/host:ro,rslave
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
 
   certbot:
     image: certbot/certbot

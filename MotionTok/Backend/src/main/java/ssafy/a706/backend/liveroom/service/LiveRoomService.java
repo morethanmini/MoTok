@@ -1,6 +1,7 @@
 package ssafy.a706.backend.liveroom.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
@@ -38,6 +39,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class LiveRoomService {
@@ -86,6 +88,8 @@ public class LiveRoomService {
             fields.put("password", req.password());
         }
         repository.saveRoom(roomId, fields);
+        // 방을 만드는 것도 입장이다 — 입장 경로와 같은 규칙을 받는다(계정당 한 방).
+        leaveOtherRoom(principal, playerKey(principal), roomId);
         repository.addMember(roomId, playerKey(principal), principal.userId(), principal.displayName(),
                 principal.isGuest(), now);
         repository.indexRoom(roomId, now);
@@ -249,6 +253,39 @@ public class LiveRoomService {
         String key = playerKey(member.userId(), member.guest());
         cancelPendingUnloadLeave(roomId, key);
         processLeave(roomId, member.userId(), member.displayName(), key);
+    }
+
+    /**
+     * 한 계정은 한 방에만 — 다른 방에 있었으면 거기서 먼저 나온다.
+     *
+     * <h4>왜 필요한가</h4>
+     * 방 멤버십은 <b>방마다</b> 관리돼서, 같은 방에 두 번 들어가는 것은 막히지만 서로 다른 방
+     * 여러 개에 동시에 들어가는 것은 아무도 막지 않았다. 계정 하나로 방 100개를 점유할 수 있다는
+     * 뜻이고, 방마다 SFU 퍼블리셔가 하나씩 붙으므로 비용이 방 수에 비례해 늘어난다. 부하보다 먼저
+     * 나타나는 피해는 <b>방 스쿼팅</b>이다 — 공개방을 점유해 두면 빠른시작·매칭이 실제 사용자에게
+     * 돌아가지 않는다. {@code RoomPresenceTracker}는 이미 "한 연결은 한 방"을 전제하고 있었는데,
+     * 계정 단위로는 그 전제가 없었다.
+     *
+     * <h4>왜 거절이 아니라 자동 퇴장인가</h4>
+     * 제품상 한 번에 한 방만 플레이하므로, 새 방을 고른 것은 곧 옛 방을 뜨겠다는 뜻이다. 거절하면
+     * 눈에 보이지도 않는 옛 멤버십(유령·다른 탭) 때문에 입장이 막혀 빠져나올 방법이 없어진다.
+     * 자동 퇴장은 {@link #leave}와 같은 경로를 타므로 방장 이양·빈방 삭제·퇴장 방송이 그대로 돈다 —
+     * 남은 참가자에게는 그냥 평범한 퇴장으로 보인다.
+     *
+     * <p>이미 사라진 방을 가리키는 색인(방이 TTL로 죽었는데 기록만 남은 경우)은 조용히 넘긴다 —
+     * 여기서 던지면 멀쩡한 입장이 옛 흔적 때문에 실패한다.</p>
+     */
+    private void leaveOtherRoom(AuthPrincipal principal, String key, String targetRoomId) {
+        String previousRoomId = repository.findRoomIdOfPlayer(key).orElse(null);
+        if (previousRoomId == null || previousRoomId.equals(targetRoomId)) {
+            return; // 아무 방에도 없거나, 지금 들어가려는 그 방이다(새로고침 복귀)
+        }
+        cancelPendingUnloadLeave(previousRoomId, key); // 옛 방의 언로드 유예 예약도 함께 접는다(-164)
+        try {
+            processLeave(previousRoomId, principal.userId(), principal.displayName(), key);
+        } catch (BusinessException e) {
+            log.info("이전 방 자동 퇴장 생략: room={} player={} — {}", previousRoomId, key, e.getMessage());
+        }
     }
 
     /** 퇴장 공통 처리 — 멤버 제거·MEMBER_LEFT 방송·빈방 삭제·방장 이양. */
@@ -438,6 +475,9 @@ public class LiveRoomService {
         if (!rejoining && room.participantCount() >= room.maxPlayers()) {
             throw new BusinessException(ErrorCode.ROOM_FULL);
         }
+        // 여기까지 왔으면 입장이 확정됐다 — 그때서야 있던 방을 뜬다. 거절(강퇴·게임중·정원초과)보다
+        // 뒤에 두는 것이 핵심이다: 못 들어가는 방 때문에 멀쩡히 있던 방에서 쫓겨나면 안 된다.
+        leaveOtherRoom(principal, key, room.roomId());
         repository.addMember(room.roomId(), key, principal.userId(), principal.displayName(),
                 principal.isGuest(), System.currentTimeMillis());
         LiveRoom joined = loadRoom(room.roomId());
