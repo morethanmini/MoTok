@@ -14,6 +14,7 @@ import RhythmThumbnail from './components/RhythmThumbnail.vue'
 import FingerStarThumbnail from './components/FingerStarThumbnail.vue'
 import DrawingThumbnail from './components/DrawingThumbnail.vue'
 import BodyFitThumbnail from './components/BodyFitThumbnail.vue'
+import FishingThumbnail from './components/FishingThumbnail.vue'
 import heroFishingCat from '@/assets/games-catalog/hero-fishing-cat-transparent.png'
 import lobbyRoomListBoard from '@/assets/lobby/lobby-room-list-board.png'
 import lobbyGardenGrassTile from '@/assets/lobby/lobby-garden-grass-tile.png'
@@ -23,10 +24,10 @@ const session = useSessionStore()
 const { message: toast, flash } = useToast()
 
 const GAME_ART: Record<number, string> = {
-  2: '/assets/intro/fishing-rod.png',
   3: '/assets/intro/tambourine.png',
   5: '/assets/intro/person.png',
   10: '/assets/intro/sketchbook.png',
+  11: '/assets/intro/fishing-rod.png',
 }
 const GAME_TONE = ['sky', 'mint', 'peach', 'lilac', 'butter']
 /**
@@ -51,15 +52,23 @@ const DRAWING_GAME_ID = 10
  */
 const BODY_FIT_GAME_ID = 4
 /**
+ * 모션 낚시 — 이 게임 카드만 레이어형 썸네일(FishingThumbnail)을 쓴다.
+ * 실제 백엔드 시더(GameCatalogSeeder, "game catalog seeded: id=11 모션 낚시") 기준 id=11 —
+ * game-room/data.ts의 GAME_CATALOG(gameId:11, "모션 낚시")과도 대조해 일치 확인함(2026-07-31).
+ * 이름이 완전히 같은 항목이라(그림으로 말해요 6→10 전례와 동일 패턴) MOCK_GAMES의 id도
+ * 2에서 11로 맞췄다(아래 MOCK_GAMES 주석 참고).
+ */
+const FISHING_GAME_ID = 11
+/**
  * MOCK_GAMES의 id는 실제 백엔드 시더(GameCatalogSeeder/RhythmGameSeeder) 기준으로 맞춘다.
- * 확인 결과 백엔드에 실제로 존재하는 게임은 4개뿐(id 1 핑거 스타, 2 캐치캐치리듬,
- * 4 몸 끼워 맞추기, 10 그림으로 말해요) — 아래 "모션 낚시"(2)·"리듬 터치"(3)·"자세 매치"(5)는
+ * 확인 결과 백엔드에 실제로 존재하는 게임은 5개(id 1 핑거 스타, 2 캐치캐치리듬,
+ * 4 몸 끼워 맞추기, 10 그림으로 말해요, 11 모션 낚시) — 아래 "리듬 터치"(3)·"자세 매치"(5)는
  * 이름이 백엔드 어떤 게임과도 일치하지 않아 대응하는 실제 id가 없다(2026-07-30 확인).
- * 즉 이 3개는 목데이터 전용 placeholder이며, id 숫자를 실제 게임과 임의로 짝짓지 않는다.
+ * 즉 이 2개는 목데이터 전용 placeholder이며, id 숫자를 실제 게임과 임의로 짝짓지 않는다.
  */
 const MOCK_GAMES: Game[] = [
   { id: 1, name: '핑거 스타', description: '손끝으로 별자리를 완성해요', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '손동작', thumbnailUrl: '', playable: true, active: true },
-  { id: 2, name: '모션 낚시', description: '온몸으로 즐기는 낚시 게임', mode: 'SOLO', minPlayers: 1, maxPlayers: 4, supportsBot: false, category: '전신', thumbnailUrl: '', playable: true, active: true },
+  { id: 11, name: '모션 낚시', description: '온몸으로 즐기는 낚시 게임', mode: 'SOLO', minPlayers: 1, maxPlayers: 4, supportsBot: false, category: '전신', thumbnailUrl: '', playable: true, active: true },
   { id: 3, name: '리듬 터치', description: '비트에 맞춰 움직여요', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '리듬', thumbnailUrl: '', playable: true, active: true },
   { id: 5, name: '자세 매치', description: '화면 속 자세를 따라 해요', mode: 'VERSUS', minPlayers: 2, maxPlayers: 8, supportsBot: true, category: '전신', thumbnailUrl: '', playable: false, active: true },
   { id: 10, name: '그림으로 말해요', description: '그림 릴레이로 마음을 맞춰요', mode: 'COOP', minPlayers: 3, maxPlayers: 8, supportsBot: false, category: '파티', thumbnailUrl: '', playable: true, active: true },
@@ -86,6 +95,7 @@ function isRhythm(game: Game) { return game.id === RHYTHM_GAME_ID }
 function isFingerStar(game: Game) { return game.id === FINGER_STAR_GAME_ID }
 function isDrawing(game: Game) { return game.id === DRAWING_GAME_ID }
 function isBodyFit(game: Game) { return game.id === BODY_FIT_GAME_ID }
+function isFishing(game: Game) { return game.id === FISHING_GAME_ID }
 async function openDetail(game: Game) {
   selected.value = game
   detailOpen.value = true
@@ -161,6 +171,7 @@ function goDevice(game: Game, roomId: string) {
               <FingerStarThumbnail v-else-if="isFingerStar(game)" />
               <DrawingThumbnail v-else-if="isDrawing(game)" />
               <BodyFitThumbnail v-else-if="isBodyFit(game)" />
+              <FishingThumbnail v-else-if="isFishing(game)" />
               <img v-else-if="artFor(game)" :src="artFor(game)" alt="" />
               <button type="button" class="detail-button" :aria-label="`${game.name} 상세 보기`" @click.stop="openDetail(game)"><span>자세히</span><b>›</b></button>
             </div>
