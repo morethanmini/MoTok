@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 계정 설정 — 닉네임 변경 / 비밀번호 변경 / 회원 탈퇴 (API §2). */
+/** 계정 설정 — 소리 / 닉네임 변경 / 비밀번호 변경 / 회원 탈퇴 (API §2). */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { usersApi, authApi, ApiError, forceRefreshAccessToken, type WithdrawRequest } from '@/api'
@@ -230,6 +230,24 @@ onMounted(() => {
       <span>계정 정보를 안전하게 관리해요.</span>
     </section>
     <div class="stack">
+      <!-- 소리를 맨 위에 둔다 — 계정 항목보다 훨씬 자주 만지는 설정이다 -->
+      <PixelCard title="소리">
+        <label v-for="s in soundSliders" :key="s.name" class="sound-row">
+          <span class="sound-name">{{ s.name }}</span>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="5"
+            :value="s.percent"
+            :aria-label="s.name"
+            @input="s.set(Number(($event.target as HTMLInputElement).value) / 100)"
+          />
+          <span class="sound-val" :class="{ boost: s.percent > 50 }">{{ s.percent }}%</span>
+        </label>
+        <p class="sound-hint">50%가 기본이고, 100%까지 올리면 두 배로 커져요.</p>
+      </PixelCard>
+
       <PixelCard title="닉네임 변경">
         <label class="field">
           새 닉네임
@@ -296,23 +314,6 @@ onMounted(() => {
         </label>
 
         <PixelButton variant="primary" block @click="savePassword">변경</PixelButton>
-      </PixelCard>
-
-      <PixelCard title="소리">
-        <label v-for="s in soundSliders" :key="s.name" class="sound-row">
-          <span class="sound-name">{{ s.name }}</span>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            step="5"
-            :value="s.percent"
-            :aria-label="s.name"
-            @input="s.set(Number(($event.target as HTMLInputElement).value) / 100)"
-          />
-          <span class="sound-val" :class="{ boost: s.percent > 50 }">{{ s.percent }}%</span>
-        </label>
-        <p class="sound-hint">50%가 기본이고, 100%까지 올리면 두 배로 커져요.</p>
       </PixelCard>
 
       <PixelButton variant="primary" block @click="openWithdraw">회원 탈퇴</PixelButton>
