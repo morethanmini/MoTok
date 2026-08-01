@@ -43,7 +43,10 @@ const gameMusic = ref(DEFAULT_LEVEL)
 const GAIN_AT_FULL = 2
 
 function readLevel(key: string): number {
-  const v = Number(sessionStorage.getItem(key))
+  // 저장값이 없을 때 Number(null)이 0이 되어 기본값 대신 무음으로 시작하던 문제 — 먼저 걸러낸다.
+  const raw = sessionStorage.getItem(key)
+  if (raw === null || raw === '') return DEFAULT_LEVEL
+  const v = Number(raw)
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_LEVEL
 }
 

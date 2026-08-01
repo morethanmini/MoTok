@@ -87,7 +87,9 @@ export function setSpeakerLevel(value: number) {
 }
 
 export function useSpeakerGain() {
-  const saved = Number(sessionStorage.getItem(KEY))
+  // 저장값이 없으면 Number(null)이 0이라 기본값 대신 무음으로 시작한다 — 먼저 걸러낸다.
+  const raw = sessionStorage.getItem(KEY)
+  const saved = raw === null || raw === '' ? NaN : Number(raw)
   if (Number.isFinite(saved) && saved >= 0 && saved <= 1 && level.value === DEFAULT_LEVEL) {
     level.value = saved
   }
