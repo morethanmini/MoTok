@@ -89,12 +89,10 @@ export class RhythmMusic {
    * <p>파일 t=0이 아니라 격자 원점을 맞춘다 — 머리 무음·인코더 지연을 건너뛰고 재생하므로
    * 호출부는 "노트 슬롯의 시각"만 주면 된다.</p>
    *
-   * @returns 실제로 걸었는지 — 이미 곡 길이를 넘겼거나 음악을 꺼둔 경우 false
+   * @returns 실제로 걸었는지 — 버퍼가 없거나 이미 곡 길이를 넘긴 경우 false
    */
   start(atCtxTime: number): boolean {
     if (!this.buffer || this.source || this.disposed) return false
-    // 사용자가 BGM을 꺼뒀으면 게임 음악도 내지 않는다(다른 게임들과 같은 규약)
-    if (!useBgm().isEnabled.value) return false
 
     const now = this.ctx.currentTime
     // 예약 시각이 이미 지났으면(모델 로딩이 길어진 경우) 그만큼 파일 안쪽에서 시작한다 —

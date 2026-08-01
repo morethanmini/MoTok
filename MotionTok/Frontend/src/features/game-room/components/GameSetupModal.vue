@@ -10,9 +10,9 @@
  * <p>옵션이 없는 게임은 이 창을 띄우지 않는다 — 호출부(GameRoomView)가 게임④만 여기로 보낸다.
  * 전부 거치게 하면 "플레이 버튼만 있는 빈 창"이 생긴다.</p>
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useBgm } from '@/composables/useBgm'
-import { SRC as BODY_FIT_SFX } from '@/features/games/body-fit/audio'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { gameMusicGain, useBgm } from '@/composables/useBgm'
+import { SRC as BODY_FIT_SFX, VOLUME as BODY_FIT_VOLUME } from '@/features/games/body-fit/audio'
 import type { GameEntry } from '../data'
 import PixelButton from '@/components/common/PixelButton.vue'
 
@@ -69,15 +69,27 @@ const activeDifficulty = computed(() => DIFFICULTIES.find((d) => d.key === diffi
  *
  * <p>로비 테마와 겹치지 않는 건 호출부가 맡는다 — GameRoomView가 이 창이 열린 동안
  * useBgm().suspendForGame()을 이미 걸어둔다(게임④ 사운드 규약과 같은 자리).</p>
+ *
+ * <p>크기는 게임 본체와 같은 식으로 정한다 — 상수로 두면 설정을 무시하고 음량도 어긋난다.</p>
  */
 let bed: HTMLAudioElement | null = null
+
+/** BodyFitAudio.target()과 같은 계산 */
+function bedVolume(): number {
+  return Math.min(1, BODY_FIT_VOLUME * gameMusicGain())
+}
+
 onMounted(() => {
-  if (!useBgm().isEnabled.value) return // 음악을 꺼둔 사용자에게는 틀지 않는다
   bed = new Audio(BODY_FIT_SFX.ingame)
   bed.loop = true
-  bed.volume = 0.5
+  bed.volume = bedVolume()
   // 이 창은 클릭(플레이 버튼)으로만 열리므로 자동재생 정책에 막히지 않는다
   bed.play().catch(() => {})
+})
+
+// 창이 떠 있는 동안 슬라이더를 움직이면 즉시 반영
+watch(useBgm().gameMusic, () => {
+  if (bed) bed.volume = bedVolume()
 })
 onBeforeUnmount(() => {
   bed?.pause()

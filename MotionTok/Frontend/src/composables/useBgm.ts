@@ -28,6 +28,8 @@ let baseVolume = 0.2
 
 /**
  * 사용자가 조절하는 음악 크기 — 로비와 게임을 따로 둔다(설정 화면에서 각각, 게임방 버튼은 게임만).
+ * 켜기/끄기도 따로다 — {@link isEnabled}(헤더 토글)는 로비 테마 전용이고,
+ * 게임 음악은 이 값이 0인 것이 곧 꺼진 상태다.
  *
  * <p><b>0.5가 기본이고 1.0이 2배다.</b> 곡별 기준 레벨(로비 0.2 · 게임 0.28/0.23)에
  * {@code 값 × 2}를 곱하므로 0.5에서 기준 그대로, 1.0에서 두 배가 된다. 기준 레벨이 낮아
@@ -43,7 +45,10 @@ const gameMusic = ref(DEFAULT_LEVEL)
 const GAIN_AT_FULL = 2
 
 function readLevel(key: string): number {
-  const v = Number(sessionStorage.getItem(key))
+  // 저장값이 없을 때 Number(null)이 0이 되어 기본값 대신 무음으로 시작하던 문제 — 먼저 걸러낸다.
+  const raw = sessionStorage.getItem(key)
+  if (raw === null || raw === '') return DEFAULT_LEVEL
+  const v = Number(raw)
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_LEVEL
 }
 
@@ -114,8 +119,11 @@ function setVolume(value: number) {
 }
 
 /**
- * 0에서 올릴 때 꺼둔 음악을 되살린다 — 슬라이더를 올렸는데 아무 소리도 안 나면 고장으로 보인다.
+ * 0에서 올릴 때 꺼둔 로비 테마를 되살린다 — 슬라이더를 올렸는데 아무 소리도 안 나면 고장으로 보인다.
  * 헤더 토글과 설정 슬라이더가 서로를 모르는 상태를 피한다.
+ *
+ * <p>로비 음악에만 쓴다. 게임 음악 슬라이더가 이걸 부르면 게임방에서 볼륨을 올렸다는 이유로
+ * 꺼둔 로비 테마가 켜진다 — 축이 다른 두 값이 서로를 건드리는 자리였다.</p>
  */
 function reviveIfSilenced(next: number, wasSilent: boolean) {
   if (next > 0 && (wasSilent || !isEnabled.value)) {
@@ -135,13 +143,14 @@ function setLobbyMusic(value: number) {
   reviveIfSilenced(next, wasSilent)
 }
 
-/** 게임 BGM 크기(0~1, 0.5가 기본). 게임방 음악 버튼과 설정 화면이 같은 값을 쓴다. */
+/**
+ * 게임 BGM 크기(0~1, 0.5가 기본). 게임방 음악 버튼과 설정 화면이 같은 값을 쓴다.
+ * 0이 곧 "게임 음악 끄기"다 — 헤더 토글({@link toggle})은 로비 테마만 맡는다.
+ */
 function setGameMusic(value: number) {
   const next = Math.max(0, Math.min(1, value))
-  const wasSilent = gameMusic.value === 0
   gameMusic.value = next
   sessionStorage.setItem(KEY_GAME_MUSIC, String(next))
-  reviveIfSilenced(next, wasSilent)
 }
 
 /** 게임 실행 중 BGM 일시 정지 (게임 자체 사운드와 겹치지 않도록) */

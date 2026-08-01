@@ -26,8 +26,9 @@ export type Cue = keyof typeof SRC
  * 로비 테마(useBgm 의 0.2)와 체감을 맞춘 값 — 파일 RMS 를 재서 역산했다.
  * 로비 테마 −15.2 dBFS 대 이 큐들 −16.4 dBFS 라서 0.23 이 같은 레벨이 된다.
  * 0.5 였을 때 로비보다 +6.8 dB 커서 세 게임 중 가장 컸다(gameBgm.ts 와 같은 기준으로 정렬).
+ * 설정 창(GameSetupModal)도 이 값을 쓴다 — 따로 두면 창을 닫는 순간 음량이 튄다.
  */
-const VOLUME = 0.23
+export const VOLUME = 0.23
 
 /**
  * 큐 교체 시 겹치는 시간.
@@ -110,8 +111,8 @@ export class BodyFitAudio {
 
   /** 큐 재생. 같은 큐를 다시 요청하면 무시한다(페이즈가 매 틱 갱신돼도 재시작되지 않게). */
   play(cue: Cue, opts: { tailMs?: number; loop?: boolean } = {}) {
-    // 사용자가 BGM을 꺼뒀으면 게임 사운드도 내지 않는다 — 음악 설정은 하나로 본다
-    if (!useBgm().isEnabled.value || this.current === cue) return
+    // 헤더 BGM 토글은 로비 테마 전용이라 보지 않는다 — 여기는 게임 음악 슬라이더만 따른다
+    if (this.current === cue) return
     const previous = this.current
     this.current = cue
     // 이전 곡은 끊지 않고 겹치며 빼고, 새 곡은 0에서 올린다 — 이 두 줄이 "새로 시작하는" 소리를 없앤다

@@ -1232,6 +1232,16 @@ onBeforeUnmount(() => {
             <span class="pill setter-pill" :class="{ mine: isMultiplayer && isSetter }">
               👑 출제자 {{ setterLabel }}
             </span>
+            <!-- 결과 오버레이에는 자체 종료 버튼이 있다 — 둘 다 보이면 두 개가 된다 -->
+            <button
+              v-if="!results && finalScore === null"
+              type="button"
+              class="close"
+              title="게임 종료"
+              @click="emit('close')"
+            >
+              ✕
+            </button>
           </div>
           <div v-if="!(isMultiplayer && isSetter)" class="accuracy-card">
             <svg viewBox="0 0 120 120" class="gauge">
@@ -1787,6 +1797,24 @@ onBeforeUnmount(() => {
 }
 .viewport-meta .setter-pill.mine {
   animation: none;
+}
+/* 상시 종료 — 부모가 pointer-events:none 이라 여기서만 되살린다 */
+.viewport-meta .close {
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background-color: var(--bf-panel);
+  background-image: var(--bf-grain);
+  background-size: var(--bf-grain-size);
+  border: var(--bf-line);
+  border-radius: var(--bf-radius-sm);
+  box-shadow: var(--bf-shadow-sm);
+  color: var(--bf-text);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
 }
 /* 3D 캔버스에만 — .viewport canvas로 잡으면 썸네일·PiP 오버레이 캔버스까지 늘어난다 */
 .gl-canvas {

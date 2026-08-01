@@ -120,6 +120,10 @@ export function useRhythmSession(roomChat: StompLike, roomId: Ref<string>) {
     if (event.type === 'RHYTHM_END') {
       results.value = event.results
     }
+    // 방장 강제종료(-164) — 정산이 없으니 결과를 띄우지 않고 라운드만 접는다
+    if (event.type === 'RHYTHM_ABORTED') {
+      reset()
+    }
   }
 
   function subscribe() {
