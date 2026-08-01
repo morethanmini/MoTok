@@ -5,20 +5,20 @@
  * <p>로비 테마는 건드리지 않는다. 게임방에서 듣게 되는 음악이 게임 BGM이고, 로비 음악은
  * 설정 화면에서 따로 조절한다(설정 › 소리).</p>
  *
- * <p>0.5가 기본이고 1.0이 2배다. 헤더의 {@code BgmToggle}(켜기/끄기)과 역할이 다르며,
- * 0에서 올리면 꺼둔 음악까지 되살린다.</p>
+ * <p>0.5가 기본이고 1.0이 2배이며, 0이 곧 끄기다. 헤더의 {@code BgmToggle}은 로비 테마만
+ * 맡으므로 여기서는 보지 않는다.</p>
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useBgm } from '@/composables/useBgm'
 
-const { gameMusic, isEnabled, setGameMusic } = useBgm()
+const { gameMusic, setGameMusic } = useBgm()
 
 const open = ref(false)
 const root = ref<HTMLElement | null>(null)
 
 const percent = computed(() => Math.round(gameMusic.value * 100))
-/** 0이거나 헤더에서 꺼둔 상태 — 아이콘에 사선을 그린다 */
-const silent = computed(() => percent.value === 0 || !isEnabled.value)
+/** 0이면 꺼진 상태 — 아이콘에 사선을 그린다 */
+const silent = computed(() => percent.value === 0)
 
 function onInput(e: Event) {
   setGameMusic(Number((e.target as HTMLInputElement).value) / 100)

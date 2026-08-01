@@ -80,7 +80,6 @@ function bedVolume(): number {
 }
 
 onMounted(() => {
-  if (!useBgm().isEnabled.value) return // 음악을 꺼둔 사용자에게는 틀지 않는다
   bed = new Audio(BODY_FIT_SFX.ingame)
   bed.loop = true
   bed.volume = bedVolume()
