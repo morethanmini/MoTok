@@ -179,6 +179,35 @@ public class RhythmSessionService {
     }
 
     /**
+     * 방장 강제종료(-164) — 정산 없이 라운드를 접는다. 공용 게임의 {@code /game/abort}와 대칭이다.
+     *
+     * <p>이 수단이 없던 동안, 방장이 리듬 도중 화면을 닫아도 세션은 endAt까지 살아 있었다.
+     * 그 사이 방은 PLAYING에 묶이고 다음 게임 시작은 GAME_SESSION_ALREADY_ACTIVE로 거절됐다
+     * (GameSessionService.start가 rhythmActive를 함께 보기 때문).</p>
+     */
+    public void abort(String roomId, AuthPrincipal sender) {
+        Map<Object, Object> roomFields = liveRoomRepository.findRoomFields(roomId)
+                .orElseThrow(RhythmException::roomNotFound);
+        requireMembership(roomId, sender);
+        if (!sender.userId().equals(roomFields.get("hostUserId"))) {
+            throw RhythmException.notHost();
+        }
+        RhythmSession session = sessionRepository.findSession(roomId).orElse(null);
+        if (session == null || !session.isPlaying(System.currentTimeMillis(), END_GRACE_MILLIS)) {
+            return; // 이미 정산됐거나 세션 없음 — 멱등(시작 화면에서 눌러도 안전)
+        }
+        // 정산 타이머·전원 완주 조기 정산과 경합해도 가드를 선점한 한쪽만 실행된다.
+        if (!sessionRepository.tryAcquireEndGuard(roomId, session.sessionId())) {
+            return;
+        }
+        cancelScheduledEnd(roomId);
+        sessionRepository.markEnded(roomId);
+        liveRoomService.changeStatus(roomId, "WAITING");
+        broadcast(roomId, RhythmEventResponse.aborted(session.sessionId()));
+        log.info("rhythm session aborted by host: room={} session={}", roomId, session.sessionId());
+    }
+
+    /**
      * 라운드 정산 — 타이머와 "전원 완주"가 모두 호출할 수 있어 Redis SETNX 가드로 1회만 실행된다.
      * 미제출 참가자는 0점 미완주로 포함한다.
      */

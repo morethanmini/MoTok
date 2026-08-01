@@ -59,6 +59,11 @@ export type RhythmEvent =
       sessionId: string
       results: RhythmResultEntry[]
     }
+  /** 방장 강제종료(-164) — 정산이 없어 results가 없다 */
+  | {
+      type: 'RHYTHM_ABORTED'
+      sessionId: string
+    }
 
 export type RhythmStartEvent = Extract<RhythmEvent, { type: 'RHYTHM_START' }>
 

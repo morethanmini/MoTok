@@ -52,6 +52,12 @@ public class RhythmController {
         rhythmSessionService.finish(roomId, request, extractSender(principal));
     }
 
+    /** 방장 강제종료(-164) — 정산 없이 세션을 접고 RHYTHM_ABORTED를 배포한다. */
+    @MessageMapping("/rooms/{roomId}/rhythm/abort")
+    public void abort(@DestinationVariable String roomId, Principal principal) {
+        rhythmSessionService.abort(roomId, extractSender(principal));
+    }
+
     private AuthPrincipal extractSender(Principal principal) {
         if (principal instanceof Authentication authentication
                 && authentication.getPrincipal() instanceof AuthPrincipal sender) {
