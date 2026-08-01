@@ -240,6 +240,15 @@ export function useRoomChat() {
     publishGlobal(`/app/rooms/${currentRoomId}/game/abort`, {})
   }
 
+  /**
+   * 리듬 강제종료(-164, 방장 전용). 리듬은 전용 채널이라 game/abort로는 안 끝난다 —
+   * 안 보내면 세션이 endAt까지 살아 있어 다음 게임이 GAME_SESSION_ALREADY_ACTIVE로 막힌다.
+   */
+  function sendRhythmAbort() {
+    if (!currentRoomId) return
+    publishGlobal(`/app/rooms/${currentRoomId}/rhythm/abort`, {})
+  }
+
   /** 게임④ 출제자 포즈 제출(-86) — 서버가 검증 후 POSE_SET을 방 전체에 배포한다. */
   function sendPoseSubmit(pose: string) {
     if (!currentRoomId) return
@@ -317,6 +326,7 @@ export function useRoomChat() {
     startGame,
     sendGameReady,
     sendGameAbort,
+    sendRhythmAbort,
     sendPoseSubmit,
     sendGameProgress,
     sendGameFinish,
