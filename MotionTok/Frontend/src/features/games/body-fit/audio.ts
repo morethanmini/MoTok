@@ -26,8 +26,9 @@ export type Cue = keyof typeof SRC
  * 로비 테마(useBgm 의 0.2)와 체감을 맞춘 값 — 파일 RMS 를 재서 역산했다.
  * 로비 테마 −15.2 dBFS 대 이 큐들 −16.4 dBFS 라서 0.23 이 같은 레벨이 된다.
  * 0.5 였을 때 로비보다 +6.8 dB 커서 세 게임 중 가장 컸다(gameBgm.ts 와 같은 기준으로 정렬).
+ * 설정 창(GameSetupModal)도 이 값을 쓴다 — 따로 두면 창을 닫는 순간 음량이 튄다.
  */
-const VOLUME = 0.23
+export const VOLUME = 0.23
 
 /**
  * 큐 교체 시 겹치는 시간.
