@@ -775,13 +775,13 @@ watch(hostAway, (away) => {
  * 자체 사운드를 가진 게임은 로비 BGM을 내린다 — 안 내리면 테마와 게임 음악이 겹쳐 들린다.
  * 게임④(shape, -138)로 시작했고, 핑거 스타(finger)·그림 릴레이(draw)가 인게임 루프를 받으면서
  * 함께 들어왔다. 캐치캐치리듬(rhythm)도 인게임 곡을 갖게 되어 합류 — 판정음까지 내는 게임이라
- * 테마가 남아 있으면 셋이 겹친다.
+ * 테마가 남아 있으면 셋이 겹친다. 낚시(fish)도 인게임 루프를 받아 합류했다.
  *
  * 반드시 activeGame 선언 아래에 둔다 — watch는 초기값을 잡으려고 getter를 setup 중 즉시
  * 실행하므로, 위에 두면 const TDZ에 걸려 setup 전체가 죽는다(빌드는 통과한다: TS는 화살표
  * 함수 안의 선언 전 참조를 잡지 않는다).
  */
-const AUDIO_OWNING_GAMES = ['shape', 'finger', 'draw', 'rhythm']
+const AUDIO_OWNING_GAMES = ['shape', 'finger', 'draw', 'rhythm', 'fish']
 watch(
   // 설정 창(-9)도 인게임 베드를 직접 깔기 때문에 같이 내린다 — 소유 판정을 여기 한 곳에 모아두면
   // 창을 닫고 게임으로 넘어가는 사이에 테마가 잠깐 살아나는 일이 없다.
@@ -1305,19 +1305,30 @@ function onBodyFitFinished(r: { score: number; grade: string; iou: number }) {
 }
 
 /**
- * 게임 ✕(닫기) 요청(-164 개정) — 진행 중 세션이면 바로 닫지 않고 확인 모달을 거친다.
+ * 게임 ✕(닫기) 요청(-164 개정) — 판이 살아 있으면 바로 닫지 않고 확인 모달을 거친다.
  * 방장의 닫기는 전체 세션 종료(abort)라 실수로 누르면 방 전체가 날아가고,
- * 비방장의 닫기는 이번 판 이탈이라 의사를 한 번 확인한다. 정산 후(결과 화면)·
- * 로컬 솔로·리듬(activeSession 없음)은 기존대로 즉시 닫는다.
+ * 비방장의 닫기는 이번 판 이탈이라 의사를 한 번 확인한다.
+ *
+ * activeSession 유무로 가르지 않는다 — 그건 "공용 세션이 있나"지 "판이 도는 중인가"가
+ * 아니다. 리듬(전용 채널)과 게임④ 솔로 연습은 그 값이 늘 비어 있어 확인 없이 닫혔다.
+ * 정산이 끝난 결과 화면에서만 그냥 닫는다.
  */
 function requestCloseGame() {
-  if (!activeSession.value || gameResults.value) {
+  if (gameResults.value) {
     closeGame()
     return
   }
   closeGameConfirm.value = true
 }
 const closeGameConfirm = ref(false)
+/**
+ * 방장의 종료가 방 전체 판을 끝내는가 — 확인 모달 문구를 가른다.
+ * 리듬은 전용 채널이라 서버 세션이 돌아도 activeSession이 비어 있어 따로 본다.
+ * 둘 다 아니면 게임④ 솔로 연습이라 같이 끝날 사람이 없다.
+ */
+const hostCloseEndsAll = computed(
+  () => !!activeSession.value || activeGame.value?.id === 'rhythm',
+)
 function confirmCloseGame() {
   closeGameConfirm.value = false
   if (amRoomHost.value) {
@@ -1368,10 +1379,15 @@ function onRhythmEnded(pointsEarned: number) {
 
 function closeGame() {
   // 방장이 게임 도중 닫으면 방 전체 세션을 종료한다(-164) — 예전에는 본인 화면만 닫혀
-  // 남은 사람끼리 라운드가 돌고 방은 endAt까지 잠겨 있었다. 정산 후(gameResults 존재)나
-  // 리듬(전용 채널, activeSession 없음)은 해당 없음. GAME_ABORTED 에코는 세션을 먼저
-  // 비우고 이 함수를 부르므로 재발신되지 않는다.
-  if (amRoomHost.value && activeSession.value && !gameResults.value) roomChat.sendGameAbort()
+  // 남은 사람끼리 라운드가 돌고 방은 endAt까지 잠겨 있었다. 정산 후(gameResults 존재)는
+  // 해당 없음. GAME_ABORTED 에코는 세션을 먼저 비우고 이 함수를 부르므로 재발신되지 않는다.
+  if (amRoomHost.value && !gameResults.value) {
+    if (activeSession.value) roomChat.sendGameAbort()
+    // 리듬은 전용 채널이라 game/abort가 닿지 않는다 — 안 보내면 서버 세션이 endAt까지
+    // 남아 방이 PLAYING에 묶이고 다음 게임이 "이미 진행 중"으로 거절된다.
+    // 서버가 멱등이라 라운드가 없을 때(시작 화면) 보내도 무해하다.
+    else if (activeGame.value?.id === 'rhythm' && !rhythmEnded.value) roomChat.sendRhythmAbort()
+  }
   void lk.unpublishGameScreen()
   gamePrep.value = null
   sessionEntry.value = null
@@ -2159,7 +2175,9 @@ const startHint = computed(() =>
         <p class="leave-kicker">GAME EXIT</p>
         <h3 class="leave-title">{{ amRoomHost ? '전체 게임을 종료할까요?' : '게임에서 나갈까요?' }}</h3>
         <p class="leave-desc">
-          <template v-if="amRoomHost">방장이 종료하면 모든 참가자의 게임이 함께 끝나요.<br />이번 판 점수는 기록되지 않습니다.</template>
+          <template v-if="amRoomHost && hostCloseEndsAll">방장이 종료하면 모든 참가자의 게임이 함께 끝나요.<br />이번 판 점수는 기록되지 않습니다.</template>
+          <!-- 솔로 연습(게임④) — 서버 세션이 없어 같이 끝날 사람이 없다 -->
+          <template v-else-if="amRoomHost">하던 판이 사라지고 대기실로 돌아가요.<br />이번 판 점수는 기록되지 않습니다.</template>
           <template v-else>게임은 계속 진행돼요.<br />라운드가 끝나기 전이라면 ‘게임 복귀’로 다시 들어올 수 있어요.</template>
         </p>
         <div class="leave-confirm-actions">

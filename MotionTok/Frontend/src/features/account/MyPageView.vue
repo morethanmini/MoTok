@@ -23,6 +23,7 @@ import PixelToast from '@/components/common/PixelToast.vue'
 import CoinIcon from '@/components/common/CoinIcon.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import { RouteName } from '@/router/routeNames'
+import PixelModal from '@/components/common/PixelModal.vue'
 import AvatarPickerModal from './AvatarPickerModal.vue'
 
 const router = useRouter()
@@ -67,6 +68,12 @@ interface MyRecord {
 }
 const MODES: LeaderboardMode[] = ['MULTI', 'SOLO']
 const MODE_LABEL: Record<LeaderboardMode, string> = { MULTI: '멀티', SOLO: '솔로' }
+
+/**
+ * 전체 내역 모달 — 카드는 높이를 고정해 잘라 두고, 나머지는 여기서 스크롤해 본다.
+ * 카드가 행 수만큼 늘면 두 열의 높이가 제각각이 되고 화면이 길어진다.
+ */
+const detail = ref<'records' | 'points' | null>(null)
 
 const records = ref<MyRecord[]>([])
 const recordsError = ref<string | null>(null)
@@ -319,22 +326,34 @@ async function removeAvatar() {
         <p v-if="recordsLoading" class="cell-empty">불러오는 중…</p>
         <p v-else-if="recordsError" class="cell-empty">{{ recordsError }}</p>
         <p v-else-if="!records.length" class="cell-empty">아직 기록이 남은 게임이 없어요</p>
-        <table v-else class="records">
-          <thead>
-            <tr><th>게임</th><th>모드</th><th>플레이</th><th>최고점수</th><th>순위</th></tr>
-          </thead>
-          <tbody>
-            <!-- 같은 게임이라도 멀티/싱글 기록이 별개 행으로 온다(-97) — 모드는 별도 열 -->
-            <tr v-for="r in records" :key="r.key">
-              <td>{{ r.gameName }}</td>
-              <td>{{ MODE_LABEL[r.mode] }}</td>
-              <td>{{ r.playCount }}회</td>
-              <td>{{ r.bestScore.toLocaleString() }}</td>
-              <td>#{{ r.rankNo }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <p v-if="!records.length" class="empty">아직 게임 기록이 없어요.</p>
+        <template v-else>
+          <div
+            class="table-clip"
+            role="button"
+            tabindex="0"
+            title="전체 전적 보기"
+            @click="detail = 'records'"
+            @keydown.enter.prevent="detail = 'records'"
+            @keydown.space.prevent="detail = 'records'"
+          >
+            <table class="records">
+              <thead>
+                <tr><th>게임</th><th>모드</th><th>플레이</th><th>최고점수</th><th>순위</th></tr>
+              </thead>
+              <tbody>
+                <!-- 같은 게임이라도 멀티/싱글 기록이 별개 행으로 온다(-97) — 모드는 별도 열 -->
+                <tr v-for="r in records" :key="r.key">
+                  <td>{{ r.gameName }}</td>
+                  <td>{{ MODE_LABEL[r.mode] }}</td>
+                  <td>{{ r.playCount }}회</td>
+                  <td>{{ r.bestScore.toLocaleString() }}</td>
+                  <td>#{{ r.rankNo }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="clip-hint">눌러서 전체 보기</p>
+        </template>
       </PixelCard>
 
       <!-- 카메라·마이크 권한 — 앱 전체에 적용된다(방 입장 때 이 상태를 확인만 한다) -->
@@ -360,11 +379,59 @@ async function removeAvatar() {
       <!-- 포인트 내역 — 전적 아래(오른쪽 열), 권한 카드 옆에 놓인다 -->
       <PixelCard title="포인트 내역" class="history-card">
         <p v-if="historyError" class="cell-empty">{{ historyError }}</p>
-        <table v-else class="records">
-          <thead>
+        <p v-else-if="!history.length" class="cell-empty">포인트 내역이 없어요</p>
+        <template v-else>
+          <div
+            class="table-clip"
+            role="button"
+            tabindex="0"
+            title="전체 포인트 내역 보기"
+            @click="detail = 'points'"
+            @keydown.enter.prevent="detail = 'points'"
+            @keydown.space.prevent="detail = 'points'"
+          >
+            <table class="records">
+              <thead>
+                <tr><th>내역</th><th>변동</th><th>잔액</th><th>일시</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="h in history" :key="h.id">
+                  <td>{{ POINT_TYPE_LABEL[h.type] }}</td>
+                  <td :class="h.amount >= 0 ? 'plus' : 'minus'">
+                    {{ h.amount >= 0 ? '+' : '' }}{{ h.amount.toLocaleString() }}
+                  </td>
+                  <td>{{ h.balanceAfter.toLocaleString() }}</td>
+                  <td>{{ fmtDate(h.createdAt) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="clip-hint">눌러서 전체 보기</p>
+        </template>
+      </PixelCard>
+    </div>
+
+    <!-- 전체 내역 — 카드에서 잘린 나머지를 여기서 스크롤해 본다(스크롤바는 숨긴다) -->
+    <PixelModal v-if="detail" class="detail-modal" @close="detail = null">
+      <h3 class="detail-title">{{ detail === 'records' ? '내 전적' : '포인트 내역' }}</h3>
+      <div class="table-scroll">
+        <table class="records" :class="{ points: detail === 'points' }">
+          <thead v-if="detail === 'records'">
+            <tr><th>게임</th><th>모드</th><th>플레이</th><th>최고점수</th><th>순위</th></tr>
+          </thead>
+          <thead v-else>
             <tr><th>내역</th><th>변동</th><th>잔액</th><th>일시</th></tr>
           </thead>
-          <tbody>
+          <tbody v-if="detail === 'records'">
+            <tr v-for="r in records" :key="r.key">
+              <td>{{ r.gameName }}</td>
+              <td>{{ MODE_LABEL[r.mode] }}</td>
+              <td>{{ r.playCount }}회</td>
+              <td>{{ r.bestScore.toLocaleString() }}</td>
+              <td>#{{ r.rankNo }}</td>
+            </tr>
+          </tbody>
+          <tbody v-else>
             <tr v-for="h in history" :key="h.id">
               <td>{{ POINT_TYPE_LABEL[h.type] }}</td>
               <td :class="h.amount >= 0 ? 'plus' : 'minus'">
@@ -373,11 +440,11 @@ async function removeAvatar() {
               <td>{{ h.balanceAfter.toLocaleString() }}</td>
               <td>{{ fmtDate(h.createdAt) }}</td>
             </tr>
-            <tr v-if="history.length === 0"><td colspan="4" class="empty">포인트 내역이 없어요</td></tr>
           </tbody>
         </table>
-      </PixelCard>
-    </div>
+      </div>
+      <PixelButton variant="primary" block @click="detail = null">닫기</PixelButton>
+    </PixelModal>
 
     <AvatarPickerModal
       v-if="showPicker"
@@ -469,6 +536,24 @@ async function removeAvatar() {
 .records th, .records td { padding: 9px 8px; text-align: left; border-bottom: 2px dashed #eaddea; }
 .records th { font-size: 9px; color: var(--c-muted); }
 .records td:last-child { color: var(--c-blue); font-weight: 700; }
+
+/* 카드 안 표는 높이를 고정해 자른다 — 행 수만큼 늘면 두 열 높이가 제각각이 되고 화면이 길어진다.
+   잘린 나머지는 카드를 눌러 모달에서 본다. */
+.table-clip { height: 190px; overflow: hidden; cursor: pointer; }
+.table-clip:focus-visible { outline: 2px solid var(--c-blue); outline-offset: 2px; }
+/* 아래가 뚝 잘려 보이지 않게 마지막 행을 흐린다 — "더 있다"는 신호도 된다 */
+.table-clip { -webkit-mask-image: linear-gradient(#000 72%, transparent); mask-image: linear-gradient(#000 72%, transparent); }
+.clip-hint { margin: 8px 0 0; text-align: center; font-size: 9px; color: var(--c-muted); }
+
+.detail-title { margin: 0 0 14px; font-size: 15px; }
+/* 스크롤바는 숨긴다 — 내용만 흐르게 */
+.table-scroll { max-height: 58vh; margin-bottom: 16px; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; }
+.table-scroll::-webkit-scrollbar { display: none; }
+.detail-modal :deep(.modal) { width: 620px; }
+/* 카드에서는 .history-card 가 주던 색 — 모달에서는 그 조상이 없어 여기서 다시 준다 */
+.detail-modal .records.points td:last-child { color: var(--c-muted); font-weight: 400; }
+.detail-modal .plus { color: #36a17f; font-weight: 700; }
+.detail-modal .minus { color: var(--c-coral); font-weight: 700; }
 
 /* 그리드 안(전적 아래 칸)에 들어가므로 바깥 여백은 그리드 gap이 맡는다 */
 .history-card .records td:last-child { color: var(--c-muted); font-weight: 400; }
