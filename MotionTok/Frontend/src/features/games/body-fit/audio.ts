@@ -111,8 +111,8 @@ export class BodyFitAudio {
 
   /** 큐 재생. 같은 큐를 다시 요청하면 무시한다(페이즈가 매 틱 갱신돼도 재시작되지 않게). */
   play(cue: Cue, opts: { tailMs?: number; loop?: boolean } = {}) {
-    // 사용자가 BGM을 꺼뒀으면 게임 사운드도 내지 않는다 — 음악 설정은 하나로 본다
-    if (!useBgm().isEnabled.value || this.current === cue) return
+    // 헤더 BGM 토글은 로비 테마 전용이라 보지 않는다 — 여기는 게임 음악 슬라이더만 따른다
+    if (this.current === cue) return
     const previous = this.current
     this.current = cue
     // 이전 곡은 끊지 않고 겹치며 빼고, 새 곡은 0에서 올린다 — 이 두 줄이 "새로 시작하는" 소리를 없앤다

@@ -30,8 +30,8 @@ export class GameBgm {
     // 게임 중 슬라이더를 움직이면 즉시 반영한다. 램프 없이 바로 얹는 이유 —
     // 드래그는 값이 연속으로 들어와서 램프를 걸면 서로 취소하며 계단처럼 들린다.
     this.stopWatch = watch(useBgm().gameMusic, (v) => {
-      // 음악을 꺼둔 채로 게임에 들어오면 start()가 조기 반환해 트랙이 아예 안 선다.
-      // 그 상태에서 슬라이더를 올렸을 때 살아나야 한다 — 이 게임은 start()를 마운트에 한 번만 부른다.
+      // 트랙이 아직 안 섰거나 멈춰 있으면 슬라이더를 올릴 때 살린다 —
+      // 이 게임은 start()를 마운트에 한 번만 부른다.
       if (v > 0 && (!this.el || this.el.paused)) return this.start()
       if (this.el && !this.el.paused && this.ramp === undefined) this.el.volume = this.target()
     })
@@ -68,9 +68,11 @@ export class GameBgm {
     }, RAMP_STEP_MS)
   }
 
-  /** 사용자가 BGM을 꺼뒀으면 게임 사운드도 내지 않는다 — 음악 설정은 하나로 본다(body-fit과 같은 규약). */
+  /**
+   * 헤더의 BGM 토글은 보지 않는다 — 그건 로비 테마 전용이다. 게임 음악을 끄는 수단은
+   * "게임 음악" 슬라이더 0이고, 그때는 target()이 0이라 소리 없이 흐른다.
+   */
   start() {
-    if (!useBgm().isEnabled.value) return
     const a = this.audio()
     if (!a.paused) return
     a.volume = 0
