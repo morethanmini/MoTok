@@ -5,7 +5,7 @@ import jakarta.validation.ConstraintValidatorContext;
 
 public class PasswordValidator implements ConstraintValidator<Password, String> {
 
-    private static final int MIN_LENGTH = 12;
+    private static final int MIN_LENGTH = 8;
     private static final int MAX_LENGTH = 64;
     private static final int REQUIRED_KINDS = 3;
 
