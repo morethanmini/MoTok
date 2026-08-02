@@ -246,6 +246,80 @@ describe('랭킹 닉네임 검색', () => {
     expect(result(wrapper)).toContain('없어요')
   })
 
+  it('훑는 중에 Enter를 또 눌러도 검색이 겹쳐 돌지 않는다', async () => {
+    const wrapper = await mountView()
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((r) => (release = r))
+    // 다른 게임 조회를 붙잡아 둬서 "훑는 중" 상태를 만든다
+    leaderboard.mockImplementation(async (gameId, mode) => {
+      if (!(gameId === 1 && mode === 'MULTI')) await gate
+      return { gameId, entries: BOARDS[`${gameId}:${mode}`] ?? [], myRank: null }
+    })
+
+    await wrapper.find('.search-box input').setValue('떠돌이')
+    await wrapper.find('.search-box input').trigger('keydown.enter')
+    await flushPromises()
+    const firstWave = leaderboard.mock.calls.length
+    expect(firstWave).toBeGreaterThan(0)
+    expect(wrapper.find('.search-box button').attributes('disabled')).toBeDefined()
+
+    // 버튼은 잠기지만 Enter는 그대로 들어온다 — 여기서 두 번째 훑기가 돌면 안 된다
+    await wrapper.find('.search-box input').trigger('keydown.enter')
+    await flushPromises()
+    expect(leaderboard.mock.calls.length).toBe(firstWave)
+
+    release!()
+    await flushPromises()
+    await flushPromises()
+    expect(shownGame(wrapper)).toBe('모션 낚시')
+    expect(foundRow(wrapper)).toBe('떠돌이')
+  })
+
+  it('옮겼는데 그 사람이 없으면 그 안내가 다음 검색에 남지 않는다', async () => {
+    const wrapper = await mountView()
+    // 훑을 때는 모션 낚시에 떠돌이가 있는데, 옮겨서 다시 받을 때는 이미 빠져 있다
+    // (훑기와 재조회 사이에 순위가 바뀐 경우)
+    let elevenCalls = 0
+    leaderboard.mockImplementation((gameId, mode) => {
+      if (gameId === 11 && mode === 'MULTI') {
+        elevenCalls += 1
+        return Promise.resolve({
+          gameId,
+          entries: elevenCalls === 1 ? BOARDS['11:MULTI']! : [entry(1, '남')],
+          myRank: null,
+        })
+      }
+      return Promise.resolve({ gameId, entries: BOARDS[`${gameId}:${mode}`] ?? [], myRank: null })
+    })
+
+    await search(wrapper, '떠돌이')
+    // 옮겨 갔지만 거기 없으니 못 찾았고, 쓸 자리가 없어진 안내도 남지 않는다
+    expect(shownGame(wrapper)).toBe('모션 낚시')
+    expect(foundRow(wrapper)).toBeNull()
+    expect(moved(wrapper)).toBeNull()
+
+    // 이 순위표에 있는 사람으로 검색을 성공시킨다 — 여기에 "옮겼어요"가 붙으면 안 된다
+    await search(wrapper, '남')
+
+    expect(foundRow(wrapper)).toBe('남')
+    expect(moved(wrapper)).toBeNull()
+  })
+
+  it('조회가 실패해 폴백 순위표를 보고 있으면 검색 대상으로 삼지 않는다', async () => {
+    const wrapper = await mountView()
+    // 모든 조회를 실패시켜 폴백(MOCK_BOARD)만 남긴다
+    leaderboard.mockImplementation(() => Promise.reject(new Error('boom')))
+    await pickGame(wrapper, '리듬 터치')
+    // 폴백에 실제로 들어 있는 이름이다 — 그런데 실제 회원이 아니라 찾아 주면 안 된다
+    expect(wrapper.findAll('.score-row .player b').map((b) => b.text())).toContain('민수')
+
+    await search(wrapper, '민수')
+
+    expect(foundRow(wrapper)).toBeNull()
+    expect(wrapper.find('button.search-result').exists()).toBe(false)
+    expect(result(wrapper)).toContain('없어요')
+  })
+
   it('한 게임 조회가 실패해도 나머지에서 찾은 순위로 답한다', async () => {
     const wrapper = await mountView()
     leaderboard.mockImplementation((gameId, mode) =>

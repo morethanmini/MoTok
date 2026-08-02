@@ -11,7 +11,11 @@
  */
 import type { FriendRequestItem } from '@/api'
 
-defineProps<{ requests: FriendRequestItem[]; busyId: number | null }>()
+/**
+ * busyIds — 지금 응답을 보내는 중인 요청들. 여러 장이 떠 있을 때 한 장을 처리하는 동안
+ * 다른 장까지 잠기면, 두 번째 카드를 누른 사람은 아무 반응도 못 본다. 그래서 목록으로 받는다.
+ */
+defineProps<{ requests: FriendRequestItem[]; busyIds: number[] }>()
 defineEmits<{
   accept: [FriendRequestItem]
   reject: [FriendRequestItem]
@@ -34,10 +38,18 @@ defineEmits<{
         >님이 친구가 되고 싶어 해요
       </p>
       <div class="req-actions">
-        <button class="reject" :disabled="busyId === r.requestId" @click="$emit('reject', r)">
+        <button
+          class="reject"
+          :disabled="busyIds.includes(r.requestId)"
+          @click="$emit('reject', r)"
+        >
           거절
         </button>
-        <button class="accept" :disabled="busyId === r.requestId" @click="$emit('accept', r)">
+        <button
+          class="accept"
+          :disabled="busyIds.includes(r.requestId)"
+          @click="$emit('accept', r)"
+        >
           수락
         </button>
       </div>

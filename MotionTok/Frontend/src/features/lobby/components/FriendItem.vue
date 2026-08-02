@@ -14,7 +14,12 @@ defineEmits<{ open: []; profile: [] }>()
 </script>
 
 <template>
-  <div class="friend" role="button" tabindex="0" @click="$emit('open')" @keydown.enter="$emit('open')">
+  <!--
+    바깥 박스에 role="button"을 주지 않는다 — 그 안에 프로필 동그라미 버튼이 들어 있고,
+    button 역할 안에 포커스 가능한 자손을 두면 스크린리더가 구조를 잘못 읽는다(ARIA).
+    마우스 편의를 위한 클릭만 남기고, 키보드 경로는 안쪽 두 버튼이 각자 가져간다.
+  -->
+  <div class="friend" @click="$emit('open')">
     <!--
       동그라미만 프로필로 간다. 바깥 박스가 귓속말이라 클릭이 새어 나가지 않게 stop을 건다.
       사진이 없거나 못 불러온 친구는 이모지 얼굴로 떨어진다(UserAvatar가 처리).
@@ -35,10 +40,16 @@ defineEmits<{ open: []; profile: [] }>()
         :alt="`${friend.name} 프로필 사진`"
       />
     </button>
-    <div class="friend-info">
+    <!-- 이름 쪽이 귓속말의 키보드 경로다 — 박스 전체 클릭은 마우스용으로 그대로 남는다 -->
+    <button
+      type="button"
+      class="friend-info"
+      :aria-label="`${friend.name}에게 귓속말`"
+      @click.stop="$emit('open')"
+    >
       <b>{{ friend.name }}</b>
       <small>{{ friend.game }}</small>
-    </div>
+    </button>
     <span v-if="unread" class="unread">{{ unread > 9 ? '9+' : unread }}</span>
     <i class="status" :class="{ offline: !friend.online }" />
   </div>
@@ -88,7 +99,8 @@ defineEmits<{ open: []; profile: [] }>()
   background: #e8e3d9;
   font-size: 22px;
 }
-.friend-info { min-width: 0; margin: -3px -6px; padding: 3px 6px; border-radius: 6px; transition: background .15s ease; }
+.friend-info { min-width: 0; margin: -3px -6px; padding: 3px 6px; border: 0; border-radius: 6px; background: transparent; box-shadow: none; font: inherit; text-align: left; cursor: pointer; transition: background .15s ease; }
+.friend-info:focus-visible { outline: 2px solid var(--c-ink); outline-offset: 2px; }
 .friend-info b { display: block; color: #443127; font-size: 17px; line-height: 1.1; }
 .friend-info small {
   display: block;
@@ -156,5 +168,4 @@ defineEmits<{ open: []; profile: [] }>()
 .friend > .unread { position: absolute; right: 32px; top: 11px; min-width: 17px; padding: 0 4px; border: 2px solid #fff8e6; border-radius: 9px; background: #e2564a; color: #fff; font-size: 10px; font-weight: 700; line-height: 15px; }
 .friend:hover { background: transparent; }
 .friend:hover .face-frame { filter: brightness(1.12); transform: scale(.98); }
-.friend:focus-visible { outline: 2px solid var(--c-ink); outline-offset: 2px; }
 </style>

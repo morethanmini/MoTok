@@ -36,6 +36,14 @@ const { data: games } = useAsyncData(() => gamesApi.list(), MOCK_GAMES)
 const selected = ref(1)
 const board = ref<LeaderboardResponse>(MOCK_BOARD)
 const error = ref<string | null>(null)
+/**
+ * 지금 보고 있는 순위표가 서버에서 온 게 아니라 폴백(MOCK_BOARD)인지.
+ *
+ * 폴백은 화면이 텅 비지 않게 두는 예시 데이터라 실제 회원이 아니다. 검색이 이걸 찾아내면
+ * 결과 박스를 눌러 없는 userId로 프로필을 열게 되고("조회할 수 없는 계정"), 없는 사람의
+ * 순위를 알려 준 셈이 된다. 그래서 검색은 이 순위표를 대상으로 삼지 않는다.
+ */
+const boardIsFallback = ref(false)
 const MODES = [
   { value: 'MULTI', label: '멀티 플레이' },
   { value: 'SOLO', label: '혼자 플레이' },
@@ -61,19 +69,24 @@ const searchMiss = ref('')
 const searching = ref(false)
 /** 옮겨서 찾았다는 안내. 보고 있던 게임이 바뀌므로 왜 바뀌었는지 말해 줘야 한다. */
 const movedNote = ref('')
-/** 옮기는 중 보관 — 새 순위표를 받은 뒤 안내로 올린다(clearSearch가 지우지 못하는 자리). */
+/**
+ * 옮기는 중 보관 — 순위표를 새로 받은 뒤 바로 다음 검색이 안내로 올린다.
+ *
+ * <b>한 번만 쓴다.</b> 옮긴 뒤 그 순위표 조회가 실패하면(폴백 데이터로 대체) 그 사람을 못 찾아
+ * 안내를 쓸 자리가 없는데, 그때 값을 남겨 두면 나중에 성공한 엉뚱한 검색에 "옮겼어요"가 붙는다.
+ */
 let pendingMove = ''
 
 function clearSearch() {
   searchHit.value = null
   searchMiss.value = ''
   movedNote.value = ''
+  pendingMove = ''
 }
 
-function focusHit(hit: LeaderboardEntry) {
+function focusHit(hit: LeaderboardEntry, note = '') {
   searchHit.value = hit
-  movedNote.value = pendingMove
-  pendingMove = ''
+  movedNote.value = note
   // 찾은 사람이 몇 페이지에 있든 그 페이지로 넘겨 준다 — 순위(rank)가 아니라 목록에서의
   // 자리로 센다. 동점자 처리에 따라 rank는 건너뛸 수 있어 페이지 계산이 어긋난다.
   page.value = Math.floor(board.value.entries.indexOf(hit) / PAGE_SIZE) + 1
@@ -124,12 +137,21 @@ async function bestRankElsewhere(query: string) {
  *   게임을 고를 수가 없다. 재귀도 이 한 줄로 막힌다.
  */
 async function searchPlayer(crossGame = true) {
+  // 훑는 중에는 새 검색을 받지 않는다. 버튼은 잠기지만 Enter는 그대로 들어오는데, 겹쳐 돌면
+  // 요청이 배로 늘고 늦게 끝난 쪽이 이겨 엉뚱한 게임으로 옮겨진다.
+  // 순위표를 새로 받는 경로(crossGame=false)는 막지 않는다 — 그건 옮긴 결과를 표시하는 쪽이다.
+  if (crossGame && searching.value) return
   const query = searchQuery.value.trim()
+  // 이동 직후인지 여기서 확정하고 비운다 — 아래에서 쓰든 못 쓰든 다음 검색으로 넘기지 않는다.
+  const moveNote = pendingMove
   clearSearch()
   if (!query) return
-  const hit = board.value.entries.find((entry) => entry.nickname === query)
+  // 폴백 순위표는 실제 회원이 아니라 건너뛴다(위 boardIsFallback 참고)
+  const hit = boardIsFallback.value
+    ? undefined
+    : board.value.entries.find((entry) => entry.nickname === query)
   if (hit) {
-    focusHit(hit)
+    focusHit(hit, moveNote)
     return
   }
   if (!crossGame) {
@@ -159,9 +181,11 @@ async function loadBoard() {
   error.value = null
   try {
     board.value = await gamesApi.leaderboard(selected.value, mode.value, FETCH_LIMIT)
+    boardIsFallback.value = false
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '랭킹을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'
     board.value = { ...MOCK_BOARD, gameId: selected.value }
+    boardIsFallback.value = true
   }
   page.value = 1
   // 게임·모드를 바꿔도 찾던 사람을 계속 따라간다 — 같은 이름을 다시 칠 이유가 없다

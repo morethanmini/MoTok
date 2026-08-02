@@ -17,11 +17,14 @@ const PANEL = { w: 170, h: 120 }
 const DEFAULT_LEFT = STAGE.w - PANEL.w - 8
 const DEFAULT_TOP = 8
 
-/** jsdom에는 레이아웃이 없어 무대·패널 크기를 직접 심어 준다. */
-function makePanel() {
+/**
+ * jsdom에는 레이아웃이 없어 무대·패널 크기를 직접 심어 준다.
+ * 무대 크기는 참조로 읽어 테스트 중에 줄일 수 있게 한다(창 크기 변경 재현).
+ */
+function makePanel(size: { w: number; h: number } = { ...STAGE }) {
   const stage = document.createElement('div')
-  Object.defineProperty(stage, 'clientWidth', { value: STAGE.w })
-  Object.defineProperty(stage, 'clientHeight', { value: STAGE.h })
+  Object.defineProperty(stage, 'clientWidth', { get: () => size.w })
+  Object.defineProperty(stage, 'clientHeight', { get: () => size.h })
   stage.getBoundingClientRect = () => ({ left: 0, top: 0 }) as DOMRect
 
   const panel = document.createElement('div')
@@ -49,6 +52,40 @@ function mount() {
 }
 
 describe('useDraggablePanel', () => {
+  it('창이 줄어 무대 밖에 놓이면 되돌린다 — 밖에 있으면 다시 잡을 수 없다', async () => {
+    // 지난 판에 넓은 화면에서 옮겨 둔 자리(지금 무대 안이다)
+    localStorage.setItem(KEY, JSON.stringify({ x: 600, y: 400 }))
+    const size = { ...STAGE }
+    const p = mount()
+    p.el.value = makePanel(size)
+    await nextTick()
+    expect(p.pos.value).toEqual({ x: 600, y: 400 })
+
+    // 창을 줄이면 그 자리가 무대 밖이 된다 — 손잡이를 잡을 수 없으면 초기화도 못 한다
+    size.w = 400
+    size.h = 300
+    window.dispatchEvent(new Event('resize'))
+    await nextTick()
+
+    expect(p.pos.value).toEqual({ x: 400 - PANEL.w, y: 300 - PANEL.h })
+  })
+
+  it('화면을 떠난 뒤에는 창 크기 변경에 반응하지 않는다', async () => {
+    localStorage.setItem(KEY, JSON.stringify({ x: 600, y: 400 }))
+    const size = { ...STAGE }
+    const p = mount()
+    p.el.value = makePanel(size)
+    await nextTick()
+
+    scope.stop() // 게임을 닫아 스코프가 정리됐다
+    size.w = 400
+    size.h = 300
+    window.dispatchEvent(new Event('resize'))
+    await nextTick()
+
+    expect(p.pos.value).toEqual({ x: 600, y: 400 }) // 손대지 않는다
+  })
+
   it('잡는 순간 튀지 않는다 — 지금 보이는 자리에서 이어서 움직인다', async () => {
     const p = mount()
     p.el.value = makePanel()

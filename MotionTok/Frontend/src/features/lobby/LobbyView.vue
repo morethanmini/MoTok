@@ -357,8 +357,13 @@ useLobbyLive({
  * 카드가 다시 뜬다. 한 번 닫은 요청은 기억해 두고 배지로만 알린다(dismissedRequests).
  */
 const dismissedRequestIds = ref<Set<number>>(new Set())
-/** 응답 중인 요청 — 수락·거절 버튼 연타로 같은 요청을 두 번 보내지 않게. */
-const respondingRequestId = ref<number | null>(null)
+/**
+ * 응답을 보내는 중인 요청들 — 같은 요청을 연타로 두 번 보내지 않게.
+ *
+ * 하나만 담으면 카드 두 장이 떠 있을 때 한 장을 처리하는 동안 다른 장의 클릭이 조용히 먹힌다.
+ * 서로 다른 요청이라 동시에 보내도 문제가 없으므로 요청별로 잠근다.
+ */
+const respondingRequestIds = ref<Set<number>>(new Set())
 
 const popupRequests = computed(() =>
   receivedRequests.value.filter(
@@ -368,10 +373,13 @@ const popupRequests = computed(() =>
 
 // 요청 목록이 바뀔 때마다 죽은 id를 걷어낸다 — 안 그러면 저장소가 계속 자라고,
 // 언젠가 같은 번호의 새 요청이 오면 뜨지도 않고 묻힌다.
+//
+// 내 id도 같이 본다. 저장 키가 사용자별이라 프로필이 없으면 아무것도 못 읽는데, 목록만
+// 감시하면 프로필이 목록보다 늦게 온 경우 닫아 둔 기록을 영영 못 불러온다 — 닫은 카드가
+// 다시 뜬다. 지금은 라우터 가드가 프로필을 먼저 채우지만 그 순서에 기대지 않는다.
 watch(
-  receivedRequests,
-  (list) => {
-    const me = session.profile?.id
+  [receivedRequests, () => session.profile?.id],
+  ([list, me]) => {
     if (me == null) return
     dismissedRequestIds.value = pruneDismissed(
       me,
@@ -388,8 +396,8 @@ function dismissRequest(request: FriendRequestItem) {
 }
 
 async function respondToRequest(request: FriendRequestItem, action: 'ACCEPT' | 'REJECT') {
-  if (respondingRequestId.value !== null) return
-  respondingRequestId.value = request.requestId
+  if (respondingRequestIds.value.has(request.requestId)) return
+  respondingRequestIds.value = new Set([...respondingRequestIds.value, request.requestId])
   try {
     await friendsApi.respond(request.requestId, action)
     // 서버가 처리했으니 목록에서 사라진다. 수락이면 친구 목록에 새로 들어온다.
@@ -398,7 +406,9 @@ async function respondToRequest(request: FriendRequestItem, action: 'ACCEPT' | '
     // 실패하면 카드를 남긴다 — 조용히 지우면 처리된 줄 알고 넘어간다.
     flash(e instanceof ApiError ? e.message : '요청을 처리하지 못했어요. 다시 시도해 주세요.')
   } finally {
-    respondingRequestId.value = null
+    const next = new Set(respondingRequestIds.value)
+    next.delete(request.requestId)
+    respondingRequestIds.value = next
   }
 }
 
@@ -659,7 +669,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
       />
       <FriendRequestCardStack
         :requests="popupRequests"
-        :busy-id="respondingRequestId"
+        :busy-ids="[...respondingRequestIds]"
         @accept="respondToRequest($event, 'ACCEPT')"
         @reject="respondToRequest($event, 'REJECT')"
         @dismiss="dismissRequest"
