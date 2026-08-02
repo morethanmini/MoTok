@@ -11,6 +11,9 @@ import { useMediaPermissionStore } from '@/stores/mediaPermission'
 import { useSessionStore } from '@/stores/session'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
+import EffectIntensitySlider from '@/features/decor/EffectIntensitySlider.vue'
+import CameraEffectLayer from '@/features/decor/CameraEffectLayer.vue'
+import { EFFECT_LABEL, hasGlowLayer, videoFilter } from '@/features/decor/cameraEffect'
 
 import PixelButton from '@/components/common/PixelButton.vue'
 import BrandLogo from '@/components/common/BrandLogo.vue'
@@ -97,6 +100,12 @@ onMounted(decor.load)
 const frameW = ref(640)
 const frameH = ref(400)
 const previewAspect = computed(() => frameW.value / frameH.value)
+
+/** 뽀샤시의 영상 쪽 절반(빛 레이어는 CameraEffectLayer가 맡는다) — 입장 전 미리보기에도 그대로 걸린다. */
+const camFilterStyle = computed(() => {
+  const fx = decor.cameraEffect.value
+  return fx ? { filter: videoFilter(fx.kind, fx.intensity) } : undefined
+})
 
 function onVideoMeta() {
   const el = videoEl.value
@@ -239,7 +248,13 @@ async function cancel() {
             playsinline
             muted
             class="cam-video"
+            :style="camFilterStyle"
             @loadedmetadata="onVideoMeta"
+          />
+          <!-- 입장 전에도 뽀샤시가 걸린 모습을 그대로 보여 준다 — 여기서 세기를 정하고 들어간다 -->
+          <CameraEffectLayer
+            v-if="showVideo && decor.cameraEffect.value && hasGlowLayer(decor.cameraEffect.value.kind)"
+            :intensity="decor.cameraEffect.value.intensity"
           />
           <!-- 장착 스티커 미리보기 겸 편집. 프리뷰는 좌우 반전(scaleX(-1))이라 mirrored,
                object-fit:cover라 넘치는 영역까지 같은 기하로 맞춘다. 끌어서 자리를 정한다. -->
@@ -257,6 +272,13 @@ async function cancel() {
             @scale="decor.setScale"
             @remove="removeSticker"
             @select="selectedId = $event"
+          />
+          <EffectIntensitySlider
+            v-if="showVideo && decor.cameraEffect.value"
+            class="fx-row"
+            :intensity="decor.cameraEffect.value.intensity"
+            :label="`${EFFECT_LABEL[decor.cameraEffect.value.kind]} 세기`"
+            @change="decor.setIntensity(decor.cameraEffect.value!.itemId, $event)"
           />
           <div v-if="!isOn" class="camera-empty">
             <div class="camera-icon" aria-hidden="true" />

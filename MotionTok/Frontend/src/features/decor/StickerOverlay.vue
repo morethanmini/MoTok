@@ -24,6 +24,11 @@ const props = withDefaults(
     mirrored?: boolean
     /** 끌어서 위치 변경·핸들 조작 허용 */
     editable?: boolean
+    /**
+     * 삭제(✕) 손잡이를 보일지. 상점 미리보기처럼 <b>지울 대상이 없는</b> 화면에서는 끈다 —
+     * 눌러도 아무 일이 없는 버튼이 붙어 있으면 고장으로 읽힌다.
+     */
+    removable?: boolean
     selectedId?: number | null
     /**
      * 영상 비율(가로/세로). 박스와 영상 비율이 다를 때 실제 영상이 그려진 영역을 계산하는 데 쓴다.
@@ -41,6 +46,7 @@ const props = withDefaults(
   {
     mirrored: false,
     editable: false,
+    removable: true,
     selectedId: null,
     frameAspect: null,
     fit: 'contain',
@@ -229,6 +235,7 @@ function onResizeUp(e: PointerEvent) {
     >
       <button
         type="button"
+        v-if="removable"
         class="handle remove"
         title="삭제"
         aria-label="스티커 삭제"
