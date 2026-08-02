@@ -13,7 +13,7 @@ import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 import EffectIntensitySlider from '@/features/decor/EffectIntensitySlider.vue'
 import CameraEffectLayer from '@/features/decor/CameraEffectLayer.vue'
-import { videoFilter } from '@/features/decor/cameraEffect'
+import { EFFECT_LABEL, hasGlowLayer, videoFilter } from '@/features/decor/cameraEffect'
 
 import PixelButton from '@/components/common/PixelButton.vue'
 import BrandLogo from '@/components/common/BrandLogo.vue'
@@ -104,7 +104,7 @@ const previewAspect = computed(() => frameW.value / frameH.value)
 /** 뽀샤시의 영상 쪽 절반(빛 레이어는 CameraEffectLayer가 맡는다) — 입장 전 미리보기에도 그대로 걸린다. */
 const camFilterStyle = computed(() => {
   const fx = decor.cameraEffect.value
-  return fx ? { filter: videoFilter(fx.intensity) } : undefined
+  return fx ? { filter: videoFilter(fx.kind, fx.intensity) } : undefined
 })
 
 function onVideoMeta() {
@@ -253,7 +253,7 @@ async function cancel() {
           />
           <!-- 입장 전에도 뽀샤시가 걸린 모습을 그대로 보여 준다 — 여기서 세기를 정하고 들어간다 -->
           <CameraEffectLayer
-            v-if="showVideo && decor.cameraEffect.value"
+            v-if="showVideo && decor.cameraEffect.value && hasGlowLayer(decor.cameraEffect.value.kind)"
             :intensity="decor.cameraEffect.value.intensity"
           />
           <!-- 장착 스티커 미리보기 겸 편집. 프리뷰는 좌우 반전(scaleX(-1))이라 mirrored,
@@ -277,6 +277,7 @@ async function cancel() {
             v-if="showVideo && decor.cameraEffect.value"
             class="fx-row"
             :intensity="decor.cameraEffect.value.intensity"
+            :label="`${EFFECT_LABEL[decor.cameraEffect.value.kind]} 세기`"
             @change="decor.setIntensity(decor.cameraEffect.value!.itemId, $event)"
           />
           <div v-if="!isOn" class="camera-empty">

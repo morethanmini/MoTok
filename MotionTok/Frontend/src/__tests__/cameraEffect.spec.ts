@@ -12,7 +12,9 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_INTENSITY,
   clampIntensity,
+  effectKindOf,
   glowStyle,
+  hasGlowLayer,
   videoFilter,
 } from '@/features/decor/cameraEffect'
 
@@ -32,28 +34,78 @@ describe('clampIntensity', () => {
   })
 })
 
-describe('videoFilter — 영상 자체 보정', () => {
+describe('videoFilter — 뽀샤시', () => {
   it('블러를 걸지 않는다 — 눈·입이 흐려지면 뽀샤시가 아니다', () => {
-    expect(videoFilter(1)).not.toContain('blur')
+    expect(videoFilter('SOFT_GLOW', 1)).not.toContain('blur')
   })
 
   it('세기를 올리면 밝기는 오르고 채도·대비는 내려간다', () => {
-    const low = videoFilter(0)
-    const high = videoFilter(1)
+    const low = videoFilter('SOFT_GLOW', 0)
+    const high = videoFilter('SOFT_GLOW', 1)
     expect(num(high, 'brightness')).toBeGreaterThan(num(low, 'brightness'))
     expect(num(high, 'saturate')).toBeLessThan(num(low, 'saturate'))
     expect(num(high, 'contrast')).toBeLessThan(num(low, 'contrast'))
   })
 
   it('채도를 올리지 않는다 — 빛 레이어가 이미 색을 띄우는데 여기서 더하면 얼굴이 붉게 뜬다', () => {
-    expect(num(videoFilter(0.5), 'saturate')).toBeLessThan(1)
-    expect(num(videoFilter(1), 'saturate')).toBeLessThan(1)
+    expect(num(videoFilter('SOFT_GLOW', 0.5), 'saturate')).toBeLessThan(1)
+    expect(num(videoFilter('SOFT_GLOW', 1), 'saturate')).toBeLessThan(1)
   })
 
   it('세기 0이면 영상을 건드리지 않는다(1배)', () => {
-    expect(num(videoFilter(0), 'brightness')).toBe(1)
-    expect(num(videoFilter(0), 'saturate')).toBe(1)
-    expect(num(videoFilter(0), 'contrast')).toBe(1)
+    expect(num(videoFilter('SOFT_GLOW', 0), 'brightness')).toBe(1)
+    expect(num(videoFilter('SOFT_GLOW', 0), 'saturate')).toBe(1)
+    expect(num(videoFilter('SOFT_GLOW', 0), 'contrast')).toBe(1)
+  })
+})
+
+describe('videoFilter — 흑백', () => {
+  it('색을 뺀다', () => {
+    expect(num(videoFilter('GRAYSCALE', 1), 'grayscale')).toBe(1)
+  })
+
+  it('세기를 올릴수록 더 빠진다', () => {
+    const low = num(videoFilter('GRAYSCALE', 0), 'grayscale')
+    const high = num(videoFilter('GRAYSCALE', 1), 'grayscale')
+    expect(high).toBeGreaterThan(low)
+  })
+
+  it('세기 0에서도 눈에 띄게 빠진다 — 원본과 구분이 안 되면 장착이 안 된 줄 안다', () => {
+    expect(num(videoFilter('GRAYSCALE', 0), 'grayscale')).toBeGreaterThanOrEqual(0.4)
+  })
+
+  it('블러를 걸지 않는다 — 흑백은 색만 빼는 효과다', () => {
+    expect(videoFilter('GRAYSCALE', 1)).not.toContain('blur')
+  })
+
+  it('색을 빼며 밋밋해진 만큼 대비를 올린다', () => {
+    expect(num(videoFilter('GRAYSCALE', 1), 'contrast')).toBeGreaterThan(1)
+  })
+
+  it('뽀샤시와 다른 값을 낸다 — 종류를 무시하고 한 가지로 그리면 안 된다', () => {
+    expect(videoFilter('GRAYSCALE', 0.5)).not.toBe(videoFilter('SOFT_GLOW', 0.5))
+  })
+})
+
+describe('effectKindOf — 아이템 그림에서 종류 찾기', () => {
+  it('에셋 파일명으로 고른다', () => {
+    expect(effectKindOf('/assets/item/effect/soft_glow.svg')).toBe('SOFT_GLOW')
+    expect(effectKindOf('/assets/item/effect/grayscale.svg')).toBe('GRAYSCALE')
+    expect(effectKindOf('https://cdn.example.com/x/grayscale.svg')).toBe('GRAYSCALE')
+  })
+
+  it('모르는 에셋·빈 값이면 걸지 않는다 — 엉뚱한 효과보다 아무것도 안 하는 게 낫다', () => {
+    expect(effectKindOf('/assets/item/sticker/heart_1.png')).toBeNull()
+    expect(effectKindOf('')).toBeNull()
+    expect(effectKindOf(null)).toBeNull()
+    expect(effectKindOf(undefined)).toBeNull()
+  })
+})
+
+describe('hasGlowLayer — 겹치는 레이어가 필요한 종류', () => {
+  it('뽀샤시만 빛 레이어를 쓴다', () => {
+    expect(hasGlowLayer('SOFT_GLOW')).toBe(true)
+    expect(hasGlowLayer('GRAYSCALE')).toBe(false)
   })
 })
 

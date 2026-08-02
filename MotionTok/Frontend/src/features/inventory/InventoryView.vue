@@ -15,6 +15,8 @@ import PixelToast from '@/components/common/PixelToast.vue'
 import { useToast } from '@/composables/useToast'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 import EffectIntensitySlider from '@/features/decor/EffectIntensitySlider.vue'
+import CameraEffectLayer from '@/features/decor/CameraEffectLayer.vue'
+import { EFFECT_LABEL, hasGlowLayer, videoFilter } from '@/features/decor/cameraEffect'
 
 
 const { message: toast, flash } = useToast()
@@ -60,6 +62,13 @@ const videoEl = ref<HTMLVideoElement>()
 const frameW = ref(640)
 const frameH = ref(400)
 const aspect = computed(() => frameW.value / frameH.value)
+
+/** 효과의 영상 쪽 절반(빛 레이어는 CameraEffectLayer가 맡는다) — 세기 슬라이더의 결과를 여기서 본다. */
+const camFilterStyle = computed(() =>
+  cameraEffect.value
+    ? { filter: videoFilter(cameraEffect.value.kind, cameraEffect.value.intensity) }
+    : undefined,
+)
 
 watch([() => camera.stream.value, videoEl], ([stream, el], _prev, onCleanup) => {
   if (!el || !stream) return
@@ -149,7 +158,13 @@ async function saveDecoration() {
               autoplay
               playsinline
               muted
+              :style="camFilterStyle"
               @loadedmetadata="onVideoMeta"
+            />
+            <!-- 슬라이더로 세기를 맞추려면 결과가 여기 보여야 한다 -->
+            <CameraEffectLayer
+              v-if="camera.isOn.value && cameraEffect && hasGlowLayer(cameraEffect.kind)"
+              :intensity="cameraEffect.intensity"
             />
             <div v-if="!camera.isOn.value" class="cam-placeholder">
               <img src="/assets/intro/person.png" alt="" />
@@ -185,6 +200,7 @@ async function saveDecoration() {
             v-if="cameraEffect"
             class="fx-row"
             :intensity="cameraEffect.intensity"
+            :label="`${EFFECT_LABEL[cameraEffect.kind]} 세기`"
             @change="setIntensity(cameraEffect.itemId, $event)"
           />
         </div>

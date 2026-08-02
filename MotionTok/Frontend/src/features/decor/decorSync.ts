@@ -3,7 +3,7 @@
  * 남의 브라우저가 보낸 값이라 개수·좌표·주소를 모두 다듬어서 받는다.
  */
 import { clamp01, clampScale, type StickerSprite } from './sticker'
-import { clampIntensity, type CameraEffect } from './cameraEffect'
+import { clampIntensity, type CameraEffect, type EffectKind } from './cameraEffect'
 
 export const DECOR_TOPIC = 'decor'
 
@@ -75,19 +75,29 @@ export function encodeDecorMessage(state: DecorState): string {
       imageUrl: s.imageUrl,
     })),
     effect: state.effect
-      ? { itemId: state.effect.itemId, intensity: state.effect.intensity }
+      ? {
+          itemId: state.effect.itemId,
+          // 종류도 함께 보낸다 — 받는 쪽은 그 아이템을 보유하지 않아 그림에서 알아낼 수가 없다.
+          kind: state.effect.kind,
+          intensity: state.effect.intensity,
+        }
       : null,
   })
 }
 
-/** 남이 보낸 효과 — 세기만 쓰므로 숫자 하나만 다듬으면 된다. */
+/** 우리가 그릴 줄 아는 종류인지. 남의 브라우저가 보낸 문자열이라 그대로 믿지 않는다. */
+const KNOWN_KINDS: EffectKind[] = ['SOFT_GLOW', 'GRAYSCALE']
+
+/** 남이 보낸 효과 — 종류와 세기를 다듬는다. 모르는 종류면 통째로 버린다(엉뚱하게 그리지 않는다). */
 function sanitizeEffect(raw: unknown): CameraEffect | null {
   if (!raw || typeof raw !== 'object') return null
   const e = raw as Record<string, unknown>
   const itemId = Number(e.itemId)
   const intensity = Number(e.intensity)
   if (!Number.isFinite(itemId) || !Number.isFinite(intensity)) return null
-  return { itemId, intensity: clampIntensity(intensity) }
+  const kind = KNOWN_KINDS.find((k) => k === e.kind)
+  if (!kind) return null
+  return { itemId, kind, intensity: clampIntensity(intensity) }
 }
 
 /** 받은 메시지를 그릴 수 있는 상태로 바꾼다. 규약이 안 맞으면 null(무시). */

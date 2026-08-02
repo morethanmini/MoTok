@@ -23,7 +23,7 @@ function onInput(e: Event) {
 
 <template>
   <label class="fx-intensity">
-    <span class="fx-intensity-label">{{ props.label ?? '뽀샤시 세기' }}</span>
+    <span class="fx-intensity-label">{{ props.label ?? '효과 세기' }}</span>
     <input
       type="range"
       :min="MIN_INTENSITY"

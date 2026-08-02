@@ -37,8 +37,12 @@ public class ShopItemSeeder implements ApplicationRunner {
             /*
              * 효과는 스티커와 달리 이미지를 영상 위에 얹지 않는다 — 프레임 전체에 CSS로 걸리고
              * imageUrl은 상점·인벤토리 목록의 아이콘으로만 쓴다. 세기는 사용자가 조절한다.
+             *
+             * 어떤 효과로 그릴지는 이 이미지 파일명으로 프론트가 고른다(cameraEffect.ts).
+             * 효과 장착 한도는 1개라 둘을 동시에 걸 수는 없다.
              */
-            new SeedItem("뽀샤시 효과", ItemCategory.EFFECT, 300, EFFECT_PATH + "soft_glow.svg"));
+            new SeedItem("뽀샤시 효과", ItemCategory.EFFECT, 300, EFFECT_PATH + "soft_glow.svg"),
+            new SeedItem("흑백 효과", ItemCategory.EFFECT, 150, EFFECT_PATH + "grayscale.svg"));
 
     private final ItemRepository itemRepository;
 

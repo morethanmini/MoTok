@@ -16,7 +16,7 @@ import { useDecorSync } from '@/composables/useDecorSync'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 import CameraEffectLayer from '@/features/decor/CameraEffectLayer.vue'
 import EffectIntensitySlider from '@/features/decor/EffectIntensitySlider.vue'
-import { videoFilter } from '@/features/decor/cameraEffect'
+import { EFFECT_LABEL, hasGlowLayer, videoFilter } from '@/features/decor/cameraEffect'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
 import { useRoomChat } from '@/composables/useRoomChat'
 import { onStompConnected } from '@/composables/useGlobalStomp'
@@ -138,7 +138,7 @@ function effectFor(slot: Slot) {
 /** 내 캠에 거는 뽀샤시의 영상 쪽 절반(빛 레이어는 CameraEffectLayer가 맡는다). */
 const selfCameraFilterStyle = computed(() => {
   const fx = decor.cameraEffect.value
-  return fx ? { filter: videoFilter(fx.intensity) } : undefined
+  return fx ? { filter: videoFilter(fx.kind, fx.intensity) } : undefined
 })
 // 대기실 채팅 + 게임 제안 (STOMP, 명세 §7)
 const roomChat = useRoomChat()
@@ -1908,7 +1908,7 @@ const startHint = computed(() =>
           <!-- 내 뽀샤시 — 편집 중에도 결과를 그대로 보여야 세기를 맞출 수 있다.
                이 타일은 언제나 내 카메라라 게임 화면 여부를 따지지 않는다. -->
           <CameraEffectLayer
-            v-if="selfCamOn && decor.cameraEffect.value"
+            v-if="selfCamOn && decor.cameraEffect.value && hasGlowLayer(decor.cameraEffect.value.kind)"
             class="self-fx-layer"
             :intensity="decor.cameraEffect.value.intensity"
           />
@@ -1955,6 +1955,7 @@ const startHint = computed(() =>
               v-if="decor.cameraEffect.value"
               class="game-decor-fx"
               :intensity="decor.cameraEffect.value.intensity"
+              :label="`${EFFECT_LABEL[decor.cameraEffect.value.kind]} 세기`"
               @change="decor.setIntensity(decor.cameraEffect.value!.itemId, $event)"
             />
             <button v-if="decor.placements.value.length" type="button" class="game-decor-save" :disabled="decor.saving.value" @click="saveGameDecor">
