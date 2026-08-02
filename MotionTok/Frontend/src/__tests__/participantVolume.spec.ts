@@ -37,8 +37,9 @@ describe('ParticipantTile 개인 볼륨', () => {
 
     await tile.find('.vol-btn').trigger('click')
     const slider = tile.find('.vol-bar input')
+    // 슬라이더 자체가 0~100 눈금이다. 예전에는 옆에 "60%" 글자(.vol-val)도 있었지만
+    // 메뉴가 개편되며 사라졌다 — 규약은 눈금이고 글자는 표시였으므로 눈금만 못박는다.
     expect((slider.element as HTMLInputElement).value).toBe('60')
-    expect(tile.find('.vol-val').text()).toBe('60%')
 
     await slider.setValue('25')
     // .at(-1) 대신 인덱싱 — tsconfig lib가 ES2022 미만이라 Array.at 타입이 없다
@@ -47,7 +48,9 @@ describe('ParticipantTile 개인 볼륨', () => {
   })
 
   it('0으로 내리면 음소거 상태로 보인다', () => {
-    const tile = mountTile({ volume: 0 })
-    expect(tile.find('.vol-btn').classes()).toContain('muted')
+    // 예전에는 버튼에 .muted 클래스가 붙었는데, 지금은 아이콘의 X 하나로 표시한다.
+    // (버튼이 볼륨 전용에서 참가자 메뉴로 바뀌면서 배경색을 쓸 수 없게 됐다)
+    expect(mountTile({ volume: 0 }).find('.vol-btn .mute-x').exists()).toBe(true)
+    expect(mountTile({ volume: 0.6 }).find('.vol-btn .mute-x').exists()).toBe(false)
   })
 })

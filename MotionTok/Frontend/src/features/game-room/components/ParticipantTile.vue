@@ -222,7 +222,9 @@ function onVolumeInput(e: Event) {
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square">
           <path d="M11 5L6 9H2v6h4l5 4V5z" />
-          <path v-if="volume === 0" d="M16 9l6 6M22 9l-6 6" />
+          <!-- 음소거 표시는 이 X 하나뿐이라 클래스로 붙잡을 수 있게 둔다(테스트가 좌표
+               문자열을 비교하면 아이콘을 다듬을 때마다 깨진다) -->
+          <path v-if="volume === 0" class="mute-x" d="M16 9l6 6M22 9l-6 6" />
           <path v-else d="M15.5 9a3.5 3.5 0 010 6" />
         </svg>
       </button>
