@@ -58,6 +58,12 @@ public class DecorService {
     private static final double MIN_SCALE = 0.05;
     private static final double MAX_SCALE = 1.0;
 
+    /**
+     * 프레임 전체 효과(FRAME)의 기본 세기. 처음 장착했을 때 "걸렸다"는 게 보여야 하되
+     * 과하지 않은 지점이다 — 0이면 장착해도 아무 변화가 없어 고장으로 읽힌다.
+     */
+    private static final double DEFAULT_INTENSITY = 0.5;
+
     private final UserItemRepository userItemRepository;
     private final DecorSettingRepository decorSettingRepository;
     private final ObjectMapper objectMapper;
@@ -95,8 +101,12 @@ public class DecorService {
             if (equippedInCategory >= EQUIP_LIMIT.getOrDefault(category, 1)) {
                 throw new BusinessException(ErrorCode.DECOR_EQUIP_LIMIT);
             }
-            next.add(new DecorConfigPayload.Placement(
-                    itemId, DecorAnchor.FIXED, DEFAULT_X, DEFAULT_Y, DEFAULT_SCALE));
+            // 효과는 붙는 자리가 없다 — 프레임 전체에 걸리고 세기로만 조절한다.
+            next.add(category == ItemCategory.EFFECT
+                    ? new DecorConfigPayload.Placement(
+                            itemId, DecorAnchor.FRAME, 0, 0, 0, DEFAULT_INTENSITY)
+                    : new DecorConfigPayload.Placement(
+                            itemId, DecorAnchor.FIXED, DEFAULT_X, DEFAULT_Y, DEFAULT_SCALE, 0));
         } else if (!equipped) {
             next.removeIf(p -> p.itemId().equals(itemId));
         }
@@ -127,12 +137,19 @@ public class DecorService {
             if (p == null || p.itemId() == null || !categoryOf.containsKey(p.itemId())) {
                 continue; // 보유하지 않은 아이템
             }
-            sanitized.put(p.itemId(), new DecorConfigPayload.Placement(
-                    p.itemId(),
-                    p.anchor() == null ? DecorAnchor.FIXED : p.anchor(),
-                    clamp(p.x(), 0, 1),
-                    clamp(p.y(), 0, 1),
-                    clamp(p.scale(), MIN_SCALE, MAX_SCALE)));
+            // 효과의 앵커는 클라이언트 말을 듣지 않고 분류에서 정한다. FIXED로 보내오면
+            // 그림이 없는 아이템이 스티커로 그려져 화면에 아이콘이 붙어 버린다.
+            boolean frame = categoryOf.get(p.itemId()) == ItemCategory.EFFECT;
+            sanitized.put(p.itemId(), frame
+                    ? new DecorConfigPayload.Placement(
+                            p.itemId(), DecorAnchor.FRAME, 0, 0, 0, clamp(p.intensity(), 0, 1))
+                    : new DecorConfigPayload.Placement(
+                            p.itemId(),
+                            p.anchor() == null ? DecorAnchor.FIXED : p.anchor(),
+                            clamp(p.x(), 0, 1),
+                            clamp(p.y(), 0, 1),
+                            clamp(p.scale(), MIN_SCALE, MAX_SCALE),
+                            0));
         }
 
         // 분류별 한도 초과는 잘라 내지 않고 거절한다 — 조용히 몇 개를 버리면
