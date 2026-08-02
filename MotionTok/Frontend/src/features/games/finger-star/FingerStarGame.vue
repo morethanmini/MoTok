@@ -727,9 +727,11 @@ function entryAvg(r: GameResultEntry): number {
   object-fit: contain;
 }
 
+/* 방 UI의 참가자명 박스(.self-label, top 8px · 높이 약 28px) 아래에서 시작한다 —
+   top:0이면 이름이 상단 바에 가린다 */
 .fs-topbar {
   position: absolute;
-  top: 0;
+  top: 40px;
   left: 0;
   right: 0;
   display: flex;
@@ -745,7 +747,7 @@ function entryAvg(r: GameResultEntry): number {
 .fs-timer { font-size: 11px; min-width: 52px; text-align: right; color: #ff5d73; }
 .fs-flash {
   position: absolute;
-  top: 44px;
+  top: 92px;
   left: 50%;
   transform: translateX(-50%);
   padding: 8px 14px;
