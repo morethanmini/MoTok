@@ -15,6 +15,8 @@ import FingerStarThumbnail from './components/FingerStarThumbnail.vue'
 import DrawingThumbnail from './components/DrawingThumbnail.vue'
 import BodyFitThumbnail from './components/BodyFitThumbnail.vue'
 import FishingThumbnail from './components/FishingThumbnail.vue'
+import GameGuideCarousel from './guide/GameGuideCarousel.vue'
+import { guidePagesFor } from './guide/pages'
 import heroFishingCat from '@/assets/games-catalog/hero-fishing-cat-transparent.png'
 import lobbyRoomListBoard from '@/assets/lobby/lobby-room-list-board.png'
 import lobbyGardenGrassTile from '@/assets/lobby/lobby-garden-grass-tile.png'
@@ -81,6 +83,12 @@ const detail = ref<GameDetail | null>(null)
 const detailOpen = ref(false)
 const selected = ref<Game | null>(null)
 const soloPlayable = computed(() => !!selected.value?.playable && selected.value.minPlayers <= 1)
+/**
+ * 그림 설명이 있는 게임이면 서버 글(rules/controls) 대신 그림을 보여준다.
+ * selected(고른 카드)를 기준으로 잡는 이유 — detail은 서버 응답을 기다리는 동안
+ * "불러오는 중" 자리표시자라, 그걸 보면 모달이 열리자마자 글이 잠깐 보였다 그림으로 바뀐다.
+ */
+const guidePages = computed(() => (selected.value ? guidePagesFor(selected.value.id) : null))
 const starting = ref(false)
 /**
  * 관리자가 닫은 게임(-106)인지. `playable`이 false인 이유는 두 가지고(닫힘 / 인원 부족)
@@ -182,7 +190,7 @@ function goDevice(game: Game, roomId: string) {
     </main>
 
     <PixelModal v-if="detailOpen && detail" variant="lobby" @close="detailOpen = false">
-      <section class="game-modal"><span class="modal-eyebrow">GAME GUIDE</span><h3>{{ detail.name }}</h3><div class="guide-block"><strong>게임 규칙</strong><p>{{ detail.rules }}</p></div><div v-if="detail.controls" class="guide-block"><strong>조작 방법</strong><p>{{ detail.controls }}</p></div><!-- 닫힘과 인원 부족을 나눠 안내한다 — 기다릴 일과 친구를 부를 일은 다르다 --><p v-if="selected && closedByAdmin(selected)" class="multi-notice">지금은 점검 중이라 플레이할 수 없어요. 잠시 뒤에 다시 확인해 주세요.</p><p v-else-if="selected?.playable && !soloPlayable" class="multi-notice">이 게임은 {{ selected.minPlayers }}명 이상이 함께 즐길 수 있어요. 로비에서 방을 만들어 친구를 초대해 주세요.</p><div class="modal-actions"><PixelButton block @click="detailOpen = false">닫기</PixelButton><PixelButton v-if="soloPlayable" variant="primary" block :disabled="starting" @click="play">혼자 플레이</PixelButton></div></section>
+      <section class="game-modal"><span class="modal-eyebrow">GAME GUIDE</span><h3>{{ detail.name }}</h3><!-- 그림 설명이 있는 게임이면 글 대신 그림으로 — 없는 게임은 지금까지대로 서버 글을 쓴다 --><GameGuideCarousel v-if="guidePages" :key="detail.id" :pages="guidePages" /><template v-else><div class="guide-block"><strong>게임 규칙</strong><p>{{ detail.rules }}</p></div><div v-if="detail.controls" class="guide-block"><strong>조작 방법</strong><p>{{ detail.controls }}</p></div></template><!-- 닫힘과 인원 부족을 나눠 안내한다 — 기다릴 일과 친구를 부를 일은 다르다 --><p v-if="selected && closedByAdmin(selected)" class="multi-notice">지금은 점검 중이라 플레이할 수 없어요. 잠시 뒤에 다시 확인해 주세요.</p><p v-else-if="selected?.playable && !soloPlayable" class="multi-notice">이 게임은 {{ selected.minPlayers }}명 이상이 함께 즐길 수 있어요. 로비에서 방을 만들어 친구를 초대해 주세요.</p><div class="modal-actions"><PixelButton block @click="detailOpen = false">닫기</PixelButton><PixelButton v-if="soloPlayable" variant="primary" block :disabled="starting" @click="play">혼자 플레이</PixelButton></div></section>
     </PixelModal>
     <PixelToast :message="toast" />
   </div>
