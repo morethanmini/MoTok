@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useScrollLock } from '@/composables/useScrollLock'
 /**
  * 방 안 게임 선택창.
  *
@@ -69,6 +70,9 @@ const guidePages = computed(() => {
   if (!game) return []
   return guidePagesOrFallback(game.gameId, game.emoji, [game.description, ...game.howToPlay])
 })
+
+// 선택창이 떠 있는 동안 뒤 화면이 스크롤되지 않게 — 이 오버레이는 PixelModal이 아니라 직접 건다
+useScrollLock()
 </script>
 
 <template>

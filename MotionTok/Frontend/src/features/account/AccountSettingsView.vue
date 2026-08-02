@@ -44,10 +44,10 @@ const newPasswordConfirm = ref('')
 // 비밀번호 표시/검증 — 회원가입(AuthView) 로직과 동일한 규칙
 const showNewPasswordConfirm = ref(false)
 
-// 서버 규칙과 동일: 12~64자, 소문자·대문자·숫자·특수문자 중 3종 이상
+// 서버 규칙과 동일: 8~64자, 소문자·대문자·숫자·특수문자 중 3종 이상
 const newPasswordValid = computed(() => {
   const pw = newPassword.value
-  if (pw.length < 12 || pw.length > 64) return false
+  if (pw.length < 8 || pw.length > 64) return false
   const kinds = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/].filter((re) => re.test(pw)).length
   return kinds >= 3
 })
@@ -285,7 +285,7 @@ onMounted(() => {
 
         <label class="field">
           새 비밀번호
-          <input v-model="newPassword" type="password" placeholder="12자 이상, 영문 대/소문자·숫자·특수기호 중 3종 이상" />
+          <input v-model="newPassword" type="password" placeholder="8자 이상, 영문 대/소문자·숫자·특수기호 중 3종 이상" />
         </label>
 
         <label class="field">

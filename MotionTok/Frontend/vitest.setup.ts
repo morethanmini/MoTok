@@ -27,3 +27,13 @@ class ResizeObserverStub implements ResizeObserver {
 if (!globalThis.ResizeObserver) {
   globalThis.ResizeObserver = ResizeObserverStub
 }
+
+/**
+ * Pointer capture — jsdom에 없다. 드래그 중 포인터를 붙잡아 두는 API라 붙잡지 않아도
+ * 테스트에서는 이벤트가 그대로 전달된다(진짜 브라우저에서만 의미가 있는 동작).
+ */
+if (!Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = () => {}
+  Element.prototype.releasePointerCapture = () => {}
+  Element.prototype.hasPointerCapture = () => false
+}

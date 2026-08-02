@@ -60,6 +60,7 @@ const FishingGame = lazyGame(() => import('@/features/games/fishing/FishingGame.
 const DrawingRelayGame = lazyGame(() => import('@/features/games/drawing-relay/DrawingRelayGame.vue'))
 const CatchRhythmGame = lazyGame(() => import('@/features/games/catch-rhythm/CatchRhythmGame.vue'))
 import { useRhythmAutoJoin } from '@/features/games/catch-rhythm/useRhythmAutoJoin'
+import { useDraggablePanel } from './useDraggablePanel'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import BrandLogo from '@/components/common/BrandLogo.vue'
@@ -1729,15 +1730,46 @@ const startLabel = computed(() => 'GAME')
  * STOMP 미연결(백엔드 미연동 로컬 데모)에서는 상세 조회가 영영 안 끝나므로 잠그지 않는다 —
  * 이때 열리는 게임은 로컬 솔로 폴백뿐이고 제안 발신은 useRoomChat이 미연결 시 무시한다.
  */
+/**
+ * 스코어보드 위치 — 게임마다 화면이 달라 기본 자리가 무언가를 가린다(핑거 스타는 종료 ✕,
+ * 바디핏·낚시는 각자의 HUD). 게임별로 자리를 잡아 주는 대신 직접 옮기게 하고 그 자리를 기억한다.
+ */
+const {
+  el: scoreEl,
+  style: scoreStyle,
+  dragging: scoreDragging,
+  onHandleDown: onScoreDown,
+  onHandleMove: onScoreMove,
+  onHandleUp: onScoreUp,
+  reset: resetScorePos,
+} = useDraggablePanel('motiontok:scoreboard-pos')
+
 const pickerLocked = computed(() => roomChat.connected.value && !detailLoaded.value)
+/**
+ * 판이 도는 중인가 — 이 동안에는 GAME 버튼을 잠근다.
+ *
+ * <p>게임이 떠 있으면 푸터가 가려질 것 같지만 그렇지 않다. 게임은 셀프 타일 자리에 뜨고
+ * 푸터는 그대로 남는다 — 게다가 비방장이 중간에 ✕로 나가면 화면은 없고 라운드만 도는
+ * 상태가 된다(그때 "게임 복귀" 버튼이 뜬다). 그 상태에서 GAME을 누르면 방장은 서버가
+ * GAME_SESSION_ALREADY_ACTIVE로 거절하고, 비방장은 아무 소용 없는 제안을 쏜다.</p>
+ *
+ * <p>세 값을 다 보는 이유 — activeSession은 공용 세션만 잡는다(리듬은 전용 채널이라 늘 비어
+ * 있다), activeGame은 내 화면에 게임이 떠 있는지, gamePrep은 시작을 눌러 준비 확인 중인지다.
+ * 하나라도 서 있으면 "종료하기 전"이다.</p>
+ */
+const gameInProgress = computed(
+  () => !!activeSession.value || !!activeGame.value || !!gamePrep.value,
+)
 const startHint = computed(() =>
-  !roomChat.connected.value
-    ? '오프라인 — 로컬 게임을 플레이할 수 있어요'
-    : !detailLoaded.value
-      ? '방 정보를 불러오는 중…'
-      : amRoomHost.value
-        ? '게임을 선택하고 시작!'
-        : '하고 싶은 게임을 제안해보세요',
+  gameInProgress.value
+    ? '이미 게임이 진행 중입니다'
+    : !roomChat.connected.value
+      ? '오프라인 — 로컬 게임을 플레이할 수 있어요'
+      : !detailLoaded.value
+        ? '방 정보를 불러오는 중…'
+        : amRoomHost.value
+          ? '게임을 선택하고 시작!'
+          : '하고 싶은 게임을 제안해보세요',
 )
 </script>
 
@@ -2066,13 +2098,25 @@ const startHint = computed(() =>
           />
         </div>
 
-        <!-- 실시간 스코어보드 (게임 중, S15P11A706-82) -->
+        <!-- 실시간 스코어보드 (게임 중, S15P11A706-82) — 제목 줄을 잡아 옮길 수 있다 -->
         <div
           v-if="activeSession && !gameResults"
+          ref="scoreEl"
           class="px game-scoreboard"
-          :class="{ bf: activeGame?.id === 'shape' }"
+          :class="{ bf: activeGame?.id === 'shape', fs: activeGame?.id === 'finger', dragging: scoreDragging }"
+          :style="scoreStyle"
         >
-          <div class="gs-title">⭐ LIVE SCORE</div>
+          <div
+            class="gs-title"
+            title="끌어서 옮기기 · 더블클릭하면 제자리로"
+            @pointerdown="onScoreDown"
+            @pointermove="onScoreMove"
+            @pointerup="onScoreUp"
+            @pointercancel="onScoreUp"
+            @dblclick="resetScorePos"
+          >
+            ⭐ LIVE SCORE <span class="gs-grip" aria-hidden="true">⠿</span>
+          </div>
           <div
             v-for="row in scoreboardRows"
             :key="row.userId"
@@ -2197,8 +2241,9 @@ const startHint = computed(() =>
       <button
         class="px start-btn footer-start-btn"
         :class="{ suggest: !amRoomHost }"
-        :disabled="pickerLocked || (detailLoaded && !amRoomHost && suggestCooldown)"
+        :disabled="pickerLocked || gameInProgress || (detailLoaded && !amRoomHost && suggestCooldown)"
         :title="startHint"
+        :aria-disabled="gameInProgress"
         @click="openPicker"
       >
         <span class="play-ico">▶</span>
@@ -2534,13 +2579,32 @@ const startHint = computed(() =>
   border-radius: 12px;
   box-shadow: var(--shadow-sm);
 }
-.gs-title { font-size: 8px; color: #f0a815; margin-bottom: 8px; }
+.gs-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 8px;
+  color: #f0a815;
+  cursor: grab;
+  /* 손잡이를 끄는 동안 브라우저가 스크롤·선택으로 가로채지 않게 */
+  touch-action: none;
+  user-select: none;
+}
+.gs-grip { color: #c9b48b; font-size: 10px; letter-spacing: -1px; }
+.game-scoreboard.dragging { cursor: grabbing; }
+.game-scoreboard.dragging .gs-title { cursor: grabbing; }
 .gs-row { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; font-size: 8px; color: var(--c-ink-soft); }
 .gs-row.me .gs-name { color: #f0a815; }
 .gs-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 110px; }
 .gs-val { color: #5cbf4a; white-space: nowrap; }
 .gs-empty { font-size: 7px; color: #a99f86; }
 .gs-badge { font-size: 7px; font-weight: 800; padding: 2px 6px; border: 1px solid; border-radius: 6px; white-space: nowrap; }
+
+/* 핑거 스타 — 게임 상단 바(top 40px, 높이 약 46px) 아래로 내린다.
+   z-index:5라 그냥 두면 상단 바 오른쪽 끝의 게임 종료 ✕를 덮는다 */
+.game-scoreboard.fs { top: 92px; }
 
 /* 게임④(-9) 전용 다크 테마 — 인게임 화면(BodyFitGame)과 톤을 맞춘다 */
 .game-scoreboard.bf { background: rgba(18, 20, 43, 0.96); border-color: rgba(255, 255, 255, 0.12); }
