@@ -70,7 +70,7 @@ const BOARDS: Record<string, LeaderboardEntry[]> = {
 beforeEach(() => {
   leaderboard.mockReset()
   leaderboard.mockImplementation((gameId, mode) =>
-    Promise.resolve({ gameId, entries: BOARDS[`${gameId}:${mode}`] ?? [], myRank: null }),
+    Promise.resolve({ gameId, entries: BOARDS[`${gameId}:${mode}`] ?? [] }),
   )
   getProfile.mockReset()
   getProfile.mockResolvedValue({ id: 1003, nickname: '유저3', createdAt: '2026-01-01T00:00:00Z', totalConnectSeconds: 0 })
@@ -253,7 +253,7 @@ describe('랭킹 닉네임 검색', () => {
     // 다른 게임 조회를 붙잡아 둬서 "훑는 중" 상태를 만든다
     leaderboard.mockImplementation(async (gameId, mode) => {
       if (!(gameId === 1 && mode === 'MULTI')) await gate
-      return { gameId, entries: BOARDS[`${gameId}:${mode}`] ?? [], myRank: null }
+      return { gameId, entries: BOARDS[`${gameId}:${mode}`] ?? [] }
     })
 
     await wrapper.find('.search-box input').setValue('떠돌이')
@@ -286,10 +286,9 @@ describe('랭킹 닉네임 검색', () => {
         return Promise.resolve({
           gameId,
           entries: elevenCalls === 1 ? BOARDS['11:MULTI']! : [entry(1, '남')],
-          myRank: null,
         })
       }
-      return Promise.resolve({ gameId, entries: BOARDS[`${gameId}:${mode}`] ?? [], myRank: null })
+      return Promise.resolve({ gameId, entries: BOARDS[`${gameId}:${mode}`] ?? [] })
     })
 
     await search(wrapper, '떠돌이')
@@ -325,7 +324,7 @@ describe('랭킹 닉네임 검색', () => {
     leaderboard.mockImplementation((gameId, mode) =>
       gameId === 11
         ? Promise.reject(new Error('boom')) // 최고 순위였던 곳이 죽었다
-        : Promise.resolve({ gameId, entries: BOARDS[`${gameId}:${mode}`] ?? [], myRank: null }),
+        : Promise.resolve({ gameId, entries: BOARDS[`${gameId}:${mode}`] ?? [] }),
     )
 
     await search(wrapper, '떠돌이')
