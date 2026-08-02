@@ -632,6 +632,22 @@ export interface StompErrorPayload {
   path?: string
 }
 
+// ── 게임 설명 함께 보기 (STOMP) ─────────
+// 수신: SUBSCRIBE /topic/rooms/{roomId}/guide (방 전체) · /user/queue/game-guide (sync 회신).
+// 발신: SEND /app/rooms/{roomId}/guide(방장) · /app/rooms/{roomId}/guide/sync(누구나).
+/**
+ * 방 전원이 맞춰야 할 설명 화면 상태 — 이벤트가 아니라 스냅샷이다.
+ * 열기/넘김/닫기가 모두 이 한 모양이라 마지막 프레임만 반영하면 화면이 맞는다(멱등).
+ */
+export interface GameGuideEvent {
+  /** 설명 모달이 떠 있어야 하는지. false면 나머지 필드는 의미 없다 */
+  open: boolean
+  /** 설명 중인 게임(서버 games.id) */
+  gameId: number | null
+  /** 방장이 보고 있는 0-based 페이지 */
+  page: number
+}
+
 // ── 게임 세션 (STOMP, S15P11A706-115) ─────────
 // 수신: SUBSCRIBE /topic/rooms/{roomId}/game.
 // 발신: SEND /app/rooms/{roomId}/game/start(방장) · /game/progress(2~5Hz 스로틀) · /game/finish(1회).

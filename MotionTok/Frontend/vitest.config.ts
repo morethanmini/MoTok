@@ -26,6 +26,8 @@ export default mergeConfig(
     },
     test: {
       environment: 'jsdom',
+      /** jsdom에 없는 브라우저 API를 채운다 — 무엇을 왜 채우는지는 그 파일 주석 참고. */
+      setupFiles: [fileURLToPath(new URL('./vitest.setup.ts', import.meta.url))],
       exclude: [...configDefaults.exclude, 'e2e/**'],
       root: fileURLToPath(new URL('./', import.meta.url)),
     },

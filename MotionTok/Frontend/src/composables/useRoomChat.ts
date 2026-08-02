@@ -29,6 +29,7 @@ import type {
   ChatMessage,
   DrawOp,
   GameEvent,
+  GameGuideEvent,
   LiveRoomHostChangedEvent,
   LiveRoomMemberKickedEvent,
   LiveRoomMemberRemovedEvent,
@@ -70,6 +71,14 @@ export function useRoomChat() {
   const memberRemoved = ref<LiveRoomMemberRemovedEvent | null>(null)
   /** 강퇴 알림(-73). 사유가 포함되어 대상에게 안내할 수 있다. */
   const memberKicked = ref<LiveRoomMemberKickedEvent | null>(null)
+  /**
+   * 게임 설명 함께 보기 상태 — 방장이 넘긴 장이 여기로 온다.
+   *
+   * 이벤트 목록(gameEvents)이 아니라 최신 1건인 이유: 서버가 "무슨 일이 있었다"가 아니라
+   * "지금 무엇이 보여야 한다"를 통째로 보낸다(BE GameGuideEvent 주석). 쌓아 둘 이유가 없고,
+   * 중간 프레임을 놓쳐도 마지막 것만 반영하면 화면이 맞는다.
+   */
+  const gameGuide = ref<GameGuideEvent | null>(null)
 
   function handleChatFrame(body: string) {
     try {
@@ -84,6 +93,15 @@ export function useRoomChat() {
     try {
       const event = JSON.parse(body) as GameEvent
       gameEvents.value = [...gameEvents.value, event]
+    } catch {
+      // 무시
+    }
+  }
+
+  /** 설명 함께 보기 수신 — 방 토픽과 sync 개인 회신이 같은 모양이라 핸들러도 하나다. */
+  function handleGuideFrame(body: string) {
+    try {
+      gameGuide.value = JSON.parse(body) as GameGuideEvent
     } catch {
       // 무시
     }
@@ -126,7 +144,8 @@ export function useRoomChat() {
         err.path?.endsWith('/chat') ||
         err.path?.endsWith('/game-suggest') ||
         err.path?.includes('/game/') ||
-        err.path?.includes('/rhythm/')
+        err.path?.includes('/rhythm/') ||
+        err.path?.includes('/guide')
       ) {
         lastError.value = err
       }
@@ -155,11 +174,15 @@ export function useRoomChat() {
     hostChanged.value = null
     memberRemoved.value = null
     memberKicked.value = null
+    gameGuide.value = null
 
     roomSubscriptions = [
       subscribeGlobal(`/topic/rooms/${roomId}/chat`, handleChatFrame),
       subscribeGlobal(`/topic/rooms/${roomId}/game`, handleGameFrame),
       subscribeGlobal(`/topic/rooms/${roomId}/members`, handleMembersFrame),
+      subscribeGlobal(`/topic/rooms/${roomId}/guide`, handleGuideFrame),
+      // sync 회신은 개인 큐로 온다 — 방 토픽으로 보내면 남의 화면까지 되돌린다.
+      subscribeGlobal('/user/queue/game-guide', handleGuideFrame),
       subscribeGlobal('/user/queue/errors', handleErrorFrame),
     ]
     joined.value = true
@@ -198,6 +221,26 @@ export function useRoomChat() {
   function suggestGame(gameId: number, gameName: string) {
     if (!currentRoomId) return
     publishGlobal(`/app/rooms/${currentRoomId}/game-suggest`, { gameId, gameName })
+  }
+
+  // ── 게임 설명 함께 보기 ──────────
+  /**
+   * 설명 화면 상태 발신(방장 전용 — 서버가 방장 검증).
+   * 열기·페이지 넘김·닫기를 나누지 않고 매번 전체 상태를 보낸다 — 프레임 하나를 놓쳐도
+   * 다음 것으로 복구되고, 서버가 그대로 저장해 뒤늦게 들어온 사람에게 돌려준다.
+   */
+  function sendGameGuide(open: boolean, gameId: number | null, page: number) {
+    if (!currentRoomId) return
+    publishGlobal(`/app/rooms/${currentRoomId}/guide`, { open, gameId, page })
+  }
+
+  /**
+   * 지금 설명이 떠 있는지 물어본다(누구나) — 답은 /user/queue/game-guide로 나에게만 온다.
+   * 토픽은 재생되지 않으므로 입장·재연결 직후 이걸 부르지 않으면 이미 열려 있는 설명을 놓친다.
+   */
+  function requestGameGuideSync() {
+    if (!currentRoomId) return
+    publishGlobal(`/app/rooms/${currentRoomId}/guide/sync`, {})
   }
 
   // ── 게임 세션 발신 (S15P11A706-115) ──────────
@@ -319,10 +362,13 @@ export function useRoomChat() {
     hostChanged,
     memberRemoved,
     memberKicked,
+    gameGuide,
     connect,
     disconnect,
     sendChat,
     suggestGame,
+    sendGameGuide,
+    requestGameGuideSync,
     startGame,
     sendGameReady,
     sendGameAbort,
