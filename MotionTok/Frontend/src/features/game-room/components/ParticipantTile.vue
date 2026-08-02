@@ -9,6 +9,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ParticipantView } from '@/composables/useLiveKitRoom'
 import { attachSpeakerGain, detachSpeakerGain } from '@/composables/useSpeakerGain'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
+import CameraEffectLayer from '@/features/decor/CameraEffectLayer.vue'
+import { videoFilter, type CameraEffect } from '@/features/decor/cameraEffect'
 import type { StickerSprite } from '@/features/decor/sticker'
 
 const props = withDefaults(
@@ -42,6 +44,11 @@ const props = withDefaults(
     preferCam?: boolean
     /** 이 참가자가 데이터 채널로 알려 준 꾸미기 배치(useDecorSync) — 발행 영상에는 안 들어 있다. */
     sprites?: StickerSprite[]
+    /**
+     * 이 참가자가 걸어 둔 프레임 효과(뽀샤시). 스티커와 같은 경로로 받는다.
+     * 송출 영상에는 굽지 않는다 — 그래야 모션 인식이 원본 프레임을 그대로 읽는다.
+     */
+    effect?: CameraEffect | null
   }>(),
   {
     view: null,
@@ -55,6 +62,7 @@ const props = withDefaults(
     volume: 1,
     preferCam: false,
     sprites: () => [],
+    effect: null,
   },
 )
 const emit = defineEmits<{ kick: []; friend: []; volume: [value: number] }>()
@@ -95,6 +103,14 @@ const videoTrack = computed(() => {
 })
 const showingVideo = computed(() => !!videoTrack.value)
 const audioTrack = computed(() => (props.playAudio ? (props.view?.audioTrack ?? null) : null))
+
+/**
+ * 뽀샤시의 영상 쪽 절반 — 밝기·채도만 살짝 올린다(블러는 위에 겹치는 레이어가 맡는다).
+ * 게임 화면 트랙에는 걸지 않는다: 글자·UI가 뿌옇게 되고 색까지 틀어진다.
+ */
+const cameraFilterStyle = computed(() =>
+  props.effect && !showingGame.value ? { filter: videoFilter(props.effect.intensity) } : undefined,
+)
 
 watch(
   [videoTrack, videoEl],
@@ -167,12 +183,20 @@ function onVolumeInput(e: Event) {
         muted
         class="tile-video"
         :class="{ mirror: mirror && !showingGame, game: showingGame }"
+        :style="cameraFilterStyle"
         @loadedmetadata="syncVideoAspect"
       />
       <audio v-if="playAudio" ref="audioEl" autoplay />
       <div v-if="!showingVideo" class="cam-off">
         <span class="avatar">{{ initial }}</span>
       </div>
+
+      <!-- 뽀샤시도 카메라에만 — 게임 화면 트랙에 걸면 글자·UI까지 뿌옇게 된다.
+           영상 보정(filter)과 이 빛 레이어는 한 짝이라 조건이 같아야 한다. -->
+      <CameraEffectLayer
+        v-if="showingVideo && !showingGame && effect"
+        :intensity="effect.intensity"
+      />
 
       <!-- 스티커 좌표는 카메라 프레임 기준이라 게임 화면 트랙에는 얹지 않는다.
            fit은 <video>의 object-fit과 같아야 여백이 아니라 영상 안 같은 자리에 붙는다. -->

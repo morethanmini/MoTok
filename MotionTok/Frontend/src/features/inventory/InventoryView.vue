@@ -14,6 +14,7 @@ import PixelButton from '@/components/common/PixelButton.vue'
 import PixelToast from '@/components/common/PixelToast.vue'
 import { useToast } from '@/composables/useToast'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
+import EffectIntensitySlider from '@/features/decor/EffectIntensitySlider.vue'
 
 
 const { message: toast, flash } = useToast()
@@ -27,6 +28,7 @@ const {
   inventory, placements, sprites, equippedCount,
   loading, saving, dirty, error,
   load, setEquipped, canEquip, move, setScale, save,
+  cameraEffect, setIntensity,
 } = useDecoration()
 /**
  * 목록을 못 불러온 상태만 따로 붙든다 — 장착 실패 같은 개별 오류까지 큰 배너로 띄우면
@@ -177,6 +179,14 @@ async function saveDecoration() {
             </button>
             <span v-if="placements.length === 0" class="empty">장착된 아이템이 없어요</span>
           </div>
+
+          <!-- 효과는 끌 손잡이가 없다 — 크기 조절 대신 세기를 여기서 맞춘다 -->
+          <EffectIntensitySlider
+            v-if="cameraEffect"
+            class="fx-row"
+            :intensity="cameraEffect.intensity"
+            @change="setIntensity(cameraEffect.itemId, $event)"
+          />
         </div>
       </PixelCard>
 

@@ -5,9 +5,11 @@ import {
   MAX_SPRITES,
   encodeDecorMessage,
   parseDecorMessage,
+  type DecorState,
 } from '@/features/decor/decorSync'
 import { useDecorSync, type DecorTransport } from '@/composables/useDecorSync'
 import type { StickerSprite } from '@/features/decor/sticker'
+import type { CameraEffect } from '@/features/decor/cameraEffect'
 
 const sprite = (over: Partial<StickerSprite> = {}): StickerSprite => ({
   itemId: 1,
@@ -19,26 +21,65 @@ const sprite = (over: Partial<StickerSprite> = {}): StickerSprite => ({
   ...over,
 })
 
+/** 스티커만 있는 상태 — 효과까지 보는 테스트만 effect를 채운다. */
+const state = (sprites: StickerSprite[], effect: CameraEffect | null = null): DecorState => ({
+  sprites,
+  effect,
+})
+
 describe('decorSync 메시지', () => {
   it('보낸 배치를 그대로 되돌려 받는다', () => {
     const sprites = [sprite(), sprite({ itemId: 2, imageUrl: 'https://cdn.example.com/a.png' })]
-    expect(parseDecorMessage(encodeDecorMessage(sprites))).toEqual(sprites)
+    expect(parseDecorMessage(encodeDecorMessage(state(sprites)))).toEqual(state(sprites))
   })
 
   it('범위를 벗어난 좌표·크기는 다듬는다', () => {
-    const [got] = parseDecorMessage(encodeDecorMessage([sprite({ x: 9, y: -3, scale: 50 })])) ?? []
-    expect(got).toMatchObject({ x: 1, y: 0, scale: 1 })
+    const got = parseDecorMessage(encodeDecorMessage(state([sprite({ x: 9, y: -3, scale: 50 })])))
+    expect(got?.sprites[0]).toMatchObject({ x: 1, y: 0, scale: 1 })
   })
 
   it('그릴 수 없는 이미지 주소는 버린다', () => {
     for (const imageUrl of ['javascript:alert(1)', 'data:image/png;base64,AAA', '//evil.example/a.png', '']) {
-      expect(parseDecorMessage(encodeDecorMessage([sprite({ imageUrl })]))).toEqual([])
+      expect(parseDecorMessage(encodeDecorMessage(state([sprite({ imageUrl })])))?.sprites).toEqual([])
     }
   })
 
   it('장착 한도를 넘는 개수는 잘라낸다', () => {
     const many = Array.from({ length: MAX_SPRITES + 5 }, (_, i) => sprite({ itemId: i }))
-    expect(parseDecorMessage(encodeDecorMessage(many))).toHaveLength(MAX_SPRITES)
+    expect(parseDecorMessage(encodeDecorMessage(state(many)))?.sprites).toHaveLength(MAX_SPRITES)
+  })
+
+  it('프레임 효과도 함께 실어 보낸다', () => {
+    const fx = { itemId: 9, intensity: 0.4 }
+    const got = parseDecorMessage(encodeDecorMessage(state([sprite()], fx)))
+    expect(got?.effect).toEqual(fx)
+  })
+
+  it('효과 세기는 0~1로 다듬는다', () => {
+    const over = parseDecorMessage(encodeDecorMessage(state([], { itemId: 9, intensity: 5 })))
+    expect(over?.effect?.intensity).toBe(1)
+    const under = parseDecorMessage(encodeDecorMessage(state([], { itemId: 9, intensity: -2 })))
+    expect(under?.effect?.intensity).toBe(0)
+  })
+
+  it('효과를 뗐으면 null로 알린다 — "껐다"도 전해져야 한다', () => {
+    expect(parseDecorMessage(encodeDecorMessage(state([sprite()], null)))?.effect).toBeNull()
+  })
+
+  it('효과를 모르는 옛 클라이언트 메시지도 그대로 읽는다 — 버전을 올리지 않은 이유', () => {
+    // effect 필드가 아예 없는 v1 메시지(스티커만 보내던 시절)
+    const legacy = JSON.stringify({ v: 1, sprites: [sprite()] })
+    const got = parseDecorMessage(legacy)
+    expect(got?.sprites).toHaveLength(1)
+    expect(got?.effect).toBeNull()
+  })
+
+  it('망가진 효과는 버리고 스티커는 살린다', () => {
+    for (const effect of [{ itemId: 'x' }, { intensity: 0.5 }, 'nope', 3]) {
+      const got = parseDecorMessage(JSON.stringify({ v: 1, sprites: [sprite()], effect }))
+      expect(got?.sprites).toHaveLength(1)
+      expect(got?.effect).toBeNull()
+    }
   })
 
   it('규약이 안 맞는 메시지는 null', () => {
@@ -73,10 +114,10 @@ describe('useDecorSync', () => {
   it('받은 배치를 그 참가자 것으로 들고 있다', () => {
     const t = fakeTransport()
     const scope = effectScope()
-    const sync = scope.run(() => useDecorSync(t.transport, () => []))!
+    const sync = scope.run(() => useDecorSync(t.transport, () => state([])))!
 
     expect(sync.spritesOf('7')).toEqual([])
-    t.receive(encodeDecorMessage([sprite()]), '7')
+    t.receive(encodeDecorMessage(state([sprite()])), '7')
     expect(sync.spritesOf('7')).toEqual([sprite()])
 
     t.leaves('7')
@@ -87,9 +128,9 @@ describe('useDecorSync', () => {
   it('다른 토픽 메시지는 무시한다', () => {
     const t = fakeTransport()
     const scope = effectScope()
-    const sync = scope.run(() => useDecorSync(t.transport, () => []))!
+    const sync = scope.run(() => useDecorSync(t.transport, () => state([])))!
 
-    t.receive(encodeDecorMessage([sprite()]), '7', 'chat')
+    t.receive(encodeDecorMessage(state([sprite()])), '7', 'chat')
     expect(sync.spritesOf('7')).toEqual([])
     scope.stop()
   })
@@ -97,24 +138,24 @@ describe('useDecorSync', () => {
   it('새로 들어온 사람에게는 그 사람에게만 보낸다', () => {
     const t = fakeTransport()
     const scope = effectScope()
-    scope.run(() => useDecorSync(t.transport, () => [sprite()]))
+    scope.run(() => useDecorSync(t.transport, () => state([sprite()])))
 
     t.joins('9')
     expect(t.sent).toHaveLength(1)
     expect(t.sent[0]?.to).toEqual(['9'])
-    expect(parseDecorMessage(t.sent[0]!.payload)).toEqual([sprite()])
+    expect(parseDecorMessage(t.sent[0]!.payload)).toEqual(state([sprite()]))
     scope.stop()
   })
 
   it('아직 알린 적 없는 사람에게서 받으면 답장하고, 그 뒤로는 왕복하지 않는다', () => {
     const t = fakeTransport()
     const scope = effectScope()
-    scope.run(() => useDecorSync(t.transport, () => [sprite()]))
+    scope.run(() => useDecorSync(t.transport, () => state([sprite()])))
 
-    t.receive(encodeDecorMessage([]), '7')
+    t.receive(encodeDecorMessage(state([])), '7')
     expect(t.sent.map((s) => s.to)).toEqual([['7']])
 
-    t.receive(encodeDecorMessage([]), '7')
+    t.receive(encodeDecorMessage(state([])), '7')
     expect(t.sent).toHaveLength(1)
     scope.stop()
   })
@@ -122,22 +163,52 @@ describe('useDecorSync', () => {
   it('이미 알린 사람에게는 답장하지 않는다', () => {
     const t = fakeTransport()
     const scope = effectScope()
-    const sync = scope.run(() => useDecorSync(t.transport, () => [sprite()]))!
+    const sync = scope.run(() => useDecorSync(t.transport, () => state([sprite()])))!
 
     t.joins('7')
-    t.receive(encodeDecorMessage([]), '7')
+    t.receive(encodeDecorMessage(state([])), '7')
     expect(t.sent).toHaveLength(1)
     expect(sync.spritesOf('7')).toEqual([])
     scope.stop()
   })
 
-  it('내 배치가 바뀌면 방 전체에 다시 보낸다', async () => {
+  it('그 참가자 영상에 걸 효과를 따로 꺼내 준다', () => {
     const t = fakeTransport()
-    const mine = ref<StickerSprite[]>([])
+    const scope = effectScope()
+    const sync = scope.run(() => useDecorSync(t.transport, () => state([])))!
+
+    expect(sync.effectOf('7')).toBeNull()
+    t.receive(encodeDecorMessage(state([], { itemId: 9, intensity: 0.3 })), '7')
+    expect(sync.effectOf('7')).toEqual({ itemId: 9, intensity: 0.3 })
+
+    // 그 사람이 효과를 떼면 곧바로 사라진다
+    t.receive(encodeDecorMessage(state([])), '7')
+    expect(sync.effectOf('7')).toBeNull()
+
+    t.leaves('7')
+    expect(sync.effectOf('7')).toBeNull()
+    scope.stop()
+  })
+
+  it('세기만 바뀌어도 방 전체에 다시 보낸다 — 슬라이더를 끌면 상대 화면도 따라와야 한다', async () => {
+    const t = fakeTransport()
+    const mine = ref<DecorState>(state([], { itemId: 9, intensity: 0.2 }))
     const scope = effectScope()
     scope.run(() => useDecorSync(t.transport, () => mine.value))
 
-    mine.value = [sprite()]
+    mine.value = state([], { itemId: 9, intensity: 0.8 })
+    await vi.waitFor(() => expect(t.sent).toHaveLength(1))
+    expect(parseDecorMessage(t.sent[0]!.payload)?.effect?.intensity).toBe(0.8)
+    scope.stop()
+  })
+
+  it('내 배치가 바뀌면 방 전체에 다시 보낸다', async () => {
+    const t = fakeTransport()
+    const mine = ref<DecorState>(state([]))
+    const scope = effectScope()
+    scope.run(() => useDecorSync(t.transport, () => mine.value))
+
+    mine.value = state([sprite()])
     await vi.waitFor(() => expect(t.sent).toHaveLength(1))
     expect(t.sent[0]?.to).toBeUndefined()
     scope.stop()

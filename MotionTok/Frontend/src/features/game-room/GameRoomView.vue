@@ -14,6 +14,9 @@ import { EQUIP_LIMIT, useDecoration } from '@/composables/useDecoration'
 import { motionModelsReady, warmUpMotionModels } from '@/composables/motionModels'
 import { useDecorSync } from '@/composables/useDecorSync'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
+import CameraEffectLayer from '@/features/decor/CameraEffectLayer.vue'
+import EffectIntensitySlider from '@/features/decor/EffectIntensitySlider.vue'
+import { videoFilter } from '@/features/decor/cameraEffect'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
 import { useRoomChat } from '@/composables/useRoomChat'
 import { onStompConnected } from '@/composables/useGlobalStomp'
@@ -89,7 +92,10 @@ const CAMERA_CONSTRAINTS = { video: { width: 640, height: 400 }, audio: false } 
 // 캔버스 합성으로 발행하던 예전 방식은 다른 오리진(S3)에 있는 AI 아이템 이미지를 읽지 못해
 // (버킷 CORS 없음) 내 화면에만 보였다.
 const decor = useDecoration()
-const decorSync = useDecorSync(lk, () => decor.sprites.value)
+const decorSync = useDecorSync(lk, () => ({
+  sprites: decor.sprites.value,
+  effect: decor.cameraEffect.value,
+}))
 const showDecorInventory = ref(false)
 const decorBusyItemId = ref<number | null>(null)
 const selectedDecorId = ref<number | null>(null)
@@ -123,6 +129,17 @@ function publishableTrack(stream: MediaStream | null): MediaStreamTrack | null {
 function spritesFor(slot: Slot) {
   return slot.view ? decorSync.spritesOf(slot.view.identity) : []
 }
+
+/** 그 참가자 영상에 걸 프레임 효과(뽀샤시) — 스티커와 같은 이유로 여기 한 곳에서 본다. */
+function effectFor(slot: Slot) {
+  return slot.view ? decorSync.effectOf(slot.view.identity) : null
+}
+
+/** 내 캠에 거는 뽀샤시의 영상 쪽 절반(빛 레이어는 CameraEffectLayer가 맡는다). */
+const selfCameraFilterStyle = computed(() => {
+  const fx = decor.cameraEffect.value
+  return fx ? { filter: videoFilter(fx.intensity) } : undefined
+})
 // 대기실 채팅 + 게임 제안 (STOMP, 명세 §7)
 const roomChat = useRoomChat()
 const myParticipantId = computed(() => readAccessClaims()?.sub ?? null)
@@ -1861,6 +1878,7 @@ const startHint = computed(() =>
             :cover="coverFor(slot)"
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
+            :effect="effectFor(slot)"
             play-audio
             mirror
             compact
@@ -1884,7 +1902,15 @@ const startHint = computed(() =>
             playsinline
             muted
             class="self-video"
+            :style="selfCameraFilterStyle"
             @loadedmetadata="syncSelfVideoAspect"
+          />
+          <!-- 내 뽀샤시 — 편집 중에도 결과를 그대로 보여야 세기를 맞출 수 있다.
+               이 타일은 언제나 내 카메라라 게임 화면 여부를 따지지 않는다. -->
+          <CameraEffectLayer
+            v-if="selfCamOn && decor.cameraEffect.value"
+            class="self-fx-layer"
+            :intensity="decor.cameraEffect.value.intensity"
           />
           <!-- 상대 타일(ParticipantTile)과 같은 오버레이 — self-video는 좌우 반전이라 mirrored,
                fit은 <video>의 object-fit과 같아야 영상 안 같은 자리에 얹힌다. -->
@@ -1924,6 +1950,13 @@ const startHint = computed(() =>
               </button>
             </div>
             <p v-else class="game-decor-empty">{{ decor.loading.value ? '불러오는 중…' : '보유한 꾸미기 아이템이 없어요' }}</p>
+            <!-- 효과는 영상 위 손잡이가 없어 크기 조절 자리를 이 슬라이더가 대신한다 -->
+            <EffectIntensitySlider
+              v-if="decor.cameraEffect.value"
+              class="game-decor-fx"
+              :intensity="decor.cameraEffect.value.intensity"
+              @change="decor.setIntensity(decor.cameraEffect.value!.itemId, $event)"
+            />
             <button v-if="decor.placements.value.length" type="button" class="game-decor-save" :disabled="decor.saving.value" @click="saveGameDecor">
               {{ decor.saving.value ? '저장 중…' : decor.dirty.value ? '꾸미기 저장 *' : '꾸미기 저장' }}
             </button>
@@ -2068,6 +2101,7 @@ const startHint = computed(() =>
             :cover="coverFor(slot)"
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
+            :effect="effectFor(slot)"
             play-audio
             mirror
             compact
@@ -2088,6 +2122,7 @@ const startHint = computed(() =>
             :cover="coverFor(slot)"
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
+            :effect="effectFor(slot)"
             play-audio
             mirror
             :can-kick="amRoomHost && !!slot.view"

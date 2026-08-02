@@ -23,16 +23,22 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ShopItemSeeder implements ApplicationRunner {
 
-    /** 시드 1건. 카테고리별로 행을 추가해 나간다(현재는 스티커 3종). */
+    /** 시드 1건. 카테고리별로 행을 추가해 나간다(스티커 4종 · 효과 1종). */
     private record SeedItem(String name, ItemCategory category, int pricePoint, String imageUrl) {}
 
     private static final String STICKER_PATH = "/assets/item/sticker/";
+    private static final String EFFECT_PATH = "/assets/item/effect/";
 
     private static final List<SeedItem> SEED_ITEMS = List.of(
             new SeedItem("하트 스티커", ItemCategory.STICKER, 150, STICKER_PATH + "heart_1.png"),
             new SeedItem("음표 스티커", ItemCategory.STICKER, 200, STICKER_PATH + "note_1.png"),
             new SeedItem("별 스티커", ItemCategory.STICKER, 250, STICKER_PATH + "star_1.png"),
-            new SeedItem("고양이 풍선 스티커", ItemCategory.STICKER, 1500, STICKER_PATH + "cat_balloon.gif"));
+            new SeedItem("고양이 풍선 스티커", ItemCategory.STICKER, 1500, STICKER_PATH + "cat_balloon.gif"),
+            /*
+             * 효과는 스티커와 달리 이미지를 영상 위에 얹지 않는다 — 프레임 전체에 CSS로 걸리고
+             * imageUrl은 상점·인벤토리 목록의 아이콘으로만 쓴다. 세기는 사용자가 조절한다.
+             */
+            new SeedItem("뽀샤시 효과", ItemCategory.EFFECT, 300, EFFECT_PATH + "soft_glow.svg"));
 
     private final ItemRepository itemRepository;
 
