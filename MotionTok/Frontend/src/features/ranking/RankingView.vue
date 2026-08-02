@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import {
   gamesApi,
   ApiError,
@@ -46,6 +46,115 @@ const FETCH_LIMIT = 100
 const PAGE_SIZE = 10
 const page = ref(1)
 
+/**
+ * 닉네임으로 순위표에서 사람 찾기.
+ *
+ * 부분 일치가 아니라 정확히 같은 닉네임만 찾는다. 서버가 아니라 순위표(게임·모드별 최대
+ * {@link FETCH_LIMIT}명)를 훑는다 — 닉네임으로 회원을 찾는 공개 API가 없다(있는 건 관리자용
+ * `/v1/admin/users`뿐). 그래서 "못 찾음"은 그런 사람이 없거나 어느 순위표에도 100위 안에
+ * 들지 못했다는 뜻이다.
+ */
+const searchQuery = ref('')
+const searchHit = ref<LeaderboardEntry | null>(null)
+const searchMiss = ref('')
+/** 다른 게임 순위표를 훑는 중 — 요청이 여러 건이라 버튼을 잠가 중복 발사를 막는다. */
+const searching = ref(false)
+/** 옮겨서 찾았다는 안내. 보고 있던 게임이 바뀌므로 왜 바뀌었는지 말해 줘야 한다. */
+const movedNote = ref('')
+/** 옮기는 중 보관 — 새 순위표를 받은 뒤 안내로 올린다(clearSearch가 지우지 못하는 자리). */
+let pendingMove = ''
+
+function clearSearch() {
+  searchHit.value = null
+  searchMiss.value = ''
+  movedNote.value = ''
+}
+
+function focusHit(hit: LeaderboardEntry) {
+  searchHit.value = hit
+  movedNote.value = pendingMove
+  pendingMove = ''
+  // 찾은 사람이 몇 페이지에 있든 그 페이지로 넘겨 준다 — 순위(rank)가 아니라 목록에서의
+  // 자리로 센다. 동점자 처리에 따라 rank는 건너뛸 수 있어 페이지 계산이 어긋난다.
+  page.value = Math.floor(board.value.entries.indexOf(hit) / PAGE_SIZE) + 1
+  nextTick(() => {
+    document.querySelector('.score-row.found')?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  })
+}
+
+const modeLabel = (value: LeaderboardMode) => MODES.find((m) => m.value === value)?.label ?? value
+
+/**
+ * 지금 순위표에 없으면 다른 순위표에서 가장 높은 순위를 찾는다.
+ *
+ * <p>지금 모드의 다른 게임들을 먼저 본다. 거기서 나오면 모드 스위치를 건드리지 않고 끝난다 —
+ * 요청도 절반이고, 누르지 않은 토글이 저절로 넘어가는 일도 없다. 그 모드 어디에도 없을 때만
+ * 반대 모드까지 넓힌다. 아예 안 넓히면 솔로 기록만 있는 사람을 못 찾아, 직접 모드를 바꿔
+ * 다시 검색하는 수고가 그대로 남는다.</p>
+ */
+async function bestRankElsewhere(query: string) {
+  const waves: LeaderboardMode[] = [mode.value, mode.value === 'MULTI' ? 'SOLO' : 'MULTI']
+  for (const wave of waves) {
+    const targets = games.value.filter((g) => !(g.id === selected.value && wave === mode.value))
+    const found = (
+      await Promise.all(
+        targets.map((game) =>
+          gamesApi
+            .leaderboard(game.id, wave, FETCH_LIMIT)
+            .then((b) => {
+              const entry = b.entries.find((e) => e.nickname === query)
+              return entry ? { gameId: game.id, name: game.name, mode: wave, entry } : null
+            })
+            // 한 게임이 실패해도 나머지 결과로 답한다 — 전부 못 찾은 것과 구분되지 않지만,
+            // 여기서 화면을 오류로 덮으면 이미 찾은 순위까지 버리게 된다
+            .catch(() => null),
+        ),
+      )
+    ).filter((r): r is NonNullable<typeof r> => r !== null)
+    if (found.length) {
+      return found.reduce((best, r) => (r.entry.rank < best.entry.rank ? r : best))
+    }
+  }
+  return null
+}
+
+/**
+ * @param crossGame 지금 순위표에 없을 때 다른 게임까지 찾아볼지.
+ *   순위표를 새로 받을 때는 false다 — 사용자가 직접 고른 게임을 검색이 다시 덮어쓰면
+ *   게임을 고를 수가 없다. 재귀도 이 한 줄로 막힌다.
+ */
+async function searchPlayer(crossGame = true) {
+  const query = searchQuery.value.trim()
+  clearSearch()
+  if (!query) return
+  const hit = board.value.entries.find((entry) => entry.nickname === query)
+  if (hit) {
+    focusHit(hit)
+    return
+  }
+  if (!crossGame) {
+    searchMiss.value = query
+    return
+  }
+  searching.value = true
+  try {
+    const best = await bestRankElsewhere(query)
+    if (!best) {
+      searchMiss.value = query
+      return
+    }
+    pendingMove =
+      best.mode === mode.value
+        ? `이 게임엔 없어서 ‘${best.name}’로 옮겼어요`
+        : `이 게임엔 없어서 ‘${best.name} · ${modeLabel(best.mode)}’로 옮겼어요`
+    // 두 값을 바꾸면 watch가 순위표를 새로 받고, 그 안에서 이 사람을 찾아 표시한다
+    selected.value = best.gameId
+    mode.value = best.mode
+  } finally {
+    searching.value = false
+  }
+}
+
 async function loadBoard() {
   error.value = null
   try {
@@ -55,6 +164,9 @@ async function loadBoard() {
     board.value = { ...MOCK_BOARD, gameId: selected.value }
   }
   page.value = 1
+  // 게임·모드를 바꿔도 찾던 사람을 계속 따라간다 — 같은 이름을 다시 칠 이유가 없다
+  if (searchQuery.value.trim()) void searchPlayer(false)
+  else clearSearch()
 }
 onMounted(loadBoard)
 watch([selected, mode], loadBoard)
@@ -106,6 +218,33 @@ function selectGame(gameId: number) {
 
     <section class="ranking-panel">
       <div class="ranking-controls">
+        <div class="player-search">
+          <div class="search-box">
+            <label class="search-field">
+              <i class="search-icon" aria-hidden="true">⌕</i>
+              <input
+                v-model="searchQuery"
+                type="text"
+                placeholder="닉네임으로 순위 찾기"
+                aria-label="닉네임으로 순위 찾기"
+                @keydown.enter="searchPlayer()"
+              />
+            </label>
+            <button type="button" :disabled="searching" @click="searchPlayer()">
+              {{ searching ? '찾는 중' : '찾기' }}
+            </button>
+          </div>
+          <button v-if="searchHit" class="search-result" type="button" :aria-label="`${searchHit.nickname} 프로필 보기`" title="프로필 보기" @click="openProfile(searchHit)">
+            <UserAvatar :src="searchHit.avatarUrl" :fallback="searchHit.nickname.charAt(0)" :alt="`${searchHit.nickname} 프로필 사진`" />
+            <b>{{ searchHit.nickname }}</b>
+            <span class="result-rank">{{ searchHit.rank }}위</span>
+            <small>{{ searchHit.bestScore.toLocaleString() }} PTS</small>
+          </button>
+          <p v-else-if="searchMiss" class="search-result miss" role="status">
+            ‘{{ searchMiss }}’ 님은 어느 순위표에도 없어요
+          </p>
+          <p v-if="movedNote" class="search-moved" role="status">{{ movedNote }}</p>
+        </div>
         <div class="game-picker">
           <button class="game-picker-trigger" :aria-expanded="gameMenuOpen" @click="gameMenuOpen = !gameMenuOpen">
             <span><b>{{ selectedGame }}</b></span>
@@ -142,7 +281,7 @@ function selectGame(gameId: number) {
         <section class="scoreboard">
           <header class="board-head"><div><span>LEADERBOARD</span><h2>{{ selectedGame }} 전체 순위</h2></div><small>프로필을 눌러 확인해 보세요</small></header>
           <div class="score-labels"><span>RANK</span><span>PLAYER</span><span>SCORE</span><span>PLAY</span></div>
-          <button v-for="entry in pagedEntries" :key="entry.userId" class="score-row" :class="{ mine: board.myRank?.userId === entry.userId, elite: entry.rank <= 3 }" @click="openProfile(entry)">
+          <button v-for="entry in pagedEntries" :key="entry.userId" class="score-row" :class="{ mine: board.myRank?.userId === entry.userId, elite: entry.rank <= 3, found: searchHit?.userId === entry.userId }" @click="openProfile(entry)">
             <span class="row-rank">{{ rankMark(entry.rank) }}</span>
             <span class="player"><UserAvatar :src="entry.avatarUrl" :fallback="entry.nickname.charAt(0)" :alt="`${entry.nickname} 프로필 사진`" /><b>{{ entry.nickname }}</b><i v-if="board.myRank?.userId === entry.userId">ME</i></span>
             <strong>{{ entry.bestScore.toLocaleString() }}</strong>
@@ -178,8 +317,16 @@ function selectGame(gameId: number) {
 .trophy-scene { position: absolute; right: 20%; bottom: 0; width: 275px; height: 100%; }.champion-cat { position: absolute; z-index: 2; right: -22px; bottom: -33px; width: 320px; filter: drop-shadow(4px 6px 0 rgba(114,83,125,.12)); animation: champion-float 3.2s ease-in-out infinite; }.scene-floor { display: none; }.spark { position: absolute; z-index: 3; color: #b596c5; font-style: normal; font-size: 17px; }.spark-one { top: 33px; left: 10px; }.spark-two { top: 77px; right: 2px; font-size: 11px; }.spark-three { top: 27px; right: 52px; font-size: 7px; }
 .my-rank-flag { position: relative; z-index: 3; display: flex; width: 145px; margin: 24px 25px 24px auto; flex-direction: column; align-items: center; justify-content: center; border: 2px solid #c8b5d1; border-radius: 11px; background: rgba(255,252,255,.56); box-shadow: 2px 2px 0 rgba(137,103,150,.16); }.my-rank-flag span { color: #95759c; font-size: 8px; letter-spacing: 1px; }.my-rank-flag strong { margin: 3px 0; color: #71527d; font-size: 35px; line-height: 1; }.my-rank-flag small { color: #866d8d; font-size: 9px; }
 .ranking-panel { margin-top: 20px; }.ranking-controls { position: relative; z-index: 10; display: flex; justify-content: flex-end; align-items: end; gap: 10px; margin-bottom: 16px; }.game-picker { position: relative; order: 2; width: 210px; }.game-picker-trigger { display: flex; width: 100%; height: 41px; align-items: center; justify-content: space-between; padding: 7px 11px 7px 13px; border: 2px solid #bdaac3; border-radius: 9px; background: #fffdfb; box-shadow: 2px 2px 0 #e4d7e2; text-align: left; }.game-picker-trigger small { display: block; margin-bottom: 2px; color: #a087a4; font-size: 8px; letter-spacing: 1px; }.game-picker-trigger b { color: #59435f; font-size: 12px; }.game-picker-chevron { position: relative; display: block; width: 24px; height: 24px; flex: none; transition: transform .16s ease; }.game-picker-chevron::before, .game-picker-chevron::after { position: absolute; top: 11px; width: 9px; height: 2px; background: #82688a; content: ''; }.game-picker-chevron::before { left: 4px; transform: rotate(42deg); }.game-picker-chevron::after { right: 4px; transform: rotate(-42deg); }.game-picker-chevron.open { transform: scaleY(-1); }.game-menu { position: absolute; top: calc(100% + 6px); right: 0; left: 0; overflow: hidden; border: 2px solid #bdaac3; border-radius: 9px; background: #fffdfb; box-shadow: 4px 4px 0 rgba(157,127,169,.24); }.game-menu button { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: 10px 13px; border: 0; border-bottom: 1px solid #eadfeb; background: transparent; color: #725d77; font-size: 11px; text-align: left; }.game-menu button:last-child { border-bottom: 0; }.game-menu button:hover, .game-menu button.selected { background: #eee3f1; color: #56405d; }.game-menu i { color: #8f699a; font-style: normal; }.mode-switch { order: 1; display: flex; height: 41px; overflow: hidden; border: 2px solid #bdaac3; border-radius: 9px; background: #fffdfb; box-shadow: 2px 2px 0 #e4d7e2; }.mode-switch button { display: flex; height: 100%; align-items: center; padding: 0 12px; border: 0; background: transparent; color: #846f86; font-size: 11px; }.mode-switch button + button { border-left: 1px solid #dfd1e0; }.mode-switch button.active { background: #cbb7d4; box-shadow: inset 0 -3px #9b7ca8; color: #493750; }.mode-switch i { margin-right: 5px; font-style: normal; }
+/* 줄이 좁아질 때 줄어드는 건 검색 쪽이다 — 모드·게임 선택이 눌리면 버튼 글자가 두 줄로 접힌다 */
+.player-search { order: 0; display: flex; flex: 1 1 auto; min-width: 0; align-items: center; flex-wrap: wrap; gap: 8px; margin-right: auto; }.mode-switch, .game-picker { flex: none; }.mode-switch button { white-space: nowrap; }.search-box { display: flex; height: 41px; overflow: hidden; border: 2px solid #bdaac3; border-radius: 9px; background: #fffdfb; box-shadow: 2px 2px 0 #e4d7e2; }
+/* 돋보기까지 label로 감싸 아이콘을 눌러도 입력창에 커서가 간다(로비 방 검색과 같은 방식) */
+.search-field { display: flex; height: 100%; align-items: center; gap: 6px; padding-left: 11px; }.search-icon { color: #9a83a0; font-size: 25px; font-style: normal; line-height: 1; }.search-box input { width: 158px; height: 100%; padding: 0 10px 0 0; border: 0; background: transparent; color: #59435f; font-size: 11px; outline: 0; }.search-box input::placeholder { color: #a892ab; }.search-box button { padding: 0 14px; border: 0; border-left: 1px solid #dfd1e0; background: #eee3f1; color: #6b5273; font-size: 11px; font-weight: 700; }.search-box button:hover { background: #e2d2e8; }.search-box button:disabled { color: #a892ab; cursor: default; }
+/* 결과도 검색창과 같은 박스로 — 찾은 사람은 눌러서 프로필을 볼 수 있다 */
+.search-result { display: flex; height: 41px; align-items: center; gap: 7px; margin: 0; padding: 0 12px 0 9px; border: 2px solid #bdaac3; border-radius: 9px; background: #fffdfb; box-shadow: 2px 2px 0 #e4d7e2; transition: var(--t-fast); }button.search-result:hover { background: #f8eef8; transform: translateY(-1px); }.search-result :deep(.user-avatar) { width: 26px; height: 26px; flex: none; border: 2px solid #765f72; border-radius: 50%; background: #f3e3ee; }.search-result b { color: #4f3a57; font-size: 11px; }.result-rank { padding: 3px 7px; border-radius: 999px; background: #eee3f1; color: #6b5273; font-size: 9px; font-weight: 700; }.search-result small { color: #9c8792; font-size: 9px; }.search-result.miss { border-style: dashed; border-color: #cfbcd2; background: #fbf6fa; box-shadow: none; color: #a3818b; font-size: 10px; }.search-moved { margin: 0; color: #8d7594; font-size: 9px; }
 .podium-wrap { overflow: hidden; padding: 20px 24px 0; border: 2px solid #d4c2d7; border-radius: 15px; background: linear-gradient(135deg, #fff7e9, #f6ecfa); box-shadow: 4px 4px 0 #e1d0d5; }.podium-title { display: flex; align-items: center; gap: 10px; }.podium-title span { color: #9c6e73; }.podium-title b { font-size: 15px; }.podium { display: flex; height: 174px; align-items: end; justify-content: center; gap: 14px; }.podium-player { position: relative; display: flex; width: min(21vw, 160px); min-width: 105px; flex-direction: column; align-items: center; border: 0; background: transparent; color: #4a3748; }.podium-player :deep(.user-avatar) { position: relative; z-index: 2; width: 44px; height: 44px; border: 3px solid #4d3963; border-radius: 50%; background: #fff; box-shadow: 3px 3px 0 rgba(77,57,99,.25); }.podium-player strong { position: relative; z-index: 2; max-width: 100%; margin-top: 6px; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }.podium-player small { position: relative; z-index: 2; margin: 3px 0 7px; color: #8e7080; font-size: 8px; }.podium-medal { position: absolute; z-index: 3; top: -10px; left: calc(50% + 11px); display: grid; width: 23px; height: 23px; place-items: center; border: 2px solid #4d3963; border-radius: 50%; background: #ffd05b; font-size: 10px; }.podium-block { display: grid; width: 100%; height: 48px; place-items: center; border: 2px solid #4d3963; border-bottom: 0; border-radius: 8px 8px 0 0; background: #d9c4e9; box-shadow: inset 0 4px rgba(255,255,255,.33); color: #725486; font-size: 22px; font-style: normal; }.place-1 { order: 2; }.place-1 .podium-block { height: 78px; background: #ffcb59; color: #9e6237; }.place-2 { order: 1; }.place-2 .podium-block { background: #bad2e2; color: #5e7185; }.place-3 { order: 3; }.place-3 .podium-block { height: 38px; background: #e9b59c; color: #9a604b; }.podium-empty { display: grid; width: 100%; height: 100%; place-items: center; padding: 0; color: var(--c-muted); font-size: 11px; text-align: center; }
-.leaderboard-grid { display: grid; grid-template-columns: minmax(0, 1fr) 225px; gap: 18px; margin-top: 18px; }.scoreboard, .personal-card { border: 2px solid #cbbbc8; border-radius: 14px; background: #fffdf8; box-shadow: 4px 4px 0 #dfd0d8; }.scoreboard { overflow: hidden; }.board-head { display: flex; align-items: end; justify-content: space-between; padding: 18px 20px 13px; border-bottom: 2px dashed #e1d3df; }.board-head span { color: #9a6f8c; }.board-head h2 { margin: 6px 0 0; font-size: 16px; }.board-head small { color: #a38d9d; font-size: 9px; }.score-labels, .score-row { display: grid; grid-template-columns: 64px minmax(130px, 1fr) 112px 60px; align-items: center; column-gap: 8px; }.score-labels { padding: 10px 20px 7px; color: #a5909b; font-size: 8px; }.score-row { width: 100%; min-height: 59px; padding: 7px 20px; border: 0; border-top: 1px solid #efe6ec; background: transparent; text-align: left; transition: var(--t-fast); }.score-row:hover { background: #f8eef8; transform: translateX(2px); }.score-row.mine { background: #fff4cc; box-shadow: inset 4px 0 0 #f1b933; }.row-rank { color: #8b7385; font-size: 12px; }.elite .row-rank { color: #b87838; }.player { display: flex; align-items: center; gap: 8px; min-width: 0; }.player :deep(.user-avatar) { width: 34px; height: 34px; flex: none; border: 2px solid #765f72; border-radius: 50%; background: #f3e3ee; }.player b { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }.player i { padding: 3px 4px; border-radius: 3px; background: #e67a75; color: #fff; font-size: 7px; font-style: normal; }.score-row > strong { color: #60466d; font-size: 12px; }.score-row > small { color: #9c8792; font-size: 9px; }.empty { display: grid; min-height: 158px; margin: 0; place-items: center; padding: 32px 20px 24px; color: #9c8792; text-align: center; font-size: 11px; }.pager { display: flex; justify-content: center; gap: 10px; padding: 14px; border-top: 1px solid #efe6ec; font-size: 10px; }.pager button { width: 25px; border: 2px solid #806b80; border-radius: 5px; background: #fff; }.pager button:disabled { opacity: .35; cursor: default; }.error-message { margin: 0; padding: 0 14px 14px; color: #a85b65; font-size: 9px; }
+.leaderboard-grid { display: grid; grid-template-columns: minmax(0, 1fr) 225px; gap: 18px; margin-top: 18px; }.scoreboard, .personal-card { border: 2px solid #cbbbc8; border-radius: 14px; background: #fffdf8; box-shadow: 4px 4px 0 #dfd0d8; }.scoreboard { overflow: hidden; }.board-head { display: flex; align-items: end; justify-content: space-between; padding: 18px 20px 13px; border-bottom: 2px dashed #e1d3df; }.board-head span { color: #9a6f8c; }.board-head h2 { margin: 6px 0 0; font-size: 16px; }.board-head small { color: #a38d9d; font-size: 9px; }.score-labels, .score-row { display: grid; grid-template-columns: 64px minmax(130px, 1fr) 112px 60px; align-items: center; column-gap: 8px; }.score-labels { padding: 10px 20px 7px; color: #a5909b; font-size: 8px; }.score-row { width: 100%; min-height: 59px; padding: 7px 20px; border: 0; border-top: 1px solid #efe6ec; background: transparent; text-align: left; transition: var(--t-fast); }.score-row:hover { background: #f8eef8; transform: translateX(2px); }.score-row.mine { background: #fff4cc; box-shadow: inset 4px 0 0 #f1b933; }
+/* 찾은 줄은 내 줄(노랑)과 구분되게 — 내가 나를 검색해도 어느 쪽이 검색 결과인지 알 수 있다 */
+.score-row.found { background: #f2e4f8; box-shadow: inset 4px 0 0 #9b7ca8; }.row-rank { color: #8b7385; font-size: 12px; }.elite .row-rank { color: #b87838; }.player { display: flex; align-items: center; gap: 8px; min-width: 0; }.player :deep(.user-avatar) { width: 34px; height: 34px; flex: none; border: 2px solid #765f72; border-radius: 50%; background: #f3e3ee; }.player b { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }.player i { padding: 3px 4px; border-radius: 3px; background: #e67a75; color: #fff; font-size: 7px; font-style: normal; }.score-row > strong { color: #60466d; font-size: 12px; }.score-row > small { color: #9c8792; font-size: 9px; }.empty { display: grid; min-height: 158px; margin: 0; place-items: center; padding: 32px 20px 24px; color: #9c8792; text-align: center; font-size: 11px; }.pager { display: flex; justify-content: center; gap: 10px; padding: 14px; border-top: 1px solid #efe6ec; font-size: 10px; }.pager button { width: 25px; border: 2px solid #806b80; border-radius: 5px; background: #fff; }.pager button:disabled { opacity: .35; cursor: default; }.error-message { margin: 0; padding: 0 14px 14px; color: #a85b65; font-size: 9px; }
 .personal-card { align-self: start; overflow: hidden; padding: 20px; border-color: #c8b8ce; background: linear-gradient(150deg, #eee6f2, #dfd2e7); box-shadow: 3px 3px 0 #d6c8d9; color: #514059; }.personal-kicker { color: #96769e; }.personal-rank { display: flex; align-items: end; justify-content: space-between; margin-top: 13px; }.personal-rank span { color: #846f89; font-size: 10px; }.personal-rank strong { color: #795b88; font-size: 32px; line-height: .9; }.personal-score { margin-top: 19px; padding: 13px; border: 1px solid #cbbbd1; border-radius: 8px; background: rgba(255,253,255,.58); }.personal-score span, .personal-score small { display: block; color: #927e98; font-size: 8px; }.personal-score b { display: block; margin: 5px 0 2px; color: #664c72; font-size: 19px; }.personal-meta { display: flex; justify-content: space-between; margin-top: 13px; color: #806a88; font-size: 9px; }.personal-meta b { color: #674c73; }.tip { display: flex; gap: 8px; margin-top: 20px; padding-top: 13px; border-top: 1px dashed #bba9c2; }.tip i { color: #b08d52; font-style: normal; }.tip p { margin: 0; color: #745f7a; font-size: 9px; line-height: 1.55; }
 @keyframes champion-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-11px); } }
 @media (prefers-reduced-motion: reduce) { .champion-cat { animation: none; } }
