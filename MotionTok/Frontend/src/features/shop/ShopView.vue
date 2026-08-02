@@ -13,6 +13,7 @@ import CoinIcon from '@/components/common/CoinIcon.vue'
 import catAccessories from '@/assets/shop/cat-accessories.png'
 import { useToast } from '@/composables/useToast'
 import PurchaseConfirmModal from './components/PurchaseConfirmModal.vue'
+import ItemPreviewModal from './components/ItemPreviewModal.vue'
 import ChargePointsModal from '@/components/common/ChargePointsModal.vue'
 import { POINT_CHARGE_ENABLED } from '@/config/features'
 
@@ -85,6 +86,19 @@ const { data: items, error: loadError, reload: reloadItems } = useAsyncData(() =
 const filtered = computed(() =>
   active.value === 'ALL' ? items.value : items.value.filter((i) => i.category === active.value),
 )
+
+/**
+ * 미리보기 대상 — 사기 전에 내 카메라에 걸어 보는 창(ItemPreviewModal).
+ * 구매 확인창과 동시에 뜨지 않게 템플릿에서 하나만 그린다.
+ */
+const previewItem = ref<Item | null>(null)
+
+/** 미리보기에서 바로 구매로 — 창을 갈아탄다(둘이 겹쳐 뜨면 뒤 창을 못 닫는다). */
+function buyFromPreview() {
+  const item = previewItem.value
+  previewItem.value = null
+  if (item) openConfirm(item)
+}
 
 // 구매 확인 모달 대상
 const selected = ref<Item | null>(null)
@@ -209,16 +223,29 @@ async function confirmPurchase() {
         <div class="name">{{ item.name }}</div>
         <div class="row">
           <span class="price"><CoinIcon :size="13" /> {{ item.pricePoint?.toLocaleString() ?? '-' }}</span>
-          <PixelButton
-            :variant="item.owned ? 'secondary' : 'yellow'"
-            :disabled="item.owned || !!loadError"
-            @click="openConfirm(item)"
-          >
-            {{ item.owned ? '보유중' : '구매' }}
-          </PixelButton>
+          <div class="row-actions">
+            <!-- 보유 중인 아이템은 인벤토리에서 실제로 걸어 볼 수 있으므로 여기서는 감춘다 -->
+            <PixelButton v-if="!item.owned" class="try-btn" @click="previewItem = item">보기</PixelButton>
+            <PixelButton
+              :variant="item.owned ? 'secondary' : 'yellow'"
+              :disabled="item.owned || !!loadError"
+              @click="openConfirm(item)"
+            >
+              {{ item.owned ? '보유중' : '구매' }}
+            </PixelButton>
+          </div>
         </div>
       </article>
     </div>
+
+    <!-- 미리보기에서 바로 구매로 넘어갈 수 있다. 두 창이 겹치지 않게 미리보기를 먼저 닫는다. -->
+    <ItemPreviewModal
+      v-if="previewItem && !selected"
+      :key="previewItem.id"
+      :item="previewItem"
+      @close="previewItem = null"
+      @buy="buyFromPreview"
+    />
 
     <PurchaseConfirmModal
       v-if="selected && !showCharge"
@@ -260,7 +287,11 @@ async function confirmPurchase() {
 .shop-page { background: #fff8e9; }.shop-page :deep(.app-page) { padding: 28px 0 48px; }.shop-page :deep(.hero), .shop-page :deep(.body) { padding-right: clamp(18px, 4vw, 58px); padding-left: clamp(18px, 4vw, 58px); }.shop-page :deep(.page-sticker) { display: none; }
 .shop-hero { position: relative; display: flex; min-height: 262px; overflow: hidden; border-radius: 18px; background: url('/assets/shop-hero-bg.png') center / cover; color: #4c3d44; }.shop-hero::before { display: none; }.shop-copy { position: relative; z-index: 2; padding: 38px 46px; }.shop-kicker, .section-label span { display: block; color: #a87069; font-size: 10px; letter-spacing: 1px; }.shop-copy h1 { margin: 11px 0 9px; font-size: clamp(30px, 3vw, 43px); letter-spacing: -.8px; }.shop-copy h1 em { color: #d77c7a; font-style: normal; }.shop-copy p { margin: 0; color: #705e61; font-size: 14px; }.shop-hero-side { position: relative; z-index: 3; display: flex; margin: auto 32px 25px auto; flex-direction: column; align-items: end; gap: 10px; }.balance { min-width: 142px; padding: 12px 14px; border: 2px solid #c79b83; border-radius: 9px; background: rgba(255,253,246,.78); box-shadow: 2px 2px 0 rgba(148,105,84,.2); }.balance small { display: block; margin-bottom: 5px; color: #aa8272; font-size: 8px; }.balance b { display: flex; align-items: center; gap: 7px; color: #c47b35; font-size: 15px; }.hero-actions { display: flex; gap: 8px; }.hero-actions :deep(.px-btn) { border: 2px solid #b98771; border-radius: 7px; box-shadow: 2px 2px 0 rgba(130,82,62,.2); font-size: 10px; }.shop-art { position: absolute; right: 20%; bottom: -38px; z-index: 2; width: 400px; filter: drop-shadow(5px 6px 0 rgba(116,79,76,.14)); }
 .shop-controls { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 18px; }.section-label h2 { margin: 5px 0 0; font-size: 19px; }.chips { display: flex; flex-wrap: wrap; justify-content: end; gap: 6px; }.chip { padding: 8px 11px; border: 2px solid #cfbbc5; border-radius: 7px; background: #fffdf9; color: #856d75; font-size: 10px; transition: var(--t-fast); }.chip:hover { background: #f8eef1; }.chip.on { border-color: #bd8d9c; background: #e8cbd5; color: #5e414c; box-shadow: inset 0 -3px #bd8d9c; }
-.load-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 14px; padding: 11px 14px; border: 2px solid #d7abb0; border-radius: 10px; background: #fff0eb; font-size: 11px; }.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(205px, 1fr)); gap: 14px; }.item { padding: 10px; border: 2px solid #e0cfd7; border-radius: 12px; background: #fffdf9; box-shadow: 3px 3px 0 #eadde1; transition: var(--t-fast); }.item:hover { transform: translate(-2px,-2px); border-color: #cba7b5; box-shadow: 5px 5px 0 #dcc5ce; }.thumb { position: relative; display: flex; height: 142px; align-items: center; justify-content: center; overflow: hidden; border-radius: 8px; background: linear-gradient(135deg, #ede4f4, #ffe7ca); }.thumb::before { position: absolute; inset: 0; opacity: .48; background-image: radial-gradient(rgba(255,255,255,.9) 1px, transparent 1px); background-size: 11px 11px; content: ''; }.thumb img { position: relative; z-index: 1; width: 65%; height: 65%; object-fit: contain; transition: transform .15s ease; }.item:hover .thumb img { transform: translateY(-3px) rotate(-2deg); }.thumb i { position: absolute; z-index: 2; top: 8px; left: 8px; padding: 4px 6px; border-radius: 4px; background: #b5ddca; color: #527565; font-size: 7px; font-style: normal; }.name { margin: 12px 3px 0; color: #554149; font-size: 13px; }.row { display: flex; align-items: center; justify-content: space-between; margin: 9px 3px 2px; }.price { display: flex; align-items: center; color: #c47b35; font-size: 11px; }.row :deep(.px-btn) { min-height: 29px; padding: 5px 8px; border-radius: 6px; font-size: 9px; }
+.load-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 14px; padding: 11px 14px; border: 2px solid #d7abb0; border-radius: 10px; background: #fff0eb; font-size: 11px; }.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(205px, 1fr)); gap: 14px; }.item { padding: 10px; border: 2px solid #e0cfd7; border-radius: 12px; background: #fffdf9; box-shadow: 3px 3px 0 #eadde1; transition: var(--t-fast); }.item:hover { transform: translate(-2px,-2px); border-color: #cba7b5; box-shadow: 5px 5px 0 #dcc5ce; }.thumb { position: relative; display: flex; height: 142px; align-items: center; justify-content: center; overflow: hidden; border-radius: 8px; background: linear-gradient(135deg, #ede4f4, #ffe7ca); }.thumb::before { position: absolute; inset: 0; opacity: .48; background-image: radial-gradient(rgba(255,255,255,.9) 1px, transparent 1px); background-size: 11px 11px; content: ''; }.thumb img { position: relative; z-index: 1; width: 65%; height: 65%; object-fit: contain; transition: transform .15s ease; }.item:hover .thumb img { transform: translateY(-3px) rotate(-2deg); }.thumb i { position: absolute; z-index: 2; top: 8px; left: 8px; padding: 4px 6px; border-radius: 4px; background: #b5ddca; color: #527565; font-size: 7px; font-style: normal; }.name { margin: 12px 3px 0; color: #554149; font-size: 13px; }.row { display: flex; align-items: center; justify-content: space-between; margin: 9px 3px 2px; }
+/* 가격 왼쪽 · 버튼 둘은 오른쪽에 나란히. 좁아지면 가격 아래로 접힌다 */
+.row { flex-wrap: wrap; gap: 6px; }
+.row-actions { display: flex; align-items: center; gap: 6px; }
+.price { display: flex; align-items: center; color: #c47b35; font-size: 11px; }.row :deep(.px-btn) { min-height: 29px; padding: 5px 8px; border-radius: 6px; font-size: 9px; }
 .row :deep(.px-btn) {
   min-width: 54px;
   border: 2px solid #925c47;
@@ -269,6 +300,17 @@ async function confirmPurchase() {
   box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), inset -2px -2px 0 rgba(120,58,47,.18), 3px 3px 0 #a66b50;
   color: #4a3328;
 }
+/*
+ * '보기'는 구매를 재촉하지 않는 보조 버튼이라 노란 구매 버튼과 색을 나눈다.
+ * 위 .row :deep(.px-btn)이 노란 배경을 주므로 반드시 그 뒤에 와야 한다(같은 특정도라 순서로 이긴다).
+ */
+/* '보기'는 구매를 재촉하지 않는 보조 버튼이라 노란 구매 버튼과 색을 나눈다 */
+.row :deep(.try-btn) {
+  background: #fdf6e6;
+  box-shadow: inset 2px 2px 0 rgba(255, 255, 255, .8), inset -2px -2px 0 rgba(146, 92, 71, .12), 3px 3px 0 #c9a98f;
+  color: #7a5540;
+}
+.row :deep(.try-btn:hover) { background: #fffdf7; }
 .row :deep(.px-btn:hover:not(:disabled)) {
   transform: translate(-2px, -2px);
   box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), inset -2px -2px 0 rgba(120,58,47,.18), 3px 3px 0 #a66b50;
