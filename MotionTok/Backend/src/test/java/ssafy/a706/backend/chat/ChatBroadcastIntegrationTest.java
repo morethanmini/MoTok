@@ -16,6 +16,7 @@ import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
+import org.springframework.test.context.TestPropertySource;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
 import ssafy.a706.backend.chat.dto.ChatGameSuggestRequest;
 import ssafy.a706.backend.chat.dto.ChatMessageResponse;
@@ -39,6 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * (클라이언트 구성·인증 헤더 규약은 signal/SignalRelayIntegrationTest 참고)
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@TestPropertySource(properties = "app.shop.ai-provider=GPU")
 class ChatBroadcastIntegrationTest {
 
     private static final String SENDER_ID = "guest-chat-sender";

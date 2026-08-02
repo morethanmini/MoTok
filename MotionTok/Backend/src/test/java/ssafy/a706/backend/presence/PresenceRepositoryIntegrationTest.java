@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.test.context.TestPropertySource;
 import ssafy.a706.backend.presence.model.PresenceSnapshot;
 import ssafy.a706.backend.presence.model.PresenceState;
 import ssafy.a706.backend.presence.repository.PresenceRepository;
@@ -26,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * </ol>
  */
 @SpringBootTest
+@TestPropertySource(properties = "app.shop.ai-provider=GPU")
 class PresenceRepositoryIntegrationTest {
 
     /** 실제 사용자와 겹치지 않도록 높은 번호를 쓴다. */
