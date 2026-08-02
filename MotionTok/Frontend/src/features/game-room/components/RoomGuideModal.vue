@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useScrollLock } from '@/composables/useScrollLock'
 /**
  * 게임 설명 함께 보기 — 방장이 넘기면 방 전원의 화면이 같이 넘어간다.
  *
@@ -29,6 +30,9 @@ const emit = defineEmits<{
   /** 참가자 — 내 화면에서만 닫는다. */
   dismiss: []
 }>()
+
+// 설명이 떠 있는 동안 뒤 화면이 스크롤되지 않게 — 이 오버레이는 PixelModal이 아니라 직접 건다
+useScrollLock()
 </script>
 
 <template>

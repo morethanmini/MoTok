@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useScrollLockWhen } from '@/composables/useScrollLock'
 /**
  * AI 아이템 생성 (API §3 /shop/ai-items, -102) — "생성 → 확인 → 저장" 흐름.
  * GPU 워커가 폴링해 비동기로 처리하므로, POST는 jobId만 즉시 돌려주고
@@ -447,6 +448,10 @@ function onBackdropClose() {
   if (phase.value === 'generating') return
   closeModal()
 }
+
+// 확인창(포인트 사용·그림 지우기)이 떠 있는 동안 뒤 페이지 스크롤을 막는다.
+// 전용 컴포넌트가 아니라 이 화면 안의 v-if 블록이라 PixelModal 쪽 잠금이 닿지 않는다.
+useScrollLockWhen(() => showPointConfirm.value || showClearConfirm.value)
 </script>
 
 <template>
