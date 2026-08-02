@@ -13,6 +13,11 @@ import {
   preloadSprites,
   type StickerSprite,
 } from '@/features/decor/sticker'
+import {
+  DEFAULT_INTENSITY,
+  clampIntensity,
+  type CameraEffect,
+} from '@/features/decor/cameraEffect'
 
 /**
  * 분류별 동시 장착 한도 — 백엔드 DecorService.EQUIP_LIMIT와 같은 값을 유지한다.
@@ -36,16 +41,26 @@ export function useDecoration() {
 
   const imageOf = computed(() => new Map(inventory.value.map((i) => [i.itemId, i.imageUrl])))
 
-  /** 그릴 수 있는 것만 — 이미지가 없거나 추적 앵커(가면·효과)는 뺀다. */
+  /** 그릴 수 있는 것만 — 이미지가 없거나 그림으로 얹지 않는 앵커는 뺀다. */
   const sprites = computed<StickerSprite[]>(() => {
     const list = placements.value.flatMap((p) => {
       // FACE·HAND는 아직 추적기가 없어 그리지 않는다 — 엉뚱한 자리에 고정되느니 빼는 게 낫다.
+      // FRAME(효과)은 그림이 아니라 CSS로 걸린다 — 여기 넣으면 아이콘이 영상에 붙어 버린다.
       if (p.anchor !== 'FIXED') return []
       const imageUrl = imageOf.value.get(p.itemId)
       return imageUrl ? [{ ...p, imageUrl }] : []
     })
     preloadSprites(list)
     return list
+  })
+
+  /**
+   * 걸려 있는 프레임 효과(뽀샤시). 한도가 1개라 하나만 나온다.
+   * 스티커와 달리 이미지가 필요 없다 — 아이템 그림은 목록 아이콘일 뿐이다.
+   */
+  const cameraEffect = computed<CameraEffect | null>(() => {
+    const p = placements.value.find((it) => it.anchor === 'FRAME')
+    return p ? { itemId: p.itemId, intensity: clampIntensity(p.intensity ?? DEFAULT_INTENSITY) } : null
   })
 
   /** 인벤토리·배치를 함께 읽는다. 실패해도 예외를 던지지 않는다(방 입장 흐름을 막지 않도록). */
@@ -81,7 +96,14 @@ export function useDecoration() {
 
     if (equipped) {
       if (!placements.value.some((p) => p.itemId === itemId)) {
-        placements.value = [...placements.value, { itemId, anchor: 'FIXED', ...DEFAULT_PLACEMENT }]
+        // 효과는 붙는 자리가 없다 — 서버도 분류를 보고 FRAME으로 넣으므로 규칙을 맞춘다.
+        const isEffect = inventory.value.find((i) => i.itemId === itemId)?.category === 'EFFECT'
+        placements.value = [
+          ...placements.value,
+          isEffect
+            ? { itemId, anchor: 'FRAME', x: 0, y: 0, scale: 0, intensity: DEFAULT_INTENSITY }
+            : { itemId, anchor: 'FIXED', ...DEFAULT_PLACEMENT },
+        ]
       }
     } else {
       placements.value = placements.value.filter((p) => p.itemId !== itemId)
@@ -120,6 +142,14 @@ export function useDecoration() {
     dirty.value = true
   }
 
+  /** 프레임 효과 세기 변경(0~1) — 스티커의 크기 조절에 대응하는 자리다. */
+  function setIntensity(itemId: number, intensity: number) {
+    placements.value = placements.value.map((p) =>
+      p.itemId === itemId ? { ...p, intensity: clampIntensity(intensity) } : p,
+    )
+    dirty.value = true
+  }
+
   /**
    * 배치 저장(전체 교체). 서버가 좌표를 다듬어(범위 clamp·미보유 제거) 돌려주므로 응답 기준으로 맞춘다.
    * 저장할 게 없으면 요청하지 않는다.
@@ -141,8 +171,8 @@ export function useDecoration() {
   }
 
   return {
-    inventory, placements, sprites, equippedCount,
+    inventory, placements, sprites, cameraEffect, equippedCount,
     loading, saving, dirty, error,
-    load, setEquipped, canEquip, move, setScale, save,
+    load, setEquipped, canEquip, move, setScale, setIntensity, save,
   }
 }

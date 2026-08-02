@@ -152,14 +152,19 @@ export interface GameRecord {
  * x·y는 영상 기준 정규화 좌표(0~1, 스티커 중심), scale은 영상 짧은 변 대비 비율이다.
  * 픽셀이 아니라 비율인 이유 — 편집 화면과 게임 타일의 크기가 달라서 픽셀로 저장하면 위치가 어긋난다.
  */
-export type DecorAnchor = 'FIXED' | 'FACE' | 'HAND'
+export type DecorAnchor = 'FIXED' | 'FRAME' | 'FACE' | 'HAND'
 export interface DecorPlacement {
   itemId: number
-  /** FIXED만 구현 — FACE·HAND(가면·효과 추적)는 추적기가 붙을 때 사용 */
+  /** FIXED(스티커)·FRAME(프레임 전체 효과)만 구현 — FACE·HAND(가면 추적)는 추적기가 붙을 때 사용 */
   anchor: DecorAnchor
   x: number
   y: number
   scale: number
+  /**
+   * FRAME 앵커의 세기(0~1). 효과는 크기가 없어 scale 대신 이 값으로 조절한다.
+   * 서버가 분류(EFFECT)에서 앵커를 정하므로 스티커에는 오지 않는다.
+   */
+  intensity?: number
 }
 export interface DecorConfig {
   version: number
