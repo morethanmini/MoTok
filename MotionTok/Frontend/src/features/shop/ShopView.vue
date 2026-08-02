@@ -243,11 +243,20 @@ async function confirmPurchase() {
 </template>
 
 <style scoped>
+/*
+ * 스크롤바만 숨기고 스크롤은 문서가 맡는다(랭킹 화면과 같은 방식).
+ *
+ * 전에는 html·body에 overflow:hidden을 걸고 `.shop-page :deep(.app-shell)`을 내부 스크롤러로
+ * 삼으려 했는데, 그 선택자는 매칭되지 않는다 — `class="shop-page"`는 AppPage의 루트에 붙고
+ * 그 루트가 바로 `.app-shell`이다(한 요소인데 자손으로 찾고 있었다). 그래서 내부 스크롤러는
+ * 만들어지지 않고 html·body 잠금만 걸려 상점이 아예 스크롤되지 않았다.
+ *
+ * 셀프 선택자로 고치는 길도 있지만 문서 스크롤로 되돌린다 — 팝업이 뜰 때 뒤를 잠그는
+ * useScrollLock이 문서 스크롤을 기준으로 동작하고, 모달 오버레이가 `.app-shell` 안에 있어
+ * 내부 스크롤러로 두면 오버레이 위에서 굴려도 뒤가 그대로 움직인다.
+ */
 :global(html:has(.shop-page)), :global(body:has(.shop-page)) { scrollbar-width: none; }
 :global(html:has(.shop-page)::-webkit-scrollbar), :global(body:has(.shop-page)::-webkit-scrollbar) { display: none; }
-:global(html:has(.shop-page)), :global(body:has(.shop-page)) { height: 100%; overflow: hidden; }
-.shop-page :deep(.app-shell) { height: 100vh; overflow-y: auto; scrollbar-width: none; }
-.shop-page :deep(.app-shell::-webkit-scrollbar) { display: none; }
 .shop-page { background: #fff8e9; }.shop-page :deep(.app-page) { padding: 28px 0 48px; }.shop-page :deep(.hero), .shop-page :deep(.body) { padding-right: clamp(18px, 4vw, 58px); padding-left: clamp(18px, 4vw, 58px); }.shop-page :deep(.page-sticker) { display: none; }
 .shop-hero { position: relative; display: flex; min-height: 262px; overflow: hidden; border-radius: 18px; background: url('/assets/shop-hero-bg.png') center / cover; color: #4c3d44; }.shop-hero::before { display: none; }.shop-copy { position: relative; z-index: 2; padding: 38px 46px; }.shop-kicker, .section-label span { display: block; color: #a87069; font-size: 10px; letter-spacing: 1px; }.shop-copy h1 { margin: 11px 0 9px; font-size: clamp(30px, 3vw, 43px); letter-spacing: -.8px; }.shop-copy h1 em { color: #d77c7a; font-style: normal; }.shop-copy p { margin: 0; color: #705e61; font-size: 14px; }.shop-hero-side { position: relative; z-index: 3; display: flex; margin: auto 32px 25px auto; flex-direction: column; align-items: end; gap: 10px; }.balance { min-width: 142px; padding: 12px 14px; border: 2px solid #c79b83; border-radius: 9px; background: rgba(255,253,246,.78); box-shadow: 2px 2px 0 rgba(148,105,84,.2); }.balance small { display: block; margin-bottom: 5px; color: #aa8272; font-size: 8px; }.balance b { display: flex; align-items: center; gap: 7px; color: #c47b35; font-size: 15px; }.hero-actions { display: flex; gap: 8px; }.hero-actions :deep(.px-btn) { border: 2px solid #b98771; border-radius: 7px; box-shadow: 2px 2px 0 rgba(130,82,62,.2); font-size: 10px; }.shop-art { position: absolute; right: 20%; bottom: -38px; z-index: 2; width: 400px; filter: drop-shadow(5px 6px 0 rgba(116,79,76,.14)); }
 .shop-controls { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 18px; }.section-label h2 { margin: 5px 0 0; font-size: 19px; }.chips { display: flex; flex-wrap: wrap; justify-content: end; gap: 6px; }.chip { padding: 8px 11px; border: 2px solid #cfbbc5; border-radius: 7px; background: #fffdf9; color: #856d75; font-size: 10px; transition: var(--t-fast); }.chip:hover { background: #f8eef1; }.chip.on { border-color: #bd8d9c; background: #e8cbd5; color: #5e414c; box-shadow: inset 0 -3px #bd8d9c; }
