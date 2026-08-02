@@ -50,15 +50,15 @@ describe('decorSync 메시지', () => {
   })
 
   it('프레임 효과도 함께 실어 보낸다', () => {
-    const fx = { itemId: 9, intensity: 0.4 }
+    const fx: CameraEffect = { itemId: 9, kind: 'SOFT_GLOW', intensity: 0.4 }
     const got = parseDecorMessage(encodeDecorMessage(state([sprite()], fx)))
     expect(got?.effect).toEqual(fx)
   })
 
   it('효과 세기는 0~1로 다듬는다', () => {
-    const over = parseDecorMessage(encodeDecorMessage(state([], { itemId: 9, intensity: 5 })))
+    const over = parseDecorMessage(encodeDecorMessage(state([], { itemId: 9, kind: 'SOFT_GLOW' as const, intensity: 5 })))
     expect(over?.effect?.intensity).toBe(1)
-    const under = parseDecorMessage(encodeDecorMessage(state([], { itemId: 9, intensity: -2 })))
+    const under = parseDecorMessage(encodeDecorMessage(state([], { itemId: 9, kind: 'SOFT_GLOW' as const, intensity: -2 })))
     expect(under?.effect?.intensity).toBe(0)
   })
 
@@ -75,7 +75,15 @@ describe('decorSync 메시지', () => {
   })
 
   it('망가진 효과는 버리고 스티커는 살린다', () => {
-    for (const effect of [{ itemId: 'x' }, { intensity: 0.5 }, 'nope', 3]) {
+    const broken = [
+      { itemId: 'x', kind: 'SOFT_GLOW', intensity: 0.5 },
+      { itemId: 9, intensity: 0.5 }, // 종류 없음(옛 형식)
+      { itemId: 9, kind: 'NEON', intensity: 0.5 }, // 우리가 모르는 종류
+      { itemId: 9, kind: 'SOFT_GLOW' }, // 세기 없음
+      'nope',
+      3,
+    ]
+    for (const effect of broken) {
       const got = parseDecorMessage(JSON.stringify({ v: 1, sprites: [sprite()], effect }))
       expect(got?.sprites).toHaveLength(1)
       expect(got?.effect).toBeNull()
@@ -178,8 +186,8 @@ describe('useDecorSync', () => {
     const sync = scope.run(() => useDecorSync(t.transport, () => state([])))!
 
     expect(sync.effectOf('7')).toBeNull()
-    t.receive(encodeDecorMessage(state([], { itemId: 9, intensity: 0.3 })), '7')
-    expect(sync.effectOf('7')).toEqual({ itemId: 9, intensity: 0.3 })
+    t.receive(encodeDecorMessage(state([], { itemId: 9, kind: 'SOFT_GLOW' as const, intensity: 0.3 })), '7')
+    expect(sync.effectOf('7')).toEqual({ itemId: 9, kind: 'SOFT_GLOW' as const, intensity: 0.3 })
 
     // 그 사람이 효과를 떼면 곧바로 사라진다
     t.receive(encodeDecorMessage(state([])), '7')
@@ -192,11 +200,11 @@ describe('useDecorSync', () => {
 
   it('세기만 바뀌어도 방 전체에 다시 보낸다 — 슬라이더를 끌면 상대 화면도 따라와야 한다', async () => {
     const t = fakeTransport()
-    const mine = ref<DecorState>(state([], { itemId: 9, intensity: 0.2 }))
+    const mine = ref<DecorState>(state([], { itemId: 9, kind: 'SOFT_GLOW' as const, intensity: 0.2 }))
     const scope = effectScope()
     scope.run(() => useDecorSync(t.transport, () => mine.value))
 
-    mine.value = state([], { itemId: 9, intensity: 0.8 })
+    mine.value = state([], { itemId: 9, kind: 'SOFT_GLOW' as const, intensity: 0.8 })
     await vi.waitFor(() => expect(t.sent).toHaveLength(1))
     expect(parseDecorMessage(t.sent[0]!.payload)?.effect?.intensity).toBe(0.8)
     scope.stop()

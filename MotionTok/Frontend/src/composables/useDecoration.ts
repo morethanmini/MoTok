@@ -16,6 +16,7 @@ import {
 import {
   DEFAULT_INTENSITY,
   clampIntensity,
+  effectKindOf,
   type CameraEffect,
 } from '@/features/decor/cameraEffect'
 
@@ -60,7 +61,11 @@ export function useDecoration() {
    */
   const cameraEffect = computed<CameraEffect | null>(() => {
     const p = placements.value.find((it) => it.anchor === 'FRAME')
-    return p ? { itemId: p.itemId, intensity: clampIntensity(p.intensity ?? DEFAULT_INTENSITY) } : null
+    if (!p) return null
+    // 어떤 효과인지는 아이템 그림이 알려 준다 — 모르는 에셋이면 걸지 않는다(엉뚱한 효과보다 낫다).
+    const kind = effectKindOf(imageOf.value.get(p.itemId))
+    if (!kind) return null
+    return { itemId: p.itemId, kind, intensity: clampIntensity(p.intensity ?? DEFAULT_INTENSITY) }
   })
 
   /** 인벤토리·배치를 함께 읽는다. 실패해도 예외를 던지지 않는다(방 입장 흐름을 막지 않도록). */

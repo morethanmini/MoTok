@@ -10,7 +10,7 @@ import type { ParticipantView } from '@/composables/useLiveKitRoom'
 import { attachSpeakerGain, detachSpeakerGain } from '@/composables/useSpeakerGain'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 import CameraEffectLayer from '@/features/decor/CameraEffectLayer.vue'
-import { videoFilter, type CameraEffect } from '@/features/decor/cameraEffect'
+import { hasGlowLayer, videoFilter, type CameraEffect } from '@/features/decor/cameraEffect'
 import type { StickerSprite } from '@/features/decor/sticker'
 
 const props = withDefaults(
@@ -109,7 +109,9 @@ const audioTrack = computed(() => (props.playAudio ? (props.view?.audioTrack ?? 
  * 게임 화면 트랙에는 걸지 않는다: 글자·UI가 뿌옇게 되고 색까지 틀어진다.
  */
 const cameraFilterStyle = computed(() =>
-  props.effect && !showingGame.value ? { filter: videoFilter(props.effect.intensity) } : undefined,
+  props.effect && !showingGame.value
+    ? { filter: videoFilter(props.effect.kind, props.effect.intensity) }
+    : undefined,
 )
 
 watch(
@@ -194,7 +196,7 @@ function onVolumeInput(e: Event) {
       <!-- 뽀샤시도 카메라에만 — 게임 화면 트랙에 걸면 글자·UI까지 뿌옇게 된다.
            영상 보정(filter)과 이 빛 레이어는 한 짝이라 조건이 같아야 한다. -->
       <CameraEffectLayer
-        v-if="showingVideo && !showingGame && effect"
+        v-if="showingVideo && !showingGame && effect && hasGlowLayer(effect.kind)"
         :intensity="effect.intensity"
       />
 
