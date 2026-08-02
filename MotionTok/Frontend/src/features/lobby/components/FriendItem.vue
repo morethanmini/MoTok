@@ -1,31 +1,40 @@
 <script setup lang="ts">
 /**
  * 접속 친구 한 명. 이름·현재 상태 문구와 온라인 여부 점.
- * 박스를 누르면 공개 프로필을 열도록 open을 올린다 — 조회는 LobbyView가 한다(친구 화면과 같은 컴포저블).
  *
- * 귓속말(-150)은 <b>별도 버튼</b>이다. 박스 전체를 귓속말에 주면 전적을 볼 길이 없어지고,
- * 프로필을 한 번 더 거치게 하면 "친구에게 말 걸기"가 두 번 클릭이 된다 — 둘 다 자주 하는 행동이라
- * 각자 자기 자리를 준다. 안 읽은 말이 있으면 그 버튼에 개수를 띄운다.
+ * 누르는 자리에 따라 갈린다 — <b>박스</b>는 귓속말(-150), <b>프로필 동그라미</b>는 공개 프로필(-96).
+ * 둘 다 자주 하는 행동이라 각자 자리를 준다. 조회·열기는 LobbyView가 한다(친구 화면과 같은 컴포저블).
+ * 안 읽은 말이 있으면 개수를 띄운다.
  */
 import type { Friend } from '../data'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 
 defineProps<{ friend: Friend; unread?: number }>()
-defineEmits<{ open: [] }>()
+defineEmits<{ open: []; profile: [] }>()
 </script>
 
 <template>
   <div class="friend" role="button" tabindex="0" @click="$emit('open')" @keydown.enter="$emit('open')">
-    <!-- 사진이 없거나 못 불러온 친구는 이모지 얼굴로 떨어진다(UserAvatar가 처리). -->
-    <div class="face-frame">
+    <!--
+      동그라미만 프로필로 간다. 바깥 박스가 귓속말이라 클릭이 새어 나가지 않게 stop을 건다.
+      사진이 없거나 못 불러온 친구는 이모지 얼굴로 떨어진다(UserAvatar가 처리).
+    -->
+    <button
+      type="button"
+      class="face-frame"
+      :aria-label="`${friend.name} 프로필 보기`"
+      @click.stop="$emit('profile')"
+      @keydown.enter.stop="$emit('profile')"
+      @keydown.space.prevent.stop="$emit('profile')"
+    >
       <UserAvatar
-      class="face"
-      :style="{ background: friend.bg }"
-      :src="friend.avatarUrl"
-      :fallback="friend.face"
-      :alt="`${friend.name} 프로필 사진`"
+        class="face"
+        :style="{ background: friend.bg }"
+        :src="friend.avatarUrl"
+        :fallback="friend.face"
+        :alt="`${friend.name} 프로필 사진`"
       />
-    </div>
+    </button>
     <div class="friend-info">
       <b>{{ friend.name }}</b>
       <small>{{ friend.game }}</small>
@@ -64,7 +73,11 @@ defineEmits<{ open: [] }>()
   box-shadow: none;
   transform: none;
   transition: transform .15s ease, filter .15s ease;
+  cursor: pointer;
 }
+.face-frame:focus-visible { outline: 2px solid var(--c-ink); outline-offset: 2px; }
+/* 동그라미만 따로 눌린다는 걸 hover로 알린다(박스 hover와 구별) */
+.face-frame:hover { filter: brightness(1.12); transform: scale(1.06); }
 .face {
   width: 100%;
   height: 100%;
