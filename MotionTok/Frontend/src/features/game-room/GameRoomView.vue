@@ -26,6 +26,8 @@ import { CHAT_REPORT_REASONS, CHAT_REPORT_DETAIL_MAX, canSubmitChatReport, chatR
 import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
 import GameSetupModal from './components/GameSetupModal.vue'
+import RoomGuideModal from './components/RoomGuideModal.vue'
+import { guidePagesOrFallback } from '@/features/games-catalog/guide/pages'
 import ReportIcon from './components/ReportIcon.vue'
 import HostWaitingOverlay from './components/HostWaitingOverlay.vue'
 import InviteFriendsModal from './components/InviteFriendsModal.vue'
@@ -915,6 +917,9 @@ function applyGameEvent(e: GameEvent) {
     const entry = GAME_CATALOG.find((g) => g.gameId === e.gameId)
     if (!entry) return
     picker.value = false
+    // 설명은 시작과 함께 사라진다. 방장은 이미 닫고 왔지만, 그 프레임이 유실됐거나
+    // 리듬처럼 다른 경로로 시작된 경우에도 참가자 화면에 설명이 남지 않게 여기서도 접는다.
+    guideState.value = null
     // 모델을 먼저 채우고 ready를 회신한다 — 서버는 전원 완료(또는 15초) 후 GAME_START를 쏜다.
     // 모델 로드에 실패해도 ready는 보낸다: 나 하나 때문에 방 전체를 타임아웃까지 붙잡는 것보다,
     // 시작 후 내 화면의 게이트(mountWhenReady)가 실패·재시도를 처리하는 쪽이 낫다.
@@ -1040,6 +1045,84 @@ useRhythmAutoJoin(roomChat, roomCode, () => {
 })
 
 function openPicker() {
+  picker.value = true
+}
+
+// ── 게임 설명 함께 보기 ─────────────────────────────────────────
+/**
+ * 지금 떠 있어야 할 설명. 원본은 서버 스냅샷(roomChat.gameGuide)이고, 방장이 넘길 때만
+ * 여기를 먼저 고친다 — 왕복을 기다리면 자기가 누른 화살표가 한 박자 늦게 듣는다.
+ * 서버 에코가 곧 같은 값으로 덮으므로 둘이 어긋난 채로 남지 않는다.
+ */
+const guideState = ref<{ gameId: number; page: number } | null>(null)
+/** 참가자가 자기 화면에서만 닫았는지 — 방장이 게임을 바꾸거나 다시 열면 풀린다. */
+const guideDismissed = ref(false)
+
+watch(
+  () => roomChat.gameGuide.value,
+  (g) => {
+    if (!g?.open || g.gameId == null) {
+      guideState.value = null
+      guideDismissed.value = false
+      return
+    }
+    // 다른 게임의 설명이면 앞서 닫아 둔 것과 무관하다 — 새 설명은 다시 보여야 한다.
+    if (guideState.value?.gameId !== g.gameId) guideDismissed.value = false
+    guideState.value = { gameId: g.gameId, page: g.page }
+  },
+)
+
+/**
+ * 설명이 떠 있는 중에 들어오거나 재연결한 사람을 맞춘다 — 토픽은 재생되지 않아서
+ * 이걸 묻지 않으면 방장이 다음 장을 넘길 때까지 혼자 아무것도 못 본다.
+ * joined만으로는 이르다(소켓이 아직 안 붙었으면 발신이 버려진다).
+ */
+watch(
+  () => [roomChat.joined.value, roomChat.connected.value] as const,
+  ([isJoined, isConnected]) => {
+    if (isJoined && isConnected) roomChat.requestGameGuideSync()
+  },
+  { immediate: true },
+)
+
+const guideGame = computed(() => {
+  const id = guideState.value?.gameId
+  return id == null ? null : (GAME_CATALOG.find((g) => g.gameId === id) ?? null)
+})
+const guidePages = computed(() => {
+  const g = guideGame.value
+  return g ? guidePagesOrFallback(g.gameId, g.emoji, [g.description, ...g.howToPlay]) : []
+})
+/** 방장에게는 닫기가 없다(다른 게임·바로 시작으로 빠져나간다) — dismiss는 참가자 얘기다. */
+const guideOpen = computed(() => !!guideGame.value && (selfIsHost.value || !guideDismissed.value))
+
+/** 방장: 설명을 방 전원에게 띄운다. 게임은 아직 시작하지 않는다. */
+function openGuide(g: GameEntry) {
+  picker.value = false
+  guideState.value = { gameId: g.gameId, page: 0 }
+  roomChat.sendGameGuide(true, g.gameId, 0)
+}
+/** 방장: 넘긴 장을 방 전원에게 맞춘다. */
+function setGuidePage(page: number) {
+  const state = guideState.value
+  if (!state) return
+  guideState.value = { gameId: state.gameId, page }
+  roomChat.sendGameGuide(true, state.gameId, page)
+}
+/** 방장: 설명을 접는다 — 방 전원 화면에서 함께 사라진다. */
+function closeGuide() {
+  guideState.value = null
+  guideDismissed.value = false
+  roomChat.sendGameGuide(false, null, 0)
+}
+function startFromGuide() {
+  const g = guideGame.value
+  // 설명을 먼저 접는다 — 시작 경로(pick)가 설정 창을 띄우는 게임이면 그 창이 설명에 가린다.
+  closeGuide()
+  if (g) pick(g)
+}
+function guideBackToPicker() {
+  closeGuide()
   picker.value = true
 }
 
@@ -2132,7 +2215,27 @@ const startHint = computed(() =>
     </footer>
 
     <!-- 게임 선택 모달 -->
-    <GamePicker v-if="picker" :closed-game-ids="closedGameIds" @close="picker = false" @launch="pick" />
+    <GamePicker
+      v-if="picker"
+      :closed-game-ids="closedGameIds"
+      :is-host="selfIsHost"
+      @close="picker = false"
+      @launch="pick"
+      @guide="openGuide"
+    />
+
+    <!-- 설명 함께 보기 — 방장이 넘기면 방 전원 화면이 같이 넘어간다 -->
+    <RoomGuideModal
+      v-if="guideOpen && guideGame && guideState"
+      :game="guideGame"
+      :pages="guidePages"
+      :page="guideState.page"
+      :is-host="selfIsHost"
+      @update:page="setGuidePage"
+      @start="startFromGuide"
+      @back="guideBackToPicker"
+      @dismiss="guideDismissed = true"
+    />
 
     <!-- 게임④(-9) 설정 창 — 모드·벽 수·난이도. 옵션이 있는 게임만 이 단계를 거친다 -->
     <GameSetupModal
