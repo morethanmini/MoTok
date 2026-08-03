@@ -344,6 +344,9 @@ const screenOn = ref(false)
 const picker = ref(false)
 /** 게임을 고른 뒤 모드·난이도를 정하는 설정 창의 대상 게임(-9). null이면 닫힘 */
 const setupGame = ref<GameEntry | null>(null)
+/** 1인 방 연습 모드(-9)는 서버 세션이 없다 — 설정 창에서 고른 값을 여기 담아 게임에 넘긴다 */
+const soloDifficulty = ref('easy')
+const soloWallCount = ref(10)
 
 // bfcache 복원 시 로비로(뒤로가기 복귀 차단). 퇴장 통보는 서버 리퍼에 맡긴다 —
 // 새로고침도 pagehide라, 여기서 통보하면 끊긴 사람이 새로고침으로 복구할 길이 막힌다.
@@ -1231,7 +1234,9 @@ function tryAutostart() {
   const entry = gameEntries.value.find((g) => g.gameId === autostartGameId.value)
   if (!entry) return
   autostarted = true
-  void launch(entry)
+  // pick을 거친다 — 옵션이 있는 게임(-9)은 자동 시작이라도 설정 창을 한 번 띄운다.
+  // 방에서 고를 때와 같은 창이라야 "혼자 플레이"만 벽 수를 못 고르는 일이 없다.
+  pick(entry)
 }
 
 // 마지막으로 갖춰지는 조건이 무엇이든(카메라 권한이 늦거나 재연결이 끼어도) 그때 시작되게 한다.
@@ -1253,7 +1258,8 @@ watch(
 // 판정 기준은 "발신했는가"가 아니라 "게임이 열렸는가"다 — 그 둘이 갈리는 경우가 실제로 있었다.
 if (autostartGameId.value) {
   autostartTimer = window.setTimeout(() => {
-    if (activeGame.value) return
+    // 설정 창이 떠 있으면 자동 시작은 제 몫을 다 한 것이다 — 시작 버튼은 사용자가 누른다
+    if (activeGame.value || setupGame.value) return
     // 발신까지는 갔는데 화면이 안 열렸다면 GAME_START를 못 받은 것이다(막고 있는 조건은 이미 없다).
     // 닫힌 게임을 먼저 보는 이유 — 카탈로그 조회가 시작 조건보다 늦게 도착하면 발신이 먼저
     // 나가고 서버가 거부한다. 그때 "응답을 받지 못해"라고 하면 원인을 반대로 알려 주게 된다.
@@ -1335,6 +1341,10 @@ async function launch(g: GameEntry, difficulty?: string, mode?: string, wallCoun
     // (서버도 같은 이유로 2인 미만을 거부한다 — 여기 검사는 그 거부를 먼저 안내하는 것).
     if (g.id === 'shape' && (await memberCountNow()) < 2) {
       flash('혼자 있어서 연습 모드로 시작해요 — 랜덤 벽이 계속 날아와요')
+      // 설정 창에서 고른 값은 서버를 안 거치므로 게임 컴포넌트에 직접 넘긴다(0 = 무한).
+      // 인자가 없으면 직전 판의 값을 지킨다 — 다시하기는 "같은 조건으로 한 판 더"다.
+      soloDifficulty.value = difficulty ?? soloDifficulty.value
+      soloWallCount.value = wallCount ?? soloWallCount.value
       activeSession.value = null
       activeGame.value = g
       return
@@ -1510,8 +1520,8 @@ async function leaveSoloRoom(auth?: 'login' | 'signup') {
  * <p>혼자 하는 이유가 랭킹 갱신 아니면 연습이라, 판이 끝난 자리에서 가장 잦은 행동이 이것이다.
  * 방을 유지하므로 게임 선택·기기 설정을 다시 거치지 않는다.</p>
  *
- * <p>게임④의 설정(난이도·모드·벽 수)은 넘기지 않는다 — 1인 방은 서버 세션 없이 연습 모드로
- * 도는 경로라 그 값들이 쓰이지 않는다(launch 참고).</p>
+ * <p>게임④의 설정(난이도·벽 수)은 인자로 넘기지 않는다 — launch가 직전 값을 그대로 쓰므로
+ * 설정 창을 다시 거치지 않고 같은 조건으로 시작한다. 조건을 바꾸려면 게임을 다시 고른다.</p>
  */
 function replaySolo() {
   if (lastPlayed.value) void launch(lastPlayed.value)
@@ -2136,6 +2146,8 @@ const startHint = computed(() =>
             :challenge="poseChallenge"
             :scores="scoreboardRows"
             :setter-name="setterName"
+            :solo-difficulty="soloDifficulty"
+            :solo-wall-count="soloWallCount"
             embedded
             @close="requestCloseGame"
             @pose-submit="onPoseSubmit"

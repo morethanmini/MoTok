@@ -50,12 +50,19 @@ const MODES: { key: 'pose' | 'chain'; label: string; hint: string }[] = [
   },
 ]
 
-/** 무한은 끝이 없어 승부가 안 나므로 방에서는 빼고 솔로에만 남겼다 */
-const WALL_CHOICES = [10, 20, 30]
 const wallCount = ref(10)
 
 /** 혼자면 출제 대결이 성립하지 않는다(내가 낸 포즈를 내가 푼다) */
 const soloOnly = computed(() => (props.memberCount ?? 1) < 2)
+/**
+ * 무한(0)은 끝이 없어 방에서는 승부가 안 난다(서버도 10·20·30만 받는다).
+ * 혼자면 서버 세션 없이 로컬 연습으로 도는 경로라 무한을 남겨 둔다.
+ */
+const WALL_CHOICES = computed(() => (soloOnly.value ? [10, 20, 0] : [10, 20, 30]))
+// 무한을 골라 둔 채로 누가 들어오면 방에서 쓸 수 없는 값이 남는다
+watch(soloOnly, (solo) => {
+  if (!solo && !wallCount.value) wallCount.value = 10
+})
 const modes = computed(() => (soloOnly.value ? MODES.filter((m) => m.key === 'chain') : MODES))
 const effectiveMode = computed<'pose' | 'chain'>(() => (soloOnly.value ? 'chain' : mode.value))
 const activeMode = computed(() => MODES.find((m) => m.key === effectiveMode.value))
@@ -136,7 +143,7 @@ onBeforeUnmount(() => {
             :class="{ on: wallCount === n }"
             @click="wallCount = n"
           >
-            {{ n }}개
+            {{ n === 0 ? '무한' : `${n}개` }}
           </button>
         </div>
       </template>
