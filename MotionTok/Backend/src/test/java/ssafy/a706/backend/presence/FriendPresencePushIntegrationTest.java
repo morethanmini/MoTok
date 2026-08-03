@@ -15,6 +15,7 @@ import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
+import org.springframework.test.context.TestPropertySource;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
 import ssafy.a706.backend.friend.model.Friendship;
 import ssafy.a706.backend.friend.repository.FriendshipRepository;
@@ -46,6 +47,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 클라이언트 구성 규약은 chat/ChatBroadcastIntegrationTest 참고.</p>
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@TestPropertySource(properties = "app.shop.ai-provider=GPU")
 class FriendPresencePushIntegrationTest {
 
     private static final String ROOM_ID = "PRSNC1";

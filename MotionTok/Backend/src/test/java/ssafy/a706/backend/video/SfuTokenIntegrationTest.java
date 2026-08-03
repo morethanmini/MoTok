@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.test.context.TestPropertySource;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
 
@@ -32,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 발급은 무상태 서명뿐이라 LiveKit 없이 검증 가능(실접속은 하네스 E2E에서).
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@TestPropertySource(properties = "app.shop.ai-provider=GPU")
 class SfuTokenIntegrationTest {
 
     private static final String MEMBER_ID = "guest-member";

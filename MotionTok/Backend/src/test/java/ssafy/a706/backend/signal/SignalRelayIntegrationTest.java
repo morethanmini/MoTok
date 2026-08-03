@@ -20,6 +20,7 @@ import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.test.context.TestPropertySource;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
 import ssafy.a706.backend.global.response.ErrorResponse;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
@@ -44,6 +45,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * ⚠ JWT는 STOMP CONNECT 헤더(3번째 인자)에 넣는다 — 핸드셰이크 HTTP 헤더가 아님.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@TestPropertySource(properties = "app.shop.ai-provider=GPU")
 class SignalRelayIntegrationTest {
 
     private static final String SENDER_ID = "guest-sender";
