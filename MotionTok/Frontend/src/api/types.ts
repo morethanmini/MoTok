@@ -26,6 +26,8 @@ export interface TokenResponse {
   user?: UserProfile
   /** 소셜 최초 로그인 — true면 닉네임 설정 화면으로 보내야 한다 (-22) */
   nicknameSetupRequired?: boolean
+  /** 소셜 로그인이 같은 인증 이메일의 기존 계정에 '이번에 처음' 연동됐으면 true — 1회 안내용 */
+  linkedExistingAccount?: boolean
 }
 export interface SignupRequest {
   email: string

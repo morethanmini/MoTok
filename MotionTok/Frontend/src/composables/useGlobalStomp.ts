@@ -161,6 +161,19 @@ export function publishGlobal(destination: string, body: unknown): boolean {
 }
 
 /**
+ * 토큰의 name 클레임이 바뀐 뒤(닉네임 확정·변경) 소켓을 갈아 끼운다.
+ *
+ * <p>서버는 CONNECT 때 한 번만 인증해 프린시펄(채팅 표시명 포함)을 세션에 고정하므로
+ * (StompAuthChannelInterceptor), forceRefreshAccessToken으로 HTTP 토큰을 회전시켜도
+ * 이미 열린 소켓은 옛 이름(pending_* 등)으로 계속 말한다. 끊으면 beforeConnect가
+ * 새 토큰으로 다시 CONNECT하고, 구독은 레지스트리에서 자동 복구된다.</p>
+ */
+export function reconnectGlobalStomp(): void {
+  // 이미 끊긴 상태라면 stompjs가 재시도 중이고, beforeConnect가 그때의 최신 토큰을 읽는다.
+  if (client?.connected) client.forceDisconnect()
+}
+
+/**
  * <b>재</b>연결될 때마다 불린다. 끊긴 동안 놓친 것을 REST 스냅샷으로 메우는 자리다.
  *
  * <p>등록 시점에 이미 연결돼 있어도 <b>즉시 부르지 않는다.</b> 화면은 어차피 마운트될 때

@@ -36,33 +36,43 @@ public class OauthLinkService {
     }
 
     /**
+     * createAndLink 결과 — 어느 계정에 연동됐고, 그 계정이 <b>기존 회원</b>이었는지.
+     * linkedToExisting은 응답의 linkedExistingAccount로 나가 "기존 계정으로 로그인했어요" 안내(1회)의 근거가 된다.
+     */
+    public record LinkResult(Long userId, boolean linkedToExisting) {}
+
+    /**
      * 최초 소셜 로그인 — 계정 결정(기존 인증-이메일 연동 or 신규 생성) + OAUTH_ACCOUNT 연동을 한 트랜잭션으로.
      * 경합 시 saveAndFlush가 DataIntegrityViolationException을 던지고 트랜잭션 전체가 롤백된다(USER 생성분 포함).
      */
     @Transactional
-    public Long createAndLink(OauthProvider provider, OauthUserInfo info) {
+    public LinkResult createAndLink(OauthProvider provider, OauthUserInfo info) {
         // 여기까지 왔다는 건 이 소셜 계정에 연동된 회원이 없다는 뜻 — 탈퇴 직후 재가입인지 먼저 본다(-111).
         rejoinPolicy.ensureRejoinable(
                 RejoinPolicy.socialIdentifier(provider.name(), info.providerUid()),
                 WithdrawnIdentifierType.SOCIAL);
 
-        User user = resolveLinkTarget(info);
-        oauthAccountRepository.saveAndFlush(OauthAccount.of(user, provider, info.providerUid()));
-        return user.getId();
+        LinkTarget target = resolveLinkTarget(info);
+        oauthAccountRepository.saveAndFlush(OauthAccount.of(target.user(), provider, info.providerUid()));
+        return new LinkResult(target.user().getId(), target.existing());
     }
+
+    /** 연동 대상 — 엔티티는 OAUTH_ACCOUNT 저장에, existing은 LinkResult에 쓴다. */
+    private record LinkTarget(User user, boolean existing) {}
 
     /**
      * 연동 대상 사용자 결정.
      * provider가 '인증된' 이메일을 준 경우에만 그 이메일의 기존 계정과 연동한다(미인증 이메일 연동은 계정 탈취 위험).
      * 그 외에는 이메일 없는 소셜 전용 계정을 새로 만든다.
      */
-    private User resolveLinkTarget(OauthUserInfo info) {
+    private LinkTarget resolveLinkTarget(OauthUserInfo info) {
         if (info.email() != null && info.emailVerified()) {
             String email = info.email().trim().toLowerCase();
             return userRepository.findByEmail(email)
-                    .orElseGet(() -> createSocialUser(email, info));
+                    .map(existing -> new LinkTarget(existing, true))
+                    .orElseGet(() -> new LinkTarget(createSocialUser(email, info), false));
         }
-        return createSocialUser(null, info);
+        return new LinkTarget(createSocialUser(null, info), false);
     }
 
     private User createSocialUser(String email, OauthUserInfo info) {

@@ -149,8 +149,9 @@ async function saveDecoration() {
             <span>CAMERA PREVIEW</span>
             <b :class="{ ready: camera.isOn.value }">{{ camera.isOn.value ? '카메라 연결됨' : '카메라 OFF' }}</b>
           </div>
-          <!-- 상대에게 보이는 방향 그대로 보여 준다(좌우 반전 없음) — 반전된 화면에서 자리를 잡으면
-               저장된 좌표와 상대가 보는 위치가 뒤집힌다. -->
+          <!-- 게임룸 셀프 뷰와 같은 거울(scaleX(-1)) 방향 — 상대 타일(ParticipantTile)도 발행자
+               기준 거울로 뒤집어 보여 주므로, 여기서 거울로 자리를 잡아야 모든 화면과 일치한다.
+               스티커 좌표는 StickerOverlay가 mirrored로 되돌려 저장값 기준을 유지한다. -->
           <div class="cam" :style="{ aspectRatio: String(aspect) }">
             <video
               v-show="camera.isOn.value"
@@ -173,6 +174,7 @@ async function saveDecoration() {
             <StickerOverlay
               :sprites="sprites"
               editable
+              mirrored
               :selected-id="selectedId"
               :frame-pixels="framePixels"
               @move="move"
@@ -255,7 +257,7 @@ async function saveDecoration() {
 .cam { position: relative; overflow: hidden; border: var(--border); border-radius: var(--radius-md); background: linear-gradient(135deg, #dff3ee, #fff0c4); }
 /* 박스 비율은 onVideoMeta가 영상에 맞춰 두지만, 비율이 확정되기 전(또는 카메라가 요청과 다른
    해상도를 준 순간)에는 어긋난다 — 그때 얼굴이 잘리지 않게 contain으로 두고 남는 자리는 회색 여백. */
-.cam video { width: 100%; height: 100%; object-fit: contain; background: var(--c-letterbox); display: block; }
+.cam video { width: 100%; height: 100%; object-fit: contain; background: var(--c-letterbox); display: block; transform: scaleX(-1); }
 .cam-placeholder { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 8px; }
 .cam-placeholder img { width: 55%; opacity: 0.5; }
 .hint { margin: 10px 0 0; font-size: 9px; color: var(--c-muted); line-height: 1.6; }

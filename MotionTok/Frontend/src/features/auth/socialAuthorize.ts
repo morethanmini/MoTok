@@ -73,6 +73,23 @@ export function consumeAuthorizeContext(): {
   return { provider, intent }
 }
 
+/**
+ * 소셜 로그인이 같은 이메일의 기존 계정에 '처음' 연동된 경우(TokenResponse.linkedExistingAccount) —
+ * 안내는 로비 도착 후에 띄워야 해서(콜백 화면은 바로 라우팅으로 사라진다) 1회성 플래그로 넘긴다.
+ */
+const LINKED_NOTICE_KEY = 'motok.socialLinkedNotice'
+
+export function stashLinkedExistingNotice() {
+  sessionStorage.setItem(LINKED_NOTICE_KEY, '1')
+}
+
+/** 로비에서 꺼내며 소비한다(새로고침 재진입 시 다시 뜨지 않도록). */
+export function consumeLinkedExistingNotice(): boolean {
+  const has = sessionStorage.getItem(LINKED_NOTICE_KEY) !== null
+  sessionStorage.removeItem(LINKED_NOTICE_KEY)
+  return has
+}
+
 export function stashWithdrawProof(proof: WithdrawProof) {
   sessionStorage.setItem(WITHDRAW_PROOF_KEY, JSON.stringify(proof))
 }
