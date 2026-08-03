@@ -101,12 +101,7 @@ public class DecorService {
             if (equippedInCategory >= EQUIP_LIMIT.getOrDefault(category, 1)) {
                 throw new BusinessException(ErrorCode.DECOR_EQUIP_LIMIT);
             }
-            // 효과는 붙는 자리가 없다 — 프레임 전체에 걸리고 세기로만 조절한다.
-            next.add(category == ItemCategory.EFFECT
-                    ? new DecorConfigPayload.Placement(
-                            itemId, DecorAnchor.FRAME, 0, 0, 0, DEFAULT_INTENSITY)
-                    : new DecorConfigPayload.Placement(
-                            itemId, DecorAnchor.FIXED, DEFAULT_X, DEFAULT_Y, DEFAULT_SCALE, 0));
+            next.add(newPlacement(itemId, category));
         } else if (!equipped) {
             next.removeIf(p -> p.itemId().equals(itemId));
         }
@@ -137,19 +132,22 @@ public class DecorService {
             if (p == null || p.itemId() == null || !categoryOf.containsKey(p.itemId())) {
                 continue; // 보유하지 않은 아이템
             }
-            // 효과의 앵커는 클라이언트 말을 듣지 않고 분류에서 정한다. FIXED로 보내오면
-            // 그림이 없는 아이템이 스티커로 그려져 화면에 아이콘이 붙어 버린다.
-            boolean frame = categoryOf.get(p.itemId()) == ItemCategory.EFFECT;
-            sanitized.put(p.itemId(), frame
-                    ? new DecorConfigPayload.Placement(
-                            p.itemId(), DecorAnchor.FRAME, 0, 0, 0, clamp(p.intensity(), 0, 1))
-                    : new DecorConfigPayload.Placement(
-                            p.itemId(),
-                            p.anchor() == null ? DecorAnchor.FIXED : p.anchor(),
-                            clamp(p.x(), 0, 1),
-                            clamp(p.y(), 0, 1),
-                            clamp(p.scale(), MIN_SCALE, MAX_SCALE),
-                            0));
+            // 앵커는 클라이언트 말을 듣지 않고 분류에서 정한다(anchorOf 주석 참고).
+            DecorAnchor anchor = anchorOf(categoryOf.get(p.itemId()));
+            sanitized.put(p.itemId(), switch (anchor) {
+                case FRAME -> new DecorConfigPayload.Placement(
+                        p.itemId(), DecorAnchor.FRAME, 0, 0, 0, clamp(p.intensity(), 0, 1));
+                // 가면의 좌표·크기는 클라이언트가 얼굴에서 매 프레임 다시 잡는다 — 저장하지 않는다.
+                case FACE -> new DecorConfigPayload.Placement(
+                        p.itemId(), DecorAnchor.FACE, 0, 0, 0, 0);
+                default -> new DecorConfigPayload.Placement(
+                        p.itemId(),
+                        anchor,
+                        clamp(p.x(), 0, 1),
+                        clamp(p.y(), 0, 1),
+                        clamp(p.scale(), MIN_SCALE, MAX_SCALE),
+                        0);
+            });
         }
 
         // 분류별 한도 초과는 잘라 내지 않고 거절한다 — 조용히 몇 개를 버리면
@@ -169,6 +167,39 @@ public class DecorService {
     }
 
     // ── 내부 ────────────────────────────────────────────────
+
+    /**
+     * 새로 장착한 아이템의 배치 — <b>앵커는 분류가 정한다</b>.
+     *
+     * <p>스티커만 화면 좌표를 쓴다. 효과는 프레임 전체에 걸려 붙는 자리가 없고, 가면은
+     * 클라이언트가 매 프레임 얼굴에서 자리·크기를 계산하므로 저장할 좌표가 없다 — 둘 다
+     * 0을 넣어 "여기 있는 숫자는 의미가 없다"를 분명히 한다. 가면에 스티커 기본 좌표
+     * (0.78, 0.20)를 넣어 두면 추적이 붙기 전 화면에서 오른쪽 위에 떠 버린다.</p>
+     */
+    private DecorConfigPayload.Placement newPlacement(Long itemId, ItemCategory category) {
+        return switch (category) {
+            case EFFECT -> new DecorConfigPayload.Placement(
+                    itemId, DecorAnchor.FRAME, 0, 0, 0, DEFAULT_INTENSITY);
+            case MASK -> new DecorConfigPayload.Placement(
+                    itemId, DecorAnchor.FACE, 0, 0, 0, 0);
+            default -> new DecorConfigPayload.Placement(
+                    itemId, DecorAnchor.FIXED, DEFAULT_X, DEFAULT_Y, DEFAULT_SCALE, 0);
+        };
+    }
+
+    /**
+     * 분류가 정하는 앵커. 클라이언트가 보내온 값을 그대로 믿지 않는다 —
+     * 가면을 FIXED로 보내오면 얼굴을 따라가야 할 그림이 화면 한구석에 못 박히고,
+     * 스티커를 FACE로 보내오면 남의 얼굴 위로 올라간다.
+     * 스티커(그 외)만 클라이언트가 보낸 좌표를 쓴다.
+     */
+    private static DecorAnchor anchorOf(ItemCategory category) {
+        return switch (category) {
+            case EFFECT -> DecorAnchor.FRAME;
+            case MASK -> DecorAnchor.FACE;
+            default -> DecorAnchor.FIXED;
+        };
+    }
 
     /** 보유 아이템 id → 분류. 한도 검사는 "무엇을 몇 개 붙였나"라 분류를 알아야 한다. */
     private Map<Long, ItemCategory> categoryByItemId(Long userId) {

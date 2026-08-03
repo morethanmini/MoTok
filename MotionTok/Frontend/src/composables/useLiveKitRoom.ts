@@ -351,12 +351,23 @@ export function useLiveKitRoom() {
   }
 
   // ── 데이터 채널 송·수신 ─────────────────────
-  /** identities를 주면 그 사람들에게만, 없으면 방 전체. 각 구독 함수는 해지 함수를 돌려준다. */
-  async function sendData(payload: string, identities?: string[], topic?: string) {
+  /**
+   * identities를 주면 그 사람들에게만, 없으면 방 전체. 각 구독 함수는 해지 함수를 돌려준다.
+   *
+   * @param reliable 기본 true(상태 알림 — 유실되면 안 된다). <b>매 프레임 보내는 값은 false</b>로
+   *   준다: 신뢰 전송은 재전송·순서 보장을 하므로 지난 프레임을 되살리려고 지금 프레임을
+   *   붙들고, 한 번 밀리면 그 뒤가 줄줄이 늦는다. 다음 프레임이 덮어쓸 값에는 손해뿐이다.
+   */
+  async function sendData(
+    payload: string,
+    identities?: string[],
+    topic?: string,
+    reliable = true,
+  ) {
     if (!room) return
     try {
       await room.localParticipant.publishData(new TextEncoder().encode(payload), {
-        reliable: true,
+        reliable,
         topic,
         destinationIdentities: identities,
       })
