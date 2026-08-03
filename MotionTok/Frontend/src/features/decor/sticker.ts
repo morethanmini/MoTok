@@ -26,8 +26,14 @@ export const MAX_SCALE = 1
  */
 export const MIN_SIZE_PX = 24
 
-export const clamp01 = (v: number) => Math.min(1, Math.max(0, v))
-export const clampScale = (v: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, v))
+/**
+ * 유효 범위로 자른다. <b>NaN은 기본값으로 되돌린다</b> — Math.min/max는 NaN을 그대로 통과시키고,
+ * 그 값이 저장 요청에 실리면 JSON에서 `null`이 되어 서버가 본문 전체를 거절한다(400).
+ * 화면 계산에도 NaN이 섞이면 스티커가 사라진 것처럼 보인다.
+ */
+export const clamp01 = (v: number) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0)
+export const clampScale = (v: number) =>
+  Number.isFinite(v) ? Math.min(MAX_SCALE, Math.max(MIN_SCALE, v)) : DEFAULT_PLACEMENT.scale
 
 /**
  * 프레임 크기(px)에서 스티커가 차지할 너비(px). 높이는 이미지 비율을 따른다.
