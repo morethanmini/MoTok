@@ -362,7 +362,8 @@ public class LiveRoomService {
             repository.updateHost(roomId, newHost.userId(), newHost.displayName());
             messagingTemplate.convertAndSend(
                     String.format(MEMBERS_TOPIC, roomId),
-                    new LiveRoomHostChangedEvent(newHost.userId(), newHost.displayName()));
+                    new LiveRoomHostChangedEvent(newHost.userId(), newHost.displayName(),
+                            LiveRoomHostChangedEvent.HostChangeReason.HOST_LEFT));
         }
     }
 
@@ -440,6 +441,43 @@ public class LiveRoomService {
             return;
         }
         lobbyBroadcaster.roomUpdated(LiveRoomSummaryResponse.from(loadRoom(roomId)));
+    }
+
+    /**
+     * 방장이 대기실에서 참가자를 지목해 방장을 넘긴다(S15P11A706-180).
+     *
+     * <p>지금까지 방장이 바뀌는 길은 자동 이양({@link #processLeave}, -72)뿐이었다 — 방장이 나가야만
+     * 넘어가고, 대상도 "입장 순"이 정한다. 남아 있는 채로 특정 사람에게 넘기려면 나갔다 들어오는 수밖에
+     * 없었고 그마저 원하는 사람에게 갈 보장이 없었다.</p>
+     *
+     * <p>WAITING에서만 허용한다 — 진행 중인 라운드의 시작·정산·중단 발신 주체가 방장이라(GameSession),
+     * 게임 도중에 갈아 끼우면 그 판의 주인이 사라진다.</p>
+     *
+     * <p>게스트도 대상이 될 수 있다. 자동 이양이 이미 게스트를 거르지 않으므로(입장 순 그대로),
+     * 여기서만 막으면 같은 시스템이 경로에 따라 다르게 굴게 된다.</p>
+     */
+    public void delegateHost(AuthPrincipal host, String roomId, String targetUserId) {
+        LiveRoom room = loadRoom(roomId);
+        if (!room.hostUserId().equals(host.userId())) {
+            throw new BusinessException(ErrorCode.NOT_ROOM_HOST);
+        }
+        if (!"WAITING".equals(room.status())) {
+            // 코드는 재사용하되 문구는 갈아 끼운다 — 기본 문구가 "입장할 수 없습니다"라 위임 화면에 그대로 뜨면 엉뚱하다.
+            throw new BusinessException(ErrorCode.ROOM_GAME_IN_PROGRESS, "게임 중에는 방장을 넘길 수 없습니다.");
+        }
+        if (targetUserId.equals(host.userId())) {
+            throw new BusinessException(ErrorCode.ROOM_CANNOT_DELEGATE_SELF);
+        }
+        LiveRoomMemberValue target = room.members().stream()
+                .filter(m -> m.userId().equals(targetUserId))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException(ErrorCode.ROOM_MEMBER_NOT_FOUND));
+
+        repository.updateHost(roomId, target.userId(), target.displayName());
+        messagingTemplate.convertAndSend(
+                String.format(MEMBERS_TOPIC, roomId),
+                new LiveRoomHostChangedEvent(target.userId(), target.displayName(),
+                        LiveRoomHostChangedEvent.HostChangeReason.DELEGATED));
     }
 
     /**
