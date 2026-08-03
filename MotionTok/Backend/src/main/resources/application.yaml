@@ -249,7 +249,9 @@ app:
       # 동기 호출 호스트. 큐(https://queue.fal.run)는 요청 후 status/response 폴링이 필요한 2단계라,
       # 전용 스레드에서 기다리는 우리 구조에는 한 번에 끝나는 이쪽이 맞다.
       base-url: ${FAL_BASE_URL:https://fal.run}
-      model: ${FAL_MODEL:fal-ai/qwen-image-edit-2511}
+      # /lora 붙은 쪽을 쓴다 — 입력 스키마는 기본 엔드포인트와 같고 loras·num_inference_steps·
+      # guidance_scale만 더 받는다. 아래 lora-path를 쓰려면 이 주소여야 한다.
+      model: ${FAL_MODEL:fal-ai/qwen-image-edit-2511/lora}
       # 프론트에 절대 넣지 않는다 — 번들에 노출되면 남이 우리 크레딧을 쓴다.
       api-key: ${FAL_KEY:}
       # 생성 지시문 — GPU 워커 노트북(ITEM_PROMPT)과 같은 문구를 기본값으로 둔다.
@@ -265,10 +267,23 @@ app:
         shading, and subtle pixel/dot texture for a retro mini-game feel.
         The result must look like the user's original drawing itself turned into a game item, not a different
         character based on it.
+        Single centered object, plain white background.
+        If the sketch has no eyes, mouth, or face, do not add any.
+        Inanimate shapes must stay inanimate objects.
         Single centered object, plain white background.}
-      # GPU 워커는 negative_prompt를 사실상 끄고 쓴다(Lightning LoRA가 CFG 증류라 true_cfg_scale=1.0).
-      # fal은 LoRA를 못 얹어 일반 CFG로 도니 여기서는 켜 두는 편이 나을 수 있다 — 실물 보고 정할 값.
+      # GPU 워커도 negative_prompt를 사실상 끄고 쓴다(Lightning LoRA가 CFG 증류라 true_cfg_scale=1.0).
+      # 아래에서 같은 LoRA를 얹고 guidance도 1로 끄므로 이쪽도 비워 두는 게 워커와 같은 조건이다.
       negative-prompt: ${FAL_NEGATIVE_PROMPT:}
+      # ── LoRA 세트 ── 세 값은 함께 켜고 함께 끈다(FalProperties.usesLora 주석 참고).
+      # 워커와 같은 Lightning LoRA를 얹는다. 이게 없으면 fal 기본값(28스텝 · guidance 4.5)으로 도는데,
+      # 자유도가 커서 모델이 원본에서 멀어지고 "다시 생성"할 때마다 얼굴을 새로 그려 버린다.
+      # lora-path를 비우면 steps·guidance-scale도 보내지 않고 fal 기본값에 맡긴다.
+      lora-path: ${FAL_LORA_PATH:https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/main/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors}
+      lora-scale: ${FAL_LORA_SCALE:1.0}
+      # 위 LoRA는 파일명대로 4스텝 전용으로 증류돼 있다 — 28로 올리면 오히려 나빠진다.
+      steps: ${FAL_STEPS:4}
+      # 증류 LoRA는 CFG가 접혀 들어가 있어 끈다(워커의 true_cfg_scale=1.0과 같은 뜻).
+      guidance-scale: ${FAL_GUIDANCE_SCALE:1.0}
       # 배경 제거 임계값(0~255) — R·G·B가 모두 이 값 이상이면 흰색으로 본다.
       # 낮출수록 과감히 지운다. 그림의 밝은 부분까지 파먹으면 올리고, 배경이 남으면 내린다.
       background-threshold: ${FAL_BACKGROUND_THRESHOLD:240}
