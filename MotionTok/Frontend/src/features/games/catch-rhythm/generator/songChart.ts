@@ -790,9 +790,22 @@ export function generateSongRingChart(
           Math.max(400, onset.sustain.durationMs),
         ),
       )
-      // 멜로디가 움직이면 슬라이드 — 방향은 음높이 변화, 폭은 변화량에 비례(최대 2칸)
-      const delta = Math.round(onset.sustain.pitchDelta * 4)
-      if (delta !== 0) note.laneDelta = Math.max(-2, Math.min(2, delta))
+      if (onset.holdMs) {
+        // 직접 찍은 홀드는 **항상 슬라이드** — 제자리 홀드가 나와서 "고장" 제보가 왔다.
+        // 누른 길이만큼 돈다(한 박에 한 칸꼴, 최소 1칸·최대 한 바퀴). 방향은 멜로디
+        // 변화를 따르고, 정보가 없으면 시드 난수로 좌우를 섞는다.
+        const steps = Math.max(
+          1,
+          Math.min(8, Math.round((note.durationMs ?? 0) / analysis.beatMs)),
+        )
+        const pitchDir = onset.sustain.pitchDelta
+        const dir = Math.abs(pitchDir) > 0.05 ? Math.sign(pitchDir) : rng() < 0.5 ? -1 : 1
+        note.laneDelta = dir * steps
+      } else {
+        // 검출 지속음: 멜로디가 움직일 때만 슬라이드 — 방향은 음높이 변화, 폭은 최대 2칸
+        const delta = Math.round(onset.sustain.pitchDelta * 4)
+        if (delta !== 0) note.laneDelta = Math.max(-2, Math.min(2, delta))
+      }
     }
     notes.push(note)
 
