@@ -77,6 +77,17 @@ describe('correctTapTracks', () => {
     expect(short!.holdMs).toBeUndefined()
   })
 
+  it('snapWindowMs=0이면 온셋으로 안 끌려간다 — 지연만 제거', () => {
+    // 지연(+60)을 확정해 줄 정박 탭 3개 + 일부러 25ms 밀어 친 탭 1개
+    const taps = [tap(700 + 60), tap(1200 + 60), tap(1700 + 60), tap(2225 + 60)]
+    const free = correctTapTracks({ perc: taps, melody: [] }, analysis, { snapWindowMs: 0 })
+    const pushed = free.onsets.find((o) => Math.abs(o.timeMs - 2225) <= 5)
+    expect(pushed).toBeDefined() // 밀어 친 25ms가 살아 있다
+    // 기본(±30)이면 같은 탭이 2200 온셋으로 스냅된다 — 옵션이 실제로 갈라놓는지 확인
+    const snapped = correctTapTracks({ perc: taps, melody: [] }, analysis)
+    expect(snapped.onsets.some((o) => o.timeMs === 2200)).toBe(true)
+  })
+
   it('100ms 안의 이중 입력은 하나로 접는다', () => {
     const corr = correctTapTracks({ perc: [tap(700), tap(740), tap(1200)], melody: [] }, analysis)
     expect(corr.onsets.length).toBe(2)
