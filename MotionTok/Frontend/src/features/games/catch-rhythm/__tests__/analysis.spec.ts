@@ -159,6 +159,25 @@ describe('analyzeSong (합성 클릭 트랙)', () => {
     expect(snippet).toContain('SLOT_ACCENTS: readonly number[]')
   }, 30_000)
 
+  it('엇박 8분음표까지 꽉 찬 곡에서도 4/3배 템포(172)로 새지 않는다 — Neon_Pulse 실곡 회귀', async () => {
+    // 실패 재현 조건: 8분음표 자리 전부에 소리, 박이 엇박보다 살짝만 셈(실측 1.03 vs 0.92).
+    // 이전 "박−엇박 대비" 점수는 이런 곡에서 성긴 4/3배 격자(엇박 벌점 회피)에 졌다.
+    const beatMs = 60000 / 129
+    const durationSec = 40
+    const samples = new Float32Array(SR * durationSec)
+    let k = 0
+    for (let t = 154; t < durationSec * 1000 - 100; t += beatMs / 2) {
+      addClick(samples, t, k % 2 === 0 ? 0.85 : 0.65) // 짝수 = 박, 홀수 = 엇박
+      k++
+    }
+    const analysis = await analyzeSong(fakeBuffer(samples))
+
+    expect(Math.abs(analysis.bpm - 129)).toBeLessThanOrEqual(0.15) // 172.01·86·64.5·258 전부 오답
+    const phaseDiff = Math.abs(((analysis.gridOriginMs - 154) % beatMs) + beatMs) % beatMs
+    const wrapped = Math.min(phaseDiff, beatMs - phaseDiff)
+    expect(wrapped).toBeLessThanOrEqual(25)
+  }, 30_000)
+
   it('지속 톤은 sustain으로, 음높이는 pitch로 잡힌다', async () => {
     const samples = new Float32Array(SR * 6)
     addTone(samples, 1000, 1200, 350, 0.6) // 낮은 지속음
