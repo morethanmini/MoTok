@@ -12,7 +12,7 @@ import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import { preloadHandLandmarker } from '@/composables/useHandLandmarker'
 import CatchRhythmStage from './CatchRhythmStage.vue'
 import { DIFFICULTIES, type Difficulty } from './generator/presets'
-import { BUNDLED_SONGS, loadBundledChart, type LoadedBundle } from './generator/bundledCharts'
+import { loadBundledChart, type LoadedBundle } from './generator/bundledCharts'
 import { useRhythmSession } from './useRhythmSession'
 import type { Judgement } from './core/types'
 import type { RhythmLiveRow } from './rhythmTypes'
@@ -42,8 +42,14 @@ const SOLO_ROUND_MS = 60_000
 
 const difficulty = ref<Difficulty>('NORMAL')
 const mode = ref<GameMode>('catch')
-/** 선택한 번들 곡(-168). null = 기존 랜덤(시드) 채보 */
-const selectedSong = ref<string | null>(null)
+/** 곡 선택(-168): 기존 랜덤(시드) 채보 vs SSAFY 응원가(수제 번들) */
+const songPick = ref<'random' | 'ssafy'>('random')
+/** 응원가 전용 난이도 — 어려움(MANUAL 채보) / 익스트림 */
+const songDifficulty = ref<'manual' | 'extreme'>('manual')
+/** 시작·로드에 쓰는 번들 id. null = 랜덤 채보 */
+const selectedSong = computed(() =>
+  songPick.value === 'ssafy' ? `ssafy-fighting-${songDifficulty.value}` : null,
+)
 /** 이번 라운드에 쓸 번들 — 곡 라운드는 이게 로드돼야 스테이지를 연다 */
 const activeBundle = shallowRef<LoadedBundle | null>(null)
 const errorMsg = ref('')
@@ -301,24 +307,22 @@ watch(
         <button
           type="button"
           class="px level"
-          :class="{ on: selectedSong === null }"
+          :class="{ on: songPick === 'random' }"
           :disabled="isMultiplayer && !isHost"
           title="분석 기반 랜덤 채보 — 매판 다르게"
-          @click="selectedSong = null"
+          @click="songPick = 'random'"
         >
           랜덤 채보
         </button>
         <button
-          v-for="s in BUNDLED_SONGS"
-          :key="s.id"
           type="button"
           class="px level"
-          :class="{ on: selectedSong === s.id }"
+          :class="{ on: songPick === 'ssafy' }"
           :disabled="isMultiplayer && !isHost"
-          title="수제 채보 — 난이도는 곡에 내장"
-          @click="selectedSong = s.id"
+          title="SSAFY 응원가 수제 채보"
+          @click="songPick = 'ssafy'"
         >
-          {{ s.label }}
+          SSAFY 응원가
         </button>
       </div>
 
@@ -338,8 +342,7 @@ watch(
         </button>
       </div>
 
-      <!-- 수제 곡은 난이도가 채보에 내장 — 고를 게 없다 -->
-      <div v-if="!selectedSong" class="levels">
+      <div v-if="songPick === 'random'" class="levels">
         <button
           v-for="d in DIFFICULTIES"
           :key="d"
@@ -350,6 +353,27 @@ watch(
           @click="difficulty = d"
         >
           {{ DIFFICULTY_LABEL[d] }}
+        </button>
+      </div>
+      <!-- 응원가 전용 난이도 — 어려움(수제 MANUAL) / 익스트림 -->
+      <div v-else class="levels">
+        <button
+          type="button"
+          class="px level difficulty-level difficulty-hard"
+          :class="{ on: songDifficulty === 'manual' }"
+          :disabled="isMultiplayer && !isHost"
+          @click="songDifficulty = 'manual'"
+        >
+          어려움
+        </button>
+        <button
+          type="button"
+          class="px level difficulty-level difficulty-extreme"
+          :class="{ on: songDifficulty === 'extreme' }"
+          :disabled="isMultiplayer && !isHost"
+          @click="songDifficulty = 'extreme'"
+        >
+          익스트림
         </button>
       </div>
 
@@ -491,6 +515,7 @@ watch(
 .difficulty-easy { border-color: #b6d9c1; color: #4c8a65; }
 .difficulty-normal { border-color: #e7cf82; color: #a06d20; }
 .difficulty-hard { border-color: #e6a9a3; color: #b4524a; }
+.difficulty-extreme { border-color: #c9a3e6; color: #7b4ab4; }
 .difficulty-level.on {
   background: #fff0c5;
   border-color: #d69d41;
@@ -591,7 +616,7 @@ watch(
   background: #fff2ea;
 }
 .mode-level::before { display: none; }
-.difficulty-easy, .difficulty-normal, .difficulty-hard { border-color: #ecdcd2; color: #8b6e62; }
+.difficulty-easy, .difficulty-normal, .difficulty-hard, .difficulty-extreme { border-color: #ecdcd2; color: #8b6e62; }
 .difficulty-level.on, .level.on {
   transform: none;
   border-color: transparent;

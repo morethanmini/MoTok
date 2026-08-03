@@ -817,14 +817,29 @@ watch(hostAway, (away) => {
  * 실행하므로, 위에 두면 const TDZ에 걸려 setup 전체가 죽는다(빌드는 통과한다: TS는 화살표
  * 함수 안의 선언 전 참조를 잡지 않는다).
  */
-const AUDIO_OWNING_GAMES = ['shape', 'finger', 'draw', 'rhythm', 'fish']
+const AUDIO_OWNING_GAMES = ['shape', 'finger', 'draw', 'fish']
+/**
+ * 리듬은 위 목록과 달리 **라운드가 실제로 도는 동안만** 오디오를 소유한다(-168).
+ * 다른 게임은 카드를 열면 곧장 자체 음악이 나오지만, 리듬은 곡·난이도를 고르는
+ * 시작 화면이 무음이라 카드만 열어도 테마를 내리면 정적이 흐른다(실사용 제보).
+ */
+const rhythmPlaying = ref(false)
 watch(
   // 설정 창(-9)도 인게임 베드를 직접 깔기 때문에 같이 내린다 — 소유 판정을 여기 한 곳에 모아두면
   // 창을 닫고 게임으로 넘어가는 사이에 테마가 잠깐 살아나는 일이 없다.
   () =>
     AUDIO_OWNING_GAMES.includes(activeGame.value?.id ?? '') ||
-    AUDIO_OWNING_GAMES.includes(setupGame.value?.id ?? ''),
+    AUDIO_OWNING_GAMES.includes(setupGame.value?.id ?? '') ||
+    ((activeGame.value?.id === 'rhythm' || setupGame.value?.id === 'rhythm') &&
+      rhythmPlaying.value),
   (ownsAudio) => (ownsAudio ? bgm.suspendForGame() : bgm.resumeAfterGame()),
+)
+// 리듬 화면을 떠나면(강제 종료 포함) 소유 상태를 접는다 — 다음에 열 때 테마가 살아 있게
+watch(
+  () => activeGame.value?.id,
+  (id) => {
+    if (id !== 'rhythm') rhythmPlaying.value = false
+  },
 )
 
 // ── 게임 화면 송출 — 게임 중에는 카메라와 함께 게임 캔버스를 화면공유 트랙으로 발행한다.
@@ -1582,6 +1597,7 @@ function applyEarnedPoints(results: GameResultEntry[]) {
  */
 function onRhythmEnded(pointsEarned: number) {
   rhythmEnded.value = true
+  rhythmPlaying.value = false // 정산 화면부터는 테마 복귀
   if (pointsEarned > 0) session.addPoints(pointsEarned)
 }
 
@@ -2194,7 +2210,7 @@ const startHint = computed(() =>
             :my-user-id="myParticipantId"
             :room-chat="roomChat"
             @close="requestCloseGame"
-            @started="rhythmEnded = false"
+            @started="((rhythmEnded = false), (rhythmPlaying = true))"
             @ended="onRhythmEnded"
           />
           <!-- 비방장 중간 이탈 후 복귀(-164) — 라운드가 살아 있는 동안만 노출 -->
