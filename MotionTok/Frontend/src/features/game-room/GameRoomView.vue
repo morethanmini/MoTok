@@ -1741,7 +1741,7 @@ function reloadPage() {
   window.location.reload()
 }
 
-const startLabel = computed(() => 'GAME')
+const startLabel = computed(() => 'GAME START')
 /**
  * 게임 선택 버튼 잠금 — 서버 연결 중에는 방장 여부를 알기 전까지 잠근다(제안 오발신 방지).
  * STOMP 미연결(백엔드 미연동 로컬 데모)에서는 상세 조회가 영영 안 끝나므로 잠그지 않는다 —
@@ -2274,20 +2274,22 @@ const startHint = computed(() =>
           </div>
         </template>
       </div>
-      <button
-        class="px start-btn footer-start-btn"
-        :class="{ suggest: !amRoomHost }"
-        :disabled="pickerLocked || gameInProgress || (detailLoaded && !amRoomHost && suggestCooldown)"
-        :title="startHint"
-        :aria-disabled="gameInProgress"
-        @click="openPicker"
-      >
-        <span class="play-ico">▶</span>
-        <span class="start-title">{{ startLabel }}</span>
-      </button>
       </div>
 
+      <!-- 게임 시작·나가기는 한 쌍으로 오른쪽에 세운다 — 채팅 그룹에 끼워 두면 가운데 컨트롤에
+           시선을 빼앗겨 주 행동이 눈에 안 들어온다. -->
       <div class="footer-right">
+        <button
+          class="px start-btn footer-start-btn"
+          :class="{ suggest: !amRoomHost }"
+          :disabled="pickerLocked || gameInProgress || (detailLoaded && !amRoomHost && suggestCooldown)"
+          :title="startHint"
+          :aria-disabled="gameInProgress"
+          @click="openPicker"
+        >
+          <span class="play-ico">▶</span>
+          <span class="start-title">{{ startLabel }}</span>
+        </button>
         <button class="px leave" @click="leave">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4M9 16l4-4-4-4M13 12H3" /></svg>
           LEAVE
@@ -2884,7 +2886,11 @@ const startHint = computed(() =>
 .bubble.full.suggest { background: rgba(214, 244, 233, 0.9); }
 
 .footer-right { grid-row: 1; grid-column: 3; justify-self: end; display: flex; align-items: center; gap: 10px; }
-.leave { display: flex; align-items: center; gap: 9px; padding: 0 18px; height: 52px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; background: var(--c-coral); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
+/* GAME START와 LEAVE는 한 쌍이라 규격을 공유한다 — 한쪽만 고치면 짝이 어긋난다. */
+/* min-width로 폭까지 맞춘다 — 안 잡으면 글자 수 차이(GAME START vs LEAVE)만큼 폭이 어긋난다.
+   내용이 넘치면 padding이 밀어내므로 짧은 쪽만 늘어나고 긴 쪽은 그대로다. */
+.footer-right > .px { display: flex; align-items: center; justify-content: center; gap: 9px; padding: 0 24px; min-width: 158px; height: 56px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; color: #fff; font-size: 11px; box-shadow: var(--shadow-sm); }
+.leave { background: var(--c-coral); }
 
 .room-toast { position: fixed; top: 50%; left: 50%; z-index: 90; padding: 13px 20px; transform: translate(-50%, -50%); background: rgba(56, 38, 61, .9); border: 0; border-radius: 9px; color: #fff; font-size: 11px; line-height: 1.7; box-shadow: none; }
 
@@ -3020,8 +3026,9 @@ const startHint = computed(() =>
   padding: 0 16px;
   white-space: nowrap;
 }
-.footer-start-btn, .footer-start-btn.suggest { position: static; flex: none; height: 50px; padding: 0 12px; border: 3px solid #4e67a3; border-radius: 7px; background: #7195df; color: #fff; box-shadow: 3px 3px 0 #4e67a3; white-space: nowrap; transform: none; }
-.footer-start-btn .start-title { font-size: 10px; }
+/* 크기·여백은 .footer-right > .px(LEAVE와 공유하는 규격)에서 온다 — 여기서는 색만 정한다.
+   나가기와 같은 코랄로 두면 시작과 나가기가 구분되지 않아 파랑을 유지한다. */
+.footer-start-btn, .footer-start-btn.suggest { position: static; flex: none; border: 3px solid #4e67a3; border-radius: 7px; background: #7195df; color: #fff; box-shadow: 3px 3px 0 #4e67a3; white-space: nowrap; transform: none; }
 
 .room-main { gap: 18px; padding: clamp(20px, 2vw, 26px) clamp(28px, 3.6vw, 46px); }
 .cam-stage {
@@ -3344,7 +3351,8 @@ const startHint = computed(() =>
   .controls { gap: 7px; }
   .ctrl { width: 42px; height: 42px; border-width: 2px; border-radius: 11px 11px 8px 11px; }
   .chat-dock { height: 44px; padding: 0 6px 0 11px; }
-  .leave { height: 44px; padding: 0 13px; }
+  /* 좁은 화면에서도 둘은 같은 규격을 유지한다 */
+  .footer-right > .px { min-width: 132px; height: 48px; padding: 0 15px; font-size: 10px; }
   /* chat-log는 chat-dock 높이에 맞춰 띄운다 — 52+10 이었으므로 44+10 */
   .chat-log { bottom: 54px; }
 
