@@ -69,6 +69,9 @@ public class UserRecordService {
             if (game == null) {
                 continue; // 카탈로그에서 내려간 게임 — 이름을 붙일 수 없으니 노출하지 않는다
             }
+            if (!game.hasLeaderboard(row.getMode())) {
+                continue; // 혼자 시작할 수 없는 게임의 솔로 기록(개발 중 잔재) — 리더보드(-96)와 같은 선
+            }
             records.add(new GameRecordResponse(
                     game.getId(), game.getName(), row.getMode().name(),
                     row.getPlayCount(), row.getBestScore(), rankNoOf(row)));
