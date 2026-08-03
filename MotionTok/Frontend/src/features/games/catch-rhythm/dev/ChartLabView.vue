@@ -852,6 +852,24 @@ function wavBlob(buffer: AudioBuffer, fromMs: number, toMs: number): Blob {
   return new Blob([ab], { type: 'audio/wav' })
 }
 
+/**
+ * 현재 로드된 곡을 WAV로 저장 — ✂ 자르기의 다운로드가 취소·차단돼 컷 파일이 유실됐을 때의
+ * 구조선. 탭이 열려 있는 한 언제든 다시 받을 수 있다.
+ */
+function exportSongWav() {
+  const buf = audioBuffer.value
+  if (!buf) return
+  downloadBlob(fileName.value ?? 'song.wav', wavBlob(buf, 0, songLengthMs()))
+}
+
+/** 현재 난이도의 탭 전체를 일괄 이동 — 재컷 등으로 곡 시작점이 어긋났을 때 재정렬용 */
+function shiftAllTaps(deltaMs: number) {
+  const move = (list: TapEvent[]) => list.map((e) => ({ ...e, t: Math.max(0, e.t + deltaMs) }))
+  tapsL.value = move(tapsL.value)
+  tapsR.value = move(tapsR.value)
+  drawWave()
+}
+
 /** 선택 구간만 남기기 — 주의: 슬롯을 클릭해도 선택이 그 슬롯으로 잡힌다(확인창이 지켜준다) */
 async function trimToSelection() {
   if (selStartMs.value === null || selEndMs.value === null) return
@@ -1339,6 +1357,14 @@ onBeforeUnmount(() => {
       >
         ✂ 여기까지 남기기
       </button>
+      <button
+        type="button"
+        :disabled="!audioBuffer || tapping || running"
+        title="지금 로드된 곡을 WAV로 저장 — 잘린 곡 파일을 잃어버렸을 때 여기서 다시 받는다"
+        @click="exportSongWav"
+      >
+        곡 저장(WAV)
+      </button>
       <span v-if="lastResult" class="result">{{ lastResult }}</span>
     </section>
 
@@ -1406,6 +1432,13 @@ onBeforeUnmount(() => {
         >
           복사해 오기
         </button>
+        <label class="dim">
+          전체 이동
+          <button type="button" :disabled="tapping || !totalTaps" @click="shiftAllTaps(-100)">−100</button>
+          <button type="button" :disabled="tapping || !totalTaps" @click="shiftAllTaps(-10)">−10</button>
+          <button type="button" :disabled="tapping || !totalTaps" @click="shiftAllTaps(10)">+10</button>
+          <button type="button" :disabled="tapping || !totalTaps" @click="shiftAllTaps(100)">+100</button>
+        </label>
       </section>
 
       <section class="slots">
