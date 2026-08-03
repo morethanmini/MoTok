@@ -403,9 +403,13 @@ async function boot() {
     const musicClock = clock
     void musicReady.then((ok) => {
       if (!ok || disposed || phase.value === 'result') return
-      // 커스텀 곡이면 채보 랩이 정한 시각(채보 offsetMs)에, 아니면 기본 곡 슬롯에 건다
-      const startMs = props.song?.startMs ?? slotTimeMs(SONG_START_SLOT)
-      music?.start(musicClock.ctxTimeAt(startMs + SONG_NUDGE_MS))
+      // 커스텀 곡(채보 랩)은 넛지 없이 채보 랩이 정한 시각 그대로 건다 — 탭 채보는
+      // 사람이 "들리는 대로" 찍은 것이라 곡만 늦추면 채보 전체가 그만큼 빨라 보인다.
+      // SONG_NUDGE_MS는 기본 곡 + 자동 채보의 체감 보정 전용이다(위 주석 참고).
+      const startMs = props.song
+        ? props.song.startMs
+        : slotTimeMs(SONG_START_SLOT) + SONG_NUDGE_MS
+      music?.start(musicClock.ctxTimeAt(startMs))
     })
 
     // ★ 늦게 시작한 참가자 보정.
