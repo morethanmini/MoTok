@@ -81,6 +81,22 @@ management:
     web:
       exposure:
         include: health,prometheus
+  health:
+    mail:
+      # ★ 메일은 종합 health 에서 뺀다.
+      #
+      # 이유는 compose healthcheck 가 종합이 아니라 liveness 를 보는 것과 같다 — SMTP 가 막혀
+      # 있다고 "앱이 이상하다"가 아니다. 그런데 종합 health 는 하나라도 DOWN 이면 503 이라,
+      # 정작 장애를 진단하려고 /actuator/health 를 열었을 때 <b>메일 때문에 빨간불</b>이 떠
+      # DB·Redis 가 멀쩡한지를 가리게 된다.
+      #
+      # 게다가 이 지표는 SMTP 에 실제로 접속해 본다(connectiontimeout 5초). 종합 health 를
+      # 부를 때마다 5초가 매달리고 스택트레이스가 쌓이는데, 그게 하필 진단이 급한 순간이다.
+      # SSAFY 교육망처럼 smtp 호스트가 막힌 곳에서는 늘 그렇게 된다.
+      #
+      # 메일이 실제로 안 나가는 건 보내는 경로에서 드러난다(VerificationMailSender·
+      # PasswordResetMailSender 로그). 운영에서 그 신호를 health 로도 보고 싶으면 CI 변수로 켠다.
+      enabled: ${MAIL_HEALTH_ENABLED:false}
   endpoint:
     health:
       # 이 포트는 외부에 열지 않는다(SSH 터널로만 접근). DB·Redis 상태까지 보이는 편이 진단에 낫다.
