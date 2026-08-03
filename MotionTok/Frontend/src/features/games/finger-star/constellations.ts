@@ -5,7 +5,9 @@
  *
  * 신규 항목은 scripts/generate-constellations.mjs로 생성·검증한다
  * (좌표 산출 규칙·기하 검증 기준은 스크립트 헤더 참조).
- * 난이도는 60초 매치의 출제 순서에 쓰인다(처음 3개는 쉬움·보통만) — 명세의 난이도 어휘를 재사용.
+ * 난이도는 60초 매치의 출제 순서에 쓰인다(여는 판에서 HARD 제외) — 명세의 난이도 어휘를 재사용.
+ * 다만 여는 판의 순서를 실제로 가르는 건 <b>별 개수</b>다(pts.length) — 별 하나에 손가락 하나라
+ * 개수가 곧 체감 난이도다. 자세한 규칙은 challenge.ts의 StarSequence 참조.
  */
 export type Difficulty = 'EASY' | 'NORMAL' | 'HARD'
 
