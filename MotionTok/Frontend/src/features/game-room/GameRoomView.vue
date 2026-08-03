@@ -23,6 +23,7 @@ import { useRoomChat } from '@/composables/useRoomChat'
 import { onStompConnected } from '@/composables/useGlobalStomp'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
 import { useBgm } from '@/composables/useBgm'
+import { useSpeakerGain } from '@/composables/useSpeakerGain'
 import { useToast } from '@/composables/useToast'
 import { containsProfanity } from '@/utils/profanity'
 import { toGameEntries, type GameEntry } from './data'
@@ -345,9 +346,12 @@ watch(
   { immediate: true },
 )
 
-// ── 데모 상태 ────────────────────────────────
-const speakerOn = ref(true)
-const screenOn = ref(false)
+// ── 상대 소리 ────────────────────────────────
+// 하단 스피커 버튼 = 상대 소리 전체 음소거. 예전에는 여기 있던 ref가 버튼 색만 바꾸고
+// 아무 데도 연결되지 않아 눌러도 사람들 말소리가 그대로 났다(데모 잔재).
+// 참가자별 개인 볼륨과 설정 화면의 '상대 소리'는 그대로 두고 곱해진다 — 해제하면 원래대로.
+const { speakerMuted, setSpeakerMuted } = useSpeakerGain()
+
 const picker = ref(false)
 /** 게임을 고른 뒤 모드·난이도를 정하는 설정 창의 대상 게임(-9). null이면 닫힘 */
 const setupGame = ref<GameEntry | null>(null)
@@ -2400,8 +2404,15 @@ const startHint = computed(() =>
     <!-- 하단 바 -->
     <footer class="room-footer">
       <div class="controls">
-        <button class="ctrl" :class="{ on: speakerOn, off: !speakerOn }" title="스피커" @click="speakerOn = !speakerOn">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 9a3.5 3.5 0 010 6" /></svg>
+        <button
+          class="ctrl"
+          :class="{ on: !speakerMuted, off: speakerMuted }"
+          :title="speakerMuted ? '상대 소리 켜기' : '상대 소리 음소거'"
+          :aria-pressed="speakerMuted"
+          @click="setSpeakerMuted(!speakerMuted)"
+        >
+          <!-- 음소거면 음파 대신 X — 색만 바꾸면 "껐다"가 아니라 "빨간 스피커"로 읽힌다 -->
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path v-if="speakerMuted" d="M16 9l6 6M22 9l-6 6" /><path v-else d="M15.5 9a3.5 3.5 0 010 6" /></svg>
         </button>
         <button class="ctrl" :class="{ on: selfMicOn, off: !selfMicOn }" title="마이크" @click="toggleMic">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="9" y="3" width="6" height="11" /><path d="M5 11a7 7 0 0014 0M12 18v3" /></svg>
