@@ -54,6 +54,8 @@ export interface SongChartOptions {
    * 밀도 컷 없이 사람이 친 것 전부가 노트 시각이 되고, 격자 스냅·지속음 매칭·배치만 기계가 한다.
    */
   backbone?: AnalyzedOnset[] | null
+  /** 트랙을 손에 고정: perc(드럼)=왼손, melody(보컬)=오른손. any 없이 명시 지정된다. */
+  handByTrack?: boolean
 }
 
 /** 난이도별 목표 노트 밀도(개/초) — 기존 프리셋의 슬롯 확률 × 슬롯 수와 같은 대역이다 */
@@ -124,8 +126,16 @@ function pickOnsets(
       const dist = Math.abs(onset.timeMs - snapped)
       if (options.snap === 'grid' || dist <= snapTolMs) pickedMs = snapped
     }
-    const sustain =
-      sustains.find((s) => Math.abs(s.startMs - onset.timeMs) < 60) ?? null
+    const matched = sustains.find((s) => Math.abs(s.startMs - onset.timeMs) < 60) ?? null
+    // 탭 홀드는 사람이 정한 길이가 우선 — 검출 지속음은 슬라이드 방향(pitchDelta)만 빌려준다
+    const sustain = onset.holdMs
+      ? {
+          startMs: Math.round(onset.timeMs),
+          durationMs: onset.holdMs,
+          pitch: onset.pitch,
+          pitchDelta: matched?.pitchDelta ?? 0,
+        }
+      : matched
     candidates.push({ ...onset, pickedMs, sustain })
   }
 
@@ -361,6 +371,7 @@ export function generateSongCatchChart(
     snap: options.snap ?? ('free' as const),
     maxDurationMs: options.maxDurationMs ?? Infinity,
     backbone: options.backbone ?? null,
+    handByTrack: options.handByTrack ?? false,
   }
   const offsetMs = songStartMs(analysis)
   const toGame = (fileMs: number) => Math.round(offsetMs + (fileMs - analysis.gridOriginMs))
@@ -385,23 +396,37 @@ export function generateSongCatchChart(
     const timeMs = toGame(onset.pickedMs)
     if (timeMs < LEAD_IN_MS) continue
 
-    // 아주 강한 온셋(드랍·강박)은 NORMAL 이상에서 양손 동시 노트가 된다
+    // 트랙→손 고정 모드: perc=왼손, melody=오른손 — 사람이 두 패스로 나눠 친 의도 그대로
+    const mappedHand: Hand | null = opts.handByTrack
+      ? onset.source === 'perc'
+        ? 'left'
+        : 'right'
+      : null
+    // 아주 강한 온셋(드랍·강박)은 NORMAL 이상에서 양손 동시 노트가 된다 (손 고정 시 제외)
     const simultaneous =
-      preset.simultaneous > 0 && onset.strength >= 1.6 && rng() < preset.simultaneous * 2
+      !mappedHand &&
+      preset.simultaneous > 0 &&
+      onset.strength >= 1.6 &&
+      rng() < preset.simultaneous * 2
     /** 이 손이 이 시각에 새 노트를 받을 수 있는가 — 연타 한계 */
     const ready = (hand: Hand): boolean => {
       const prev = lastByHand[hand]
       return !prev || timeMs - endTimeOf(prev) >= preset.minSameHandGapMs
     }
     // 단일 노트는 교대 손이 기본이되, 그 손이 못 돌아왔으면 반대손으로 넘긴다 —
-    // 온셋(곡의 소리)을 버리는 것은 양손 다 막혔을 때뿐이다
-    const owners: Hand[] = simultaneous
-      ? (['left', 'right'] as Hand[]).filter(ready)
-      : ready(nextHand)
-        ? [nextHand]
-        : ready(other(nextHand))
-          ? [other(nextHand)]
-          : []
+    // 온셋(곡의 소리)을 버리는 것은 양손 다 막혔을 때뿐이다.
+    // 손 고정 모드에서는 반대손 폴백이 없다 — 지정한 손이 못 치면 그 온셋은 접는다.
+    const owners: Hand[] = mappedHand
+      ? ready(mappedHand)
+        ? [mappedHand]
+        : []
+      : simultaneous
+        ? (['left', 'right'] as Hand[]).filter(ready)
+        : ready(nextHand)
+          ? [nextHand]
+          : ready(other(nextHand))
+            ? [other(nextHand)]
+            : []
 
     const placedThisOnset: Obstacle[] = []
     let placedAny = false
@@ -429,7 +454,7 @@ export function generateSongCatchChart(
         usedDt,
       )
 
-      const hand: NoteHand = rng() < preset.anyRate ? 'any' : usedOwner
+      const hand: NoteHand = mappedHand ?? (rng() < preset.anyRate ? 'any' : usedOwner)
       const note: SongCatchNote = {
         timeMs,
         x,
@@ -449,13 +474,19 @@ export function generateSongCatchChart(
       // ② 길이 절단: 트레일 중에 같은손 최소 간격보다 촘촘한 온셋 쌍이 등장하면
       //    그 앞에서 손을 놓도록 길이를 줄인다(줄여서 너무 짧아지면 스와이프로 강등)
       const [durLo, durHi] = preset.trailDurationMs
-      if (
+      // 탭 홀드(사람이 누르고 있던 것)는 쿨다운·프리셋 대역을 무시한다 — 명시적 의도라서.
+      // 물리 한계(MAX_TRAIL_MS·촘촘 구간 절단)만 지킨다.
+      const tapped = onset.holdMs !== undefined
+      const wantTrail =
         onset.sustain &&
-        onset.sustain.durationMs >= durLo * 0.8 &&
         !simultaneous &&
-        timeMs - lastTrailEndMs >= TRAIL_GAP_MS
-      ) {
-        let dur = Math.min(durHi, Math.max(durLo, onset.sustain.durationMs))
+        (tapped
+          ? true
+          : onset.sustain.durationMs >= durLo * 0.8 && timeMs - lastTrailEndMs >= TRAIL_GAP_MS)
+      if (wantTrail && onset.sustain) {
+        let dur = tapped
+          ? Math.min(MAX_TRAIL_MS, Math.max(400, onset.sustain.durationMs))
+          : Math.min(durHi, Math.max(durLo, onset.sustain.durationMs))
         for (let j = i + 1; j + 1 < picked.length; j++) {
           const a = toGame(picked[j]!.pickedMs)
           if (a > timeMs + dur + preset.minSameHandGapMs) break
@@ -465,7 +496,7 @@ export function generateSongCatchChart(
             break
           }
         }
-        if (dur >= durLo * 0.8) {
+        if (dur >= (tapped ? 300 : durLo * 0.8)) {
           note.kind = 'trail'
           note.durationMs = Math.round(dur)
           note.path = makeTrailPath(
@@ -557,6 +588,7 @@ export function generateSongRingChart(
     snap: options.snap ?? ('free' as const),
     maxDurationMs: options.maxDurationMs ?? Infinity,
     backbone: options.backbone ?? null,
+    handByTrack: options.handByTrack ?? false,
   }
   const minGapMs: Record<Difficulty, number> = { EASY: 280, NORMAL: 210, HARD: 160 }
   const picked = pickOnsets(
@@ -593,7 +625,9 @@ export function generateSongRingChart(
     }
 
     const note: RingDraftNote = { timeMs, lane }
-    if (onset.sustain && onset.sustain.durationMs >= 500) {
+    if (opts.handByTrack) note.hand = onset.source === 'perc' ? 'left' : 'right'
+    // 탭 홀드(사람 의도)는 문턱을 낮춰서 존중한다
+    if (onset.sustain && onset.sustain.durationMs >= (onset.holdMs ? 300 : 500)) {
       note.type = 'hold'
       note.durationMs = Math.round(
         Math.min(analysis.beatMs * 4, Math.max(400, onset.sustain.durationMs)),
