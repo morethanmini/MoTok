@@ -725,6 +725,17 @@ function clearStartAck() {
   startAckTimer = undefined
 }
 const gameResults = ref<GameResultEntry[] | null>(null)
+/**
+ * 서버 세션 없이 도는 판에서 한 판이라도 판정이 났는가.
+ *
+ * <p>게임④를 혼자 하면 서버 세션을 만들지 않고 로컬 연습 모드로 돈다(launch 참고 — 1인 세션을
+ * 허용하면 랭킹을 혼자 쌓을 수 있어서다). 그러면 GAME_END가 없어 {@code gameResults}가 영영
+ * null이고, 게다가 벽이 계속 날아오는 무한 모드라 "판이 끝나는" 순간 자체가 없다.
+ * 그래서 "적어도 한 판은 했다"를 이 값으로 따로 들고 있는다 — 게스트 마무리 판정이 쓴다.</p>
+ *
+ * <p>STOMP 미연결 폴백(오프라인 로컬 플레이)도 같은 처지라 함께 여기로 모은다.</p>
+ */
+const localRoundEnded = ref(false)
 /** 게임④(-86): POSE_SET으로 도착한 출제 포즈(랜드마크 JSON) — 벽 생성 입력 */
 const poseChallenge = ref<string | null>(null)
 /** 그림으로 말해요(게임 10) — DRAW/DRAW_RESULT 릴레이를 게임 컴포넌트로 전달하는 피드 */
@@ -1379,6 +1390,7 @@ function onGameFinished(r: { completedCount: number; totalScore: number; avgScor
   }
   // 솔로 폴백 — 결과를 토스트로만 알린다.
   flash(`✨ ${r.completedCount}개 완성 · 평균 ${r.avgScore}점`)
+  localRoundEnded.value = true
 }
 
 /**
@@ -1401,6 +1413,7 @@ function onFishingFinished(r: { totalScore: number; caught: number }) {
   }
   // 솔로 폴백(서버 미연동) — 결과를 토스트로만 알린다
   flash(`🎣 ${r.caught}마리 · ${r.totalScore}점`)
+  localRoundEnded.value = true
 }
 
 /** 게임④(-86): 출제자가 캡처한 포즈(랜드마크 JSON)를 서버로 — POSE_SET이 방 전체에 돌아온다 */
@@ -1414,7 +1427,9 @@ function onBodyFitFinished(r: { score: number; grade: string; iou: number }) {
     roomChat.sendGameFinish(r.score, 0)
     return
   }
+  // 1인 연습 모드 — 벽 하나를 판정할 때마다 여기로 온다(무한 모드라 끝나는 순간이 따로 없다)
   flash(`🧱 ${r.grade} · 일치율 ${Math.round(r.iou)}%`)
+  localRoundEnded.value = true
 }
 
 /**
@@ -1427,9 +1442,10 @@ function onBodyFitFinished(r: { score: number; grade: string; iou: number }) {
  * 정산이 끝난 결과 화면에서만 그냥 닫는다.
  */
 function requestCloseGame() {
-  // 게스트는 한 판으로 끝난다(아래 guestWrapUp) — 판이 끝났으면 결과를 닫는 순간 방을 뜬다.
-  // 리듬은 전용 채널이라 정산이 gameResults가 아니라 rhythmEnded로 온다.
-  if (session.isGuest && (gameResults.value || rhythmEnded.value)) {
+  // 게스트는 한 판으로 끝난다(아래 guestWrapUp) — 판이 끝났으면 닫는 순간 방을 뜬다.
+  // 끝났다는 신호가 게임마다 다르다: 공용 세션은 gameResults, 리듬은 전용 채널(rhythmEnded),
+  // 서버 세션 없이 도는 판(게임④ 1인 연습·오프라인 폴백)은 localRoundEnded다.
+  if (session.isGuest && (gameResults.value || rhythmEnded.value || localRoundEnded.value)) {
     closeGame()
     guestWrapUp.value = true
     return
@@ -1502,6 +1518,8 @@ function confirmCloseGame() {
   closeGameConfirm.value = false
   if (amRoomHost.value) {
     closeGame() // 방장 — 전체 세션 종료(abort 발신 포함)
+    // 한 판도 못 채우고 그만둔 게스트도 마무리는 같다 — 방에 남는 길을 남기지 않는다
+    if (session.isGuest) guestWrapUp.value = true
     return
   }
   // 비방장 — 서버 세션은 그대로 두고 내 화면만 나간다. 라운드가 살아 있는 동안
@@ -1566,6 +1584,7 @@ function closeGame() {
   liveScores.value = {}
   poseChallenge.value = null
   rhythmEnded.value = false
+  localRoundEnded.value = false
   drawFeed.value = []
   // 낙관적으로 얹은 획득 포인트를 서버 값으로 정정한다(비동기 지급이 끝났을 시점).
   void session.refreshProfile()
@@ -2452,16 +2471,18 @@ const startHint = computed(() =>
       <div class="leave-confirm">
         <span class="leave-icon" aria-hidden="true">🎮</span>
         <p class="leave-kicker">GAME EXIT</p>
-        <h3 class="leave-title">{{ amRoomHost ? '전체 게임을 종료할까요?' : '게임에서 나갈까요?' }}</h3>
+        <!-- 게스트는 혼자라 "모든 참가자"도 "대기실"도 해당이 없다 — 끝내면 게임 선택으로 나간다 -->
+        <h3 class="leave-title">{{ session.isGuest ? '게임을 끝낼까요?' : amRoomHost ? '전체 게임을 종료할까요?' : '게임에서 나갈까요?' }}</h3>
         <p class="leave-desc">
-          <template v-if="amRoomHost && hostCloseEndsAll">방장이 종료하면 모든 참가자의 게임이 함께 끝나요.<br />이번 판 점수는 기록되지 않습니다.</template>
+          <template v-if="session.isGuest">하던 판이 사라지고 게임 선택으로 돌아가요.<br />이번 판 점수는 기록되지 않습니다.</template>
+          <template v-else-if="amRoomHost && hostCloseEndsAll">방장이 종료하면 모든 참가자의 게임이 함께 끝나요.<br />이번 판 점수는 기록되지 않습니다.</template>
           <!-- 솔로 연습(게임④) — 서버 세션이 없어 같이 끝날 사람이 없다 -->
           <template v-else-if="amRoomHost">하던 판이 사라지고 대기실로 돌아가요.<br />이번 판 점수는 기록되지 않습니다.</template>
           <template v-else>게임은 계속 진행돼요.<br />라운드가 끝나기 전이라면 ‘게임 복귀’로 다시 들어올 수 있어요.</template>
         </p>
         <div class="leave-confirm-actions">
           <PixelButton class="leave-cancel" block @click="closeGameConfirm = false">계속 하기</PixelButton>
-          <PixelButton class="leave-submit" block @click="confirmCloseGame">{{ amRoomHost ? '전체 종료' : '나가기' }}</PixelButton>
+          <PixelButton class="leave-submit" block @click="confirmCloseGame">{{ session.isGuest ? '끝내기' : amRoomHost ? '전체 종료' : '나가기' }}</PixelButton>
         </div>
       </div>
     </PixelModal>
