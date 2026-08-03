@@ -34,6 +34,14 @@ export type Band = keyof typeof BAND_EDGES
 export const FFT_SIZE = 1024
 /** 홉 — 44.1kHz에서 5.8ms. 판정창(±80ms)·스냅창(±45ms)보다 한참 촘촘하다. */
 export const HOP_SIZE = 256
+/** 멜로디 플럭스의 로그 압축 세기 log(1+γ·mag) — 클수록 작은 소리를 더 끌어올린다 */
+const LOG_GAMMA = 50
+/**
+ * 멜로디 플럭스의 시간 비교 거리(프레임) — 5프레임 ≈ 29ms.
+ * 직전 프레임(5.8ms)과만 비교하면 60~100ms에 걸쳐 올라오는 보컬 어택의 프레임당
+ * 증가가 티끌이 되어 이동평균에 묻힌다 — 거리를 벌려 어택 상승분을 뭉쳐 본다(SuperFlux의 μ).
+ */
+const MELODY_FLUX_LAG = 5
 
 export interface FrameFeatures {
   /** 프레임 중심 시각들이 이 간격(ms)으로 늘어선다 */
@@ -47,6 +55,15 @@ export interface FrameFeatures {
   energy: Float32Array
   /** 스펙트럼 센트로이드(Hz). 에너지가 거의 없는 프레임은 0 */
   centroid: Float32Array
+  /**
+   * 멜로디 대역(200Hz~4kHz) **로그 압축** 플럭스 — 보컬처럼 부드럽게(50~100ms) 올라오는
+   * 어택용. 선형 플럭스는 절대 크기에 비례해서 조용한 보컬의 변화가 시끄러운 반주에 묻힌다 —
+   * log(1+γ·mag)는 큰 소리와 작은 소리의 "변화"를 같은 눈금으로 만든다.
+   * 주파수 방향 max 필터(SuperFlux식)로 비브라토가 인접 빈을 오가며 만드는 가짜 플럭스를 누른다.
+   */
+  fluxMelody: Float32Array
+  /** 멜로디 대역 크기 합 — 보컬 지속음(홀드 후보) 검출용. 전체 RMS는 드럼이 지배한다 */
+  energyMid: Float32Array
 }
 
 /**
@@ -105,10 +122,20 @@ export async function extractFeatures(
   }
   const energy = new Float32Array(frameCount)
   const centroid = new Float32Array(frameCount)
+  const fluxMelody = new Float32Array(frameCount)
+  const energyMid = new Float32Array(frameCount)
+  // 멜로디 대역: 보컬 기본음(200~)부터 자음·명료도 성분(2~4k)까지 — 센트로이드와 같은 범위
+  const melLo = Math.max(2, Math.round(200 / binHz))
+  const melHi = Math.min(bins - 3, Math.round(4000 / binHz)) // max 필터가 k±2를 본다
 
   const frame = new Float32Array(FFT_SIZE)
   const mag = new Float32Array(bins)
   const prevMag = new Float32Array(bins)
+  // 멜로디용 로그 크기 링 버퍼 — MELODY_FLUX_LAG 프레임 전과 비교한다
+  const logRing = Array.from(
+    { length: MELODY_FLUX_LAG + 1 },
+    () => new Float32Array(bins),
+  )
 
   for (let f = 0; f < frameCount; f++) {
     const start = f * HOP_SIZE
@@ -142,6 +169,27 @@ export async function extractFeatures(
     }
     centroid[f] = mSum > 1e-6 ? wSum / mSum : 0
 
+    // 멜로디 플럭스(로그 + 주파수 max 필터 + 시간 거리 μ) — 인터페이스 주석 참고
+    const curLog = logRing[f % (MELODY_FLUX_LAG + 1)]!
+    for (let k = melLo - 2; k <= melHi + 2; k++) curLog[k] = Math.log1p(LOG_GAMMA * mag[k]!)
+    let melSum = 0
+    let midSum = 0
+    if (f >= MELODY_FLUX_LAG) {
+      const ref = logRing[(f - MELODY_FLUX_LAG) % (MELODY_FLUX_LAG + 1)]!
+      for (let k = melLo; k <= melHi; k++) {
+        // ±2빈 max — 빈 중심을 벗어난 정상파의 누설이 위상에 따라 이웃 빈 사이를
+        // 오가며 만드는 가짜 상승(비팅)을 흡수한다. ±1로는 부족했다(실측).
+        const refMax = Math.max(ref[k - 2]!, ref[k - 1]!, ref[k]!, ref[k + 1]!, ref[k + 2]!)
+        const d = curLog[k]! - refMax
+        if (d > 0) melSum += d
+        midSum += mag[k]!
+      }
+    } else {
+      for (let k = melLo; k <= melHi; k++) midSum += mag[k]!
+    }
+    fluxMelody[f] = melSum
+    energyMid[f] = midSum
+
     prevMag.set(mag)
 
     if (onProgress && f % yieldEvery === yieldEvery - 1) {
@@ -158,6 +206,8 @@ export async function extractFeatures(
     flux,
     energy,
     centroid,
+    fluxMelody,
+    energyMid,
   }
 }
 

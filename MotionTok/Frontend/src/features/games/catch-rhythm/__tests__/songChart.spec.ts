@@ -24,12 +24,16 @@ function makeAnalysis(): SongAnalysis {
   for (let k = 0; ; k++) {
     const t = origin + k * (beatMs / 2) // 8분음표마다 온셋
     if (t > durationMs - 1000) break
+    // 박마다 드럼(perc), 네 박에 한 번(k%16===9) 엇박 보컬(melody) — 곡 전체가
+    // 250ms 간격으로 빈틈없이 차 있으면 트레일 금지 규칙이 전 구간 발동해 비현실적이다
     const onBeat = k % 2 === 0
+    if (!onBeat && k % 16 !== 9) continue
     onsets.push({
       timeMs: t,
       strength: onBeat ? 1.5 : 0.7,
       bands: onBeat ? { low: 0.6, mid: 0.3, high: 0.1 } : { low: 0.2, mid: 0.5, high: 0.3 },
       pitch: 0.5 + 0.4 * Math.sin(k / 5), // 멜로디가 오르내리는 흉내
+      source: onBeat ? 'perc' : 'melody',
     })
     if (k % 16 === 0) {
       sustains.push({ startMs: t, durationMs: 1200, pitch: 0.6, pitchDelta: 0.3 })
@@ -132,6 +136,15 @@ describe('generateSongCatchChart', () => {
       expect(t.durationMs!).toBeLessThanOrEqual(hi + 1)
       expect(t.path!.length).toBeGreaterThan(0)
     }
+  })
+
+  it('두 스트림이 함께 뽑힌다 — 세기가 약한 멜로디가 타악에 밀려 전멸하지 않는다', () => {
+    const chart = generateSongCatchChart(analysis, 'NORMAL', 42)
+    const melody = chart.notes.filter((n) => n.source === 'melody')
+    // 픽스처의 멜로디 후보는 15개(세기 0.7 — 타악 1.5의 절반 이하).
+    // 전체를 세기로 한 번에 잘랐다면 타악 120개가 몫을 다 가져가 멜로디는 0이 됐을 것.
+    expect(melody.length).toBeGreaterThanOrEqual(12)
+    expect(chart.notes.filter((n) => n.source === 'perc').length).toBeGreaterThan(melody.length)
   })
 
   it('연결 노트는 쿨다운(2초)을 지켜 몰리지 않는다', () => {

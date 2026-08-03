@@ -97,15 +97,19 @@ function pitchAt(features: FrameFeatures, bounds: [number, number], timeMs: numb
 }
 
 /**
- * 온셋 뒤로 에너지가 유지되는 구간을 찾는다.
+ * 온셋 뒤로 **멜로디 대역 에너지**가 유지되는 구간을 찾는다.
  * 다음 온셋이 오면 거기서 끊는다 — 새 소리가 났으면 그건 별개의 노트다.
+ *
+ * 전체 RMS + 전체 온셋으로 보면 보컬 롱노트가 드럼 8분음표마다 잘려서
+ * SUSTAIN_MIN_MS(450ms)를 수학적으로 못 넘긴다(보컬온셋-개선제안.md) —
+ * 그래서 에너지는 멜로디 대역(energyMid), 끊는 기준은 **멜로디 스트림 온셋만** 받는다.
  */
 function detectSustains(
   features: FrameFeatures,
   onsets: Onset[],
   bounds: [number, number],
 ): Sustain[] {
-  const { energy, frameMs, frameCount } = features
+  const { energyMid: energy, frameMs, frameCount } = features
   const out: Sustain[] = []
   for (let i = 0; i < onsets.length; i++) {
     const onset = onsets[i]!
@@ -120,12 +124,18 @@ function detectSustains(
     for (let f = f0; f <= peakEnd; f++) if (energy[f]! > peak) peak = energy[f]!
     if (peak <= 0) continue
 
-    let fEnd = f0
-    for (let f = f0; f < fNext; f++) {
+    // 보컬은 어택이 느려(수십 ms) 온셋 시점의 에너지가 아직 기준 아래다 —
+    // 어택이 올라올 때까지(피크 창 안) 기다렸다가 그 지점부터 유지를 검사한다
+    let fStart = f0
+    while (fStart <= peakEnd && energy[fStart]! < peak * SUSTAIN_KEEP_RATIO) fStart++
+    if (fStart > peakEnd) continue
+
+    let fEnd = fStart
+    for (let f = fStart; f < fNext; f++) {
       if (energy[f]! < peak * SUSTAIN_KEEP_RATIO) break
       fEnd = f
     }
-    const durationMs = (fEnd - f0) * frameMs
+    const durationMs = (fEnd - f0) * frameMs // 노트 길이는 온셋 기준 — 어택도 소리의 일부다
     if (durationMs < SUSTAIN_MIN_MS) continue
 
     const startPitch = pitchAt(features, bounds, onset.timeMs)
@@ -163,6 +173,13 @@ export async function analyzeSong(
   onProgress?.(0.97)
 
   const bounds = centroidBounds(features)
+  // 지속음은 멜로디 성격의 온셋 기준 — 드럼이 8분마다 때려도 보컬 홀드가 안 잘리게.
+  // melody 스트림 + "perc로 귀속됐지만 저역이 아닌" 온셋(피아노·신스 스탭처럼 어택이
+  // 날카로워 결합 곡선이 먼저 채간 멜로디)도 포함한다. 비면(순수 타악곡) 전체로 폴백.
+  const melodic = onsetAnalysis.onsets.filter(
+    (o) => o.source === 'melody' || o.bands.low < 0.4,
+  )
+  const sustainBasis = melodic.length > 0 ? melodic : onsetAnalysis.onsets
   const onsets: AnalyzedOnset[] = onsetAnalysis.onsets.map((o) => ({
     ...o,
     timeMs: Math.round(o.timeMs),
@@ -174,7 +191,7 @@ export async function analyzeSong(
     },
     pitch: Math.round(pitchAt(features, bounds, o.timeMs) * 100) / 100,
   }))
-  const sustains = detectSustains(features, onsetAnalysis.onsets, bounds)
+  const sustains = detectSustains(features, sustainBasis, bounds)
   onProgress?.(1)
 
   return {
