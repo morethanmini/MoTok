@@ -725,17 +725,6 @@ function clearStartAck() {
   startAckTimer = undefined
 }
 const gameResults = ref<GameResultEntry[] | null>(null)
-/**
- * 서버 세션 없이 도는 판에서 한 판이라도 판정이 났는가.
- *
- * <p>게임④를 혼자 하면 서버 세션을 만들지 않고 로컬 연습 모드로 돈다(launch 참고 — 1인 세션을
- * 허용하면 랭킹을 혼자 쌓을 수 있어서다). 그러면 GAME_END가 없어 {@code gameResults}가 영영
- * null이고, 게다가 벽이 계속 날아오는 무한 모드라 "판이 끝나는" 순간 자체가 없다.
- * 그래서 "적어도 한 판은 했다"를 이 값으로 따로 들고 있는다 — 게스트 마무리 판정이 쓴다.</p>
- *
- * <p>STOMP 미연결 폴백(오프라인 로컬 플레이)도 같은 처지라 함께 여기로 모은다.</p>
- */
-const localRoundEnded = ref(false)
 /** 게임④(-86): POSE_SET으로 도착한 출제 포즈(랜드마크 JSON) — 벽 생성 입력 */
 const poseChallenge = ref<string | null>(null)
 /** 그림으로 말해요(게임 10) — DRAW/DRAW_RESULT 릴레이를 게임 컴포넌트로 전달하는 피드 */
@@ -1390,7 +1379,6 @@ function onGameFinished(r: { completedCount: number; totalScore: number; avgScor
   }
   // 솔로 폴백 — 결과를 토스트로만 알린다.
   flash(`✨ ${r.completedCount}개 완성 · 평균 ${r.avgScore}점`)
-  localRoundEnded.value = true
 }
 
 /**
@@ -1413,7 +1401,6 @@ function onFishingFinished(r: { totalScore: number; caught: number }) {
   }
   // 솔로 폴백(서버 미연동) — 결과를 토스트로만 알린다
   flash(`🎣 ${r.caught}마리 · ${r.totalScore}점`)
-  localRoundEnded.value = true
 }
 
 /** 게임④(-86): 출제자가 캡처한 포즈(랜드마크 JSON)를 서버로 — POSE_SET이 방 전체에 돌아온다 */
@@ -1427,9 +1414,7 @@ function onBodyFitFinished(r: { score: number; grade: string; iou: number }) {
     roomChat.sendGameFinish(r.score, 0)
     return
   }
-  // 1인 연습 모드 — 벽 하나를 판정할 때마다 여기로 온다(무한 모드라 끝나는 순간이 따로 없다)
   flash(`🧱 ${r.grade} · 일치율 ${Math.round(r.iou)}%`)
-  localRoundEnded.value = true
 }
 
 /**
@@ -1442,10 +1427,19 @@ function onBodyFitFinished(r: { score: number; grade: string; iou: number }) {
  * 정산이 끝난 결과 화면에서만 그냥 닫는다.
  */
 function requestCloseGame() {
-  // 게스트는 한 판으로 끝난다(아래 guestWrapUp) — 판이 끝났으면 닫는 순간 방을 뜬다.
-  // 끝났다는 신호가 게임마다 다르다: 공용 세션은 gameResults, 리듬은 전용 채널(rhythmEnded),
-  // 서버 세션 없이 도는 판(게임④ 1인 연습·오프라인 폴백)은 localRoundEnded다.
-  if (session.isGuest && (gameResults.value || rhythmEnded.value || localRoundEnded.value)) {
+  // 게스트에게 ✕는 "이제 그만"이다(아래 guestWrapUp) — 확인 없이 마무리 팝업으로 간다.
+  //
+  // "판이 끝났나"로 가르지 않는다. 끝났다는 신호가 게임마다 다른데, 게임④ 1인 연습은 아예
+  // 그런 신호가 없다 — 로컬 체인이라 finished를 쏘지 않고 최종 결과 창(finishChain)만 띄운다.
+  // 그래서 결과를 보고 종료를 눌러도 "게임을 끝낼까요?"가 한 번 더 끼어들었다.
+  //
+  // 확인은 서버 세션이 도는 중일 때만 거친다 — 잃을 기록이 있는 건 그 경우뿐이라,
+  // 실수로 누른 ✕에 진행 중인 판을 날리지 않는다. 확인을 누르면 confirmCloseGame이 잇는다.
+  if (session.isGuest) {
+    if (activeSession.value && !gameResults.value) {
+      closeGameConfirm.value = true
+      return
+    }
     closeGame()
     guestWrapUp.value = true
     return
@@ -1584,7 +1578,6 @@ function closeGame() {
   liveScores.value = {}
   poseChallenge.value = null
   rhythmEnded.value = false
-  localRoundEnded.value = false
   drawFeed.value = []
   // 낙관적으로 얹은 획득 포인트를 서버 값으로 정정한다(비동기 지급이 끝났을 시점).
   void session.refreshProfile()
