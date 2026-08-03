@@ -10,9 +10,6 @@ import ssafy.a706.backend.conntime.repository.UserConnectTimeRepository;
 import ssafy.a706.backend.presence.repository.PresenceRepository;
 
 import java.time.LocalDateTime;
-import java.util.Collection;
-import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * 총 접속시간 집계(S15P11A706-141) — 하트비트 델타 누적(Redis) + 오프라인 시 정산(RDB).
@@ -69,21 +66,17 @@ public class ConnectTimeService {
     }
 
     /**
-     * 회원별 마지막 접속 종료 시각(-179) — 친구 목록이 오프라인 친구에게 "N분 전 접속"을 붙인다.
+     * 마지막 접속 종료 시각(-179) — 공개 프로필이 가입일·총 접속시간과 함께 보여준다.
      *
-     * <p>친구 수만큼 조회하지 않는다. 한 번의 {@code WHERE user_id IN (...)}으로 걷어 오고,
-     * 기록이 없는 회원(배포 이후 한 번도 정산되지 않음)은 결과에서 빠진다 — 호출부가 "모름"으로 다룬다.</p>
-     *
-     * <p>온라인 회원의 값은 <b>직전</b> 접속의 종료 시각이라 지금과 무관하다. 오프라인일 때만 쓰라는
-     * 뜻이고, 그 판단은 프레즌스를 들고 있는 호출부가 한다.</p>
+     * <p>기록이 없으면(배포 이후 한 번도 정산되지 않음) null이다. 접속 중인 회원의 값은
+     * <b>직전</b> 접속의 종료 시각이지만, 프로필은 "이 사람의 기록"을 보는 화면이라 그대로 싣는다 —
+     * 지금 접속 중인지는 친구 목록의 상태 점이 알려준다.</p>
      */
     @Transactional(readOnly = true)
-    public Map<Long, LocalDateTime> lastSeenOf(Collection<Long> userIds) {
-        if (userIds.isEmpty()) {
-            return Map.of();
-        }
-        return connectTimeRepository.findAllById(userIds).stream()
-                .collect(Collectors.toMap(UserConnectTime::getUserId, UserConnectTime::lastSeenAt));
+    public LocalDateTime lastSeenOf(Long userId) {
+        return connectTimeRepository.findById(userId)
+                .map(UserConnectTime::lastSeenAt)
+                .orElse(null);
     }
 
     /** 총 접속시간(초) = RDB 확정치 + 아직 걷지 않은 버퍼. 기록이 없는(신규·미접속) 회원은 0. */

@@ -6,36 +6,11 @@
  * 둘 다 자주 하는 행동이라 각자 자리를 준다. 조회·열기는 LobbyView가 한다(친구 화면과 같은 컴포저블).
  * 안 읽은 말이 있으면 개수를 띄운다.
  */
-import { computed } from 'vue'
 import type { Friend } from '../data'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 
-const props = defineProps<{ friend: Friend; unread?: number; lastSeenAt?: string | null }>()
+defineProps<{ friend: Friend; unread?: number }>()
 defineEmits<{ open: []; profile: [] }>()
-
-/**
- * 마지막 접속 시각 문구(-179) — 상태 줄의 "오프라인" 뒤에 붙는다.
- *
- * <p>오프라인일 때만 그린다. 접속 중인 친구에게는 서버가 값을 안 주지만, 실시간 델타로
- * 온라인이 된 순간에는 이 프롭이 아직 남아 있을 수 있어 여기서도 한 번 더 막는다.</p>
- *
- * <p>날짜는 오늘·어제만 말로 바꾸고 그보다 오래되면 그냥 날짜를 쓴다. "5일 전"류는 며칠인지
- * 세게 만들 뿐이고, 이 줄에 주어진 폭도 좁다.</p>
- */
-const lastSeenLabel = computed(() => {
-  if (props.friend.online || !props.lastSeenAt) return ''
-  // 서버가 타임존 없는 로컬 시각을 준다 — Date가 브라우저 로컬(=KST)로 읽어 그대로 맞는다.
-  const seen = new Date(props.lastSeenAt)
-  if (Number.isNaN(seen.getTime())) return ''
-
-  const time = seen.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })
-  const midnight = new Date()
-  midnight.setHours(0, 0, 0, 0)
-  if (seen >= midnight) return `오늘 ${time}`
-  const yesterday = new Date(midnight.getTime() - 86_400_000)
-  if (seen >= yesterday) return `어제 ${time}`
-  return `${seen.getMonth() + 1}월 ${seen.getDate()}일 ${time}`
-})
 </script>
 
 <template>
@@ -73,10 +48,7 @@ const lastSeenLabel = computed(() => {
       @click.stop="$emit('open')"
     >
       <b>{{ friend.name }}</b>
-      <small>
-        {{ friend.game }}
-        <span v-if="lastSeenLabel" class="last-seen">· {{ lastSeenLabel }}</span>
-      </small>
+      <small>{{ friend.game }}</small>
     </button>
     <span v-if="unread" class="unread">{{ unread > 9 ? '9+' : unread }}</span>
     <i class="status" :class="{ offline: !friend.online }" />
@@ -137,9 +109,6 @@ const lastSeenLabel = computed(() => {
   font-size: 12px;
   line-height: 1.1;
 }
-/* "오프라인" 옆 여백에 얹는다 — 상태가 주(主)라 한 톤 흐리게 두고, 좁아지면 이쪽부터 잘린다. */
-.friend-info small { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
-.last-seen { flex: 0 1 auto; overflow: hidden; color: #a89684; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .whisper-btn {
   position: relative;
   margin-left: auto;

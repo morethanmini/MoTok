@@ -106,6 +106,12 @@ export interface PublicUserProfile {
   avatarUrl?: string | null
   /** 총 접속시간(초, -141 친구 상세). 집계 시작(배포) 이전 접속은 포함하지 않는다 */
   totalConnectSeconds: number
+  /**
+   * 마지막 접속 종료 시각(-179). 가입일·총 접속시간과 같은 성격의 기록이라 접속 여부와
+   * 무관하게 내려온다. 배포 이후 한 번도 정산되지 않은 계정은 null이고, 오프라인 정산
+   * 스윕(60초)에서만 갱신된다. 타임존 없는 로컬 시각 문자열(`2026-08-03T09:30:00`)이다.
+   */
+  lastSeenAt?: string | null
 }
 
 /**
@@ -450,12 +456,6 @@ export interface Friend {
   currentRoomId: string | null
   /** 친구 프로필 사진 URL. null이면 기본 아바타(이모지)를 그린다. */
   avatarUrl?: string | null
-  /**
-   * 마지막 접속 종료 시각(-179). <b>오프라인 친구에게만 내려온다</b> — 온라인 친구의 값은
-   * 직전 접속의 종료 시각이라 지금과 무관해서 서버가 비운다. 배포 이후 한 번도 정산되지 않은
-   * 계정도 null. 타임존 없는 로컬 시각 문자열이라(`2026-08-03T09:30:00`) Date가 KST로 읽는다.
-   */
-  lastSeenAt?: string | null
 }
 export type FriendRequestStatus = 'PENDING' | 'ACCEPTED'
 export interface FriendRequestItem {

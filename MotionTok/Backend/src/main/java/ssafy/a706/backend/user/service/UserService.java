@@ -90,8 +90,11 @@ public class UserService {
         User user = userRepository.findById(userId)
                 .filter(User::isActive)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
-        // 총 접속시간(-141)은 공개 정보로 취급한다 — 가입일과 같은 활동성 지표.
-        return PublicUserProfileResponse.from(user, connectTimeService.totalSecondsOf(userId));
+        // 총 접속시간(-141)·마지막 접속(-179)은 공개 정보로 취급한다 — 가입일과 같은 활동성 지표.
+        return PublicUserProfileResponse.from(
+                user,
+                connectTimeService.totalSecondsOf(userId),
+                connectTimeService.lastSeenOf(userId));
     }
 
     /** PATCH /users/me — 닉네임 변경(중복 검사). 동시 변경 경합은 UNIQUE 위반을 409로 변환한다. */
