@@ -216,6 +216,8 @@ describe('백본 채보 생성', () => {
     const dHold = draft.notes.find((n) => n.type === 'hold')
     expect(dHold, '초안에 홀드가 없다').toBeDefined()
     expect(dHold!.durationMs).toBeGreaterThanOrEqual(400)
+    // 직접 찍은 홀드는 제자리가 아니라 슬라이드다 — 900ms ÷ 박(500ms) ≈ 2칸
+    expect(Math.abs(dHold!.laneDelta ?? 0)).toBe(2)
 
     const game = ringDraftToGameChart(draft, analysis)
     const gHold = game.notes.find((n) => n.type === 'hold')
