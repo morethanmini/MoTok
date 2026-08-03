@@ -11,6 +11,7 @@ import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } f
 import type { ActiveGameSession } from '@/features/games/session'
 import { preferredAudioDeviceId, useCamera } from '@/composables/useCamera'
 import { EQUIP_LIMIT, useDecoration } from '@/composables/useDecoration'
+import { useFaceAnchor } from '@/composables/useFaceAnchor'
 import { motionModelsReady, warmUpMotionModels } from '@/composables/motionModels'
 import { useDecorSync } from '@/composables/useDecorSync'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
@@ -335,6 +336,18 @@ watch(
     })
   },
   { immediate: true },
+)
+
+/**
+ * 가면(FACE 앵커)은 저장 좌표가 아니라 내 얼굴을 따라간다.
+ *
+ * 이 타일에만 건다 — 상대 타일은 남의 영상이라 여기서 잡은 내 얼굴 좌표를 얹을 수 없고,
+ * 검출기 인스턴스도 영상 하나만 다룰 수 있다(타임스탬프 단조 증가). 그래서 지금 가면은
+ * 나에게만 보인다(decorSync가 FACE를 보내지 않는 것과 같은 이유).
+ */
+const selfFace = useFaceAnchor(
+  () => selfVideoEl.value,
+  () => selfCamOn.value && decor.hasFaceItem.value,
 )
 
 // ── 데모 상태 ────────────────────────────────
@@ -1941,6 +1954,7 @@ const startHint = computed(() =>
             :frame-aspect="selfVideoAspect"
             :frame-pixels="selfFramePixels"
             :selected-id="selectedDecorId"
+            :face="selfFace.anchor.value"
             @move="decor.move"
             @scale="decor.setScale"
             @remove="removeDecorSticker"

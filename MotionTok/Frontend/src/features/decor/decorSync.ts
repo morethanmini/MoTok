@@ -63,17 +63,24 @@ export interface DecorState {
  * <p>효과가 늘었는데도 프로토콜 버전을 올리지 않는다. 올리면 옛 클라이언트가 메시지 전체를
  * 버려(`v` 불일치) 스티커까지 안 보이게 된다. `effect`는 없으면 없는 대로 읽히는 추가 필드라
  * 양쪽 모두 서로의 메시지를 계속 이해한다.</p>
+ *
+ * <p><b>가면(FACE)은 보내지 않는다.</b> 자리와 크기를 내 얼굴에서 매 프레임 계산하는 값이라
+ * 좌표를 실어 보내 봐야 상대 화면에서는 남의 얼굴과 아무 상관 없는 자리에 뜬다. 그래서 지금
+ * 가면은 내 화면에만 보인다 — 남에게도 보이려면 앵커를 실시간으로 흘려보내야 한다(후속).</p>
  */
 export function encodeDecorMessage(state: DecorState): string {
   return JSON.stringify({
     v: PROTOCOL_VERSION,
-    sprites: state.sprites.slice(0, MAX_SPRITES).map((s) => ({
-      itemId: s.itemId,
-      x: s.x,
-      y: s.y,
-      scale: s.scale,
-      imageUrl: s.imageUrl,
-    })),
+    sprites: state.sprites
+      .filter((s) => s.anchor === 'FIXED')
+      .slice(0, MAX_SPRITES)
+      .map((s) => ({
+        itemId: s.itemId,
+        x: s.x,
+        y: s.y,
+        scale: s.scale,
+        imageUrl: s.imageUrl,
+      })),
     effect: state.effect
       ? {
           itemId: state.effect.itemId,

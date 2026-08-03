@@ -49,6 +49,20 @@ describe('decorSync 메시지', () => {
     expect(parseDecorMessage(encodeDecorMessage(state(many)))?.sprites).toHaveLength(MAX_SPRITES)
   })
 
+  it('가면은 보내지 않는다 — 내 얼굴 좌표를 남의 화면에 얹으면 엉뚱한 자리에 뜬다', () => {
+    const mask = sprite({ itemId: 5, anchor: 'FACE', imageUrl: '/assets/item/mask/mong_mask.png' })
+    const got = parseDecorMessage(encodeDecorMessage(state([sprite(), mask])))
+
+    // 스티커는 그대로 가고 가면만 빠진다
+    expect(got?.sprites.map((s) => s.itemId)).toEqual([1])
+  })
+
+  it('가면만 장착한 상태는 빈 목록으로 나간다 — "다 뗐다"와 같은 모양이어야 한다', () => {
+    const mask = sprite({ anchor: 'FACE', imageUrl: '/assets/item/mask/mong_mask.png' })
+
+    expect(parseDecorMessage(encodeDecorMessage(state([mask])))?.sprites).toEqual([])
+  })
+
   it('프레임 효과도 함께 실어 보낸다', () => {
     const fx: CameraEffect = { itemId: 9, kind: 'SOFT_GLOW', intensity: 0.4 }
     const got = parseDecorMessage(encodeDecorMessage(state([sprite()], fx)))
