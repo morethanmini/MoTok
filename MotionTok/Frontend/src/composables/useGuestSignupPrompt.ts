@@ -3,7 +3,11 @@
  *
  * 게임 구현이 아직 없어서 "게임이 끝났다"는 신호를 낼 곳이 없다.
  * 그래서 트리거(promptGuestSignup)만 먼저 만들어 두고, 지금은 결과 화면 진입 시점에 물려 둔다.
- * 게임 세션이 붙으면 종료 처리에서 이 함수 한 줄만 부르면 된다.
+ *
+ * ⚠️ 실제 게임 종료(GameRoomView)는 <b>여기를 쓰지 않는다.</b> 이 팝업은 App.vue가 띄우고
+ * 버튼을 누르면 그냥 라우팅만 하는데, 방 안에서는 그 이동이 라우터 가드에 걸려
+ * "정말 떠나시겠습니까?"가 겹쳐 뜬다. 방은 퇴장 통보까지 맡아야 해서
+ * GuestSignupPromptModal을 직접 띄운다(GameRoomView.leaveGuestRoom).
  */
 import { ref } from 'vue'
 

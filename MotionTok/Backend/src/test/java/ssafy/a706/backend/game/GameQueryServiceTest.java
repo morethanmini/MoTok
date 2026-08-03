@@ -4,7 +4,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.ArgumentCaptor;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.util.ReflectionTestUtils;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
@@ -35,6 +37,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -68,13 +71,19 @@ class GameQueryServiceTest {
         return row;
     }
 
+    private Game game(long id, String name, int minPlayers) {
+        return Game.builder().id(id).name(name).mode("VERSUS")
+                .minPlayers(minPlayers).maxPlayers(8)
+                .roundDurationSec(30).countdownSec(3).active(true).build();
+    }
+
     private void givenGameExists() {
-        when(gameRepository.existsById(GAME_ID)).thenReturn(true);
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game(GAME_ID, "핑거 스타", 1)));
     }
 
     @Test
     void 게임이_없으면_GAME_NOT_FOUND() {
-        when(gameRepository.existsById(GAME_ID)).thenReturn(false);
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.leaderboard(GAME_ID, MODE, 20, null))
                 .isInstanceOf(BusinessException.class)
@@ -206,6 +215,42 @@ class GameQueryServiceTest {
     }
 
     /**
+     * 혼자 시작할 수 없는 게임(minPlayers ≥ 2)에 솔로 순위표는 없다.
+     *
+     * <p>정산이 참가 인원으로 모드를 정하니 새로 쌓이지는 않지만, 개발 중 최소 인원을 잠깐 풀고
+     * 테스트한 기록이 남아 있다. 막지 않으면 "3명부터"라는 규칙 안내와 순위표가 서로 어긋난다.</p>
+     */
+    @Test
+    void 혼자_할_수_없는_게임의_솔로_순위표는_비어_있다() {
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game(GAME_ID, "그림으로 말해요", 3)));
+
+        LeaderboardResponse response =
+                service.leaderboard(GAME_ID, LeaderboardMode.SOLO, 20, new MemberPrincipal(10L, "나"));
+
+        assertThat(response.entries()).isEmpty();
+        assertThat(response.myRank()).isNull();
+        // 남은 기록을 읽지도 않는다 — 비어 있는 건 조회 결과가 아니라 규칙이다
+        verifyNoInteractions(rankRepository, leaderboardRepository, userRepository);
+    }
+
+    /** 막는 건 솔로뿐 — 같은 게임의 멀티 순위표는 그대로 나와야 한다. */
+    @Test
+    void 혼자_할_수_없는_게임도_멀티_순위표는_그대로_준다() {
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game(GAME_ID, "그림으로 말해요", 3)));
+        when(rankRepository.size(GAME_ID, MODE)).thenReturn(1L);
+        when(rankRepository.topBestScores(eq(GAME_ID), eq(MODE), anyInt()))
+                .thenReturn(new LinkedHashMap<>(Map.of(10L, 95)));
+        when(userRepository.findAllById(any())).thenReturn(List.of(user(10L, "그림왕")));
+        when(leaderboardRepository.findAllByGameIdAndModeAndUserIdIn(eq(GAME_ID), eq(MODE), any()))
+                .thenReturn(List.of(row(10L, 95, 2)));
+
+        LeaderboardResponse response = service.leaderboard(GAME_ID, MODE, 20, null);
+
+        assertThat(response.entries()).hasSize(1);
+        assertThat(response.entries().get(0).nickname()).isEqualTo("그림왕");
+    }
+
+    /**
      * 관리자가 닫은 게임(-106)은 목록에서 <b>사라지지 않는다</b>. 지워 버리면 어제까지 있던 게임이
      * 흔적 없이 없어져 사용자가 이유를 알 수 없다 — 대신 playable=false로 잠긴 카드가 된다.
      */
@@ -217,7 +262,7 @@ class GameQueryServiceTest {
         Game closed = Game.builder()
                 .id(2L).name("점검 중 게임").minPlayers(1).maxPlayers(8)
                 .roundDurationSec(30).countdownSec(3).active(false).build();
-        when(gameRepository.findAll()).thenReturn(List.of(open, closed));
+        when(gameRepository.findAll(any(Sort.class))).thenReturn(List.of(open, closed));
 
         List<GameSummaryResponse> all = service.list(null);
         assertThat(all).hasSize(2);
@@ -233,6 +278,22 @@ class GameQueryServiceTest {
         List<GameSummaryResponse> tooMany = service.list(10);
         assertThat(tooMany.get(0).playable()).isFalse(); // 정원 8 초과 인원
         assertThat(tooMany.get(0).active()).isTrue();    // 닫힌 건 아니다
+    }
+
+    /**
+     * 목록은 <b>id 순으로 정렬해</b> 조회한다. 정렬 없는 {@code findAll()}은 SQL이 순서를 보장하지
+     * 않아 실행 계획이 바뀌면 조회마다 순서가 달라질 수 있고, 화면은 이 목록을 게임 id를 key로 하는
+     * 카드 그리드로 그리므로 같은 목록인데도 카드가 재정렬되며 튄다.
+     */
+    @Test
+    void 목록은_id_오름차순으로_조회한다() {
+        when(gameRepository.findAll(any(Sort.class))).thenReturn(List.of());
+
+        service.list(null);
+
+        ArgumentCaptor<Sort> sort = ArgumentCaptor.forClass(Sort.class);
+        verify(gameRepository).findAll(sort.capture());
+        assertThat(sort.getValue()).isEqualTo(Sort.by(Sort.Direction.ASC, "id"));
     }
 
     /** 목록에 남아 눌릴 수 있는 카드라 상세도 열려야 한다 — 404면 화면이 앞뒤가 안 맞는다. */

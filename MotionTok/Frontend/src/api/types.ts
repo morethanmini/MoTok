@@ -106,6 +106,12 @@ export interface PublicUserProfile {
   avatarUrl?: string | null
   /** 총 접속시간(초, -141 친구 상세). 집계 시작(배포) 이전 접속은 포함하지 않는다 */
   totalConnectSeconds: number
+  /**
+   * 마지막 접속 종료 시각(-179). 가입일·총 접속시간과 같은 성격의 기록이라 접속 여부와
+   * 무관하게 내려온다. 배포 이후 한 번도 정산되지 않은 계정은 null이고, 오프라인 정산
+   * 스윕(60초)에서만 갱신된다. 타임존 없는 로컬 시각 문자열(`2026-08-03T09:30:00`)이다.
+   */
+  lastSeenAt?: string | null
 }
 
 /**
@@ -152,14 +158,19 @@ export interface GameRecord {
  * x·y는 영상 기준 정규화 좌표(0~1, 스티커 중심), scale은 영상 짧은 변 대비 비율이다.
  * 픽셀이 아니라 비율인 이유 — 편집 화면과 게임 타일의 크기가 달라서 픽셀로 저장하면 위치가 어긋난다.
  */
-export type DecorAnchor = 'FIXED' | 'FACE' | 'HAND'
+export type DecorAnchor = 'FIXED' | 'FRAME' | 'FACE' | 'HAND'
 export interface DecorPlacement {
   itemId: number
-  /** FIXED만 구현 — FACE·HAND(가면·효과 추적)는 추적기가 붙을 때 사용 */
+  /** FIXED(스티커)·FRAME(프레임 전체 효과)만 구현 — FACE·HAND(가면 추적)는 추적기가 붙을 때 사용 */
   anchor: DecorAnchor
   x: number
   y: number
   scale: number
+  /**
+   * FRAME 앵커의 세기(0~1). 효과는 크기가 없어 scale 대신 이 값으로 조절한다.
+   * 서버가 분류(EFFECT)에서 앵커를 정하므로 스티커에는 오지 않는다.
+   */
+  intensity?: number
 }
 export interface DecorConfig {
   version: number
@@ -310,15 +321,18 @@ export interface LiveRoomUpdatedEvent {
 }
 
 /**
- * /topic/rooms/{roomId}/members 로 오는 방장 변경 알림 (LiveRoomHostChangedEvent, -72).
- * 방장이 나가면 서버가 남은 참가자 중 가장 먼저 들어온 사람에게 위임하고 이 이벤트를 쏜다.
+ * /topic/rooms/{roomId}/members 로 오는 방장 변경 알림 (LiveRoomHostChangedEvent, -72/-180).
+ * 방장이 나가면 남은 참가자 중 가장 먼저 들어온 사람에게 자동 위임되고(HOST_LEFT),
+ * 방장이 직접 지목해 넘기면 DELEGATED로 온다 — 안내 문구의 원인이 정반대라 갈라야 한다.
  *
  * 이 토픽에는 판별용 type 필드가 없어 필드 모양으로 가른다 — hostUserId를 갖는 건 이 이벤트뿐이다
  * (퇴장·강퇴는 userId/participantCount 계열, 방 정보 수정은 title/maxPlayers).
+ * 사유 필드명이 reason이 아니라 hostReason인 것도 그래서다 — 강퇴 이벤트가 이미 reason을 쓴다.
  */
 export interface LiveRoomHostChangedEvent {
   hostUserId: string
   hostDisplayName: string
+  hostReason: 'HOST_LEFT' | 'DELEGATED'
 }
 
 /**
@@ -630,6 +644,22 @@ export interface StompErrorPayload {
   code: string
   message: string
   path?: string
+}
+
+// ── 게임 설명 함께 보기 (STOMP) ─────────
+// 수신: SUBSCRIBE /topic/rooms/{roomId}/guide (방 전체) · /user/queue/game-guide (sync 회신).
+// 발신: SEND /app/rooms/{roomId}/guide(방장) · /app/rooms/{roomId}/guide/sync(누구나).
+/**
+ * 방 전원이 맞춰야 할 설명 화면 상태 — 이벤트가 아니라 스냅샷이다.
+ * 열기/넘김/닫기가 모두 이 한 모양이라 마지막 프레임만 반영하면 화면이 맞는다(멱등).
+ */
+export interface GameGuideEvent {
+  /** 설명 모달이 떠 있어야 하는지. false면 나머지 필드는 의미 없다 */
+  open: boolean
+  /** 설명 중인 게임(서버 games.id) */
+  gameId: number | null
+  /** 방장이 보고 있는 0-based 페이지 */
+  page: number
 }
 
 // ── 게임 세션 (STOMP, S15P11A706-115) ─────────

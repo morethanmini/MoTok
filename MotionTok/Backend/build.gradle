@@ -60,4 +60,8 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+
+    // 테스트는 GPU 모드
+    environment 'AI_PROVIDER', 'GPU'
+    environment 'FAL_KEY', ''
 }

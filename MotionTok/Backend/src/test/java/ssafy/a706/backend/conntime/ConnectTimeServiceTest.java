@@ -136,4 +136,22 @@ class ConnectTimeServiceTest {
 
         assertThat(service.totalSecondsOf(USER_ID)).isZero();
     }
+
+    @Test
+    @DisplayName("마지막 접속 시각은 정산 행의 갱신 시각을 그대로 읽는다(-179)")
+    void lastSeenReadsSettlementTimestamp() {
+        UserConnectTime row = new UserConnectTime(USER_ID);
+        row.addSeconds(60);
+        when(connectTimeRepository.findById(USER_ID)).thenReturn(Optional.of(row));
+
+        assertThat(service.lastSeenOf(USER_ID)).isEqualTo(row.lastSeenAt());
+    }
+
+    @Test
+    @DisplayName("기록이 없으면 null — 배포 이후 한 번도 정산되지 않은 계정(-179)")
+    void lastSeenIsNullWithoutAnyRecord() {
+        when(connectTimeRepository.findById(USER_ID)).thenReturn(Optional.empty());
+
+        assertThat(service.lastSeenOf(USER_ID)).isNull();
+    }
 }

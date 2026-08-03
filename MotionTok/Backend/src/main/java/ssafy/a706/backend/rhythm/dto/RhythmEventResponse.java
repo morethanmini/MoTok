@@ -11,6 +11,7 @@ import java.util.List;
  *   <tr><td>PROGRESS</td><td>sessionId·userId·nickname·score·combo (비영속 중계)</td></tr>
  *   <tr><td>PLAYER_FINISHED</td><td>sessionId·userId·nickname·score·maxCombo</td></tr>
  *   <tr><td>RHYTHM_END</td><td>sessionId·results</td></tr>
+ *   <tr><td>RHYTHM_ABORTED</td><td>sessionId (방장 강제종료 — 정산 없음)</td></tr>
  * </table>
  *
  * <p>seed를 <b>문자열</b>로 내리는 이유: Java long이 JS number 정밀도(2^53)를 넘을 수 있어
@@ -54,5 +55,11 @@ public record RhythmEventResponse(
     public static RhythmEventResponse end(String sessionId, List<RhythmResultEntry> results) {
         return new RhythmEventResponse("RHYTHM_END", sessionId, null, null, null,
                 null, null, null, null, null, null, null, null, results);
+    }
+
+    /** 방장 강제종료(-164). RHYTHM_END와 달리 정산이 없어 results가 비어 있다. */
+    public static RhythmEventResponse aborted(String sessionId) {
+        return new RhythmEventResponse("RHYTHM_ABORTED", sessionId, null, null, null,
+                null, null, null, null, null, null, null, null, null);
     }
 }

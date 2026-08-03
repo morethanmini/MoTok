@@ -10,9 +10,9 @@
  * <p>옵션이 없는 게임은 이 창을 띄우지 않는다 — 호출부(GameRoomView)가 게임④만 여기로 보낸다.
  * 전부 거치게 하면 "플레이 버튼만 있는 빈 창"이 생긴다.</p>
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useBgm } from '@/composables/useBgm'
-import { SRC as BODY_FIT_SFX } from '@/features/games/body-fit/audio'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { gameMusicGain, useBgm } from '@/composables/useBgm'
+import { SRC as BODY_FIT_SFX, VOLUME as BODY_FIT_VOLUME } from '@/features/games/body-fit/audio'
 import type { GameEntry } from '../data'
 import PixelButton from '@/components/common/PixelButton.vue'
 
@@ -50,12 +50,19 @@ const MODES: { key: 'pose' | 'chain'; label: string; hint: string }[] = [
   },
 ]
 
-/** 무한은 끝이 없어 승부가 안 나므로 방에서는 빼고 솔로에만 남겼다 */
-const WALL_CHOICES = [10, 20, 30]
 const wallCount = ref(10)
 
 /** 혼자면 출제 대결이 성립하지 않는다(내가 낸 포즈를 내가 푼다) */
 const soloOnly = computed(() => (props.memberCount ?? 1) < 2)
+/**
+ * 무한(0)은 끝이 없어 방에서는 승부가 안 난다(서버도 10·20·30만 받는다).
+ * 혼자면 서버 세션 없이 로컬 연습으로 도는 경로라 무한을 남겨 둔다.
+ */
+const WALL_CHOICES = computed(() => (soloOnly.value ? [10, 20, 0] : [10, 20, 30]))
+// 무한을 골라 둔 채로 누가 들어오면 방에서 쓸 수 없는 값이 남는다
+watch(soloOnly, (solo) => {
+  if (!solo && !wallCount.value) wallCount.value = 10
+})
 const modes = computed(() => (soloOnly.value ? MODES.filter((m) => m.key === 'chain') : MODES))
 const effectiveMode = computed<'pose' | 'chain'>(() => (soloOnly.value ? 'chain' : mode.value))
 const activeMode = computed(() => MODES.find((m) => m.key === effectiveMode.value))
@@ -69,15 +76,27 @@ const activeDifficulty = computed(() => DIFFICULTIES.find((d) => d.key === diffi
  *
  * <p>로비 테마와 겹치지 않는 건 호출부가 맡는다 — GameRoomView가 이 창이 열린 동안
  * useBgm().suspendForGame()을 이미 걸어둔다(게임④ 사운드 규약과 같은 자리).</p>
+ *
+ * <p>크기는 게임 본체와 같은 식으로 정한다 — 상수로 두면 설정을 무시하고 음량도 어긋난다.</p>
  */
 let bed: HTMLAudioElement | null = null
+
+/** BodyFitAudio.target()과 같은 계산 */
+function bedVolume(): number {
+  return Math.min(1, BODY_FIT_VOLUME * gameMusicGain())
+}
+
 onMounted(() => {
-  if (!useBgm().isEnabled.value) return // 음악을 꺼둔 사용자에게는 틀지 않는다
   bed = new Audio(BODY_FIT_SFX.ingame)
   bed.loop = true
-  bed.volume = 0.5
+  bed.volume = bedVolume()
   // 이 창은 클릭(플레이 버튼)으로만 열리므로 자동재생 정책에 막히지 않는다
   bed.play().catch(() => {})
+})
+
+// 창이 떠 있는 동안 슬라이더를 움직이면 즉시 반영
+watch(useBgm().gameMusic, () => {
+  if (bed) bed.volume = bedVolume()
 })
 onBeforeUnmount(() => {
   bed?.pause()
@@ -124,7 +143,7 @@ onBeforeUnmount(() => {
             :class="{ on: wallCount === n }"
             @click="wallCount = n"
           >
-            {{ n }}개
+            {{ n === 0 ? '무한' : `${n}개` }}
           </button>
         </div>
       </template>

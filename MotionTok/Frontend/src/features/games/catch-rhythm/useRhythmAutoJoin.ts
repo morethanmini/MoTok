@@ -10,7 +10,7 @@
  */
 
 import { onScopeDispose, watch, type Ref } from 'vue'
-import { stashRhythmStart } from './useRhythmSession'
+import { clearRhythmStart, stashRhythmStart } from './useRhythmSession'
 import type { RhythmEvent } from './rhythmTypes'
 
 interface StompLike {
@@ -33,6 +33,12 @@ export function useRhythmAutoJoin(
     sub = roomChat.subscribeRaw(`/topic/rooms/${roomId.value}/rhythm`, (body) => {
       try {
         const event = JSON.parse(body) as RhythmEvent
+        // 라운드가 끝났으면 맡겨 둔 신호를 버린다. 아무도 화면을 열지 않아 꺼내 가지 않은
+        // 신호가 남으면, 다음에 게임을 열 때 지난 라운드가 되살아난다.
+        if (event.type === 'RHYTHM_END' || event.type === 'RHYTHM_ABORTED') {
+          clearRhythmStart(roomId.value)
+          return
+        }
         if (event.type !== 'RHYTHM_START') return
         // 게임 화면은 이 신호를 받고 나서야 열리므로 이 프레임을 직접 받을 수 없다.
         // 마운트된 세션이 꺼내 쓰도록 맡겨 둔 **뒤에** 화면을 연다(순서 중요).

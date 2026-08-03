@@ -6,7 +6,7 @@ import { isChunkLoadError, markBuildOutdated, reloadForNewBuild } from '@/compos
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, friendsApi, reportsApi, chatReportsApi, gamesApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason, type InventoryItem } from '@/api'
+import { roomsApi, friendsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason, type InventoryItem } from '@/api'
 import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { preferredAudioDeviceId, useCamera } from '@/composables/useCamera'
@@ -14,6 +14,9 @@ import { EQUIP_LIMIT, useDecoration } from '@/composables/useDecoration'
 import { motionModelsReady, warmUpMotionModels } from '@/composables/motionModels'
 import { useDecorSync } from '@/composables/useDecorSync'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
+import CameraEffectLayer from '@/features/decor/CameraEffectLayer.vue'
+import EffectIntensitySlider from '@/features/decor/EffectIntensitySlider.vue'
+import { EFFECT_LABEL, hasGlowLayer, videoFilter } from '@/features/decor/cameraEffect'
 import { useLiveKitRoom, type ParticipantView } from '@/composables/useLiveKitRoom'
 import { useRoomChat } from '@/composables/useRoomChat'
 import { onStompConnected } from '@/composables/useGlobalStomp'
@@ -21,11 +24,15 @@ import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
 import { containsProfanity } from '@/utils/profanity'
-import { GAME_CATALOG, type GameEntry } from './data'
+import { toGameEntries, type GameEntry } from './data'
+import { useGameCatalog } from '@/composables/useGameCatalog'
 import { CHAT_REPORT_REASONS, CHAT_REPORT_DETAIL_MAX, canSubmitChatReport, chatReportErrorMessage } from './chatReport'
 import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
+import GuestSignupPromptModal from '@/components/common/GuestSignupPromptModal.vue'
 import GameSetupModal from './components/GameSetupModal.vue'
+import RoomGuideModal from './components/RoomGuideModal.vue'
+import { guidePagesOrFallback } from '@/features/games-catalog/guide/pages'
 import ReportIcon from './components/ReportIcon.vue'
 import HostWaitingOverlay from './components/HostWaitingOverlay.vue'
 import InviteFriendsModal from './components/InviteFriendsModal.vue'
@@ -58,6 +65,7 @@ const FishingGame = lazyGame(() => import('@/features/games/fishing/FishingGame.
 const DrawingRelayGame = lazyGame(() => import('@/features/games/drawing-relay/DrawingRelayGame.vue'))
 const CatchRhythmGame = lazyGame(() => import('@/features/games/catch-rhythm/CatchRhythmGame.vue'))
 import { useRhythmAutoJoin } from '@/features/games/catch-rhythm/useRhythmAutoJoin'
+import { useDraggablePanel } from './useDraggablePanel'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import BrandLogo from '@/components/common/BrandLogo.vue'
@@ -86,7 +94,10 @@ const CAMERA_CONSTRAINTS = { video: { width: 640, height: 400 }, audio: false } 
 // 캔버스 합성으로 발행하던 예전 방식은 다른 오리진(S3)에 있는 AI 아이템 이미지를 읽지 못해
 // (버킷 CORS 없음) 내 화면에만 보였다.
 const decor = useDecoration()
-const decorSync = useDecorSync(lk, () => decor.sprites.value)
+const decorSync = useDecorSync(lk, () => ({
+  sprites: decor.sprites.value,
+  effect: decor.cameraEffect.value,
+}))
 const showDecorInventory = ref(false)
 const decorBusyItemId = ref<number | null>(null)
 const selectedDecorId = ref<number | null>(null)
@@ -120,6 +131,17 @@ function publishableTrack(stream: MediaStream | null): MediaStreamTrack | null {
 function spritesFor(slot: Slot) {
   return slot.view ? decorSync.spritesOf(slot.view.identity) : []
 }
+
+/** 그 참가자 영상에 걸 프레임 효과(뽀샤시) — 스티커와 같은 이유로 여기 한 곳에서 본다. */
+function effectFor(slot: Slot) {
+  return slot.view ? decorSync.effectOf(slot.view.identity) : null
+}
+
+/** 내 캠에 거는 뽀샤시의 영상 쪽 절반(빛 레이어는 CameraEffectLayer가 맡는다). */
+const selfCameraFilterStyle = computed(() => {
+  const fx = decor.cameraEffect.value
+  return fx ? { filter: videoFilter(fx.kind, fx.intensity) } : undefined
+})
 // 대기실 채팅 + 게임 제안 (STOMP, 명세 §7)
 const roomChat = useRoomChat()
 const myParticipantId = computed(() => readAccessClaims()?.sub ?? null)
@@ -322,6 +344,9 @@ const screenOn = ref(false)
 const picker = ref(false)
 /** 게임을 고른 뒤 모드·난이도를 정하는 설정 창의 대상 게임(-9). null이면 닫힘 */
 const setupGame = ref<GameEntry | null>(null)
+/** 1인 방 연습 모드(-9)는 서버 세션이 없다 — 설정 창에서 고른 값을 여기 담아 게임에 넘긴다 */
+const soloDifficulty = ref('easy')
+const soloWallCount = ref(10)
 
 // bfcache 복원 시 로비로(뒤로가기 복귀 차단). 퇴장 통보는 서버 리퍼에 맡긴다 —
 // 새로고침도 pagehide라, 여기서 통보하면 끊긴 사람이 새로고침으로 복구할 길이 막힌다.
@@ -668,6 +693,17 @@ const suggestCooldown = ref(false)
 const activeGame = ref<GameEntry | null>(null)
 const activeSession = ref<ActiveGameSession | null>(null)
 /**
+ * 이 방에서 하던 게임 — 1인 플레이 방의 "다시하기"가 다시 부를 대상.
+ *
+ * <p>마운트되는 순간 기억한다. 끝까지 갔든 중간에 그만뒀든 1인 플레이 방에서 하는 게임은
+ * 하나뿐이라, 시작 경로(자동 시작·직접 선택·리듬·오프라인 폴백)를 가릴 이유가 없다.
+ * {@code closeGame}이 activeGame을 비워도 여기는 남는다 — 판이 끝난 <b>뒤에</b> 쓰는 값이다.</p>
+ */
+const lastPlayed = ref<GameEntry | null>(null)
+watch(activeGame, (g) => {
+  if (g) lastPlayed.value = g
+})
+/**
  * START를 보낸 뒤 GAME_START를 기다리는 시간. 넘기면 "전달되지 않았다"고 알린다.
  *
  * <p>시작 요청은 응답이 없는 STOMP publish다. 프레임이 서버에 닿지 않아도(끊긴 걸 아직 모르는
@@ -775,13 +811,13 @@ watch(hostAway, (away) => {
  * 자체 사운드를 가진 게임은 로비 BGM을 내린다 — 안 내리면 테마와 게임 음악이 겹쳐 들린다.
  * 게임④(shape, -138)로 시작했고, 핑거 스타(finger)·그림 릴레이(draw)가 인게임 루프를 받으면서
  * 함께 들어왔다. 캐치캐치리듬(rhythm)도 인게임 곡을 갖게 되어 합류 — 판정음까지 내는 게임이라
- * 테마가 남아 있으면 셋이 겹친다.
+ * 테마가 남아 있으면 셋이 겹친다. 낚시(fish)도 인게임 루프를 받아 합류했다.
  *
  * 반드시 activeGame 선언 아래에 둔다 — watch는 초기값을 잡으려고 getter를 setup 중 즉시
  * 실행하므로, 위에 두면 const TDZ에 걸려 setup 전체가 죽는다(빌드는 통과한다: TS는 화살표
  * 함수 안의 선언 전 참조를 잡지 않는다).
  */
-const AUDIO_OWNING_GAMES = ['shape', 'finger', 'draw', 'rhythm']
+const AUDIO_OWNING_GAMES = ['shape', 'finger', 'draw', 'rhythm', 'fish']
 watch(
   // 설정 창(-9)도 인게임 베드를 직접 깔기 때문에 같이 내린다 — 소유 판정을 여기 한 곳에 모아두면
   // 창을 닫고 게임으로 넘어가는 사이에 테마가 잠깐 살아나는 일이 없다.
@@ -912,9 +948,12 @@ watch(roomChat.gameEvents, (all, prev) => {
 function applyGameEvent(e: GameEvent) {
   // ── 시작 준비 확인(-162) — 세션이 만들어지기 전 단계라 sessionId 필터보다 앞에서 처리 ──
   if (e.type === 'GAME_PREPARE') {
-    const entry = GAME_CATALOG.find((g) => g.gameId === e.gameId)
+    const entry = gameEntries.value.find((g) => g.gameId === e.gameId)
     if (!entry) return
     picker.value = false
+    // 설명은 시작과 함께 사라진다. 방장은 이미 닫고 왔지만, 그 프레임이 유실됐거나
+    // 리듬처럼 다른 경로로 시작된 경우에도 참가자 화면에 설명이 남지 않게 여기서도 접는다.
+    guideState.value = null
     // 모델을 먼저 채우고 ready를 회신한다 — 서버는 전원 완료(또는 15초) 후 GAME_START를 쏜다.
     // 모델 로드에 실패해도 ready는 보낸다: 나 하나 때문에 방 전체를 타임아웃까지 붙잡는 것보다,
     // 시작 후 내 화면의 게이트(mountWhenReady)가 실패·재시도를 처리하는 쪽이 낫다.
@@ -952,7 +991,7 @@ function applyGameEvent(e: GameEvent) {
   }
   if (e.type === 'GAME_START') {
     clearStartAck()
-    const entry = GAME_CATALOG.find((g) => g.gameId === e.gameId)
+    const entry = gameEntries.value.find((g) => g.gameId === e.gameId)
     if (!entry) return
     gameResults.value = null
     liveScores.value = {}
@@ -1032,7 +1071,7 @@ function applyGameEvent(e: GameEvent) {
 // 방장이 리듬 라운드를 시작하면 방 전원이 자동 입장한다.
 // (비방장은 게임 화면을 열 이유가 없어 스스로 구독하지 못한다 — 그래서 여기서 듣는다)
 useRhythmAutoJoin(roomChat, roomCode, () => {
-  const entry = GAME_CATALOG.find((g) => g.id === 'rhythm')
+  const entry = gameEntries.value.find((g) => g.id === 'rhythm')
   // 리듬은 공용 세션이 없어 sessionId 대신 고정 키 — 준비 게이트(-161)는 동일하게 거친다
   if (entry) mountWhenReady(entry, 'rhythm-auto-join')
   picker.value = false
@@ -1043,26 +1082,102 @@ function openPicker() {
   picker.value = true
 }
 
+// ── 게임 설명 함께 보기 ─────────────────────────────────────────
 /**
- * 관리자가 닫은 게임(-106) — 서버 카탈로그의 `active=false`.
- *
- * <p>방 안 게임 목록(GAME_CATALOG)은 하드코딩이라 서버 상태를 모른다. 그대로 두면 관리자가
- * 게임을 닫아도 목록에 멀쩡히 보이고, 방장이 고른 뒤 시작 시점에야 서버 에러를 받는다.
- * 여기서 한 번 받아 두고 선택창·자동 시작 양쪽에 같은 집합을 쓴다.</p>
- *
- * <p>조회 실패는 <b>조용히 넘긴다</b> — 이 값은 안내용이고 강제는 서버가 한다(닫힌 게임을
- * 시작하면 GAME_CLOSED로 거부된다). 실패했다고 게임 선택 자체를 막으면 관리자가 아무것도
- * 닫지 않은 평시에 방이 못 놀게 된다.</p>
+ * 지금 떠 있어야 할 설명. 원본은 서버 스냅샷(roomChat.gameGuide)이고, 방장이 넘길 때만
+ * 여기를 먼저 고친다 — 왕복을 기다리면 자기가 누른 화살표가 한 박자 늦게 듣는다.
+ * 서버 에코가 곧 같은 값으로 덮으므로 둘이 어긋난 채로 남지 않는다.
  */
-const closedGameIds = ref<Set<number>>(new Set())
-onMounted(async () => {
-  try {
-    const catalog = await gamesApi.list()
-    closedGameIds.value = new Set(catalog.filter((g) => !g.active).map((g) => g.id))
-  } catch {
-    closedGameIds.value = new Set()
-  }
+const guideState = ref<{ gameId: number; page: number } | null>(null)
+/** 참가자가 자기 화면에서만 닫았는지 — 방장이 게임을 바꾸거나 다시 열면 풀린다. */
+const guideDismissed = ref(false)
+
+watch(
+  () => roomChat.gameGuide.value,
+  (g) => {
+    if (!g?.open || g.gameId == null) {
+      guideState.value = null
+      guideDismissed.value = false
+      return
+    }
+    // 다른 게임의 설명이면 앞서 닫아 둔 것과 무관하다 — 새 설명은 다시 보여야 한다.
+    if (guideState.value?.gameId !== g.gameId) guideDismissed.value = false
+    guideState.value = { gameId: g.gameId, page: g.page }
+  },
+)
+
+/**
+ * 설명이 떠 있는 중에 들어오거나 재연결한 사람을 맞춘다 — 토픽은 재생되지 않아서
+ * 이걸 묻지 않으면 방장이 다음 장을 넘길 때까지 혼자 아무것도 못 본다.
+ * joined만으로는 이르다(소켓이 아직 안 붙었으면 발신이 버려진다).
+ */
+watch(
+  () => [roomChat.joined.value, roomChat.connected.value] as const,
+  ([isJoined, isConnected]) => {
+    if (isJoined && isConnected) roomChat.requestGameGuideSync()
+  },
+  { immediate: true },
+)
+
+const guideGame = computed(() => {
+  const id = guideState.value?.gameId
+  return id == null ? null : (gameEntries.value.find((g) => g.gameId === id) ?? null)
 })
+const guidePages = computed(() => {
+  const g = guideGame.value
+  return g ? guidePagesOrFallback(g.gameId, g.emoji, [g.description]) : []
+})
+/** 방장에게는 닫기가 없다(다른 게임·바로 시작으로 빠져나간다) — dismiss는 참가자 얘기다. */
+const guideOpen = computed(() => !!guideGame.value && (selfIsHost.value || !guideDismissed.value))
+
+/** 방장: 설명을 방 전원에게 띄운다. 게임은 아직 시작하지 않는다. */
+function openGuide(g: GameEntry) {
+  picker.value = false
+  guideState.value = { gameId: g.gameId, page: 0 }
+  roomChat.sendGameGuide(true, g.gameId, 0)
+}
+/** 방장: 넘긴 장을 방 전원에게 맞춘다. */
+function setGuidePage(page: number) {
+  const state = guideState.value
+  if (!state) return
+  guideState.value = { gameId: state.gameId, page }
+  roomChat.sendGameGuide(true, state.gameId, page)
+}
+/** 방장: 설명을 접는다 — 방 전원 화면에서 함께 사라진다. */
+function closeGuide() {
+  guideState.value = null
+  guideDismissed.value = false
+  roomChat.sendGameGuide(false, null, 0)
+}
+function startFromGuide() {
+  const g = guideGame.value
+  // 설명을 먼저 접는다 — 시작 경로(pick)가 설정 창을 띄우는 게임이면 그 창이 설명에 가린다.
+  closeGuide()
+  if (g) pick(g)
+}
+function guideBackToPicker() {
+  closeGuide()
+  picker.value = true
+}
+
+/**
+ * 방 안에서 고를 수 있는 게임 — <b>서버 카탈로그</b>에서 온다(하드코딩 목록을 없앤 자리).
+ *
+ * <p>전에는 프론트 배열이 목록의 출처였고, 서버 상태를 모르니 관리자가 닫은 게임(-106)을 알아내려고
+ * 여기서 `gamesApi.list()`를 <b>따로 한 번 더</b> 불러 닫힌 id 집합만 덧씌웠다. 이제 목록 자체가
+ * 서버에서 오므로 그 이중 조회가 사라지고, 이름·인원·점검 여부가 한 출처에서 온다.</p>
+ *
+ * <p>조회가 실패해도 게임 선택을 막지 않는다 — {@link useGameCatalog}가 직전에 성공한 목록을
+ * 그대로 내준다(오래됐을 수는 있어도 없는 게임을 만들어 내지는 않는다). 게임 시작은 REST가 아니라
+ * STOMP로 나가므로 목록 조회 실패가 곧 놀 수 없음을 뜻하지도 않는다.</p>
+ */
+const catalog = useGameCatalog()
+const gameEntries = computed(() => toGameEntries(catalog.games.value))
+
+/** 관리자가 닫은 게임 id(-106) — 목록에 함께 실려 온다. 안내용이고 강제는 서버가 한다. */
+const closedGameIds = computed(
+  () => new Set(gameEntries.value.filter((g) => !g.active).map((g) => g.gameId)),
+)
 
 /**
  * 게임 목록에서 고른 게임 자동 시작 — 헤더 ▸ 게임 ▸ 게임 선택 ▸ 대기실 ▸ 입장하면
@@ -1093,10 +1208,19 @@ function autostartBlocker(): string | null {
   if (!roomChat.joined.value) return '방에 아직 입장하지 못해'
   if (!detailLoaded.value) return '방 정보를 불러오지 못해'
   if (!captureOn.value) return '카메라를 켤 수 없어'
-  if (!GAME_CATALOG.some((g) => g.gameId === autostartGameId.value)) return '게임을 찾지 못해'
+  // 목록이 아직 없으면 "못 찾았다"가 아니라 "아직 모른다"다 — 도착하면 감시자가 다시 부른다.
+  if (catalog.loading.value) return '게임 목록을 불러오는 중이라'
+  // 그릴 수 있는 게임인지까지 본다. 목록에 있다는 것만으로 통과시키면, 이 클라이언트가 모르는
+  // 게임(서버에 새로 붙은 게임)이 자동 시작으로 열려 게임 화면이 빈 채로 뜬다.
+  const target = gameEntries.value.find((g) => g.gameId === autostartGameId.value)
+  if (!target) return '게임을 찾지 못해'
+  if (!target.implemented) return '아직 만들고 있는 게임이라'
   // 관리자가 닫은 게임(-106)이면 서버가 시작을 거부한다. 먼저 걸러야 8초를 기다린 끝에
   // "응답을 받지 못해"라는 엉뚱한 이유가 뜨지 않는다.
-  if (closedGameIds.value.has(autostartGameId.value!)) return '점검 중인 게임이라'
+  if (!target.active) return '점검 중인 게임이라'
+  // 목록이 직전 성공 값(오래된 값)이면 자동 시작을 붙이지 않는다 — 그 사이 관리자가 닫았을 수
+  // 있고, 서버가 거부하면 사용자에게는 그냥 "안 열리는 화면"이 된다. 직접 고르면 그때 판정된다.
+  if (catalog.stale.value) return '게임 목록이 최신이 아니라'
   return null
 }
 
@@ -1107,10 +1231,12 @@ function autostartBlocker(): string | null {
  */
 function tryAutostart() {
   if (autostarted || !autostartGameId.value || autostartBlocker()) return
-  const entry = GAME_CATALOG.find((g) => g.gameId === autostartGameId.value)
+  const entry = gameEntries.value.find((g) => g.gameId === autostartGameId.value)
   if (!entry) return
   autostarted = true
-  void launch(entry)
+  // pick을 거친다 — 옵션이 있는 게임(-9)은 자동 시작이라도 설정 창을 한 번 띄운다.
+  // 방에서 고를 때와 같은 창이라야 "혼자 플레이"만 벽 수를 못 고르는 일이 없다.
+  pick(entry)
 }
 
 // 마지막으로 갖춰지는 조건이 무엇이든(카메라 권한이 늦거나 재연결이 끼어도) 그때 시작되게 한다.
@@ -1121,6 +1247,9 @@ watch(
     roomChat.connected.value,
     roomChat.joined.value,
     captureOn.value,
+    // 게임 목록도 마지막으로 갖춰지는 조건이 될 수 있다 — 서버 카탈로그를 기다려야 하기 때문이다.
+    catalog.loading.value,
+    gameEntries.value.length,
   ] as const,
   tryAutostart,
   { immediate: true },
@@ -1129,7 +1258,8 @@ watch(
 // 판정 기준은 "발신했는가"가 아니라 "게임이 열렸는가"다 — 그 둘이 갈리는 경우가 실제로 있었다.
 if (autostartGameId.value) {
   autostartTimer = window.setTimeout(() => {
-    if (activeGame.value) return
+    // 설정 창이 떠 있으면 자동 시작은 제 몫을 다 한 것이다 — 시작 버튼은 사용자가 누른다
+    if (activeGame.value || setupGame.value) return
     // 발신까지는 갔는데 화면이 안 열렸다면 GAME_START를 못 받은 것이다(막고 있는 조건은 이미 없다).
     // 닫힌 게임을 먼저 보는 이유 — 카탈로그 조회가 시작 조건보다 늦게 도착하면 발신이 먼저
     // 나가고 서버가 거부한다. 그때 "응답을 받지 못해"라고 하면 원인을 반대로 알려 주게 된다.
@@ -1154,11 +1284,17 @@ function roomPlayerCount(): number {
 function pick(g: GameEntry) {
   // 선택창이 이미 잠긴 게임의 시작 버튼을 감추지만, 여기서도 막는다 — 게임 제안(비방장) 경로도
   // 이 함수를 지나가고, 카탈로그 조회가 늦게 도착했으면 선택창은 잠기지 않은 상태로 열려 있다.
+  // 그릴 줄 모르는 게임은 여기서 끝낸다 — 아래로 흘려보내면 비방장 경로가 '게임 제안'을 발신해,
+  // 방 전원에게 아무도 플레이할 수 없는 게임을 제안하게 된다.
+  if (!g.implemented) {
+    flash(`${g.name}은(는) 아직 만들고 있어요`)
+    return
+  }
   if (closedGameIds.value.has(g.gameId)) {
     flash(`${g.name}은(는) 점검 중이라 지금은 시작할 수 없어요`)
     return
   }
-  if (g.id === 'shape' && g.playable && roomChat.connected.value && selfIsHost.value) {
+  if (g.id === 'shape' && g.implemented && roomChat.connected.value && selfIsHost.value) {
     picker.value = false
     setupGame.value = g
     return
@@ -1189,7 +1325,7 @@ async function launch(g: GameEntry, difficulty?: string, mode?: string, wallCoun
     return
   }
   // 방장 + 서버 연결 + 플레이 가능 → 서버에 시작 요청. GAME_START가 방 전체에 돌아와 마운트된다.
-  if (g.playable && roomChat.connected.value && selfIsHost.value) {
+  if (g.implemented && roomChat.connected.value && selfIsHost.value) {
     if (!captureOn.value) {
       flash('카메라를 켜고 시작해 주세요')
       return
@@ -1205,6 +1341,10 @@ async function launch(g: GameEntry, difficulty?: string, mode?: string, wallCoun
     // (서버도 같은 이유로 2인 미만을 거부한다 — 여기 검사는 그 거부를 먼저 안내하는 것).
     if (g.id === 'shape' && (await memberCountNow()) < 2) {
       flash('혼자 있어서 연습 모드로 시작해요 — 랜덤 벽이 계속 날아와요')
+      // 설정 창에서 고른 값은 서버를 안 거치므로 게임 컴포넌트에 직접 넘긴다(0 = 무한).
+      // 인자가 없으면 직전 판의 값을 지킨다 — 다시하기는 "같은 조건으로 한 판 더"다.
+      soloDifficulty.value = difficulty ?? soloDifficulty.value
+      soloWallCount.value = wallCount ?? soloWallCount.value
       activeSession.value = null
       activeGame.value = g
       return
@@ -1218,11 +1358,11 @@ async function launch(g: GameEntry, difficulty?: string, mode?: string, wallCoun
   }
   // 서버 미연동 데모 — 로컬 솔로 플레이 폴백. 멀티 전용 게임(minPlayers>1)은 혼자
   // 진행할 수 없으므로 폴백에서 제외한다(그림으로 말해요는 이어그리기라 3인부터).
-  if (g.playable && !roomChat.connected.value && (g.minPlayers ?? 1) > 1) {
+  if (g.implemented && !roomChat.connected.value && (g.minPlayers ?? 1) > 1) {
     flash(`${g.name} 는 실시간 서버에 연결된 뒤 ${g.minPlayers}명부터 시작할 수 있어요`)
     return
   }
-  if (g.playable && !roomChat.connected.value) {
+  if (g.implemented && !roomChat.connected.value) {
     if (!captureOn.value) {
       flash('카메라를 켜야 게임을 플레이할 수 있어요')
       return
@@ -1305,23 +1445,102 @@ function onBodyFitFinished(r: { score: number; grade: string; iou: number }) {
 }
 
 /**
- * 게임 ✕(닫기) 요청(-164 개정) — 진행 중 세션이면 바로 닫지 않고 확인 모달을 거친다.
+ * 게임 ✕(닫기) 요청(-164 개정) — 판이 살아 있으면 바로 닫지 않고 확인 모달을 거친다.
  * 방장의 닫기는 전체 세션 종료(abort)라 실수로 누르면 방 전체가 날아가고,
- * 비방장의 닫기는 이번 판 이탈이라 의사를 한 번 확인한다. 정산 후(결과 화면)·
- * 로컬 솔로·리듬(activeSession 없음)은 기존대로 즉시 닫는다.
+ * 비방장의 닫기는 이번 판 이탈이라 의사를 한 번 확인한다.
+ *
+ * activeSession 유무로 가르지 않는다 — 그건 "공용 세션이 있나"지 "판이 도는 중인가"가
+ * 아니다. 리듬(전용 채널)과 게임④ 솔로 연습은 그 값이 늘 비어 있어 확인 없이 닫혔다.
+ * 정산이 끝난 결과 화면에서만 그냥 닫는다.
  */
 function requestCloseGame() {
-  if (!activeSession.value || gameResults.value) {
+  // 게스트에게 ✕는 "이제 그만"이다(아래 guestWrapUp) — 확인 없이 마무리 팝업으로 간다.
+  //
+  // "판이 끝났나"로 가르지 않는다. 끝났다는 신호가 게임마다 다른데, 게임④ 1인 연습은 아예
+  // 그런 신호가 없다 — 로컬 체인이라 finished를 쏘지 않고 최종 결과 창(finishChain)만 띄운다.
+  // 그래서 결과를 보고 종료를 눌러도 "게임을 끝낼까요?"가 한 번 더 끼어들었다.
+  //
+  // 확인은 서버 세션이 도는 중일 때만 거친다 — 잃을 기록이 있는 건 그 경우뿐이라,
+  // 실수로 누른 ✕에 진행 중인 판을 날리지 않는다. 확인을 누르면 confirmCloseGame이 잇는다.
+  if (session.isGuest) {
+    if (activeSession.value && !gameResults.value) {
+      closeGameConfirm.value = true
+      return
+    }
+    closeGame()
+    guestWrapUp.value = true
+    return
+  }
+  if (gameResults.value) {
     closeGame()
     return
   }
   closeGameConfirm.value = true
 }
+
+/**
+ * 게스트 1인 플레이 마무리(-109) — 결과를 닫으면 가입 유도를 띄우고 방에서 내보낸다.
+ *
+ * <p>게스트에게 1인 플레이는 "게임을 골라 한 판"이 전부다. 그런데 구현이 방 생성이라, 결과를
+ * 닫으면 대기실에 남아 GAME 버튼으로 <b>고르지 않은 게임까지</b> 계속 할 수 있었다. 게임을
+ * 골라 들어온 흐름과 앞뒤가 맞지 않아 한 판에서 끊는다.</p>
+ *
+ * <p>회원에게는 이 팝업이 뜨지 않는다 — 대신 푸터가 다시하기로 좁혀진다(아래 replaySolo).
+ * 혼자 하는 이유가 랭킹 갱신 아니면 연습이라 한 판에서 끊을 이유가 없다.</p>
+ *
+ * <p>중간에 ✕로 그만둔 판(정산 전)은 해당 없다 — 끝낸 게 아니라 그만둔 거라 "재밌으셨나요?"를
+ * 물을 자리가 아니고, 하던 게임을 다시 고를 수 있어야 한다.</p>
+ */
+const guestWrapUp = ref(false)
+
+/**
+ * 게스트 마무리 팝업의 퇴장 — 어느 버튼(가입·로그인·확인)을 눌러도, 팝업 바깥을 눌러 닫아도
+ * 방을 나간다. 한 판으로 끊는 흐름이라 방에 남을 경로를 하나라도 두면 그게 곧 재발이다.
+ *
+ * <p>돌아갈 곳은 게임 선택이다 — 1인 플레이가 시작된 화면이고, 게스트에게는 그게 곧 홈이다
+ * (게스트의 {@code exitRoute}도 같은 곳이라 사실상 같은 목적지다).</p>
+ *
+ * <p>{@code notifyLeave}가 의도된 이탈 표시까지 맡으므로 라우터 가드("정말 떠나시겠습니까?")는
+ * 뜨지 않는다 — 이미 확인을 한 번 받은 이동이다.</p>
+ *
+ * <p>게스트 1인방은 비어도 서버가 남겨 둔다(LiveRoomService.processLeave) — 게임 선택으로
+ * 돌아가 다른 게임을 고르면 같은 방으로 다시 들어간다. 회원 방은 지워지고 다음에 새로 만든다.</p>
+ */
+async function leaveSoloRoom(auth?: 'login' | 'signup') {
+  guestWrapUp.value = false
+  await notifyLeave()
+  await router.replace(
+    auth ? { name: RouteName.Auth, query: { mode: auth } } : { name: RouteName.GamesCatalog },
+  )
+}
+
+/**
+ * 1인 플레이 방 다시하기 — 방금 하던 게임을 그대로 한 판 더.
+ *
+ * <p>혼자 하는 이유가 랭킹 갱신 아니면 연습이라, 판이 끝난 자리에서 가장 잦은 행동이 이것이다.
+ * 방을 유지하므로 게임 선택·기기 설정을 다시 거치지 않는다.</p>
+ *
+ * <p>게임④의 설정(난이도·벽 수)은 인자로 넘기지 않는다 — launch가 직전 값을 그대로 쓰므로
+ * 설정 창을 다시 거치지 않고 같은 조건으로 시작한다. 조건을 바꾸려면 게임을 다시 고른다.</p>
+ */
+function replaySolo() {
+  if (lastPlayed.value) void launch(lastPlayed.value)
+}
 const closeGameConfirm = ref(false)
+/**
+ * 방장의 종료가 방 전체 판을 끝내는가 — 확인 모달 문구를 가른다.
+ * 리듬은 전용 채널이라 서버 세션이 돌아도 activeSession이 비어 있어 따로 본다.
+ * 둘 다 아니면 게임④ 솔로 연습이라 같이 끝날 사람이 없다.
+ */
+const hostCloseEndsAll = computed(
+  () => !!activeSession.value || activeGame.value?.id === 'rhythm',
+)
 function confirmCloseGame() {
   closeGameConfirm.value = false
   if (amRoomHost.value) {
     closeGame() // 방장 — 전체 세션 종료(abort 발신 포함)
+    // 한 판도 못 채우고 그만둔 게스트도 마무리는 같다 — 방에 남는 길을 남기지 않는다
+    if (session.isGuest) guestWrapUp.value = true
     return
   }
   // 비방장 — 서버 세션은 그대로 두고 내 화면만 나간다. 라운드가 살아 있는 동안
@@ -1368,10 +1587,15 @@ function onRhythmEnded(pointsEarned: number) {
 
 function closeGame() {
   // 방장이 게임 도중 닫으면 방 전체 세션을 종료한다(-164) — 예전에는 본인 화면만 닫혀
-  // 남은 사람끼리 라운드가 돌고 방은 endAt까지 잠겨 있었다. 정산 후(gameResults 존재)나
-  // 리듬(전용 채널, activeSession 없음)은 해당 없음. GAME_ABORTED 에코는 세션을 먼저
-  // 비우고 이 함수를 부르므로 재발신되지 않는다.
-  if (amRoomHost.value && activeSession.value && !gameResults.value) roomChat.sendGameAbort()
+  // 남은 사람끼리 라운드가 돌고 방은 endAt까지 잠겨 있었다. 정산 후(gameResults 존재)는
+  // 해당 없음. GAME_ABORTED 에코는 세션을 먼저 비우고 이 함수를 부르므로 재발신되지 않는다.
+  if (amRoomHost.value && !gameResults.value) {
+    if (activeSession.value) roomChat.sendGameAbort()
+    // 리듬은 전용 채널이라 game/abort가 닿지 않는다 — 안 보내면 서버 세션이 endAt까지
+    // 남아 방이 PLAYING에 묶이고 다음 게임이 "이미 진행 중"으로 거절된다.
+    // 서버가 멱등이라 라운드가 없을 때(시작 화면) 보내도 무해하다.
+    else if (activeGame.value?.id === 'rhythm' && !rhythmEnded.value) roomChat.sendRhythmAbort()
+  }
   void lk.unpublishGameScreen()
   gamePrep.value = null
   sessionEntry.value = null
@@ -1470,11 +1694,13 @@ watch(
 )
 
 /**
- * 방장 위임(-72) 반영. 방장이 나가면 서버가 남은 참가자 중 가장 먼저 들어온 사람에게 넘기고
+ * 방장 변경(-72 자동 이양 / -180 수동 위임) 반영. 서버가 hostUserId를 바꾸고
  * LiveRoomHostChangedEvent를 쏜다. 이걸 반영하지 않으면 서버 hostUserId는 바뀌었는데 화면은
  * 입장 시 조회한 값을 계속 들고 있어 <b>아무에게도 시작 권한이 안 보인다</b>(새로고침해야 정상화).
  *
  * 방장이 바뀌는 건 조용히 지나가면 안 되는 변화라 안내도 띄운다 — 특히 내가 방장이 된 경우.
+ * 원인(hostReason)까지 실어야 하는 이유: 자동 이양은 방장이 <b>없어서</b> 넘어간 것이고 수동
+ * 위임은 방장이 <b>있는 채로</b> 넘긴 것이라, "방장이 나가서"를 그대로 쓰면 후자에선 거짓말이 된다.
  */
 watch(
   () => roomChat.hostChanged.value,
@@ -1485,11 +1711,14 @@ watch(
     // 아직 공개되지 않은 방(방장이 기기 점검 중에 나가 버린 경우)이라면 여기서 목록에 올린다 —
     // 내가 방장이 됐고 나는 이 화면에 있으니 공개 조건을 그대로 만족한다. 이미 공개된 방이면 서버가 무시한다.
     if (e.hostUserId === myParticipantId.value) void publishRoom()
-    // 결과만 알리면 "왜 갑자기?"가 되므로 원인(방장 퇴장)을 함께 붙인다.
+    // 결과만 알리면 "왜 갑자기?"가 되므로 원인(방장 퇴장 / 위임)을 함께 붙인다.
+    const delegated = e.hostReason === 'DELEGATED'
     flash(
       e.hostUserId === myParticipantId.value
-        ? '방장이 나가서 내가 새 방장이 되었어요'
-        : `방장이 나가서 ${e.hostDisplayName}님이 새 방장이 되었어요`,
+        ? (delegated ? '방장을 넘겨받았어요' : '방장이 나가서 내가 새 방장이 되었어요')
+        : (delegated
+            ? `${e.hostDisplayName}님이 새 방장이 되었어요`
+            : `방장이 나가서 ${e.hostDisplayName}님이 새 방장이 되었어요`),
     )
   },
 )
@@ -1610,6 +1839,36 @@ async function addFriend(target: ParticipantView | null) {
 }
 
 /**
+ * 방장 위임(-180) 확인 모달. 되돌리려면 새 방장이 다시 넘겨줘야 하므로 한 번 묻는다.
+ * 강퇴(openKick)와 같은 구조 — 브라우저 confirm()은 방 화면 밖으로 튀어나와 톤이 깨진다.
+ */
+const delegateTarget = ref<ParticipantView | null>(null)
+const delegating = ref(false)
+function openDelegate(target: ParticipantView | null) {
+  if (!amRoomHost.value || !target) return
+  delegateTarget.value = target
+}
+function closeDelegate() {
+  if (!delegating.value) delegateTarget.value = null
+}
+/**
+ * 성공 안내는 여기서 띄우지 않는다 — 서버가 쏘는 HOST_CHANGED가 방 전원에게 돌아오고,
+ * hostChanged watch가 나를 포함한 모두에게 같은 문구로 알린다. 여기서도 띄우면 나만 두 번 본다.
+ */
+async function confirmDelegate() {
+  if (!delegateTarget.value || delegating.value) return
+  delegating.value = true
+  try {
+    await roomsApi.delegateHost(roomCode.value, delegateTarget.value.identity)
+    delegateTarget.value = null
+  } catch (e) {
+    flash(e instanceof ApiError ? e.message : '방장을 넘기지 못했어요')
+  } finally {
+    delegating.value = false
+  }
+}
+
+/**
  * 실시간 연결이 끊겼음을 방 안에서 드러낸다.
  *
  * <p>채팅·게임 시작·진행 중계가 전부 전역 소켓 하나(-142)를 쓴다. 끊긴 줄 모르면 "눌러도
@@ -1624,21 +1883,52 @@ function reloadPage() {
   window.location.reload()
 }
 
-const startLabel = computed(() => 'GAME')
+const startLabel = computed(() => 'GAME START')
 /**
  * 게임 선택 버튼 잠금 — 서버 연결 중에는 방장 여부를 알기 전까지 잠근다(제안 오발신 방지).
  * STOMP 미연결(백엔드 미연동 로컬 데모)에서는 상세 조회가 영영 안 끝나므로 잠그지 않는다 —
  * 이때 열리는 게임은 로컬 솔로 폴백뿐이고 제안 발신은 useRoomChat이 미연결 시 무시한다.
  */
+/**
+ * 스코어보드 위치 — 게임마다 화면이 달라 기본 자리가 무언가를 가린다(핑거 스타는 종료 ✕,
+ * 바디핏·낚시는 각자의 HUD). 게임별로 자리를 잡아 주는 대신 직접 옮기게 하고 그 자리를 기억한다.
+ */
+const {
+  el: scoreEl,
+  style: scoreStyle,
+  dragging: scoreDragging,
+  onHandleDown: onScoreDown,
+  onHandleMove: onScoreMove,
+  onHandleUp: onScoreUp,
+  reset: resetScorePos,
+} = useDraggablePanel('motiontok:scoreboard-pos')
+
 const pickerLocked = computed(() => roomChat.connected.value && !detailLoaded.value)
+/**
+ * 판이 도는 중인가 — 이 동안에는 GAME 버튼을 잠근다.
+ *
+ * <p>게임이 떠 있으면 푸터가 가려질 것 같지만 그렇지 않다. 게임은 셀프 타일 자리에 뜨고
+ * 푸터는 그대로 남는다 — 게다가 비방장이 중간에 ✕로 나가면 화면은 없고 라운드만 도는
+ * 상태가 된다(그때 "게임 복귀" 버튼이 뜬다). 그 상태에서 GAME을 누르면 방장은 서버가
+ * GAME_SESSION_ALREADY_ACTIVE로 거절하고, 비방장은 아무 소용 없는 제안을 쏜다.</p>
+ *
+ * <p>세 값을 다 보는 이유 — activeSession은 공용 세션만 잡는다(리듬은 전용 채널이라 늘 비어
+ * 있다), activeGame은 내 화면에 게임이 떠 있는지, gamePrep은 시작을 눌러 준비 확인 중인지다.
+ * 하나라도 서 있으면 "종료하기 전"이다.</p>
+ */
+const gameInProgress = computed(
+  () => !!activeSession.value || !!activeGame.value || !!gamePrep.value,
+)
 const startHint = computed(() =>
-  !roomChat.connected.value
-    ? '오프라인 — 로컬 게임을 플레이할 수 있어요'
-    : !detailLoaded.value
-      ? '방 정보를 불러오는 중…'
-      : amRoomHost.value
-        ? '게임을 선택하고 시작!'
-        : '하고 싶은 게임을 제안해보세요',
+  gameInProgress.value
+    ? '이미 게임이 진행 중입니다'
+    : !roomChat.connected.value
+      ? '오프라인 — 로컬 게임을 플레이할 수 있어요'
+      : !detailLoaded.value
+        ? '방 정보를 불러오는 중…'
+        : amRoomHost.value
+          ? '게임을 선택하고 시작!'
+          : '하고 싶은 게임을 제안해보세요',
 )
 </script>
 
@@ -1730,13 +2020,16 @@ const startHint = computed(() =>
             :cover="coverFor(slot)"
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
+            :effect="effectFor(slot)"
             play-audio
             mirror
             compact
             :can-kick="amRoomHost && !!slot.view"
             :can-invite="!activeGame"
+            :can-delegate="amRoomHost && !activeGame && !!slot.view"
             @kick="openKick(slot.view)"
             @friend="addFriend(slot.view)"
+            @delegate="openDelegate(slot.view)"
             @volume="changeVolume(slot, $event)"
           />
         </div>
@@ -1753,7 +2046,15 @@ const startHint = computed(() =>
             playsinline
             muted
             class="self-video"
+            :style="selfCameraFilterStyle"
             @loadedmetadata="syncSelfVideoAspect"
+          />
+          <!-- 내 뽀샤시 — 편집 중에도 결과를 그대로 보여야 세기를 맞출 수 있다.
+               이 타일은 언제나 내 카메라라 게임 화면 여부를 따지지 않는다. -->
+          <CameraEffectLayer
+            v-if="selfCamOn && decor.cameraEffect.value && hasGlowLayer(decor.cameraEffect.value.kind)"
+            class="self-fx-layer"
+            :intensity="decor.cameraEffect.value.intensity"
           />
           <!-- 상대 타일(ParticipantTile)과 같은 오버레이 — self-video는 좌우 반전이라 mirrored,
                fit은 <video>의 object-fit과 같아야 영상 안 같은 자리에 얹힌다. -->
@@ -1793,6 +2094,14 @@ const startHint = computed(() =>
               </button>
             </div>
             <p v-else class="game-decor-empty">{{ decor.loading.value ? '불러오는 중…' : '보유한 꾸미기 아이템이 없어요' }}</p>
+            <!-- 효과는 영상 위 손잡이가 없어 크기 조절 자리를 이 슬라이더가 대신한다 -->
+            <EffectIntensitySlider
+              v-if="decor.cameraEffect.value"
+              class="game-decor-fx"
+              :intensity="decor.cameraEffect.value.intensity"
+              :label="`${EFFECT_LABEL[decor.cameraEffect.value.kind]} 세기`"
+              @change="decor.setIntensity(decor.cameraEffect.value!.itemId, $event)"
+            />
             <button v-if="decor.placements.value.length" type="button" class="game-decor-save" :disabled="decor.saving.value" @click="saveGameDecor">
               {{ decor.saving.value ? '저장 중…' : decor.dirty.value ? '꾸미기 저장 *' : '꾸미기 저장' }}
             </button>
@@ -1837,6 +2146,8 @@ const startHint = computed(() =>
             :challenge="poseChallenge"
             :scores="scoreboardRows"
             :setter-name="setterName"
+            :solo-difficulty="soloDifficulty"
+            :solo-wall-count="soloWallCount"
             embedded
             @close="requestCloseGame"
             @pose-submit="onPoseSubmit"
@@ -1937,13 +2248,16 @@ const startHint = computed(() =>
             :cover="coverFor(slot)"
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
+            :effect="effectFor(slot)"
             play-audio
             mirror
             compact
             :can-kick="amRoomHost && !!slot.view"
             :can-invite="!activeGame"
+            :can-delegate="amRoomHost && !activeGame && !!slot.view"
             @kick="openKick(slot.view)"
             @friend="addFriend(slot.view)"
+            @delegate="openDelegate(slot.view)"
             @volume="changeVolume(slot, $event)"
           />
         </div>
@@ -1957,23 +2271,38 @@ const startHint = computed(() =>
             :cover="coverFor(slot)"
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
+            :effect="effectFor(slot)"
             play-audio
             mirror
             :can-kick="amRoomHost && !!slot.view"
             :can-invite="!activeGame"
+            :can-delegate="amRoomHost && !activeGame && !!slot.view"
             @kick="openKick(slot.view)"
             @friend="addFriend(slot.view)"
+            @delegate="openDelegate(slot.view)"
             @volume="changeVolume(slot, $event)"
           />
         </div>
 
-        <!-- 실시간 스코어보드 (게임 중, S15P11A706-82) -->
+        <!-- 실시간 스코어보드 (게임 중, S15P11A706-82) — 제목 줄을 잡아 옮길 수 있다 -->
         <div
           v-if="activeSession && !gameResults"
+          ref="scoreEl"
           class="px game-scoreboard"
-          :class="{ bf: activeGame?.id === 'shape' }"
+          :class="{ bf: activeGame?.id === 'shape', fs: activeGame?.id === 'finger', dragging: scoreDragging }"
+          :style="scoreStyle"
         >
-          <div class="gs-title">⭐ LIVE SCORE</div>
+          <div
+            class="gs-title"
+            title="끌어서 옮기기 · 더블클릭하면 제자리로"
+            @pointerdown="onScoreDown"
+            @pointermove="onScoreMove"
+            @pointerup="onScoreUp"
+            @pointercancel="onScoreUp"
+            @dblclick="resetScorePos"
+          >
+            ⭐ LIVE SCORE <span class="gs-grip" aria-hidden="true">⠿</span>
+          </div>
           <div
             v-for="row in scoreboardRows"
             :key="row.userId"
@@ -2095,19 +2424,39 @@ const startHint = computed(() =>
           </div>
         </template>
       </div>
-      <button
-        class="px start-btn footer-start-btn"
-        :class="{ suggest: !amRoomHost }"
-        :disabled="pickerLocked || (detailLoaded && !amRoomHost && suggestCooldown)"
-        :title="startHint"
-        @click="openPicker"
-      >
-        <span class="play-ico">▶</span>
-        <span class="start-title">{{ startLabel }}</span>
-      </button>
       </div>
 
+      <!-- 게임 시작·나가기는 한 쌍으로 오른쪽에 세운다 — 채팅 그룹에 끼워 두면 가운데 컨트롤에
+           시선을 빼앗겨 주 행동이 눈에 안 들어온다.
+
+           1인 플레이 방에서 한 판을 하고 나면 게임 선택(GAME START) 대신 다시하기다(-109).
+           게임을 골라 들어온 방이라 여기서 다른 게임까지 고를 수 있으면 고른 게 무의미해진다.
+           아직 한 판도 안 돈 방(자동 시작 실패 등)은 골라야 하므로 GAME START 그대로 둔다.
+           둘은 v-if/v-else 한 쌍이라 반드시 같은 부모 안에 나란히 있어야 한다. -->
       <div class="footer-right">
+        <button
+          v-if="isSoloPlay && lastPlayed"
+          class="px start-btn footer-start-btn solo-replay"
+          :disabled="pickerLocked || gameInProgress"
+          :title="gameInProgress ? startHint : `${lastPlayed.name} 다시하기`"
+          :aria-disabled="gameInProgress"
+          @click="replaySolo"
+        >
+          <span class="play-ico">↻</span>
+          <span class="start-title">다시하기</span>
+        </button>
+        <button
+          v-else
+          class="px start-btn footer-start-btn"
+          :class="{ suggest: !amRoomHost }"
+          :disabled="pickerLocked || gameInProgress || (detailLoaded && !amRoomHost && suggestCooldown)"
+          :title="startHint"
+          :aria-disabled="gameInProgress"
+          @click="openPicker"
+        >
+          <span class="play-ico">▶</span>
+          <span class="start-title">{{ startLabel }}</span>
+        </button>
         <button class="px leave" @click="leave">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4M9 16l4-4-4-4M13 12H3" /></svg>
           LEAVE
@@ -2116,7 +2465,27 @@ const startHint = computed(() =>
     </footer>
 
     <!-- 게임 선택 모달 -->
-    <GamePicker v-if="picker" :closed-game-ids="closedGameIds" @close="picker = false" @launch="pick" />
+    <GamePicker
+      v-if="picker"
+      :games="gameEntries"
+      :is-host="selfIsHost"
+      @close="picker = false"
+      @launch="pick"
+      @guide="openGuide"
+    />
+
+    <!-- 설명 함께 보기 — 방장이 넘기면 방 전원 화면이 같이 넘어간다 -->
+    <RoomGuideModal
+      v-if="guideOpen && guideGame && guideState"
+      :game="guideGame"
+      :pages="guidePages"
+      :page="guideState.page"
+      :is-host="selfIsHost"
+      @update:page="setGuidePage"
+      @start="startFromGuide"
+      @back="guideBackToPicker"
+      @dismiss="guideDismissed = true"
+    />
 
     <!-- 게임④(-9) 설정 창 — 모드·벽 수·난이도. 옵션이 있는 게임만 이 단계를 거친다 -->
     <GameSetupModal
@@ -2152,19 +2521,32 @@ const startHint = computed(() =>
       @create="submitSettings"
     />
 
+    <!-- 게스트 1인 플레이 마무리(-109) — 어느 버튼을 눌러도 방을 나간다(leaveGuestRoom 참고) -->
+    <GuestSignupPromptModal
+      v-if="guestWrapUp"
+      dismiss-label="확인"
+      @close="leaveSoloRoom()"
+      @signup="leaveSoloRoom('signup')"
+      @login="leaveSoloRoom('login')"
+    />
+
     <!-- 게임 ✕ 확인(-164) — 방장은 전체 종료, 비방장은 이번 판 이탈(복귀 가능) -->
     <PixelModal v-if="closeGameConfirm" variant="lobby" @close="closeGameConfirm = false">
       <div class="leave-confirm">
         <span class="leave-icon" aria-hidden="true">🎮</span>
         <p class="leave-kicker">GAME EXIT</p>
-        <h3 class="leave-title">{{ amRoomHost ? '전체 게임을 종료할까요?' : '게임에서 나갈까요?' }}</h3>
+        <!-- 게스트는 혼자라 "모든 참가자"도 "대기실"도 해당이 없다 — 끝내면 게임 선택으로 나간다 -->
+        <h3 class="leave-title">{{ session.isGuest ? '게임을 끝낼까요?' : amRoomHost ? '전체 게임을 종료할까요?' : '게임에서 나갈까요?' }}</h3>
         <p class="leave-desc">
-          <template v-if="amRoomHost">방장이 종료하면 모든 참가자의 게임이 함께 끝나요.<br />이번 판 점수는 기록되지 않습니다.</template>
+          <template v-if="session.isGuest">하던 판이 사라지고 게임 선택으로 돌아가요.<br />이번 판 점수는 기록되지 않습니다.</template>
+          <template v-else-if="amRoomHost && hostCloseEndsAll">방장이 종료하면 모든 참가자의 게임이 함께 끝나요.<br />이번 판 점수는 기록되지 않습니다.</template>
+          <!-- 솔로 연습(게임④) — 서버 세션이 없어 같이 끝날 사람이 없다 -->
+          <template v-else-if="amRoomHost">하던 판이 사라지고 대기실로 돌아가요.<br />이번 판 점수는 기록되지 않습니다.</template>
           <template v-else>게임은 계속 진행돼요.<br />라운드가 끝나기 전이라면 ‘게임 복귀’로 다시 들어올 수 있어요.</template>
         </p>
         <div class="leave-confirm-actions">
           <PixelButton class="leave-cancel" block @click="closeGameConfirm = false">계속 하기</PixelButton>
-          <PixelButton class="leave-submit" block @click="confirmCloseGame">{{ amRoomHost ? '전체 종료' : '나가기' }}</PixelButton>
+          <PixelButton class="leave-submit" block @click="confirmCloseGame">{{ session.isGuest ? '끝내기' : amRoomHost ? '전체 종료' : '나가기' }}</PixelButton>
         </div>
       </div>
     </PixelModal>
@@ -2197,6 +2579,22 @@ const startHint = computed(() =>
         <div class="leave-confirm-actions">
           <PixelButton class="leave-cancel" block :disabled="kicking" @click="closeKick">취소</PixelButton>
           <PixelButton class="leave-submit" block :disabled="kicking" @click="confirmKick">강퇴하기</PixelButton>
+        </div>
+      </div>
+    </PixelModal>
+
+    <!-- 방장 위임 확인(-180) -->
+    <PixelModal v-if="delegateTarget" variant="lobby" @close="closeDelegate">
+      <div class="leave-confirm">
+        <span class="leave-icon" aria-hidden="true">👑</span>
+        <p class="leave-kicker">HOST CONTROL</p>
+        <h3 class="leave-title">{{ delegateTarget.name }}님에게 방장을 넘길까요?</h3>
+        <p class="leave-desc">
+          게임 시작·방 설정·강퇴 권한이 함께 넘어가요. 되돌리려면 새 방장이 다시 넘겨줘야 해요.
+        </p>
+        <div class="leave-confirm-actions">
+          <PixelButton class="leave-cancel" block :disabled="delegating" @click="closeDelegate">취소</PixelButton>
+          <PixelButton class="leave-submit" block :disabled="delegating" @click="confirmDelegate">넘기기</PixelButton>
         </div>
       </div>
     </PixelModal>
@@ -2413,13 +2811,32 @@ const startHint = computed(() =>
   border-radius: 12px;
   box-shadow: var(--shadow-sm);
 }
-.gs-title { font-size: 8px; color: #f0a815; margin-bottom: 8px; }
+.gs-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 8px;
+  color: #f0a815;
+  cursor: grab;
+  /* 손잡이를 끄는 동안 브라우저가 스크롤·선택으로 가로채지 않게 */
+  touch-action: none;
+  user-select: none;
+}
+.gs-grip { color: #c9b48b; font-size: 10px; letter-spacing: -1px; }
+.game-scoreboard.dragging { cursor: grabbing; }
+.game-scoreboard.dragging .gs-title { cursor: grabbing; }
 .gs-row { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; font-size: 8px; color: var(--c-ink-soft); }
 .gs-row.me .gs-name { color: #f0a815; }
 .gs-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 110px; }
 .gs-val { color: #5cbf4a; white-space: nowrap; }
 .gs-empty { font-size: 7px; color: #a99f86; }
 .gs-badge { font-size: 7px; font-weight: 800; padding: 2px 6px; border: 1px solid; border-radius: 6px; white-space: nowrap; }
+
+/* 핑거 스타 — 게임 상단 바(top 40px, 높이 약 46px) 아래로 내린다.
+   z-index:5라 그냥 두면 상단 바 오른쪽 끝의 게임 종료 ✕를 덮는다 */
+.game-scoreboard.fs { top: 92px; }
 
 /* 게임④(-9) 전용 다크 테마 — 인게임 화면(BodyFitGame)과 톤을 맞춘다 */
 .game-scoreboard.bf { background: rgba(18, 20, 43, 0.96); border-color: rgba(255, 255, 255, 0.12); }
@@ -2663,7 +3080,11 @@ const startHint = computed(() =>
 .bubble.full.suggest { background: rgba(214, 244, 233, 0.9); }
 
 .footer-right { grid-row: 1; grid-column: 3; justify-self: end; display: flex; align-items: center; gap: 10px; }
-.leave { display: flex; align-items: center; gap: 9px; padding: 0 18px; height: 52px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; background: var(--c-coral); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
+/* GAME START와 LEAVE는 한 쌍이라 규격을 공유한다 — 한쪽만 고치면 짝이 어긋난다. */
+/* min-width로 폭까지 맞춘다 — 안 잡으면 글자 수 차이(GAME START vs LEAVE)만큼 폭이 어긋난다.
+   내용이 넘치면 padding이 밀어내므로 짧은 쪽만 늘어나고 긴 쪽은 그대로다. */
+.footer-right > .px { display: flex; align-items: center; justify-content: center; gap: 9px; padding: 0 24px; min-width: 158px; height: 56px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; color: #fff; font-size: 11px; box-shadow: var(--shadow-sm); }
+.leave { background: var(--c-coral); }
 
 .room-toast { position: fixed; top: 50%; left: 50%; z-index: 90; padding: 13px 20px; transform: translate(-50%, -50%); background: rgba(56, 38, 61, .9); border: 0; border-radius: 9px; color: #fff; font-size: 11px; line-height: 1.7; box-shadow: none; }
 
@@ -2799,8 +3220,13 @@ const startHint = computed(() =>
   padding: 0 16px;
   white-space: nowrap;
 }
-.footer-start-btn, .footer-start-btn.suggest { position: static; flex: none; height: 50px; padding: 0 12px; border: 3px solid #4e67a3; border-radius: 7px; background: #7195df; color: #fff; box-shadow: 3px 3px 0 #4e67a3; white-space: nowrap; transform: none; }
-.footer-start-btn .start-title { font-size: 10px; }
+/* 크기·여백은 .footer-right > .px(LEAVE와 공유하는 규격)에서 온다 — 여기서는 색만 정한다.
+   나가기와 같은 코랄로 두면 시작과 나가기가 구분되지 않아 파랑을 유지한다. */
+.footer-start-btn, .footer-start-btn.suggest { position: static; flex: none; border: 3px solid #4e67a3; border-radius: 7px; background: #7195df; color: #fff; box-shadow: 3px 3px 0 #4e67a3; white-space: nowrap; transform: none; }
+/* 1인 플레이 다시하기(-109) — 원래 GAME보다 크게 잡았지만, 지금은 LEAVE와 나란히 서므로
+   높이·폭은 공유 규격을 따른다. 한 판이 끝난 자리의 유일한 할 일이라는 무게는 글자 크기로 준다. */
+.footer-start-btn.solo-replay .play-ico { font-size: 20px; }
+.footer-start-btn.solo-replay .start-title { font-size: 14px; }
 
 .room-main { gap: 18px; padding: clamp(20px, 2vw, 26px) clamp(28px, 3.6vw, 46px); }
 .cam-stage {
@@ -3123,7 +3549,8 @@ const startHint = computed(() =>
   .controls { gap: 7px; }
   .ctrl { width: 42px; height: 42px; border-width: 2px; border-radius: 11px 11px 8px 11px; }
   .chat-dock { height: 44px; padding: 0 6px 0 11px; }
-  .leave { height: 44px; padding: 0 13px; }
+  /* 좁은 화면에서도 둘은 같은 규격을 유지한다 */
+  .footer-right > .px { min-width: 132px; height: 48px; padding: 0 15px; font-size: 10px; }
   /* chat-log는 chat-dock 높이에 맞춰 띄운다 — 52+10 이었으므로 44+10 */
   .chat-log { bottom: 54px; }
 
