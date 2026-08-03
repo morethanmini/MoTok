@@ -88,6 +88,17 @@ describe('correctTapTracks', () => {
     expect(snapped.onsets.some((o) => o.timeMs === 2200)).toBe(true)
   })
 
+  it('applyLatency=false면 어떤 이동도 없다 — 친 그대로', () => {
+    const times = [760, 1260, 1760, 2333]
+    const corr = correctTapTracks(
+      { perc: times.map((t) => tap(t)), melody: [] },
+      analysis,
+      { applyLatency: false, snapWindowMs: 0 },
+    )
+    expect(corr.onsets.map((o) => o.timeMs)).toEqual(times)
+    expect(corr.latencyMs).toBe(0)
+  })
+
   it('100ms 안의 이중 입력은 하나로 접는다', () => {
     const corr = correctTapTracks({ perc: [tap(700), tap(740), tap(1200)], melody: [] }, analysis)
     expect(corr.onsets.length).toBe(2)

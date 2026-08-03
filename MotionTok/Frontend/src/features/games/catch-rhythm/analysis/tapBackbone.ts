@@ -50,8 +50,14 @@ const LATENCY_MATCH_MS = 150
 export const DEFAULT_SNAP_WINDOW_MS = 30
 
 export interface TapCorrectionOptions {
-  /** 온셋 스냅 창(±ms). 0 = 지연 보정만 */
+  /** 온셋 스냅 창(±ms). 0 = 스냅 없음 */
   snapWindowMs?: number
+  /**
+   * 계통 지연(중앙값) 제거를 적용할지. 기본 true지만, 지연 추정은 검출 온셋을 기준으로
+   * 하므로 **검출이 사람의 기준과 다르면(보컬을 따라 쳤는데 온셋은 드럼) 전체가 통째로
+   * 밀린다** — 자기 타이밍을 믿는 사람은 꺼야 한다(실사용 피드백: 70ms 일괄 밀림).
+   */
+  applyLatency?: boolean
 }
 
 function median(values: number[]): number {
@@ -99,6 +105,7 @@ export function correctTapTracks(
   options: TapCorrectionOptions = {},
 ): TapCorrection {
   const snapWindowMs = options.snapWindowMs ?? DEFAULT_SNAP_WINDOW_MS
+  const applyLatency = options.applyLatency ?? true
   const sortedOnsets = [...analysis.onsets].sort((a, b) => a.timeMs - b.timeMs)
   const perc = dedupe(taps.perc)
   const melody = dedupe(taps.melody)
@@ -109,7 +116,7 @@ export function correctTapTracks(
     const near = nearestOnset(sortedOnsets, e.t)
     if (near && Math.abs(e.t - near.timeMs) <= LATENCY_MATCH_MS) deltas.push(e.t - near.timeMs)
   }
-  const latencyMs = Math.round(median(deltas))
+  const latencyMs = applyLatency ? Math.round(median(deltas)) : 0
 
   // ── 2·3. 트랙별 보정·스냅 ──
   let matched = 0

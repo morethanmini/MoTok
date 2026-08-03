@@ -68,8 +68,16 @@ const songLengthMs = () =>
 
 const taps = ref<TapEvent[]>([])
 const slotIdx = ref(0)
-/** 온셋 스냅 창 — 0이면 지연 보정만. 넓으면 옆의 다른 소리로 빨려간다 */
-const snapWindow = ref<0 | 30 | 70>(30)
+/**
+ * 보정 모드 — 기본 '없음'(친 그대로). 지연 보정은 검출 온셋 기준이라 사람의 기준과
+ * 다르면 전체가 통째로 밀린다(실사용: 70ms 일괄 밀림 → 퍼펙트가 느려 보임).
+ */
+const correction = ref<'none' | 'latency' | 'snap30' | 'snap70'>('none')
+const correctionOpts = computed(() => ({
+  applyLatency: correction.value !== 'none',
+  snapWindowMs:
+    correction.value === 'snap30' ? 30 : correction.value === 'snap70' ? 70 : 0,
+}))
 
 /** 슬롯 목표 길이 — 마디 단위로 맞추되 이 근처가 되게 */
 const SLOT_TARGET_MS = 10_000
@@ -124,9 +132,7 @@ function selectSlot(i: number) {
 /** 탭 보정 결과 — 직접 찍는 난이도에서만 쓴다 */
 const backbone = computed(() => {
   if (!analysis.value || !isTapped.value || taps.value.length === 0) return null
-  return correctTapTracks({ perc: [], melody: taps.value }, analysis.value, {
-    snapWindowMs: snapWindow.value,
-  })
+  return correctTapTracks({ perc: [], melody: taps.value }, analysis.value, correctionOpts.value)
 })
 
 // ── 탭 자동 저장 — 곡 파일명 + 난이도별로 따로 산다 ──
@@ -964,15 +970,16 @@ onBeforeUnmount(() => {
       <section class="controls tapbox">
         <b>{{ difficulty }} 슬롯 채보</b>
         <span class="dim">{{ doneCount }}/{{ slots.length }} 슬롯 완료</span>
-        <span v-if="backbone" class="dim">
+        <span v-if="backbone && correction !== 'none'" class="dim">
           · 지연 보정 {{ backbone.latencyMs }}ms · 온셋 일치 {{ Math.round(backbone.matchedRatio * 100) }}%
         </span>
         <label>
           보정
-          <select v-model.number="snapWindow" :disabled="tapping">
-            <option :value="0">지연만 제거</option>
-            <option :value="30">온셋 스냅 ±30ms</option>
-            <option :value="70">온셋 스냅 ±70ms</option>
+          <select v-model="correction" :disabled="tapping">
+            <option value="none">없음 — 친 그대로</option>
+            <option value="latency">지연만 제거</option>
+            <option value="snap30">지연 + 온셋 스냅 ±30ms</option>
+            <option value="snap70">지연 + 온셋 스냅 ±70ms</option>
           </select>
         </label>
         <button v-if="!previewing" type="button" :disabled="tapping || !taps.length" @click="previewAll(true)">
