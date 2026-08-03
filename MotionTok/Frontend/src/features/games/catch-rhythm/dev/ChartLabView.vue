@@ -694,7 +694,7 @@ onBeforeUnmount(() => {
             지연 보정 {{ backbone.latencyMs }}ms · 온셋 일치 {{ Math.round(backbone.matchedRatio * 100) }}%
           </span>
           <label><input v-model="useBackbone" type="checkbox" /> 백본으로 생성</label>
-          <label><input v-model="handByTrack" type="checkbox" :disabled="!useBackbone" /> 드럼=왼손·보컬=오른손</label>
+          <label><input v-model="handByTrack" type="checkbox" :disabled="!useBackbone" /> 드럼↔왼손·보컬↔오른손 성향</label>
         </template>
         <button type="button" :disabled="!percTaps.length && !melodyTaps.length" @click="exportTaps">
           탭 저장

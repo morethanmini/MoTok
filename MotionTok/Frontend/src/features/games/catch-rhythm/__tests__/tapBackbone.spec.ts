@@ -127,7 +127,8 @@ describe('백본 채보 생성', () => {
     expect(trails[2]!.durationMs!).toBeLessThanOrEqual(1700) // 물리 한계(MAX_TRAIL_MS)는 지킨다
   })
 
-  it('handByTrack: 드럼=왼손·보컬=오른손으로 못 박힌다 (캐치·링)', () => {
+  it('handByTrack은 성향이다 — 여유 있으면 드럼=왼손·보컬=오른손, 라벨은 강제 없음', () => {
+    // 손이 넉넉히 돌아오는 간격 — 성향대로 배정돼야 한다
     const corr = correctTapTracks(
       { perc: [tap(700 + 60), tap(2700 + 60)], melody: [tap(1700 + 60), tap(3700 + 60)] },
       analysis,
@@ -137,13 +138,27 @@ describe('백본 채보 생성', () => {
       handByTrack: true,
     })
     for (const n of catchChart.notes) {
-      expect(n.hand).toBe(n.source === 'perc' ? 'left' : 'right')
-      expect(n.owner).toBe(n.hand)
+      expect(n.owner).toBe(n.source === 'perc' ? 'left' : 'right')
+      // 라벨은 기존 규칙(대부분 any) — 성향이지 강제가 아니다
+      expect(['any', n.owner]).toContain(n.hand)
     }
+    // 링은 손을 못 박지 않고 위치로만 유도 — 드럼 왼쪽 반원, 보컬 오른쪽 반원
     const ring = generateSongRingChart(analysis, 'NORMAL', 42, {
       backbone: corr.onsets,
       handByTrack: true,
     })
-    expect(ring.notes.every((n) => n.hand === 'left' || n.hand === 'right')).toBe(true)
+    expect(ring.notes.every((n) => n.hand === undefined)).toBe(true)
+  })
+
+  it('handByTrack: 지정 손이 연타 한계로 바쁘면 반대손으로 넘긴다 — 노트를 버리지 않는다', () => {
+    // 드럼 두 개를 200ms 간격(NORMAL 같은손 최소 380ms 미만)으로 — 강제였다면 둘째가 사라진다
+    const corr = correctTapTracks({ perc: [tap(950 + 60), tap(1150 + 60)], melody: [] }, analysis)
+    const chart = generateSongCatchChart(analysis, 'NORMAL', 42, {
+      backbone: corr.onsets,
+      handByTrack: true,
+    })
+    expect(chart.notes.length).toBe(2)
+    expect(chart.notes[0]!.owner).toBe('left')
+    expect(chart.notes[1]!.owner).toBe('right') // 폴백
   })
 })

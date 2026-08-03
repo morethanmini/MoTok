@@ -54,7 +54,11 @@ export interface SongChartOptions {
    * 밀도 컷 없이 사람이 친 것 전부가 노트 시각이 되고, 격자 스냅·지속음 매칭·배치만 기계가 한다.
    */
   backbone?: AnalyzedOnset[] | null
-  /** 트랙을 손에 고정: perc(드럼)=왼손, melody(보컬)=오른손. any 없이 명시 지정된다. */
+  /**
+   * 트랙→손 **성향**: perc(드럼)는 왼손을, melody(보컬)는 오른손을 우선 시도한다(배치도 그쪽).
+   * 강제가 아니다 — 그 손이 연타 한계로 못 받으면 반대손으로 넘기고, 손 라벨도
+   * 기존처럼 대부분 any라 플레이어는 아무 손으로나 칠 수 있다.
+   */
   handByTrack?: boolean
 }
 
@@ -396,37 +400,30 @@ export function generateSongCatchChart(
     const timeMs = toGame(onset.pickedMs)
     if (timeMs < LEAD_IN_MS) continue
 
-    // 트랙→손 고정 모드: perc=왼손, melody=오른손 — 사람이 두 패스로 나눠 친 의도 그대로
-    const mappedHand: Hand | null = opts.handByTrack
+    // 트랙→손 성향: perc=왼손, melody=오른손을 **우선 시도**한다. 강제가 아니라
+    // 그 손이 바쁘면 아래 폴백이 반대손으로 넘긴다(노트를 버리지 않는 게 우선).
+    const preferredHand: Hand = opts.handByTrack
       ? onset.source === 'perc'
         ? 'left'
         : 'right'
-      : null
-    // 아주 강한 온셋(드랍·강박)은 NORMAL 이상에서 양손 동시 노트가 된다 (손 고정 시 제외)
+      : nextHand
+    // 아주 강한 온셋(드랍·강박)은 NORMAL 이상에서 양손 동시 노트가 된다
     const simultaneous =
-      !mappedHand &&
-      preset.simultaneous > 0 &&
-      onset.strength >= 1.6 &&
-      rng() < preset.simultaneous * 2
+      preset.simultaneous > 0 && onset.strength >= 1.6 && rng() < preset.simultaneous * 2
     /** 이 손이 이 시각에 새 노트를 받을 수 있는가 — 연타 한계 */
     const ready = (hand: Hand): boolean => {
       const prev = lastByHand[hand]
       return !prev || timeMs - endTimeOf(prev) >= preset.minSameHandGapMs
     }
-    // 단일 노트는 교대 손이 기본이되, 그 손이 못 돌아왔으면 반대손으로 넘긴다 —
-    // 온셋(곡의 소리)을 버리는 것은 양손 다 막혔을 때뿐이다.
-    // 손 고정 모드에서는 반대손 폴백이 없다 — 지정한 손이 못 치면 그 온셋은 접는다.
-    const owners: Hand[] = mappedHand
-      ? ready(mappedHand)
-        ? [mappedHand]
-        : []
-      : simultaneous
-        ? (['left', 'right'] as Hand[]).filter(ready)
-        : ready(nextHand)
-          ? [nextHand]
-          : ready(other(nextHand))
-            ? [other(nextHand)]
-            : []
+    // 우선 손(성향 또는 교대)이 기본이되, 못 돌아왔으면 반대손으로 넘긴다 —
+    // 온셋(곡의 소리)을 버리는 것은 양손 다 막혔을 때뿐이다
+    const owners: Hand[] = simultaneous
+      ? (['left', 'right'] as Hand[]).filter(ready)
+      : ready(preferredHand)
+        ? [preferredHand]
+        : ready(other(preferredHand))
+          ? [other(preferredHand)]
+          : []
 
     const placedThisOnset: Obstacle[] = []
     let placedAny = false
@@ -454,7 +451,7 @@ export function generateSongCatchChart(
         usedDt,
       )
 
-      const hand: NoteHand = mappedHand ?? (rng() < preset.anyRate ? 'any' : usedOwner)
+      const hand: NoteHand = rng() < preset.anyRate ? 'any' : usedOwner
       const note: SongCatchNote = {
         timeMs,
         x,
@@ -615,8 +612,11 @@ export function generateSongRingChart(
 
   for (const onset of picked) {
     const timeMs = Math.round(onset.pickedMs)
+    // 트랙→손 성향: 드럼은 왼쪽 반원, 보컬은 오른쪽 반원에 **주로** 놓는다.
+    // 손을 못 박는 게 아니라(hand는 그대로 any) 위치로 자연스럽게 유도하는 것.
+    const useSide: 'R' | 'L' = opts.handByTrack ? (onset.source === 'perc' ? 'L' : 'R') : side
     // melody: 음높이 등고선(멜로디를 따라 부르는 느낌) / perc: 시드 난수 — 리듬 뼈대는 자유 배치
-    let lane = laneFor(onset.source === 'melody' ? onset.pitch : rng(), side)
+    let lane = laneFor(onset.source === 'melody' ? onset.pitch : rng(), useSide)
     if (prevLane !== null) {
       const dt = timeMs - prevEndMs
       const diff = laneDiff(prevLane, lane)
@@ -625,7 +625,6 @@ export function generateSongRingChart(
     }
 
     const note: RingDraftNote = { timeMs, lane }
-    if (opts.handByTrack) note.hand = onset.source === 'perc' ? 'left' : 'right'
     // 탭 홀드(사람 의도)는 문턱을 낮춰서 존중한다
     if (onset.sustain && onset.sustain.durationMs >= (onset.holdMs ? 300 : 500)) {
       note.type = 'hold'
