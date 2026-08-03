@@ -8,10 +8,11 @@
  * 서버가 준 serverNow를 t=0으로 맞추므로 전원이 같은 순간에 같은 노트를 본다.
  * **솔로 폴백**: STOMP가 안 붙었으면 로컬 시드로 혼자 돈다.
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import { preloadHandLandmarker } from '@/composables/useHandLandmarker'
 import CatchRhythmStage from './CatchRhythmStage.vue'
 import { DIFFICULTIES, type Difficulty } from './generator/presets'
+import { BUNDLED_SONGS, loadBundledChart, type LoadedBundle } from './generator/bundledCharts'
 import { useRhythmSession } from './useRhythmSession'
 import type { Judgement } from './core/types'
 import type { RhythmLiveRow } from './rhythmTypes'
@@ -41,6 +42,10 @@ const SOLO_ROUND_MS = 60_000
 
 const difficulty = ref<Difficulty>('NORMAL')
 const mode = ref<GameMode>('catch')
+/** 선택한 번들 곡(-168). null = 기존 랜덤(시드) 채보 */
+const selectedSong = ref<string | null>(null)
+/** 이번 라운드에 쓸 번들 — 곡 라운드는 이게 로드돼야 스테이지를 연다 */
+const activeBundle = shallowRef<LoadedBundle | null>(null)
 const errorMsg = ref('')
 const soloSeed = ref<number | null>(null)
 /** 손 인식 모델 준비 상태 — 0~1. 1이면 시작해도 첫 노트를 안 놓친다 */
@@ -52,8 +57,25 @@ const roomId = computed(() => props.roomId)
 const session = useRhythmSession(props.roomChat, roomId)
 
 const isMultiplayer = computed(() => props.roomChat.connected.value)
-/** 대전은 서버 라운드, 솔로는 로컬 시드 */
-const playing = computed(() => session.round.value !== null || soloSeed.value !== null)
+/** 대전은 서버 라운드, 솔로는 로컬 시드. 곡 라운드는 번들이 로드돼야 화면을 연다 */
+const playing = computed(() => {
+  const round = session.round.value
+  if (round) return !round.song || activeBundle.value !== null
+  if (soloSeed.value === null) return false
+  return !selectedSong.value || activeBundle.value !== null
+})
+
+/** 곡 라운드의 스테이지 주입 채보 — 시드 라운드면 null(기존 경로) */
+const stageChart = computed(() => {
+  const b = activeBundle.value
+  if (!b) return null
+  const round = session.round.value
+  if (round && !round.song) return null
+  if (!round && !selectedSong.value) return null
+  const m = round?.mode ?? mode.value
+  return m === 'catch' ? b.catch : b.ring
+})
+const stageSong = computed(() => (stageChart.value && activeBundle.value ? activeBundle.value.song : null))
 
 const MODES: { id: GameMode; label: string; hint: string }[] = [
   { id: 'catch', label: '캐치', hint: '화면 곳곳의 음표를 손으로 잡아요' },
@@ -79,16 +101,39 @@ const liveRows = computed<RhythmLiveRow[]>(() =>
     .slice(0, 4),
 )
 
-function start() {
+async function start() {
   errorMsg.value = ''
   submitted.value = false
+  const chosen = selectedSong.value
   if (isMultiplayer.value) {
-    if (props.isHost && !session.start(difficulty.value, mode.value)) {
-      errorMsg.value = '서버에 연결되어 있지 않아요'
+    if (!props.isHost) return // 비방장은 RHYTHM_START를 기다린다
+    if (!chosen) {
+      if (!session.start(difficulty.value, mode.value)) {
+        errorMsg.value = '서버에 연결되어 있지 않아요'
+      }
+      return
     }
-    return // 비방장은 RHYTHM_START를 기다린다
+    // 곡 라운드(-168): 번들을 먼저 읽어 곡 길이를 서버에 알려야 endAt이 곡에 맞는다
+    try {
+      const bundle = await loadBundledChart(chosen)
+      const durationSec = Math.ceil((bundle.durationMs + 2000) / 1000)
+      if (!session.start(bundle.difficulty, mode.value, { id: chosen, durationSec })) {
+        errorMsg.value = '서버에 연결되어 있지 않아요'
+      }
+    } catch (err) {
+      errorMsg.value = (err as Error).message
+    }
+    return
   }
-  // 서버 미연동 — 로컬 시드로 혼자 플레이
+  // 서버 미연동 — 로컬 플레이 (곡을 골랐으면 번들 채보, 아니면 로컬 시드)
+  if (chosen) {
+    try {
+      activeBundle.value = await loadBundledChart(chosen)
+    } catch (err) {
+      errorMsg.value = (err as Error).message
+      return
+    }
+  }
   soloSeed.value = Math.floor(Math.random() * 2 ** 31)
 }
 
@@ -145,6 +190,27 @@ watch(
   },
 )
 
+// 곡 라운드면 전원이 같은 번들(정적 자산)을 읽는다 — 로드 전까지 스테이지는 열리지 않고,
+// 자산이 없는 클라이언트는 라운드를 접는다(방장이 자산 없는 곡을 고른 배포 사고 대비).
+watch(
+  () => session.round.value?.song ?? null,
+  async (songId) => {
+    if (!songId) return
+    try {
+      activeBundle.value = await loadBundledChart(songId)
+    } catch {
+      errorMsg.value = '곡 채보 자산을 불러올 수 없어요'
+      session.reset()
+    }
+  },
+  { immediate: true },
+)
+
+// 곡을 고르면 탭 전용 링(ringTap)은 지원하지 않는다 — 번들에는 catch·ring 두 벌뿐
+watch(selectedSong, (chosen) => {
+  if (chosen && mode.value === 'ringTap') mode.value = 'ring'
+})
+
 // 라운드 정산(RHYTHM_END) → 부모에게 알린다. 별자리의 GAME_END와 같은 계약 —
 // 부모가 전원의 게임 화면 송출을 내려서, 결과 화면을 닫지 않아도 모든 타일이 카메라로 복귀한다.
 //
@@ -177,16 +243,21 @@ watch(
       ✕
     </button>
 
-    <!-- 대전: 서버 시드·서버 t=0 / 솔로: 로컬 시드 -->
+    <!-- 대전: 서버 시드·서버 t=0 / 솔로: 로컬 시드 / 곡 라운드: 번들 채보+곡 주입 -->
     <CatchRhythmStage
       v-if="playing"
       ref="stage"
       :key="session.round.value?.sessionId ?? soloSeed ?? 0"
       :seed="session.round.value?.seed ?? soloSeed ?? 0"
       :difficulty="session.round.value?.difficulty ?? difficulty"
-      :duration-ms="session.round.value?.durationMs ?? SOLO_ROUND_MS"
+      :duration-ms="
+        session.round.value?.durationMs ??
+        (stageChart ? stageChart.durationMs + 2000 : SOLO_ROUND_MS)
+      "
       :epoch-zero-ms="session.round.value?.epochZeroMs ?? null"
       :mode="session.round.value?.mode ?? mode"
+      :chart="stageChart"
+      :song="stageSong"
       :video="video"
       @finished="onFinished"
       @progress="onProgress"
@@ -224,12 +295,38 @@ watch(
 
     <div v-if="!playing" class="ready">
       <p class="title">캐치캐치리듬</p>
-      <p class="desc">모드 · 난이도 설정</p>
+      <p class="desc">곡 · 모드 · 난이도 설정</p>
+
+      <div class="levels">
+        <button
+          type="button"
+          class="px level"
+          :class="{ on: selectedSong === null }"
+          :disabled="isMultiplayer && !isHost"
+          title="분석 기반 랜덤 채보 — 매판 다르게"
+          @click="selectedSong = null"
+        >
+          랜덤 채보
+        </button>
+        <button
+          v-for="s in BUNDLED_SONGS"
+          :key="s.id"
+          type="button"
+          class="px level"
+          :class="{ on: selectedSong === s.id }"
+          :disabled="isMultiplayer && !isHost"
+          title="수제 채보 — 난이도는 곡에 내장"
+          @click="selectedSong = s.id"
+        >
+          {{ s.label }}
+        </button>
+      </div>
 
       <div class="levels">
         <button
           v-for="m in MODES"
           :key="m.id"
+          v-show="!selectedSong || m.id !== 'ringTap'"
           type="button"
           class="px level"
           :class="['mode-level', `mode-${m.id}`, { on: mode === m.id }]"
@@ -241,7 +338,8 @@ watch(
         </button>
       </div>
 
-      <div class="levels">
+      <!-- 수제 곡은 난이도가 채보에 내장 — 고를 게 없다 -->
+      <div v-if="!selectedSong" class="levels">
         <button
           v-for="d in DIFFICULTIES"
           :key="d"
