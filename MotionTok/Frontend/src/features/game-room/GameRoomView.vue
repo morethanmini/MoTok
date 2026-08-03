@@ -1448,7 +1448,7 @@ function requestCloseGame() {
  * 닫으면 대기실에 남아 GAME 버튼으로 <b>고르지 않은 게임까지</b> 계속 할 수 있었다. 게임을
  * 골라 들어온 흐름과 앞뒤가 맞지 않아 한 판에서 끊는다.</p>
  *
- * <p>회원에게는 이 팝업이 뜨지 않는다 — 대신 푸터가 다시하기·나가기로 좁혀진다(아래 replaySolo).
+ * <p>회원에게는 이 팝업이 뜨지 않는다 — 대신 푸터가 다시하기로 좁혀진다(아래 replaySolo).
  * 혼자 하는 이유가 랭킹 갱신 아니면 연습이라 한 판에서 끊을 이유가 없다.</p>
  *
  * <p>중간에 ✕로 그만둔 판(정산 전)은 해당 없다 — 끝낸 게 아니라 그만둔 거라 "재밌으셨나요?"를
@@ -1457,14 +1457,11 @@ function requestCloseGame() {
 const guestWrapUp = ref(false)
 
 /**
- * 1인 플레이 방 나가기 — 게임을 고른 곳(게임 선택)으로 되돌린다.
+ * 게스트 마무리 팝업의 퇴장 — 어느 버튼(가입·로그인·확인)을 눌러도, 팝업 바깥을 눌러 닫아도
+ * 방을 나간다. 한 판으로 끊는 흐름이라 방에 남을 경로를 하나라도 두면 그게 곧 재발이다.
  *
- * <p>1인 플레이는 게임 선택에서 시작하므로 되돌아갈 곳도 거기다. 로비로 보내는 {@code exitRoute}를
- * 쓰지 않는 이유 — 그건 오류로 <b>밀려날 때</b> 갈 곳이고, 이건 한 게임을 마치고 <b>스스로</b>
- * 나가는 길이라 다른 게임을 고를 수 있는 화면으로 가야 한다(푸터 LEAVE는 그대로 로비로 간다).</p>
- *
- * <p>게스트 팝업(가입·로그인·확인)도 이 함수를 쓴다 — 어느 버튼을 눌러도 방을 나가는 건 같고,
- * 게스트에게는 게임 선택이 곧 홈이라 팝업 바깥을 눌러 닫아도 같은 곳으로 간다.</p>
+ * <p>돌아갈 곳은 게임 선택이다 — 1인 플레이가 시작된 화면이고, 게스트에게는 그게 곧 홈이다
+ * (게스트의 {@code exitRoute}도 같은 곳이라 사실상 같은 목적지다).</p>
  *
  * <p>{@code notifyLeave}가 의도된 이탈 표시까지 맡으므로 라우터 가드("정말 떠나시겠습니까?")는
  * 뜨지 않는다 — 이미 확인을 한 번 받은 이동이다.</p>
@@ -2346,30 +2343,22 @@ const startHint = computed(() =>
         </template>
       </div>
       <!--
-        1인 플레이 방에서 한 판을 하고 나면 게임 선택(GAME) 대신 다시하기·나가기다.
+        1인 플레이 방에서 한 판을 하고 나면 게임 선택(GAME) 대신 다시하기다.
         게임을 골라 들어온 방이라 여기서 다른 게임까지 고를 수 있으면 고른 게 무의미해진다.
+        나가는 길은 따로 두지 않는다 — 오른쪽 LEAVE가 이미 그 자리다.
         아직 한 판도 안 돈 방(자동 시작 실패 등)은 골라야 하므로 GAME 그대로 둔다.
       -->
-      <template v-if="isSoloPlay && lastPlayed">
-        <button
-          class="px start-btn footer-start-btn"
-          :disabled="pickerLocked || gameInProgress"
-          :title="gameInProgress ? startHint : `${lastPlayed.name} 다시하기`"
-          :aria-disabled="gameInProgress"
-          @click="replaySolo"
-        >
-          <span class="play-ico">↻</span>
-          <span class="start-title">다시하기</span>
-        </button>
-        <button
-          class="px start-btn footer-start-btn solo-exit"
-          :disabled="gameInProgress"
-          title="게임 선택으로 돌아가기"
-          @click="leaveSoloRoom()"
-        >
-          <span class="start-title">나가기</span>
-        </button>
-      </template>
+      <button
+        v-if="isSoloPlay && lastPlayed"
+        class="px start-btn footer-start-btn solo-replay"
+        :disabled="pickerLocked || gameInProgress"
+        :title="gameInProgress ? startHint : `${lastPlayed.name} 다시하기`"
+        :aria-disabled="gameInProgress"
+        @click="replaySolo"
+      >
+        <span class="play-ico">↻</span>
+        <span class="start-title">다시하기</span>
+      </button>
       <button
         v-else
         class="px start-btn footer-start-btn"
@@ -3127,9 +3116,11 @@ const startHint = computed(() =>
   white-space: nowrap;
 }
 .footer-start-btn, .footer-start-btn.suggest { position: static; flex: none; height: 50px; padding: 0 12px; border: 3px solid #4e67a3; border-radius: 7px; background: #7195df; color: #fff; box-shadow: 3px 3px 0 #4e67a3; white-space: nowrap; transform: none; }
-/* 1인 플레이 나가기 — 다시하기 옆에 붙는 보조 행동이라 색을 낮춘다(주 행동은 한 판 더) */
-.footer-start-btn.solo-exit { border-color: #8d7f6c; background: #fffaf0; color: #6b5c4b; box-shadow: 3px 3px 0 #8d7f6c; }
+/* 1인 플레이 다시하기 — 한 판이 끝난 자리에서 할 일이 이것뿐이라 GAME보다 크게 잡는다 */
+.footer-start-btn.solo-replay { height: 60px; padding: 0 26px; border-radius: 9px; }
 .footer-start-btn .start-title { font-size: 10px; }
+.footer-start-btn.solo-replay .play-ico { font-size: 20px; }
+.footer-start-btn.solo-replay .start-title { font-size: 14px; }
 
 .room-main { gap: 18px; padding: clamp(20px, 2vw, 26px) clamp(28px, 3.6vw, 46px); }
 .cam-stage {
