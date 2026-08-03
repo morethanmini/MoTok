@@ -109,21 +109,11 @@ function presenceLabel(presence: Presence): string {
   return presence === 'ONLINE' ? '로비에서 둘러보는 중' : '오프라인'
 }
 
-/**
- * userId → 마지막 접속 종료 시각(-179). 목록 뷰모델(data.ts의 Friend)에 얹지 않고 따로 든다 —
- * 그 타입은 로비·친구 화면이 공유하는 표시용 모델이라 서버 시각을 들일 자리가 아니다.
- *
- * <p>실시간 프레즌스 델타(-149)는 이 맵을 갱신하지 않는다. 방금 오프라인이 된 친구는
- * 서버에도 아직 정산 전이라(스윕 60초) 값이 없는 게 맞고, 다음 목록 조회에서 채워진다.</p>
- */
-const lastSeenById = ref(new Map<number, string | null>())
-
 const NO_FRIENDS: Friend[] = []
-const { data: friends, reload: reloadFriends } = useAsyncData(async () => {
-  const list = await friendsApi.list()
-  lastSeenById.value = new Map(list.map((f) => [f.userId, f.lastSeenAt ?? null]))
-  return list.map(toFriend)
-}, NO_FRIENDS)
+const { data: friends, reload: reloadFriends } = useAsyncData(
+  async () => (await friendsApi.list()).map(toFriend),
+  NO_FRIENDS,
+)
 
 // 받은 친구 요청 (GET /friends/requests?direction=received, -57)
 // 개수 전용 엔드포인트가 명세에 없어서 목록을 받아 길이를 센다(친구 화면 탭 배지와 같은 방식).
@@ -618,7 +608,6 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
               :key="f.userId"
               :friend="f"
               :unread="whisper.unreadWith(f.userId)"
-              :last-seen-at="lastSeenById.get(f.userId)"
               @open="openWhisper(f)"
               @profile="viewer.open(f.userId, f.name)"
             />
