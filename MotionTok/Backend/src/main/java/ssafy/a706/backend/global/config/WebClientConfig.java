@@ -27,6 +27,10 @@ public class WebClientConfig {
     private static final int DEFAULT_BUFFER_BYTES = 256 * 1024;
     /** 도화지 PNG(base64)를 실어 보내므로 기본 256KB로는 부족하다. */
     private static final int JUDGE_BUFFER_BYTES = 8 * 1024 * 1024;
+    /** fal 이미지 생성 — 프론트 포기 시간(60초)보다 먼저 끝나야 환불이 제때 돈다. */
+    private static final int FAL_TIMEOUT_SEC = 40;
+    /** 스케치(입력)와 생성 결과(출력)가 모두 data URI라 넉넉히 잡는다. */
+    private static final int FAL_BUFFER_BYTES = 16 * 1024 * 1024;
 
     @Bean
     public WebClient oauthWebClient() {
@@ -41,6 +45,16 @@ public class WebClientConfig {
     @Bean
     public WebClient gmsWebClient() {
         return build(JUDGE_TIMEOUT_SEC, JUDGE_BUFFER_BYTES);
+    }
+
+    /**
+     * fal 이미지 생성 전용. 동기 호출이라 생성이 끝날 때까지 응답이 오지 않는다 —
+     * 프론트가 60초에 포기하므로 그보다 먼저 실패하게 잡는다(그래야 환불이 제때 돈다).
+     * 스케치와 결과 PNG를 모두 data URI로 주고받아 버퍼 상한도 크게 잡는다.
+     */
+    @Bean
+    public WebClient falWebClient() {
+        return build(FAL_TIMEOUT_SEC, FAL_BUFFER_BYTES);
     }
 
     /** SFU 관리 API(RemoveParticipant 등) — 비동기 best-effort 호출이라 짧은 타임아웃이면 족하다. */

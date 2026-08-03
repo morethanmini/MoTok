@@ -73,7 +73,14 @@ const canRedo = computed(() => historyIndex.value < historyLength.value - 1)
 
 onMounted(() => {
   const el = canvas.value!
-  ctx = el.getContext('2d')
+  /*
+   * willReadFrequently — 이 캔버스는 그림을 읽는 쪽이 더 잦다: 획마다 되돌리기 스냅샷을 뜨고
+   * (saveHistory), 채우기 도구와 "빈 그림인지" 검사도 매번 전체 픽셀을 읽는다(getImageData 3곳).
+   * 이 힌트가 없으면 브라우저가 GPU 뒤에 캔버스를 두는데, 읽을 때마다 GPU→CPU로 되가져와야 해서
+   * 느려지고 콘솔에도 경고가 남는다. 대신 그리기는 소프트웨어로 도는데, 360x300에 단순 선이라
+   * 체감 차이가 없다.
+   */
+  ctx = el.getContext('2d', { willReadFrequently: true })
   applyDrawingTool()
   saveHistory()
 })

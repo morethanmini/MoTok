@@ -53,6 +53,14 @@ public class AiItemJob {
     @Column(name = "error_message", length = 500)
     private String errorMessage;
 
+    /**
+     * 이 job을 실제로 가져간 쪽(GPU 워커 / fal). 아직 아무도 안 가져간 PENDING은 null이다.
+     * 비용 정산(하루 fal 호출 수)과 장애 추적에 쓴다.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 8)
+    private AiJobProvider provider;
+
     /** 이 job에서 실제 차감한 포인트. 재생성 job(parentJobId != null)은 추가 차감이 없으므로 0. */
     @Column(name = "points_charged")
     private Integer pointsCharged;
