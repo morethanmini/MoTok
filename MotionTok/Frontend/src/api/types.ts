@@ -108,6 +108,12 @@ export interface PublicUserProfile {
   avatarUrl?: string | null
   /** 총 접속시간(초, -141 친구 상세). 집계 시작(배포) 이전 접속은 포함하지 않는다 */
   totalConnectSeconds: number
+  /**
+   * 마지막 접속 종료 시각(-179). 가입일·총 접속시간과 같은 성격의 기록이라 접속 여부와
+   * 무관하게 내려온다. 배포 이후 한 번도 정산되지 않은 계정은 null이고, 오프라인 정산
+   * 스윕(60초)에서만 갱신된다. 타임존 없는 로컬 시각 문자열(`2026-08-03T09:30:00`)이다.
+   */
+  lastSeenAt?: string | null
 }
 
 /**
@@ -317,15 +323,18 @@ export interface LiveRoomUpdatedEvent {
 }
 
 /**
- * /topic/rooms/{roomId}/members 로 오는 방장 변경 알림 (LiveRoomHostChangedEvent, -72).
- * 방장이 나가면 서버가 남은 참가자 중 가장 먼저 들어온 사람에게 위임하고 이 이벤트를 쏜다.
+ * /topic/rooms/{roomId}/members 로 오는 방장 변경 알림 (LiveRoomHostChangedEvent, -72/-180).
+ * 방장이 나가면 남은 참가자 중 가장 먼저 들어온 사람에게 자동 위임되고(HOST_LEFT),
+ * 방장이 직접 지목해 넘기면 DELEGATED로 온다 — 안내 문구의 원인이 정반대라 갈라야 한다.
  *
  * 이 토픽에는 판별용 type 필드가 없어 필드 모양으로 가른다 — hostUserId를 갖는 건 이 이벤트뿐이다
  * (퇴장·강퇴는 userId/participantCount 계열, 방 정보 수정은 title/maxPlayers).
+ * 사유 필드명이 reason이 아니라 hostReason인 것도 그래서다 — 강퇴 이벤트가 이미 reason을 쓴다.
  */
 export interface LiveRoomHostChangedEvent {
   hostUserId: string
   hostDisplayName: string
+  hostReason: 'HOST_LEFT' | 'DELEGATED'
 }
 
 /**

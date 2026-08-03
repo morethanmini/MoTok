@@ -503,10 +503,7 @@ async function joinRoom(code: string) {
 const creating = ref(false)
 async function createRoom(payload: NewRoom) {
   if (creating.value) return // 요청 중 중복 제출 방지
-  if (!payload.title.trim()) {
-    flash('방 제목을 입력해 주세요')
-    return
-  }
+  // 빈 제목 검사는 없다 — 모달이 비어 있으면 placeholder에 보여 준 기본 제목으로 채워 보낸다(-175).
   if (containsProfanity(payload.title)) {
     flash('방 제목에 사용할 수 없는 단어가 있어요')
     return

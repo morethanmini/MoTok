@@ -72,6 +72,12 @@ const props = defineProps<{
    * "방 안인가"와 "멀티인가"는 별개 조건이다.
    */
   embedded?: boolean
+  /**
+   * 1인 방 연습 모드(-9) — 세션이 없어 서버가 정해 주지 못하는 값을 방에서 직접 받는다.
+   * 벽 수 0은 무한(캠 위 ✕로 끝낼 때까지). 멀티에서는 세션 값이 이긴다.
+   */
+  soloWallCount?: number
+  soloDifficulty?: string
 }>()
 const emit = defineEmits<{
   close: []
@@ -121,7 +127,7 @@ const chain = ref(false)
 const combo = ref(0)
 const bestCombo = ref(0)
 /** 연속 모드에서 벽 몇 장을 받을지. 0 = 무한(중지를 누를 때까지) */
-const chainTarget = ref(10)
+const chainTarget = ref(props.soloWallCount ?? 10)
 const CHAIN_TARGETS = [10, 20, 30, 0]
 /** 아바타 평면에 닿은 벽 수 — 진행 표시(3/10)용 */
 const chainArrived = ref(0)
@@ -1141,6 +1147,8 @@ function onPose(result: PoseLandmarkerResult) {
 }
 
 onMounted(async () => {
+  // 세션이 있으면 난이도는 서버 값이다(session 감시자가 적용한다) — 연습 모드만 여기서 받는다
+  if (!props.session) applyDifficulty(props.soloDifficulty)
   const canvas = glCanvasRef.value!
   const viewport = viewportRef.value!
   initThree(canvas)
@@ -1482,6 +1490,9 @@ onBeforeUnmount(() => {
           >
             ▶ {{ round === 0 ? '시작' : '다음' }}
           </button>
+          <!-- 무한을 멈추는 건 캠 위 ✕(게임 종료)다. 여기서 멈추면 컨베이어만 서고 게임은 떠
+               있는 채라 방 푸터(다시하기·GAME START)가 잠긴 상태로 남는다 — 나갈 길이 ✕뿐이라
+               버튼이 둘일 이유가 없다. -->
           <button v-if="false"
             class="btn-start btn-random"
             :class="{ on: chain }"

@@ -3,12 +3,11 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import {
   gamesApi,
   ApiError,
-  type Game,
   type LeaderboardEntry,
   type LeaderboardMode,
   type LeaderboardResponse,
 } from '@/api'
-import { useAsyncData } from '@/composables/useAsyncData'
+import { useGameCatalog } from '@/composables/useGameCatalog'
 import { useUserProfile } from '@/composables/useUserProfile'
 import { useToast } from '@/composables/useToast'
 import AppPage from '@/components/common/AppPage.vue'
@@ -16,11 +15,6 @@ import PixelToast from '@/components/common/PixelToast.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserProfileModal from '@/components/common/UserProfileModal.vue'
 
-const MOCK_GAMES: Game[] = [
-  { id: 1, name: '손가락 별', description: '', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '모션', thumbnailUrl: '', playable: true, active: true },
-  { id: 3, name: '리듬 터치', description: '', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8, supportsBot: true, category: '리듬', thumbnailUrl: '', playable: true, active: true },
-  { id: 5, name: '자세 매치', description: '', mode: 'VERSUS', minPlayers: 2, maxPlayers: 8, supportsBot: true, category: '피트니스', thumbnailUrl: '', playable: true, active: true },
-]
 const MOCK_BOARD: LeaderboardResponse = {
   gameId: 1,
   entries: [
@@ -32,7 +26,20 @@ const MOCK_BOARD: LeaderboardResponse = {
   myRank: { rank: 3, userId: 1, nickname: 'P1', bestScore: 9720, playCount: 12 },
 }
 
-const { data: games } = useAsyncData(() => gamesApi.list(), MOCK_GAMES)
+/**
+ * 게임 목록은 <b>예시 폴백을 두지 않는다</b>(순위표의 MOCK_BOARD와 다르게 취급하는 이유).
+ *
+ * 전에 두었던 예시 3개(손가락 별·리듬 터치·자세 매치)는 백엔드에 <b>그 이름으로 존재하지 않는
+ * 게임</b>이었다. 그래서 화면 제목이 "손가락 별" → "핑거 스타"로 바뀌며 튀었고, 게임 목록이
+ * 3개 → 5개로 늘었으며, 다른 게임까지 훑는 닉네임 검색이 없는 id(3·5)를 조회했다.
+ *
+ * 순위표는 텅 빈 표보다 예시가 나아 폴백을 유지하지만(그건 boardIsFallback으로 검색에서 제외한다),
+ * 게임 목록은 <b>고를 대상</b>이라 잘못된 항목을 잠깐이라도 보여 주면 안 된다.
+ *
+ * 공용 창구를 쓰므로 로비 게임 목록·방 안 선택창과 <b>같은 목록</b>을 본다 — 화면마다 따로 받으면
+ * 관리자가 중간에 게임을 닫았을 때 화면끼리 다른 상태를 보여 준다.
+ */
+const { games } = useGameCatalog()
 const selected = ref(1)
 const board = ref<LeaderboardResponse>(MOCK_BOARD)
 const error = ref<string | null>(null)

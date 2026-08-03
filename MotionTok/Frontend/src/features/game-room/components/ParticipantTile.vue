@@ -5,7 +5,7 @@
  * - view가 있으면 참가자 표시: 카메라 켜짐이면 영상, 아니면 이니셜 아바타. 마이크/왕관/발화 표시.
  * LiveKit 트랙은 <video>/<audio>에 attach하고 언마운트·교체 시 detach한다.
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { ParticipantView } from '@/composables/useLiveKitRoom'
 import { attachSpeakerGain, detachSpeakerGain } from '@/composables/useSpeakerGain'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
@@ -29,6 +29,8 @@ const props = withDefaults(
     compact?: boolean
     canKick?: boolean
     canInvite?: boolean
+    /** 방장 위임(-180) 노출 여부 — 방장 본인에게만, 대기실에서만 켠다. */
+    canDelegate?: boolean
     /**
      * 영상을 가려야 할 때의 안내 문구(null이면 그대로 보여준다).
      * 게임④ 출제 중인 출제자 캠처럼 "보이면 안 되는" 화면에 쓴다 — 트랙은 그대로 붙여두고
@@ -58,6 +60,7 @@ const props = withDefaults(
     compact: false,
     canKick: false,
     canInvite: false,
+    canDelegate: false,
     cover: null,
     volume: 1,
     preferCam: false,
@@ -65,7 +68,7 @@ const props = withDefaults(
     effect: null,
   },
 )
-const emit = defineEmits<{ kick: []; friend: []; volume: [value: number] }>()
+const emit = defineEmits<{ kick: []; friend: []; delegate: []; volume: [value: number] }>()
 
 const occupied = computed(() => !!props.view)
 const hasVideo = computed(() => !!props.view?.cameraOn && !!props.view?.videoTrack)
@@ -139,7 +142,6 @@ watch(
 )
 onBeforeUnmount(() => {
   if (audioEl.value) detachSpeakerGain(audioEl.value)
-  tileObserver?.disconnect()
 })
 
 const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase())
@@ -149,20 +151,6 @@ const initial = computed(() => (props.view?.name || '?').slice(0, 1).toUpperCase
 const canAdjustVolume = computed(() => props.playAudio && occupied.value)
 const menuOpen = ref(false)
 const volumePercent = computed(() => Math.round(props.volume * 100))
-const tileEl = ref<HTMLElement | null>(null)
-const tileHeight = ref(0)
-const menuScale = computed(() => {
-  const available = Math.max(0, tileHeight.value - 46)
-  return Math.min(1, Math.max(0.45, available / 158))
-})
-let tileObserver: ResizeObserver | undefined
-onMounted(() => {
-  if (!tileEl.value) return
-  tileObserver = new ResizeObserver(([entry]) => {
-    tileHeight.value = entry?.contentRect.height ?? 0
-  })
-  tileObserver.observe(tileEl.value)
-})
 function onVolumeInput(e: Event) {
   emit('volume', Number((e.target as HTMLInputElement).value) / 100)
 }
@@ -170,7 +158,6 @@ function onVolumeInput(e: Event) {
 
 <template>
   <div
-    ref="tileEl"
     class="tile"
     :class="{ empty: !occupied, speaking: occupied && view?.isSpeaking, compact, 'menu-open': menuOpen }"
     :style="{ '--camera-aspect': videoAspect }"
@@ -240,7 +227,7 @@ function onVolumeInput(e: Event) {
 
       <!-- 개인 볼륨 — 이 참가자 소리를 내 쪽에서만 줄인다(상대 마이크 설정과 무관) -->
       <button
-        v-if="canAdjustVolume || canInvite || canKick"
+        v-if="canAdjustVolume || canInvite || canDelegate || canKick"
         class="vol-btn"
         :class="{ open: menuOpen }"
         :title="`${view?.name} 메뉴`"
@@ -254,7 +241,7 @@ function onVolumeInput(e: Event) {
           <path v-else d="M15.5 9a3.5 3.5 0 010 6" />
         </svg>
       </button>
-      <div v-if="menuOpen" class="vol-bar" :style="{ '--menu-scale': menuScale }" @click.stop>
+      <div v-if="menuOpen" class="vol-bar" @click.stop>
         <div v-if="canAdjustVolume" class="menu-volume">
           <span>볼륨</span>
         <input
@@ -268,6 +255,7 @@ function onVolumeInput(e: Event) {
         />
         </div>
         <button v-if="canInvite" type="button" class="menu-action invite" @click="emit('friend')">친구 추가</button>
+        <button v-if="canDelegate" type="button" class="menu-action" @click="emit('delegate')">방장 위임</button>
         <button v-if="canKick" type="button" class="menu-action kick" @click="emit('kick')">강퇴하기</button>
       </div>
 
@@ -305,7 +293,14 @@ function onVolumeInput(e: Event) {
   box-shadow: none;
   background: #faf6ee;
 }
-.tile.menu-open { overflow: hidden; }
+/* 메뉴가 열린 동안에는 타일 밖으로 나가도 그냥 둔다 — 타일이 작으면(사이드 트레이·2인방)
+   고정 크기 메뉴가 타일 높이를 넘는데, hidden이면 아래쪽 항목이 잘려 안 보인다.
+   대신 영상 모서리 둥글기가 풀리므로 자식들이 직접 반경을 물려받는다(.tile-video 등).
+   z-index는 이웃 타일보다 위에 오게 — 안 주면 옆 타일이 메뉴를 덮는다. */
+.tile.menu-open { overflow: visible; z-index: 5; }
+.tile.menu-open .tile-video,
+.tile.menu-open .cam-off,
+.tile.menu-open .cover { border-radius: inherit; }
 
 .tile.compact { width: 100%; aspect-ratio: var(--camera-aspect, 8 / 5); }
 /* 내 타일과 같은 규칙 — 타일 비율과 영상 비율이 다를 때 잘라내지 않고 남는 자리를 회색 여백으로.
@@ -425,7 +420,12 @@ function onVolumeInput(e: Event) {
 .vol-bar input { flex: 1; min-width: 0; accent-color: #5cbf4a; }
 .vol-val { font-size: 8px; color: #403124; }
 .vol-btn { top: 8px; right: 8px; bottom: auto; left: auto; width: 30px; height: 24px; padding: 0; border: 2px solid #b78d5d; border-radius: 6px; background: #fff8e9; box-shadow: 2px 2px 0 #e2d0b5; color: #74513c; }.vol-btn:hover { background: #fff0b6; }.vol-btn svg { display: none; }.vol-btn::after { width: 13px; height: 2px; border-radius: 1px; background: currentColor; box-shadow: 0 4px currentColor, 0 8px currentColor; content: ''; transform: translateY(-4px); }.vol-btn.open { background: #f2d9a8; color: #65432f; box-shadow: 1px 1px 0 #d2af7c; }.vol-bar { top: 38px; right: 8px; bottom: auto; left: auto; width: 154px; display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 10px; border-color: #b78d5d; background: #fffdf7; box-shadow: 3px 3px 0 rgba(92, 63, 44, .22); }.vol-bar input { grid-column: 1; }.vol-val { grid-column: 2; }.menu-action { grid-column: 1 / -1; min-height: 29px; border: 0; border-radius: 5px; font-family: inherit; font-size: 9px; font-weight: 700; cursor: pointer; }.menu-action.invite { background: #dff0d0; color: #47763e; }.menu-action.kick { background: #ffe3e3; color: #a94d52; }
-.vol-bar { width: min(184px, calc(100% - 16px)); max-width: calc(100% - 16px); box-sizing: border-box; display: block; overflow: visible; padding: 8px 12px; border: 3px solid #8d6048; border-radius: 12px; background: #fff8e9; box-shadow: none; transform: scale(var(--menu-scale, 1)); transform-origin: top right; }.menu-head { padding: 9px 4px 12px; border-bottom: 2px dashed #d7b58e; color: #573a2b; font-size: 12px; font-weight: 700; text-align: center; }.menu-volume { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; padding: 12px 10px; border-bottom: 2px dashed #ead5b8; color: #5a3e30; font-size: 11px; }.menu-volume input { grid-column: auto; width: 100%; min-width: 0; margin: 0; accent-color: #6c9b54; }.vol-val { color: #6c9b54; font-size: 10px; }.menu-action { display: block; width: 100%; min-height: 0; margin: 0; padding: 12px 10px; border: 0; border-radius: 0; background: transparent; color: #5a3e30; text-align: center; font-size: 12px; }.menu-action.invite { background: transparent; color: #5a3e30; }.menu-action.kick { border-top: 2px dashed #ead5b8; background: transparent; color: #c45c52; }.menu-action:hover, .menu-action.invite:hover { background: #fff0b6; color: #5a3e30; }.menu-action.kick:hover { background: transparent; color: #a8433b; }
+/* 크기 고정 — 타일 크기에 따라 줄이지 않는다. 예전에는 타일 높이에 맞춰 scale()로 축소했는데,
+   작은 타일에서 글자가 읽기 힘들 만큼 쪼그라들면서도 결국 잘렸다. 어느 타일에서 열든 같은 상자다. */
+.vol-bar { width: 184px; box-sizing: border-box; display: block; overflow: visible; padding: 8px 12px; border: 3px solid #8d6048; border-radius: 12px; background: #fff8e9; box-shadow: none; }.menu-head { padding: 9px 4px 12px; border-bottom: 2px dashed #d7b58e; color: #573a2b; font-size: 12px; font-weight: 700; text-align: center; }.menu-volume { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; padding: 12px 10px; border-bottom: 2px dashed #ead5b8; color: #5a3e30; font-size: 11px; }.menu-volume input { grid-column: auto; width: 100%; min-width: 0; margin: 0; accent-color: #6c9b54; }.vol-val { color: #6c9b54; font-size: 10px; }.menu-action { display: block; width: 100%; min-height: 0; margin: 0; padding: 12px 10px; border: 0; border-radius: 0; background: transparent; color: #5a3e30; text-align: center; font-size: 12px; }.menu-action.invite { background: transparent; color: #5a3e30; }/* 항목 사이마다 같은 점선 — 볼륨 아래는 .menu-volume의 border-bottom이 맡고,
+   여기서는 액션끼리 맞닿는 경계만 그린다(친구 추가 ─ 방장 위임 ─ 강퇴하기). */
+.menu-action + .menu-action { border-top: 2px dashed #ead5b8; }
+.menu-action.kick { background: transparent; color: #c45c52; }.menu-action:hover, .menu-action.invite:hover { background: #fff0b6; color: #5a3e30; }.menu-action.kick:hover { background: transparent; color: #a8433b; }
 
 .view-toggle {
   position: absolute;

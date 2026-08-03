@@ -83,6 +83,13 @@ export const roomsApi = {
     httpEnvelope.post<void>(`${BASE}/${roomId}/members/${userId}/kick`, { reason }),
 
   /**
+   * POST /v1/live-rooms/{roomId}/members/{userId}/delegate-host — 방장을 이 참가자에게 넘긴다(-180).
+   * 방장·대기실(WAITING) 전용. 결과는 HOST_CHANGED 방송으로 방 전원에게 돌아온다.
+   */
+  delegateHost: (roomId: string, userId: string) =>
+    httpEnvelope.post<void>(`${BASE}/${roomId}/members/${userId}/delegate-host`),
+
+  /**
    * 문서 언로드(탭 닫기·주소창 이탈·새로고침) 전용 퇴장 통보.
    * 문서가 내려가는 중이라 응답을 기다릴 수 없어 keepalive로 쏜다 — sendBeacon은 POST만
    * 가능해서 fetch keepalive를 쓴다. leave가 멱등이라 SPA 경로와 중복 발사돼도 안전하다.

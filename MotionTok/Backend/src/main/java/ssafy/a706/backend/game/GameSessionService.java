@@ -158,7 +158,11 @@ public class GameSessionService {
      * (DrawingRelayGame MAX_IMAGE_CHARS) — 여기는 그보다 살짝 여유를 둔 방어선이다.</p>
      */
     private static final int DRAW_MAX_IMAGE_CHARS = 64_000;
-    /** 주제어 후보 — FE drawing-relay/words.ts와 동기화 필수(솔로 모드가 같은 목록을 쓴다). */
+    /**
+     * 주제어 후보 — 서버가 단일 보유한다. 예전엔 솔로 모드가 프론트 자체 목록(drawing-relay/words.ts)을
+     * 썼지만 그 경로가 제거되며 words.ts도 삭제됐다(2026-07-31 확인, 커밋 a3e8dc0 "솔로 경로 제거").
+     * 지금은 이 목록뿐이라 다른 파일과 동기화할 필요가 없다.
+     */
     private static final List<String> DRAW_TOPICS = List.of(
             "사과", "바나나", "수박", "포도", "딸기",
             "자동차", "버스", "비행기", "기차", "자전거", "로켓",
@@ -166,7 +170,8 @@ public class GameSessionService {
             "고양이", "강아지", "토끼", "코끼리", "기린", "물고기", "나비", "새", "거북이", "공룡",
             "우산", "안경", "시계", "모자", "신발", "컵", "의자", "열쇠", "가위",
             "눈사람", "산", "해", "달", "별", "구름", "무지개",
-            "피자", "케이크", "아이스크림", "축구공", "로봇");
+            "피자", "케이크", "아이스크림", "축구공", "로봇",
+            "햄버거", "헬리콥터", "펭귄", "열기구", "문어", "악어", "피아노", "선풍기");
 
     private final RoomMembershipReader membershipReader;
     private final LiveRoomRepository liveRoomRepository;
