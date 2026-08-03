@@ -16,6 +16,44 @@ const props = withDefaults(
 )
 const emit = defineEmits<{ close: []; create: [payload: NewRoom] }>()
 const title = ref(props.initial?.title ?? '')
+
+/** 제목을 비운 채 만들 때 대신 쓸 이름. 서버가 30자에서 자르므로(@Size) 짧게 유지한다. */
+const DEFAULT_TITLES = [
+  '신나는 모션 파티',
+  '다 같이 몸으로 말해요',
+  '오늘의 모션 대결',
+  '춤추는 픽셀 파티',
+  '아무나 들어와요',
+  '우당탕탕 모션룸',
+  '게임 한 판 하실 분',
+  '웃음 참기 챌린지',
+  '몸치들의 반란',
+  '심심해서 만든 방',
+  '판정이란 무엇인가',
+  '아프니까 모션이다',
+  '하마터면 이길 뻔했다',
+  '나는 몸치로 살기로 했다',
+  '지고 싶지만 게임은 하고 싶어',
+  '강퇴당할 용기',
+  '몸치 사피엔스',
+  '손, 발, 몸',
+]
+/**
+ * 열 때 하나 뽑아 고정하고 placeholder로 그대로 보여준다 — 제출 시점에 뽑아 몰래 채우면
+ * 유저는 자기가 짓지 않은 이름이 뜬 것을 보고 버그로 읽는다. 보이는 이름이 곧 만들어질 이름이다.
+ *
+ * 수정 모드(initial 있음)에서는 뽑지 않는다. 제목을 지웠을 때 기존 방 이름이 랜덤 이름으로
+ * 조용히 바뀌어버린다 — 이름을 고치려던 사람에게 최악의 결과다. 그 경우는 종전대로 서버가 막는다.
+ */
+const fallbackTitle = props.initial ? '' : DEFAULT_TITLES[Math.floor(Math.random() * DEFAULT_TITLES.length)]!
+/**
+ * 실제로 나갈 제목. 생성 모드에서는 비워도 기본 제목이 채우므로 절대 빈 값이 아니고,
+ * 수정 모드에서 지우면 빈 값이 된다 — 그때는 제출 버튼을 잠근다.
+ *
+ * 잠그지 않으면 빈 제목이 서버까지 가서 `title: 공백일 수 없습니다.`가 그대로 토스트에 뜬다
+ * (GlobalExceptionHandler가 `필드명: 기본메시지`로 조립한다). 어차피 거절될 요청이다.
+ */
+const effectiveTitle = computed(() => title.value.trim() || fallbackTitle)
 const visibility = ref(props.initial?.visibility ?? '공개')
 const password = ref(props.initial?.password ?? '')
 function onPasswordInput(e: Event) {
@@ -78,7 +116,7 @@ onBeforeUnmount(() => {
       <div class="form-grid">
         <label class="title-field">
           <span>방 제목</span>
-          <input v-model="title" placeholder="신나는 모션 파티" />
+          <input v-model="title" :placeholder="fallbackTitle || '방 제목을 입력해 주세요'" />
         </label>
         <label>
           <span>공개 설정</span>
@@ -106,7 +144,7 @@ onBeforeUnmount(() => {
 
       <footer class="modal-actions">
         <PixelButton block @click="emit('close')">취소</PixelButton>
-        <PixelButton variant="primary" block :disabled="busy" @click="emit('create', { title, visibility, max: String(max), password: visibility === '비밀' ? password : undefined })">
+        <PixelButton variant="primary" block :disabled="busy || !effectiveTitle" @click="emit('create', { title: effectiveTitle, visibility, max: String(max), password: visibility === '비밀' ? password : undefined })">
           {{ submitLabel }}
         </PixelButton>
       </footer>
