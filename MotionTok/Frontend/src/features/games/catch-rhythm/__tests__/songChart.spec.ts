@@ -134,6 +134,18 @@ describe('generateSongCatchChart', () => {
     }
   })
 
+  it('연결 노트는 쿨다운(2초)을 지켜 몰리지 않는다', () => {
+    for (const seed of [1, 42, 777]) {
+      const chart = generateSongCatchChart(analysis, 'NORMAL', seed)
+      let prevTrailEnd = -Infinity
+      for (const n of chart.notes) {
+        if (n.kind !== 'trail') continue
+        expect(n.timeMs - prevTrailEnd).toBeGreaterThanOrEqual(2000 - 1)
+        prevTrailEnd = n.timeMs + n.durationMs!
+      }
+    }
+  })
+
   it('offsetMs는 리드인 + 한 박이다 (곡 격자 원점의 게임 시각)', () => {
     const chart = generateSongCatchChart(analysis, 'NORMAL', 42)
     expect(chart.offsetMs).toBe(songStartMs(analysis))

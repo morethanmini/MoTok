@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 /**
  * 채보 랩 (/dev/chart-lab) — 곡 파일을 넣으면 분석해서 채보 초안을 만들어 주는 운영 도구.
  *
@@ -39,7 +39,7 @@ const errorMsg = ref('')
 // ── 초안 옵션 ──
 const difficulty = ref<Difficulty>('NORMAL')
 const subdivision = ref<2 | 3 | 4 | 6 | 8>(4)
-const snap = ref<'hybrid' | 'grid' | 'free'>('hybrid')
+const snap = ref<'hybrid' | 'grid' | 'free'>('free')
 const seed = ref<string>('20260731')
 const playMode = ref<'catch' | 'ring'>('catch')
 
