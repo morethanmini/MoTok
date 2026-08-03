@@ -117,6 +117,19 @@ export function songStartMs(analysis: SongAnalysis): number {
  */
 const TRAIL_GAP_MS = 2000
 
+// ── 밀도 인지 규칙 (실플레이 피드백: EXTREME에서 밀도가 치솟자 필요해졌다) ──
+/** 이웃 노트가 이 안이면 "고밀도" — 크로스·손 강요(left/right 라벨)를 걸지 않는다 */
+const DENSE_MS = 400
+/**
+ * 이 간격 이하로 이어지는 3개 이상의 노트는 **스윕 런** — 등간격 체인으로 배치해
+ * "그림 그리듯 쓸고 가면 따다다닥 맞는" 경험을 만든다(직접 찍는 난이도 전용).
+ */
+const RUN_GAP_MS = 250
+/** 스윕 런의 노트 간 거리 — 노트 지름(0.3)보다 약간 커서 사슬로 읽힌다 */
+const SWEEP_STEP = 0.24
+/** 스윕 방향 후보 수 — 장애물·벽을 피하면서 완만하게 휘게 */
+const SWEEP_ANGLE_CANDIDATES = 8
+
 // ── 시각 선택 (캐치·링 공용) ──────────────────────────────────
 
 interface PickedOnset extends AnalyzedOnset {
@@ -438,21 +451,57 @@ export function generateSongCatchChart(
   /** 지금까지 만든 가장 긴 연결 노트 — 장애물 스캔 창이 이보다 좁으면 산 노트를 놓친다 */
   let maxTrailMsSeen = MAX_TRAIL_MS
 
+  // ── 밀도 지형 — 크로스·손 강요 억제와 스윕 런 식별의 근거 ──
+  const gapBefore = (i: number): number =>
+    i > 0 ? picked[i]!.pickedMs - picked[i - 1]!.pickedMs : Infinity
+  const gapAfter = (i: number): number =>
+    i + 1 < picked.length ? picked[i + 1]!.pickedMs - picked[i]!.pickedMs : Infinity
+  const isDense = (i: number): boolean => Math.min(gapBefore(i), gapAfter(i)) <= DENSE_MS
+
+  // 스윕 런: (10, RUN_GAP] 간격으로 3개 이상 이어지는 구간(직접 찍는 난이도 전용).
+  // 동시 노트(≤10ms)는 한 손 스윕이 될 수 없으니 런을 끊는다.
+  const runId = new Array<number>(picked.length).fill(-1)
+  if (limitless) {
+    let id = 0
+    let start = 0
+    for (let i = 1; i <= picked.length; i++) {
+      const g = i < picked.length ? gapBefore(i) : Infinity
+      if (!(g > 10 && g <= RUN_GAP_MS)) {
+        if (i - start >= 3) {
+          for (let j = start; j < i; j++) runId[j] = id
+          id++
+        }
+        start = i
+      }
+    }
+  }
+  /** 진행 중인 스윕 런의 상태 — 등간격 체인은 직전 점에서 이어 그린다 */
+  let sweepRun = -1
+  let sweepPoint: Point | null = null
+  let sweepAngle = 0
+  let sweepOwner: Hand = 'left'
+
   for (let i = 0; i < picked.length; i++) {
     const onset = picked[i]!
     const timeMs = toGame(onset.pickedMs)
     if (timeMs < LEAD_IN_MS) continue
 
+    const inRun = runId[i] !== -1
+    const runContinues = inRun && runId[i] === sweepRun && sweepPoint !== null
+    const dense = isDense(i)
+
     // 트랙→손 성향: perc=왼손, melody=오른손을 **우선 시도**한다. 강제가 아니라
     // 그 손이 바쁘면 아래 폴백이 반대손으로 넘긴다(노트를 버리지 않는 게 우선).
-    const preferredHand: Hand = opts.handByTrack
-      ? onset.source === 'perc'
-        ? 'left'
-        : 'right'
-      : nextHand
-    // 아주 강한 온셋(드랍·강박)은 NORMAL 이상에서 양손 동시 노트가 된다
+    const preferredHand: Hand = runContinues
+      ? sweepOwner // 스윕 런은 한 손이 끝까지 끈다 — 그래야 쓸고 가는 동작이 된다
+      : opts.handByTrack
+        ? onset.source === 'perc'
+          ? 'left'
+          : 'right'
+        : nextHand
+    // 아주 강한 온셋(드랍·강박)은 NORMAL 이상에서 양손 동시 노트가 된다 (런 안에서는 금지)
     const simultaneous =
-      preset.simultaneous > 0 && onset.strength >= 1.6 && rng() < preset.simultaneous * 2
+      !inRun && preset.simultaneous > 0 && onset.strength >= 1.6 && rng() < preset.simultaneous * 2
     /** 이 손이 이 시각에 새 노트를 받을 수 있는가 — 연타 한계 */
     const ready = (hand: Hand): boolean => {
       const prev = lastByHand[hand]
@@ -474,31 +523,78 @@ export function generateSongCatchChart(
       const usedPrev = lastByHand[usedOwner]
       const usedDt = usedPrev ? timeMs - endTimeOf(usedPrev) : Infinity
 
-      const cross = usedDt >= preset.crossMinGapMs && rng() < preset.crossRate
+      // 고밀도(이웃 ≤400ms)에서는 크로스를 걸지 않는다 — 물리적으로 못 넘어간다
+      const cross =
+        !inRun && !dense && usedDt >= preset.crossMinGapMs && rng() < preset.crossRate
       const spawnSide = cross ? other(usedOwner) : usedOwner
-
-      // melody: 음높이 → 높이(+y가 위) — 멜로디가 오르내리는 등고선.
-      // perc: 하단 안정 위치 — 발 구르듯 낮게 깔려 리듬 뼈대라는 감각을 준다.
-      const yTarget =
-        onset.source === 'melody'
-          ? Y_RANGE[0] + onset.pitch * (Y_RANGE[1] - Y_RANGE[0])
-          : Y_RANGE[0] + 0.3 * (Y_RANGE[1] - Y_RANGE[0])
 
       const obstacles: Obstacle[] = [
         ...placedThisOnset,
         ...occupiedPoints(notes, timeMs, maxTrailMsSeen),
       ]
-      // 직접 찍는 난이도는 도달 보정도 없다 — 화면 반대편 연타든 뭐든 친 대로 놓는다
-      const { x, y } = choosePlacement(
-        rng,
-        spawnSide,
-        yTarget,
-        obstacles,
-        limitless ? null : usedPrev ? endOf(usedPrev) : null,
-        usedDt,
-      )
 
-      const hand: NoteHand = rng() < preset.anyRate ? 'any' : usedOwner
+      let x: number
+      let y: number
+      if (runContinues && sweepPoint) {
+        // ── 스윕 런 배치: 직전 점에서 등간격(SWEEP_STEP)으로 완만하게 이어 그린다 ──
+        // 후보 방향 중 장애물에서 멀고 벽에 붙어 간격이 깨지지 않는 쪽을 고른다.
+        let best: Point = sweepPoint
+        let bestAngle = sweepAngle
+        let bestScore = -Infinity
+        const tryAngle = (a2: number) => {
+          const end = clampToField({
+            x: sweepPoint!.x + Math.cos(a2) * SWEEP_STEP,
+            y: sweepPoint!.y + Math.sin(a2) * SWEEP_STEP,
+          })
+          const stepOk = dist(end, sweepPoint!) >= SWEEP_STEP * 0.8 // 벽에 눌려 뭉치면 감점
+          const score = Math.min(clearanceRatio(end, obstacles), 2) + (stepOk ? 0 : -5)
+          if (score > bestScore) {
+            bestScore = score
+            best = end
+            bestAngle = a2
+          }
+        }
+        for (let k = 0; k < SWEEP_ANGLE_CANDIDATES; k++) {
+          tryAngle(sweepAngle + (rng() - 0.5) * (Math.PI / 2)) // ±45° — 그림이 확 꺾이지 않게
+        }
+        if (bestScore <= -3) {
+          // 모서리에 몰려 ±45° 전부가 벽에 눌렸다 — 등간격이 우선이니 전방향으로 꺾는다
+          for (let k = 0; k < SWEEP_ANGLE_CANDIDATES; k++) tryAngle(rng() * Math.PI * 2)
+        }
+        x = best.x
+        y = best.y
+        sweepPoint = best
+        sweepAngle = bestAngle
+      } else {
+        // melody: 음높이 → 높이(+y가 위) — 멜로디가 오르내리는 등고선.
+        // perc: 하단 안정 위치 — 발 구르듯 낮게 깔려 리듬 뼈대라는 감각을 준다.
+        const yTarget =
+          onset.source === 'melody'
+            ? Y_RANGE[0] + onset.pitch * (Y_RANGE[1] - Y_RANGE[0])
+            : Y_RANGE[0] + 0.3 * (Y_RANGE[1] - Y_RANGE[0])
+        // 직접 찍는 난이도는 도달 보정도 없다 — 화면 반대편 연타든 뭐든 친 대로 놓는다
+        const placed = choosePlacement(
+          rng,
+          spawnSide,
+          yTarget,
+          obstacles,
+          limitless ? null : usedPrev ? endOf(usedPrev) : null,
+          usedDt,
+        )
+        x = placed.x
+        y = placed.y
+        if (inRun) {
+          // 런의 첫 노트 — 여기서 스윕이 출발한다
+          sweepRun = runId[i]!
+          sweepOwner = usedOwner
+          sweepPoint = { x, y }
+          sweepAngle = rng() * Math.PI * 2
+        }
+      }
+
+      // 고밀도·스윕 런에서는 손을 강요하지 않는다 — 어차피 한 동작으로 쓸어야 한다
+      const hand: NoteHand =
+        inRun || dense ? 'any' : rng() < preset.anyRate ? 'any' : usedOwner
       const note: SongCatchNote = {
         timeMs,
         x,
@@ -561,6 +657,8 @@ export function generateSongCatchChart(
       lastByHand[usedOwner] = note
       placedThisOnset.push({ x, y, needGap: MIN_GAP })
       placedAny = true
+      // 런 중간에 홀드(리본)가 끼면 다음 체인은 리본 끝에서 이어 그린다
+      if (inRun && note.kind === 'trail') sweepPoint = endOf(note)
     }
 
     if (placedAny) {
@@ -667,12 +765,18 @@ export function generateSongRingChart(
     const useSide: 'R' | 'L' = opts.handByTrack ? (onset.source === 'perc' ? 'L' : 'R') : side
     // melody: 음높이 등고선(멜로디를 따라 부르는 느낌) / perc: 시드 난수 — 리듬 뼈대는 자유 배치
     let lane = laneFor(onset.source === 'melody' ? onset.pitch : rng(), useSide)
-    // 직접 찍는 난이도는 레인 이동 상한도 없다 — 등고선 그대로("인간에게 한계는 없다")
-    if (prevLane !== null && !isTappedDifficulty(difficulty)) {
+    if (prevLane !== null) {
       const dt = timeMs - prevEndMs
       const diff = laneDiff(prevLane, lane)
-      const cap = allowedSteps(dt)
-      if (Math.abs(diff) > cap) lane = (prevLane + Math.sign(diff) * cap + RING_LANES) % RING_LANES
+      if (!isTappedDifficulty(difficulty)) {
+        const cap = allowedSteps(dt)
+        if (Math.abs(diff) > cap)
+          lane = (prevLane + Math.sign(diff) * cap + RING_LANES) % RING_LANES
+      } else if (dt <= DENSE_MS && Math.abs(diff) > 1) {
+        // 직접 찍는 난이도도 **고밀도에서는 1칸까지만** — 2칸 이상은 물리적으로 불가능
+        // (실플레이 피드백). 여유 구간은 등고선 그대로.
+        lane = (prevLane + Math.sign(diff) + RING_LANES) % RING_LANES
+      }
     }
 
     const note: RingDraftNote = { timeMs, lane }

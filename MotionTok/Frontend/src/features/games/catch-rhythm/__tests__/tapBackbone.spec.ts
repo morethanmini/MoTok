@@ -182,6 +182,44 @@ describe('백본 채보 생성', () => {
     expect(trail!.durationMs).toBeGreaterThanOrEqual(4990)
   })
 
+  it('고밀도 스윕 런(EXTREME): 등간격 체인 · 한 손 · any 라벨 — 그림 그리듯 쓸어담기', () => {
+    const run = Array.from({ length: 8 }, (_, i) => tap(5000 + i * 150))
+    const corr = correctTapTracks({ perc: [], melody: run }, analysis, {
+      applyLatency: false,
+      snapWindowMs: 0,
+    })
+    const chart = generateSongCatchChart(analysis, 'EXTREME', 42, { backbone: corr.onsets })
+    expect(chart.notes.length).toBe(8)
+    expect(new Set(chart.notes.map((n) => n.owner)).size).toBe(1) // 한 손 스윕
+    for (const n of chart.notes) expect(n.hand).toBe('any') // 고밀도 = 손 강요 없음
+    for (let i = 1; i < chart.notes.length; i++) {
+      const a = chart.notes[i - 1]!
+      const b = chart.notes[i]!
+      const d = Math.hypot(b.x - a.x, b.y - a.y)
+      expect(d).toBeGreaterThanOrEqual(0.24 * 0.75) // 등간격 — 뭉치지 않고
+      expect(d).toBeLessThanOrEqual(0.24 * 1.05) // 벌어지지도 않는다
+    }
+  })
+
+  it('링(EXTREME): 고밀도에서는 레인 이동이 1칸까지만 묶인다', () => {
+    const run = Array.from({ length: 10 }, (_, i) => tap(5000 + i * 150))
+    const corr = correctTapTracks({ perc: [], melody: run }, analysis, {
+      applyLatency: false,
+      snapWindowMs: 0,
+    })
+    const ring = generateSongRingChart(analysis, 'EXTREME', 42, { backbone: corr.onsets })
+    let prev: number | null = null
+    for (const n of ring.notes) {
+      if (prev !== null) {
+        let diff = (n.lane - prev) % 8
+        if (diff > 4) diff -= 8
+        if (diff < -4) diff += 8
+        expect(Math.abs(diff)).toBeLessThanOrEqual(1)
+      }
+      prev = n.laneDelta ? (n.lane + n.laneDelta + 64) % 8 : n.lane
+    }
+  })
+
   it('handByTrack은 성향이다 — 여유 있으면 드럼=왼손·보컬=오른손, 라벨은 강제 없음', () => {
     // 손이 넉넉히 돌아오는 간격 — 성향대로 배정돼야 한다
     const corr = correctTapTracks(

@@ -52,6 +52,8 @@ const playMode = ref<'catch' | 'ring'>('catch')
 const running = ref(false)
 const runKey = ref(0)
 const playChart = shallowRef<Beatmap | RingBeatmap | null>(null)
+/** 스테이지에 넣을 곡 정보 — 전체 플레이와 슬롯 플레이가 다른 원점을 쓴다 */
+const playSong = shallowRef<{ src: string; gridOriginMs: number; startMs: number } | null>(null)
 const playDurationMs = ref(0)
 const lastResult = ref<string | null>(null)
 
@@ -234,7 +236,11 @@ function tapNowMs(): number {
   return tapCtx ? playFromMs + (tapCtx.currentTime - tapStartCtxSec) * 1000 : 0
 }
 
-function startSlotRecord() {
+/**
+ * 슬롯 녹음. overdub=true면 기존 탭을 지우지 않고 위에 겹친다 — 왼손 패스를 먼저 찍고
+ * **들으면서** 오른손 패스를 얹는 용도. 겹녹음 중에는 기존 탭이 비프로 함께 재생된다.
+ */
+function startSlotRecord(overdub = false) {
   const s = currentSlot.value
   if (!audioBuffer.value || !s || tapping.value) return
   stop()
@@ -251,9 +257,27 @@ function startSlotRecord() {
   const playToMs = Math.min(songLengthMs(), s.to + CTX_AFTER_MS)
   tapSource.start(tapStartCtxSec, playFromMs / 1000, Math.max(0.05, (playToMs - playFromMs) / 1000))
   tapSource.onended = () => stopTapping()
-  // 다시 친다 = 이 슬롯을 대체한다(양 트랙 모두) — 슬롯 밖은 보존
-  tapsL.value = tapsL.value.filter((e) => e.t < s.from || e.t >= s.to)
-  tapsR.value = tapsR.value.filter((e) => e.t < s.from || e.t >= s.to)
+  if (overdub && backbone.value) {
+    // 이미 찍어둔 탭을 비프로 들려준다 — 겹쳐 칠 기준이 된다
+    for (const o of backbone.value.onsets) {
+      if (o.timeMs < playFromMs || o.timeMs > playToMs) continue
+      const at = tapStartCtxSec + (o.timeMs - playFromMs) / 1000
+      const osc = tapCtx.createOscillator()
+      const g = tapCtx.createGain()
+      osc.type = 'triangle'
+      osc.frequency.value = o.source === 'perc' ? 700 : 1568
+      g.gain.setValueAtTime(0.35, at)
+      g.gain.exponentialRampToValueAtTime(0.001, at + 0.05)
+      osc.connect(g).connect(tapCtx.destination)
+      osc.start(at)
+      osc.stop(at + 0.06)
+    }
+  }
+  if (!overdub) {
+    // 다시 친다 = 이 슬롯을 대체한다(양 트랙 모두) — 슬롯 밖은 보존
+    tapsL.value = tapsL.value.filter((e) => e.t < s.from || e.t >= s.to)
+    tapsR.value = tapsR.value.filter((e) => e.t < s.from || e.t >= s.to)
+  }
   selectedTap.value = null
   pendingDowns.clear()
   pushHistory = []
@@ -625,7 +649,54 @@ function play() {
   stopPreview()
   stopTapping()
   playChart.value = chart
+  playSong.value = { src: fileUrl.value, gridOriginMs: a.gridOriginMs, startMs: songStartMs(a) }
   playDurationMs.value = chart.durationMs + 2000
+  lastResult.value = null
+  runKey.value += 1
+  running.value = true
+}
+
+/**
+ * 현재 슬롯 구간만 게임으로 테스트 — 곡은 슬롯 2초 앞부터 들어오고, 노트는 슬롯 것만 나온다.
+ * 트릭: 곡의 "격자 원점"을 슬롯 앞 프리롤 지점으로 속이면(pseudo origin) 스테이지 수정 없이
+ * 곡·노트가 같은 축으로 평행이동된다.
+ */
+function playSlot() {
+  const a = analysis.value
+  const s = currentSlot.value
+  if (!a || !fileUrl.value || !s) return
+  if (isTapped.value && !backbone.value) {
+    errorMsg.value = '먼저 슬롯을 녹음하세요'
+    return
+  }
+  const full =
+    playMode.value === 'catch'
+      ? buildCatch()
+      : ringDraftToGameChart(generateSongRingChart(a, difficulty.value, seed.value, options()), a)
+  if (!full) return
+  const offset = songStartMs(a)
+  const pseudoOriginMs = Math.max(0, s.from - 2000)
+  const toFile = (g: number) => g - offset + a.gridOriginMs
+  const srcNotes = full.notes as unknown as ({ timeMs: number; durationMs?: number } & Record<
+    string,
+    unknown
+  >)[]
+  const notes = srcNotes
+    .filter((n) => {
+      const f = toFile(n.timeMs)
+      return f >= s.from && f < s.to
+    })
+    .map((n) => ({ ...n, timeMs: Math.round(offset + (toFile(n.timeMs) - pseudoOriginMs)) }))
+  if (notes.length === 0) {
+    errorMsg.value = '이 슬롯에는 노트가 없어요'
+    return
+  }
+  const durationMs = Math.max(...notes.map((n) => n.timeMs + (n.durationMs ?? 0)))
+  stopPreview()
+  stopTapping()
+  playChart.value = { ...full, notes, durationMs } as unknown as Beatmap | RingBeatmap
+  playSong.value = { src: fileUrl.value, gridOriginMs: pseudoOriginMs, startMs: offset }
+  playDurationMs.value = durationMs + 1500
   lastResult.value = null
   runKey.value += 1
   running.value = true
@@ -1106,10 +1177,28 @@ onBeforeUnmount(() => {
           ♪ 미리듣기
         </button>
         <button v-if="previewing" type="button" @click="stopPreview">■ 정지</button>
-        <button v-if="!tapping" type="button" class="primary" :disabled="running" @click="startSlotRecord">
-          ● {{ slotDone(slotIdx) ? '재녹음' : '녹음' }} — 왼손 ASDF·오른손 JKL; · 누르면 홀드 · ⌫ 무르기 · Esc 종료
+        <button v-if="!tapping" type="button" class="primary" :disabled="running" @click="startSlotRecord(false)">
+          ● {{ slotDone(slotIdx) ? '재녹음(교체)' : '녹음' }} — 왼손 ASDF·오른손 JKL; · 누르면 홀드 · ⌫ 무르기
         </button>
-        <button v-else type="button" @click="stopTapping">■ 정지 {{ (tapPosMs / 1000).toFixed(1) }}s</button>
+        <button
+          v-if="!tapping && slotDone(slotIdx)"
+          type="button"
+          :disabled="running"
+          title="기존 탭을 비프로 들으며 위에 겹쳐 친다 — 왼손 먼저, 오른손 나중 같은 이중 녹음용"
+          @click="startSlotRecord(true)"
+        >
+          ● 겹녹음
+        </button>
+        <button v-else-if="tapping" type="button" @click="stopTapping">
+          ■ 정지 {{ (tapPosMs / 1000).toFixed(1) }}s
+        </button>
+        <button
+          type="button"
+          :disabled="tapping || running || !slotDone(slotIdx)"
+          @click="playSlot"
+        >
+          ▶ 슬롯 플레이
+        </button>
         <button
           type="button"
           :disabled="tapping || slotIdx >= slots.length - 1"
@@ -1158,18 +1247,14 @@ onBeforeUnmount(() => {
 
     <section class="board-wrap">
       <CatchRhythmStage
-        v-if="running && playChart && fileUrl && analysis"
+        v-if="running && playChart && playSong && analysis"
         :key="runKey"
         :seed="seed"
         :difficulty="stageDifficulty"
         :duration-ms="playDurationMs"
         :mode="playMode"
         :chart="playChart"
-        :song="{
-          src: fileUrl,
-          gridOriginMs: analysis.gridOriginMs,
-          startMs: songStartMs(analysis),
-        }"
+        :song="playSong"
         @finished="onFinished"
         @error="(m: string) => (errorMsg = m)"
       >
