@@ -507,6 +507,8 @@ useScrollLockWhen(() => showPointConfirm.value || showClearConfirm.value)
           이름
           <input v-model="name" maxlength="20" placeholder="예: 반짝 별" />
         </label>
+        <!-- 분류 select 임시 제거 — category를 'STICKER'로 고정(위 ref 기본값 그대로 사용).
+             다른 분류를 다시 열 때를 위해 원래 UI는 지우지 않고 남겨둔다.
         <label class="field">
           분류
           <select v-model="category">
@@ -516,6 +518,7 @@ useScrollLockWhen(() => showPointConfirm.value || showClearConfirm.value)
             <option value="BACKGROUND">배경</option>
           </select>
         </label>
+        -->
         <PixelButton variant="primary" size="lg" block :disabled="modalOpen" @click="requestGenerate">
           ✨ AI로 생성하기
         </PixelButton>
