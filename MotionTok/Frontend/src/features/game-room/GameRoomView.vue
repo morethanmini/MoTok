@@ -1427,9 +1427,19 @@ function onBodyFitFinished(r: { score: number; grade: string; iou: number }) {
  * 정산이 끝난 결과 화면에서만 그냥 닫는다.
  */
 function requestCloseGame() {
-  // 게스트는 한 판으로 끝난다(아래 guestWrapUp) — 판이 끝났으면 결과를 닫는 순간 방을 뜬다.
-  // 리듬은 전용 채널이라 정산이 gameResults가 아니라 rhythmEnded로 온다.
-  if (session.isGuest && (gameResults.value || rhythmEnded.value)) {
+  // 게스트에게 ✕는 "이제 그만"이다(아래 guestWrapUp) — 확인 없이 마무리 팝업으로 간다.
+  //
+  // "판이 끝났나"로 가르지 않는다. 끝났다는 신호가 게임마다 다른데, 게임④ 1인 연습은 아예
+  // 그런 신호가 없다 — 로컬 체인이라 finished를 쏘지 않고 최종 결과 창(finishChain)만 띄운다.
+  // 그래서 결과를 보고 종료를 눌러도 "게임을 끝낼까요?"가 한 번 더 끼어들었다.
+  //
+  // 확인은 서버 세션이 도는 중일 때만 거친다 — 잃을 기록이 있는 건 그 경우뿐이라,
+  // 실수로 누른 ✕에 진행 중인 판을 날리지 않는다. 확인을 누르면 confirmCloseGame이 잇는다.
+  if (session.isGuest) {
+    if (activeSession.value && !gameResults.value) {
+      closeGameConfirm.value = true
+      return
+    }
     closeGame()
     guestWrapUp.value = true
     return
@@ -1502,6 +1512,8 @@ function confirmCloseGame() {
   closeGameConfirm.value = false
   if (amRoomHost.value) {
     closeGame() // 방장 — 전체 세션 종료(abort 발신 포함)
+    // 한 판도 못 채우고 그만둔 게스트도 마무리는 같다 — 방에 남는 길을 남기지 않는다
+    if (session.isGuest) guestWrapUp.value = true
     return
   }
   // 비방장 — 서버 세션은 그대로 두고 내 화면만 나간다. 라운드가 살아 있는 동안
@@ -2453,16 +2465,18 @@ const startHint = computed(() =>
       <div class="leave-confirm">
         <span class="leave-icon" aria-hidden="true">🎮</span>
         <p class="leave-kicker">GAME EXIT</p>
-        <h3 class="leave-title">{{ amRoomHost ? '전체 게임을 종료할까요?' : '게임에서 나갈까요?' }}</h3>
+        <!-- 게스트는 혼자라 "모든 참가자"도 "대기실"도 해당이 없다 — 끝내면 게임 선택으로 나간다 -->
+        <h3 class="leave-title">{{ session.isGuest ? '게임을 끝낼까요?' : amRoomHost ? '전체 게임을 종료할까요?' : '게임에서 나갈까요?' }}</h3>
         <p class="leave-desc">
-          <template v-if="amRoomHost && hostCloseEndsAll">방장이 종료하면 모든 참가자의 게임이 함께 끝나요.<br />이번 판 점수는 기록되지 않습니다.</template>
+          <template v-if="session.isGuest">하던 판이 사라지고 게임 선택으로 돌아가요.<br />이번 판 점수는 기록되지 않습니다.</template>
+          <template v-else-if="amRoomHost && hostCloseEndsAll">방장이 종료하면 모든 참가자의 게임이 함께 끝나요.<br />이번 판 점수는 기록되지 않습니다.</template>
           <!-- 솔로 연습(게임④) — 서버 세션이 없어 같이 끝날 사람이 없다 -->
           <template v-else-if="amRoomHost">하던 판이 사라지고 대기실로 돌아가요.<br />이번 판 점수는 기록되지 않습니다.</template>
           <template v-else>게임은 계속 진행돼요.<br />라운드가 끝나기 전이라면 ‘게임 복귀’로 다시 들어올 수 있어요.</template>
         </p>
         <div class="leave-confirm-actions">
           <PixelButton class="leave-cancel" block @click="closeGameConfirm = false">계속 하기</PixelButton>
-          <PixelButton class="leave-submit" block @click="confirmCloseGame">{{ amRoomHost ? '전체 종료' : '나가기' }}</PixelButton>
+          <PixelButton class="leave-submit" block @click="confirmCloseGame">{{ session.isGuest ? '끝내기' : amRoomHost ? '전체 종료' : '나가기' }}</PixelButton>
         </div>
       </div>
     </PixelModal>
