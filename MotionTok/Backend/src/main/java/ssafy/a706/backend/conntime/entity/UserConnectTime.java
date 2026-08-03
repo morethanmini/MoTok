@@ -46,4 +46,18 @@ public class UserConnectTime {
         this.totalSeconds += seconds;
         this.updatedAt = LocalDateTime.now();
     }
+
+    /**
+     * 마지막으로 접속을 끝낸 시각(-179 친구 목록의 "N분 전 접속").
+     *
+     * <p>새 컬럼을 만들지 않고 {@code updated_at}을 그대로 읽는다. 이 행이 갱신되는 경로는
+     * {@link #addSeconds}뿐이고 그것을 부르는 곳은 {@code ConnectTimeService.flush} 하나인데,
+     * flush는 <b>오프라인이 확인됐을 때만</b> 돈다 — 즉 이 값은 이미 "마지막 접속 종료 시각"이다.</p>
+     *
+     * <p><b>다른 경로에서 이 행을 저장하면 의미가 조용히 깨진다.</b> 접속과 무관한 갱신을
+     * 추가해야 한다면 그때는 별도 컬럼으로 갈라야 한다 — 이 메서드가 그 계약의 표식이다.</p>
+     */
+    public LocalDateTime lastSeenAt() {
+        return updatedAt;
+    }
 }
