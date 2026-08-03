@@ -49,6 +49,11 @@ export interface SongChartOptions {
   /** 라운드 길이 상한 — 없으면 곡 끝까지 */
   maxDurationMs?: number
   title?: string
+  /**
+   * 탭 백본(analysis/tapBackbone의 보정 결과). 있으면 **자동 선택을 완전히 대체**한다 —
+   * 밀도 컷 없이 사람이 친 것 전부가 노트 시각이 되고, 격자 스냅·지속음 매칭·배치만 기계가 한다.
+   */
+  backbone?: AnalyzedOnset[] | null
 }
 
 /** 난이도별 목표 노트 밀도(개/초) — 기존 프리셋의 슬롯 확률 × 슬롯 수와 같은 대역이다 */
@@ -97,16 +102,21 @@ function pickOnsets(
   targetPerSec: number,
   minGapMs: number,
   melodyShare: number,
-  options: Required<Pick<SongChartOptions, 'subdivision' | 'snap' | 'maxDurationMs'>>,
+  options: Required<Pick<SongChartOptions, 'subdivision' | 'snap' | 'maxDurationMs'>> &
+    Pick<SongChartOptions, 'backbone'>,
 ): PickedOnset[] {
   const { gridOriginMs, beatMs, sustains } = analysis
   const stepMs = beatMs / options.subdivision
   const snapTolMs = Math.min(45, stepMs * 0.35)
 
   const endMs = Math.min(analysis.durationMs, options.maxDurationMs)
+  // 백본이 있으면 그것이 곧 온셋 목록 — 사람이 이미 "무엇을 칠지"를 골랐다
+  const sourceOnsets = options.backbone ?? analysis.onsets
   const candidates: PickedOnset[] = []
-  for (const onset of analysis.onsets) {
-    if (onset.timeMs < gridOriginMs || onset.timeMs > endMs) continue
+  for (const onset of sourceOnsets) {
+    // 백본 탭은 곡 어디든 허용한다(격자 원점 앞의 픽업 프레이즈도 사람이 쳤으면 노트다)
+    if (options.backbone ? onset.timeMs < 0 : onset.timeMs < gridOriginMs) continue
+    if (onset.timeMs > endMs) continue
     let pickedMs = onset.timeMs
     if (options.snap !== 'free') {
       const k = Math.round((onset.timeMs - gridOriginMs) / stepMs)
@@ -117,6 +127,17 @@ function pickOnsets(
     const sustain =
       sustains.find((s) => Math.abs(s.startMs - onset.timeMs) < 60) ?? null
     candidates.push({ ...onset, pickedMs, sustain })
+  }
+
+  // 백본 모드: 선택(밀도 컷) 없이 전부 쓴다. 같은 온셋에 스냅된 중복 탭만 정리.
+  if (options.backbone) {
+    candidates.sort((a, b) => a.pickedMs - b.pickedMs)
+    return candidates.filter(
+      (c, i) =>
+        i === 0 ||
+        Math.abs(c.pickedMs - candidates[i - 1]!.pickedMs) > 10 ||
+        c.source !== candidates[i - 1]!.source,
+    )
   }
 
   const targetCount = Math.round(((endMs - gridOriginMs) / 1000) * targetPerSec)
@@ -339,6 +360,7 @@ export function generateSongCatchChart(
     subdivision: options.subdivision ?? (4 as const),
     snap: options.snap ?? ('free' as const),
     maxDurationMs: options.maxDurationMs ?? Infinity,
+    backbone: options.backbone ?? null,
   }
   const offsetMs = songStartMs(analysis)
   const toGame = (fileMs: number) => Math.round(offsetMs + (fileMs - analysis.gridOriginMs))
@@ -534,6 +556,7 @@ export function generateSongRingChart(
     subdivision: options.subdivision ?? (4 as const),
     snap: options.snap ?? ('free' as const),
     maxDurationMs: options.maxDurationMs ?? Infinity,
+    backbone: options.backbone ?? null,
   }
   const minGapMs: Record<Difficulty, number> = { EASY: 280, NORMAL: 210, HARD: 160 }
   const picked = pickOnsets(

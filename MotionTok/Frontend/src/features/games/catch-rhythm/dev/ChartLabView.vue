@@ -12,10 +12,11 @@
  *
  * CatchRhythmDevView처럼 카탈로그에 노출되지 않는 dev 라우트다.
  */
-import { onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import CatchRhythmStage from '../CatchRhythmStage.vue'
 import { DIFFICULTIES, type Difficulty } from '../generator/presets'
 import { analyzeSong, type SongAnalysis } from '../analysis/analyzeSong'
+import { correctTapTracks } from '../analysis/tapBackbone'
 import { formatSongAccentsSnippet } from '../analysis/accentExport'
 import {
   generateSongCatchChart,
@@ -51,12 +52,120 @@ const playDurationMs = ref(0)
 const lastResult = ref<string | null>(null)
 
 const waveCanvas = ref<HTMLCanvasElement | null>(null)
+const tapFile = ref<HTMLInputElement | null>(null)
+
+// ── 탭 백본 — 곡을 들으며 키보드로 친 리듬을 뼈대로 쓴다 (드럼/보컬 두 패스) ──
+const tapTrack = ref<'perc' | 'melody'>('melody')
+const percTaps = ref<number[]>([])
+const melodyTaps = ref<number[]>([])
+const tapping = ref(false)
+const tapPosMs = ref(0)
+const useBackbone = ref(true)
+let tapCtx: AudioContext | null = null
+let tapSource: AudioBufferSourceNode | null = null
+let tapStartCtxSec = 0
+let tapRaf = 0
+
+/** 탭 보정 결과 — 분석·탭이 바뀔 때마다 다시 계산 */
+const backbone = computed(() => {
+  if (!analysis.value) return null
+  if (percTaps.value.length + melodyTaps.value.length === 0) return null
+  return correctTapTracks(
+    { percMs: percTaps.value, melodyMs: melodyTaps.value },
+    analysis.value,
+  )
+})
+
+function startTapping() {
+  if (!audioBuffer.value || tapping.value) return
+  stop()
+  ;(document.activeElement as HTMLElement | null)?.blur?.()
+  tapCtx = new AudioContext()
+  tapSource = tapCtx.createBufferSource()
+  tapSource.buffer = audioBuffer.value
+  tapSource.connect(tapCtx.destination)
+  tapStartCtxSec = tapCtx.currentTime + 0.1 // 예약 재생 — 시작 지연이 탭 시각을 흔들지 않게
+  tapSource.start(tapStartCtxSec)
+  tapSource.onended = () => stopTapping()
+  // 이 트랙을 다시 친다 = 이전 기록을 대체한다
+  if (tapTrack.value === 'perc') percTaps.value = []
+  else melodyTaps.value = []
+  tapping.value = true
+  window.addEventListener('keydown', onTapKey)
+  const tick = () => {
+    if (!tapping.value || !tapCtx) return
+    tapPosMs.value = Math.max(0, (tapCtx.currentTime - tapStartCtxSec) * 1000)
+    tapRaf = requestAnimationFrame(tick)
+  }
+  tick()
+}
+
+function onTapKey(e: KeyboardEvent) {
+  if (e.repeat) return
+  const tag = (e.target as HTMLElement | null)?.tagName
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
+  if (e.code === 'Escape') {
+    stopTapping()
+    return
+  }
+  e.preventDefault()
+  if (!tapCtx) return
+  // 판정 시계와 같은 오디오 클럭으로 기록 — 계통 지연은 보정(correctTapTracks)이 흡수한다
+  const ms = (tapCtx.currentTime - tapStartCtxSec) * 1000
+  if (ms < 0) return
+  const arr = tapTrack.value === 'perc' ? percTaps : melodyTaps
+  arr.value = [...arr.value, Math.round(ms)]
+}
+
+function stopTapping() {
+  if (!tapping.value) return
+  tapping.value = false
+  window.removeEventListener('keydown', onTapKey)
+  cancelAnimationFrame(tapRaf)
+  try {
+    tapSource?.stop()
+  } catch {
+    // 이미 끝났으면 던진다 — 정리 중이라 무시
+  }
+  tapSource = null
+  void tapCtx?.close()
+  tapCtx = null
+  drawWave()
+}
+
+function clearTaps() {
+  percTaps.value = []
+  melodyTaps.value = []
+  drawWave()
+}
+
+function exportTaps() {
+  download(
+    `${base()}-taps.json`,
+    JSON.stringify({ audio: fileName.value, perc: percTaps.value, melody: melodyTaps.value }),
+  )
+}
+
+async function importTaps(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  try {
+    const json = JSON.parse(await file.text()) as { perc?: number[]; melody?: number[] }
+    percTaps.value = Array.isArray(json.perc) ? json.perc : []
+    melodyTaps.value = Array.isArray(json.melody) ? json.melody : []
+    drawWave()
+  } catch {
+    errorMsg.value = '탭 파일을 읽을 수 없어요'
+  }
+  ;(e.target as HTMLInputElement).value = ''
+}
 
 function options(): SongChartOptions {
   return {
     subdivision: subdivision.value,
     snap: snap.value,
     title: fileName.value ? `${fileName.value} ${difficulty.value}` : undefined,
+    backbone: useBackbone.value && backbone.value ? backbone.value.onsets : null,
   }
 }
 
@@ -239,11 +348,21 @@ function drawWave() {
   for (const s of a.sustains) {
     ctx.fillRect(msToX(s.startMs), 4, Math.max(2, msToX(s.durationMs) - msToX(0)), 5)
   }
+
+  // 탭 백본 (보정 후) — 위쪽 절반에 트랙 색으로. 드럼 = 주황 계열, 보컬 = 하늘색
+  if (backbone.value) {
+    for (const o of backbone.value.onsets) {
+      const x = msToX(o.timeMs)
+      ctx.fillStyle = o.source === 'perc' ? 'rgba(255,120,80,0.95)' : 'rgba(110,190,255,0.95)'
+      ctx.fillRect(x - 1, 12, 2, h * 0.3)
+    }
+  }
 }
 
-watch([analysis, audioBuffer], drawWave)
+watch([analysis, audioBuffer, backbone], drawWave)
 window.addEventListener('resize', drawWave)
 onBeforeUnmount(() => {
+  stopTapping()
   window.removeEventListener('resize', drawWave)
   if (fileUrl.value) URL.revokeObjectURL(fileUrl.value)
 })
@@ -287,6 +406,38 @@ onBeforeUnmount(() => {
         <div><dt>온셋 / 지속음</dt><dd>{{ analysis.onsets.length }} / {{ analysis.sustains.length }}개</dd></div>
         <div><dt>다른 BPM 후보</dt><dd>{{ analysis.bpmCandidates.map((c) => c.bpm).join(', ') }}</dd></div>
       </dl>
+
+      <div class="controls tapbox">
+        <b>탭 백본</b>
+        <label>
+          트랙
+          <select v-model="tapTrack" :disabled="tapping">
+            <option value="melody">보컬/멜로디</option>
+            <option value="perc">드럼</option>
+          </select>
+        </label>
+        <button v-if="!tapping" type="button" class="primary" :disabled="running" @click="startTapping">
+          ● 녹음 — 재생하며 아무 키나 (Esc 종료)
+        </button>
+        <button v-else type="button" @click="stopTapping">■ 정지 {{ (tapPosMs / 1000).toFixed(1) }}s</button>
+        <span class="dim">드럼 {{ percTaps.length }} · 보컬 {{ melodyTaps.length }}</span>
+        <template v-if="backbone">
+          <span class="dim">
+            지연 보정 {{ backbone.latencyMs }}ms · 온셋 일치 {{ Math.round(backbone.matchedRatio * 100) }}%
+          </span>
+          <label><input v-model="useBackbone" type="checkbox" /> 백본으로 생성</label>
+        </template>
+        <button type="button" :disabled="!percTaps.length && !melodyTaps.length" @click="exportTaps">
+          탭 저장
+        </button>
+        <label>
+          <button type="button" @click="tapFile?.click()">탭 불러오기</button>
+          <input ref="tapFile" type="file" accept=".json" style="display: none" @change="importTaps" />
+        </label>
+        <button type="button" :disabled="!percTaps.length && !melodyTaps.length" @click="clearTaps">
+          지우기
+        </button>
+      </div>
 
       <div class="controls">
         <label>
@@ -495,6 +646,19 @@ dd.warn {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.6rem;
+}
+.tapbox {
+  border: 1px dashed #2c3648;
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+}
+.tapbox b {
+  color: #ffcf7d;
+  font-size: 0.85rem;
+}
+.dim {
+  color: #8b97a6;
+  font-size: 0.85rem;
 }
 .result {
   color: #9fd8b4;
