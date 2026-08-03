@@ -8,6 +8,7 @@ import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import ssafy.a706.backend.game.model.LeaderboardMode;
 
 /**
  * 게임 카탈로그(ERD GAME). 팀장 as-built의 하드코딩(PLAYABLE_GAME_IDS·라운드 시간)을
@@ -101,6 +102,18 @@ public class Game {
      */
     public void changeActive(boolean active) {
         this.active = active;
+    }
+
+    /**
+     * 이 모드의 순위표를 가지는 게임인가 — 혼자 시작할 수 없는 게임(minPlayers ≥ 2)에 솔로 기록은 없다.
+     *
+     * <p>정산이 참가 인원으로 모드를 정하므로({@link LeaderboardMode#ofPlayerCount}) 이런 행은 더는
+     * 쌓이지 않는다. 그런데 개발 중 최소 인원을 잠깐 풀고 테스트한 기록이 남아 있어, 규칙 안내는
+     * "3명부터"라면서 솔로 순위가 보이는 앞뒤 안 맞는 화면이 된다. 그래서 <b>읽기 경로에서</b>
+     * 걸러낸다 — 지우는 대신 막는 쪽이라, 최소 인원이 다시 바뀌어도 규칙이 따라온다.</p>
+     */
+    public boolean hasLeaderboard(LeaderboardMode mode) {
+        return mode != LeaderboardMode.SOLO || minPlayers <= 1;
     }
 
     /** 라운드 길이·최소 인원 갱신 — 이미 시딩된 행의 규칙 조정 백필용(시더는 멱등이라 insert만으로는 못 바꾼다). */

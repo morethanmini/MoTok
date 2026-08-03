@@ -35,6 +35,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -68,13 +69,19 @@ class GameQueryServiceTest {
         return row;
     }
 
+    private Game game(long id, String name, int minPlayers) {
+        return Game.builder().id(id).name(name).mode("VERSUS")
+                .minPlayers(minPlayers).maxPlayers(8)
+                .roundDurationSec(30).countdownSec(3).active(true).build();
+    }
+
     private void givenGameExists() {
-        when(gameRepository.existsById(GAME_ID)).thenReturn(true);
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game(GAME_ID, "핑거 스타", 1)));
     }
 
     @Test
     void 게임이_없으면_GAME_NOT_FOUND() {
-        when(gameRepository.existsById(GAME_ID)).thenReturn(false);
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.leaderboard(GAME_ID, MODE, 20, null))
                 .isInstanceOf(BusinessException.class)
@@ -203,6 +210,42 @@ class GameQueryServiceTest {
         when(rankRepository.reverseRankOf(GAME_ID, MODE, 99L)).thenReturn(Optional.empty());
         assertThat(service.leaderboard(GAME_ID, MODE, 20, new MemberPrincipal(99L, "신규"))
                 .myRank()).isNull();
+    }
+
+    /**
+     * 혼자 시작할 수 없는 게임(minPlayers ≥ 2)에 솔로 순위표는 없다.
+     *
+     * <p>정산이 참가 인원으로 모드를 정하니 새로 쌓이지는 않지만, 개발 중 최소 인원을 잠깐 풀고
+     * 테스트한 기록이 남아 있다. 막지 않으면 "3명부터"라는 규칙 안내와 순위표가 서로 어긋난다.</p>
+     */
+    @Test
+    void 혼자_할_수_없는_게임의_솔로_순위표는_비어_있다() {
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game(GAME_ID, "그림으로 말해요", 3)));
+
+        LeaderboardResponse response =
+                service.leaderboard(GAME_ID, LeaderboardMode.SOLO, 20, new MemberPrincipal(10L, "나"));
+
+        assertThat(response.entries()).isEmpty();
+        assertThat(response.myRank()).isNull();
+        // 남은 기록을 읽지도 않는다 — 비어 있는 건 조회 결과가 아니라 규칙이다
+        verifyNoInteractions(rankRepository, leaderboardRepository, userRepository);
+    }
+
+    /** 막는 건 솔로뿐 — 같은 게임의 멀티 순위표는 그대로 나와야 한다. */
+    @Test
+    void 혼자_할_수_없는_게임도_멀티_순위표는_그대로_준다() {
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game(GAME_ID, "그림으로 말해요", 3)));
+        when(rankRepository.size(GAME_ID, MODE)).thenReturn(1L);
+        when(rankRepository.topBestScores(eq(GAME_ID), eq(MODE), anyInt()))
+                .thenReturn(new LinkedHashMap<>(Map.of(10L, 95)));
+        when(userRepository.findAllById(any())).thenReturn(List.of(user(10L, "그림왕")));
+        when(leaderboardRepository.findAllByGameIdAndModeAndUserIdIn(eq(GAME_ID), eq(MODE), any()))
+                .thenReturn(List.of(row(10L, 95, 2)));
+
+        LeaderboardResponse response = service.leaderboard(GAME_ID, MODE, 20, null);
+
+        assertThat(response.entries()).hasSize(1);
+        assertThat(response.entries().get(0).nickname()).isEqualTo("그림왕");
     }
 
     /**

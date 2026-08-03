@@ -4,6 +4,12 @@ import PixelModal from './PixelModal.vue'
 import PixelButton from './PixelButton.vue'
 
 defineEmits<{ close: []; signup: []; login: [] }>()
+/**
+ * 닫기 버튼 문구. 기본은 "나중에 할게요"(팝업을 닫고 하던 화면에 그대로 남는 경우).
+ * 게스트 1인 플레이 마무리처럼 닫기가 곧 다음 화면으로 넘어가는 자리에서는 "확인"을 쓴다 —
+ * 화면이 바뀌는데 "나중에 할게요"라고 적혀 있으면 아무 일도 안 일어날 것처럼 읽힌다.
+ */
+withDefaults(defineProps<{ dismissLabel?: string }>(), { dismissLabel: '나중에 할게요' })
 </script>
 
 <template>
@@ -16,7 +22,7 @@ defineEmits<{ close: []; signup: []; login: [] }>()
         <PixelButton block @click="$emit('signup')">회원가입</PixelButton>
         <PixelButton variant="primary" block @click="$emit('login')">로그인</PixelButton>
       </div>
-      <button class="later" @click="$emit('close')">나중에 할게요</button>
+      <button class="later" @click="$emit('close')">{{ dismissLabel }}</button>
     </div>
   </PixelModal>
 </template>
