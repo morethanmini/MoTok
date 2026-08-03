@@ -27,11 +27,12 @@ const { leaderboard, getProfile } = vi.hoisted(() => ({
   getProfile: vi.fn<() => Promise<PublicUserProfile>>(),
 }))
 
-const game = (id: number, name: string): Game => ({
-  id, name, description: '', mode: 'VERSUS', minPlayers: 1, maxPlayers: 8,
+const game = (id: number, name: string, minPlayers = 1): Game => ({
+  id, name, description: '', mode: 'VERSUS', minPlayers, maxPlayers: 8,
   supportsBot: true, category: '모션', thumbnailUrl: '', playable: true, active: true,
 })
-const GAMES = [game(1, '핑거 스타'), game(3, '리듬 터치'), game(11, '모션 낚시')]
+// 그림으로 말해요는 minPlayers 3 — 혼자서는 시작할 수 없는 게임이다
+const GAMES = [game(1, '핑거 스타'), game(3, '리듬 터치'), game(11, '모션 낚시'), game(10, '그림으로 말해요', 3)]
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -56,15 +57,18 @@ const HOME: LeaderboardEntry[] = [
 
 /**
  * 게임·모드별 순위표. `떠돌이`는 멀티 두 곳에 있고 모션 낚시(3위)가 리듬 터치(7위)보다 높다.
- * `솔로전용`은 멀티 어디에도 없어 반대 모드까지 넓혀야 나온다.
+ * `솔로전용`은 멀티 어디에도 없어 반대 모드까지 넓혀야 나온다. `테스트잔재`는 멀티 전용 게임의
+ * 솔로 순위표에만 있다 — 개발 중 인원 제한을 풀고 남긴 기록이라 찾아 주면 안 된다.
  */
 const BOARDS: Record<string, LeaderboardEntry[]> = {
   '1:MULTI': HOME,
   '3:MULTI': [entry(1, '남'), entry(7, '떠돌이')],
   '11:MULTI': [entry(1, '남'), entry(3, '떠돌이')],
+  '10:MULTI': [entry(1, '그림왕')],
   '1:SOLO': [entry(4, '솔로전용')],
   '3:SOLO': [],
   '11:SOLO': [],
+  '10:SOLO': [entry(2, '테스트잔재')],
 }
 
 beforeEach(() => {
@@ -331,5 +335,46 @@ describe('랭킹 닉네임 검색', () => {
 
     expect(shownGame(wrapper)).toBe('리듬 터치')
     expect(foundRow(wrapper)).toBe('떠돌이')
+  })
+})
+
+/**
+ * 혼자서는 시작할 수 없는 게임(minPlayers ≥ 2)에는 솔로 순위표가 없다.
+ *
+ * 그런데 DB에는 개발 중 인원 제한을 풀고 테스트한 기록이 남아 있어, 모드를 열어 두면 이제는
+ * 아무도 세울 수 없는 기록이 순위표로 보인다. 그래서 그 게임에서는 멀티만 남긴다.
+ */
+describe('멀티 전용 게임의 랭킹 모드', () => {
+  const modeButtons = (wrapper: View) => wrapper.findAll('.mode-switch button').map((b) => b.text())
+
+  it('혼자 플레이가 불가능한 게임을 고르면 멀티 토글만 남는다', async () => {
+    const wrapper = await mountView()
+    expect(modeButtons(wrapper)).toEqual(['멀티 플레이', '혼자 플레이'])
+
+    await pickGame(wrapper, '그림으로 말해요')
+
+    expect(modeButtons(wrapper)).toEqual(['멀티 플레이'])
+  })
+
+  it('혼자 플레이를 보던 중에 그 게임으로 옮기면 멀티로 되돌린다', async () => {
+    const wrapper = await mountView()
+    await wrapper.findAll('.mode-switch button')[1]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.mode-switch button.active').text()).toBe('혼자 플레이')
+
+    await pickGame(wrapper, '그림으로 말해요')
+
+    // 고를 수 없게 된 모드의 순위표를 그대로 보고 있으면 안 된다
+    expect(wrapper.find('.mode-switch button.active').text()).toBe('멀티 플레이')
+    expect(leaderboard).toHaveBeenLastCalledWith(10, 'MULTI', expect.anything())
+  })
+
+  it('검색도 그 게임의 남은 솔로 기록으로는 옮기지 않는다', async () => {
+    const wrapper = await mountView()
+    await search(wrapper, '테스트잔재')
+
+    expect(result(wrapper)).toContain('없어요')
+    expect(shownGame(wrapper)).toBe('핑거 스타')
+    expect(leaderboard).not.toHaveBeenCalledWith(10, 'SOLO', expect.anything())
   })
 })

@@ -28,6 +28,7 @@ import { GAME_CATALOG, type GameEntry } from './data'
 import { CHAT_REPORT_REASONS, CHAT_REPORT_DETAIL_MAX, canSubmitChatReport, chatReportErrorMessage } from './chatReport'
 import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
+import GuestSignupPromptModal from '@/components/common/GuestSignupPromptModal.vue'
 import GameSetupModal from './components/GameSetupModal.vue'
 import RoomGuideModal from './components/RoomGuideModal.vue'
 import { guidePagesOrFallback } from '@/features/games-catalog/guide/pages'
@@ -687,6 +688,17 @@ const suggestCooldown = ref(false)
 // STOMP 미연결(백엔드 미연동 데모)일 때는 로컬 솔로 플레이로 폴백.
 const activeGame = ref<GameEntry | null>(null)
 const activeSession = ref<ActiveGameSession | null>(null)
+/**
+ * 이 방에서 하던 게임 — 1인 플레이 방의 "다시하기"가 다시 부를 대상.
+ *
+ * <p>마운트되는 순간 기억한다. 끝까지 갔든 중간에 그만뒀든 1인 플레이 방에서 하는 게임은
+ * 하나뿐이라, 시작 경로(자동 시작·직접 선택·리듬·오프라인 폴백)를 가릴 이유가 없다.
+ * {@code closeGame}이 activeGame을 비워도 여기는 남는다 — 판이 끝난 <b>뒤에</b> 쓰는 값이다.</p>
+ */
+const lastPlayed = ref<GameEntry | null>(null)
+watch(activeGame, (g) => {
+  if (g) lastPlayed.value = g
+})
 /**
  * START를 보낸 뒤 GAME_START를 기다리는 시간. 넘기면 "전달되지 않았다"고 알린다.
  *
@@ -1415,11 +1427,67 @@ function onBodyFitFinished(r: { score: number; grade: string; iou: number }) {
  * 정산이 끝난 결과 화면에서만 그냥 닫는다.
  */
 function requestCloseGame() {
+  // 게스트는 한 판으로 끝난다(아래 guestWrapUp) — 판이 끝났으면 결과를 닫는 순간 방을 뜬다.
+  // 리듬은 전용 채널이라 정산이 gameResults가 아니라 rhythmEnded로 온다.
+  if (session.isGuest && (gameResults.value || rhythmEnded.value)) {
+    closeGame()
+    guestWrapUp.value = true
+    return
+  }
   if (gameResults.value) {
     closeGame()
     return
   }
   closeGameConfirm.value = true
+}
+
+/**
+ * 게스트 1인 플레이 마무리(-109) — 결과를 닫으면 가입 유도를 띄우고 방에서 내보낸다.
+ *
+ * <p>게스트에게 1인 플레이는 "게임을 골라 한 판"이 전부다. 그런데 구현이 방 생성이라, 결과를
+ * 닫으면 대기실에 남아 GAME 버튼으로 <b>고르지 않은 게임까지</b> 계속 할 수 있었다. 게임을
+ * 골라 들어온 흐름과 앞뒤가 맞지 않아 한 판에서 끊는다.</p>
+ *
+ * <p>회원에게는 이 팝업이 뜨지 않는다 — 대신 푸터가 다시하기로 좁혀진다(아래 replaySolo).
+ * 혼자 하는 이유가 랭킹 갱신 아니면 연습이라 한 판에서 끊을 이유가 없다.</p>
+ *
+ * <p>중간에 ✕로 그만둔 판(정산 전)은 해당 없다 — 끝낸 게 아니라 그만둔 거라 "재밌으셨나요?"를
+ * 물을 자리가 아니고, 하던 게임을 다시 고를 수 있어야 한다.</p>
+ */
+const guestWrapUp = ref(false)
+
+/**
+ * 게스트 마무리 팝업의 퇴장 — 어느 버튼(가입·로그인·확인)을 눌러도, 팝업 바깥을 눌러 닫아도
+ * 방을 나간다. 한 판으로 끊는 흐름이라 방에 남을 경로를 하나라도 두면 그게 곧 재발이다.
+ *
+ * <p>돌아갈 곳은 게임 선택이다 — 1인 플레이가 시작된 화면이고, 게스트에게는 그게 곧 홈이다
+ * (게스트의 {@code exitRoute}도 같은 곳이라 사실상 같은 목적지다).</p>
+ *
+ * <p>{@code notifyLeave}가 의도된 이탈 표시까지 맡으므로 라우터 가드("정말 떠나시겠습니까?")는
+ * 뜨지 않는다 — 이미 확인을 한 번 받은 이동이다.</p>
+ *
+ * <p>게스트 1인방은 비어도 서버가 남겨 둔다(LiveRoomService.processLeave) — 게임 선택으로
+ * 돌아가 다른 게임을 고르면 같은 방으로 다시 들어간다. 회원 방은 지워지고 다음에 새로 만든다.</p>
+ */
+async function leaveSoloRoom(auth?: 'login' | 'signup') {
+  guestWrapUp.value = false
+  await notifyLeave()
+  await router.replace(
+    auth ? { name: RouteName.Auth, query: { mode: auth } } : { name: RouteName.GamesCatalog },
+  )
+}
+
+/**
+ * 1인 플레이 방 다시하기 — 방금 하던 게임을 그대로 한 판 더.
+ *
+ * <p>혼자 하는 이유가 랭킹 갱신 아니면 연습이라, 판이 끝난 자리에서 가장 잦은 행동이 이것이다.
+ * 방을 유지하므로 게임 선택·기기 설정을 다시 거치지 않는다.</p>
+ *
+ * <p>게임④의 설정(난이도·모드·벽 수)은 넘기지 않는다 — 1인 방은 서버 세션 없이 연습 모드로
+ * 도는 경로라 그 값들이 쓰이지 않는다(launch 참고).</p>
+ */
+function replaySolo() {
+  if (lastPlayed.value) void launch(lastPlayed.value)
 }
 const closeGameConfirm = ref(false)
 /**
@@ -2274,7 +2342,25 @@ const startHint = computed(() =>
           </div>
         </template>
       </div>
+      <!--
+        1인 플레이 방에서 한 판을 하고 나면 게임 선택(GAME) 대신 다시하기다.
+        게임을 골라 들어온 방이라 여기서 다른 게임까지 고를 수 있으면 고른 게 무의미해진다.
+        나가는 길은 따로 두지 않는다 — 오른쪽 LEAVE가 이미 그 자리다.
+        아직 한 판도 안 돈 방(자동 시작 실패 등)은 골라야 하므로 GAME 그대로 둔다.
+      -->
       <button
+        v-if="isSoloPlay && lastPlayed"
+        class="px start-btn footer-start-btn solo-replay"
+        :disabled="pickerLocked || gameInProgress"
+        :title="gameInProgress ? startHint : `${lastPlayed.name} 다시하기`"
+        :aria-disabled="gameInProgress"
+        @click="replaySolo"
+      >
+        <span class="play-ico">↻</span>
+        <span class="start-title">다시하기</span>
+      </button>
+      <button
+        v-else
         class="px start-btn footer-start-btn"
         :class="{ suggest: !amRoomHost }"
         :disabled="pickerLocked || gameInProgress || (detailLoaded && !amRoomHost && suggestCooldown)"
@@ -2350,6 +2436,15 @@ const startHint = computed(() =>
       submit-label="저장"
       @close="settingsOpen = false"
       @create="submitSettings"
+    />
+
+    <!-- 게스트 1인 플레이 마무리(-109) — 어느 버튼을 눌러도 방을 나간다(leaveGuestRoom 참고) -->
+    <GuestSignupPromptModal
+      v-if="guestWrapUp"
+      dismiss-label="확인"
+      @close="leaveSoloRoom()"
+      @signup="leaveSoloRoom('signup')"
+      @login="leaveSoloRoom('login')"
     />
 
     <!-- 게임 ✕ 확인(-164) — 방장은 전체 종료, 비방장은 이번 판 이탈(복귀 가능) -->
@@ -3021,7 +3116,11 @@ const startHint = computed(() =>
   white-space: nowrap;
 }
 .footer-start-btn, .footer-start-btn.suggest { position: static; flex: none; height: 50px; padding: 0 12px; border: 3px solid #4e67a3; border-radius: 7px; background: #7195df; color: #fff; box-shadow: 3px 3px 0 #4e67a3; white-space: nowrap; transform: none; }
+/* 1인 플레이 다시하기 — 한 판이 끝난 자리에서 할 일이 이것뿐이라 GAME보다 크게 잡는다 */
+.footer-start-btn.solo-replay { height: 60px; padding: 0 26px; border-radius: 9px; }
 .footer-start-btn .start-title { font-size: 10px; }
+.footer-start-btn.solo-replay .play-ico { font-size: 20px; }
+.footer-start-btn.solo-replay .start-title { font-size: 14px; }
 
 .room-main { gap: 18px; padding: clamp(20px, 2vw, 26px) clamp(28px, 3.6vw, 46px); }
 .cam-stage {
