@@ -4,7 +4,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.ArgumentCaptor;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.util.ReflectionTestUtils;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
@@ -217,7 +219,7 @@ class GameQueryServiceTest {
         Game closed = Game.builder()
                 .id(2L).name("점검 중 게임").minPlayers(1).maxPlayers(8)
                 .roundDurationSec(30).countdownSec(3).active(false).build();
-        when(gameRepository.findAll()).thenReturn(List.of(open, closed));
+        when(gameRepository.findAll(any(Sort.class))).thenReturn(List.of(open, closed));
 
         List<GameSummaryResponse> all = service.list(null);
         assertThat(all).hasSize(2);
@@ -233,6 +235,22 @@ class GameQueryServiceTest {
         List<GameSummaryResponse> tooMany = service.list(10);
         assertThat(tooMany.get(0).playable()).isFalse(); // 정원 8 초과 인원
         assertThat(tooMany.get(0).active()).isTrue();    // 닫힌 건 아니다
+    }
+
+    /**
+     * 목록은 <b>id 순으로 정렬해</b> 조회한다. 정렬 없는 {@code findAll()}은 SQL이 순서를 보장하지
+     * 않아 실행 계획이 바뀌면 조회마다 순서가 달라질 수 있고, 화면은 이 목록을 게임 id를 key로 하는
+     * 카드 그리드로 그리므로 같은 목록인데도 카드가 재정렬되며 튄다.
+     */
+    @Test
+    void 목록은_id_오름차순으로_조회한다() {
+        when(gameRepository.findAll(any(Sort.class))).thenReturn(List.of());
+
+        service.list(null);
+
+        ArgumentCaptor<Sort> sort = ArgumentCaptor.forClass(Sort.class);
+        verify(gameRepository).findAll(sort.capture());
+        assertThat(sort.getValue()).isEqualTo(Sort.by(Sort.Direction.ASC, "id"));
     }
 
     /** 목록에 남아 눌릴 수 있는 카드라 상세도 열려야 한다 — 404면 화면이 앞뒤가 안 맞는다. */
