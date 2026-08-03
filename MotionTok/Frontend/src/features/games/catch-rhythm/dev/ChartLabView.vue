@@ -4,7 +4,7 @@
  *
  * 난이도 두 갈래:
  * - EASY/NORMAL/HARD: 곡 분석(온셋)만으로 자동 생성
- * - SUPERHARD/EXTREME: **슬롯 채보** — 곡을 마디에 맞춰 ~10초 슬롯으로 쪼개고,
+ * - MANUAL/EXTREME: **슬롯 채보** — 곡을 마디에 맞춰 ~10초 슬롯으로 쪼개고,
  *   슬롯마다 사람이 키보드로 리듬을 친다(앞뒤 문맥을 들려주되 슬롯 범위 입력만 기록).
  *   전 슬롯이 모여 하나의 채보가 되고, 아무 슬롯이나 다시 듣고 재녹음할 수 있다.
  *
@@ -64,7 +64,7 @@ const tapFile = ref<HTMLInputElement | null>(null)
 const songLengthMs = () =>
   audioBuffer.value ? (audioBuffer.value.length / audioBuffer.value.sampleRate) * 1000 : 0
 
-// ═══════════════════ 슬롯 채보 (SUPERHARD/EXTREME) ═══════════════════
+// ═══════════════════ 슬롯 채보 (MANUAL/EXTREME) ═══════════════════
 // 탭은 **두 트랙**: 왼손(asdf…) / 오른손(jkl;…). 단일 스트림이면 동시 입력이
 // 이중 입력 제거(100ms)에 접혀 동타·"홀드 중 다른 손 연주"가 불가능하다(실사용 발견).
 // 두 트랙은 리듬 입력용일 뿐 — 게임 손·레인 배치는 여전히 생성기가 자유롭게 정한다.
@@ -171,7 +171,11 @@ function loadTapsFromStore() {
     return
   }
   try {
-    const raw = localStorage.getItem(key)
+    let raw = localStorage.getItem(key)
+    // 개명 승계: MANUAL(구 SUPERHARD) 저장이 없으면 옛 이름 키를 읽는다
+    if (!raw && difficulty.value === 'MANUAL' && fileName.value) {
+      raw = localStorage.getItem(`${TAPS_STORE}${fileName.value}:SUPERHARD`)
+    }
     const json = raw ? (JSON.parse(raw) as { l?: unknown; r?: unknown; taps?: unknown }) : null
     if (json && (json.l !== undefined || json.r !== undefined)) {
       tapsL.value = parseTapList(json.l)
@@ -540,6 +544,81 @@ function clearTaps() {
   drawWave()
 }
 
+// ── 난이도 간 탭 복사 — "EXTREME의 왼손만 → MANUAL" 같은 파생 채보 제작용 ──
+const copySrcDiff = ref<'MANUAL' | 'EXTREME'>('EXTREME')
+const copyFilter = ref<'all' | 'L' | 'R'>('L')
+
+function copyFromDifficulty() {
+  if (!fileName.value || !isTapped.value) return
+  let raw = localStorage.getItem(`${TAPS_STORE}${fileName.value}:${copySrcDiff.value}`)
+  if (!raw && copySrcDiff.value === 'MANUAL') {
+    raw = localStorage.getItem(`${TAPS_STORE}${fileName.value}:SUPERHARD`)
+  }
+  if (!raw) {
+    errorMsg.value = `${copySrcDiff.value}에 저장된 탭이 없어요`
+    return
+  }
+  try {
+    const json = JSON.parse(raw) as { l?: unknown; r?: unknown; taps?: unknown }
+    const l = copyFilter.value !== 'R' ? parseTapList(json.l ?? json.taps) : []
+    const r = copyFilter.value !== 'L' ? parseTapList(json.r) : []
+    if (l.length + r.length === 0) {
+      errorMsg.value = '가져올 탭이 없어요'
+      return
+    }
+    const filterLabel =
+      copyFilter.value === 'all' ? '전체' : copyFilter.value === 'L' ? '왼손만' : '오른손만'
+    const ok = window.confirm(
+      `${copySrcDiff.value}의 ${filterLabel}(${l.length + r.length}개)로 현재 ${difficulty.value} 탭을 덮어쓸까요?`,
+    )
+    if (!ok) return
+    tapsL.value = l
+    tapsR.value = r
+    selectedTap.value = null
+    drawWave()
+  } catch {
+    errorMsg.value = '저장된 탭을 읽을 수 없어요'
+  }
+}
+
+/**
+ * 게임 번들 내보내기 — 곡 메타(격자 원점·시작 시각) + 캐치/링 게임 채보를 한 JSON으로.
+ * 이 파일과 음원을 public 자산으로 넣으면 게임 쪽 로더가 스테이지에 그대로 주입할 수 있다.
+ */
+function exportGameBundle() {
+  const a = analysis.value
+  if (!a) return
+  if (isTapped.value && !backbone.value) {
+    errorMsg.value = '먼저 슬롯을 녹음하세요'
+    return
+  }
+  const catchChart = buildCatch()
+  const ringGame = ringDraftToGameChart(
+    generateSongRingChart(a, difficulty.value, seed.value, options()),
+    a,
+  )
+  if (!catchChart) return
+  download(
+    `${base()}-${difficulty.value}-bundle.json`,
+    JSON.stringify(
+      {
+        version: 1,
+        song: {
+          file: fileName.value,
+          bpm: a.bpm,
+          gridOriginMs: a.gridOriginMs,
+          startMs: songStartMs(a),
+        },
+        difficulty: difficulty.value,
+        catch: catchChart,
+        ring: ringGame,
+      },
+      null,
+      2,
+    ),
+  )
+}
+
 function exportTaps() {
   download(
     `${base()}-${difficulty.value}-taps.json`,
@@ -824,7 +903,7 @@ async function doTrim(from: number, to: number) {
     list
       .filter((e) => e.t >= from && e.t < to)
       .map((e) => ({ t: Math.round(e.t - from), d: Math.round(Math.min(e.d, to - e.t)) }))
-  for (const diff of ['SUPERHARD', 'EXTREME'] as const) {
+  for (const diff of ['MANUAL', 'EXTREME'] as const) {
     if (!oldName) break
     try {
       const raw = localStorage.getItem(`${TAPS_STORE}${oldName}:${diff}`)
@@ -1215,7 +1294,7 @@ onBeforeUnmount(() => {
         난이도
         <select v-model="difficulty" :disabled="running || tapping">
           <option v-for="d in DIFFICULTIES" :key="d" :value="d">{{ d }} (자동)</option>
-          <option value="SUPERHARD">SUPER HARD (직접)</option>
+          <option value="MANUAL">MANUAL (직접)</option>
           <option value="EXTREME">EXTREME (직접)</option>
         </select>
       </label>
@@ -1236,6 +1315,13 @@ onBeforeUnmount(() => {
       <span class="divider"></span>
       <button type="button" @click="exportCatch">캐치 JSON</button>
       <button type="button" @click="exportRing">링 JSON(에디터)</button>
+      <button
+        type="button"
+        title="곡 메타(격자 원점·시작 시각) + 캐치/링 게임 채보 한 벌 — 게임 자산으로 넣는 용도"
+        @click="exportGameBundle"
+      >
+        게임 번들
+      </button>
       <button type="button" @click="exportAccents">songAccents</button>
       <button
         type="button"
@@ -1271,7 +1357,7 @@ onBeforeUnmount(() => {
       </p>
     </section>
 
-    <!-- ── 슬롯 채보 워크플로 (SUPER HARD / EXTREME) ── -->
+    <!-- ── 슬롯 채보 워크플로 (MANUAL / EXTREME) ── -->
     <template v-if="analysis && isTapped">
       <section class="controls tapbox">
         <b>{{ difficulty }} 슬롯 채보</b>
@@ -1300,6 +1386,26 @@ onBeforeUnmount(() => {
           <input ref="tapFile" type="file" accept=".json" style="display: none" @change="importTaps" />
         </label>
         <button type="button" :disabled="!totalTaps" @click="clearTaps">전체 지우기</button>
+        <label>
+          가져오기
+          <select v-model="copySrcDiff" :disabled="tapping">
+            <option value="MANUAL">MANUAL</option>
+            <option value="EXTREME">EXTREME</option>
+          </select>
+          <select v-model="copyFilter" :disabled="tapping">
+            <option value="all">전체</option>
+            <option value="L">왼손만</option>
+            <option value="R">오른손만</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          :disabled="tapping"
+          title="다른 난이도의 저장된 탭으로 현재 난이도를 덮어쓴다 (예: EXTREME 왼손만 → MANUAL)"
+          @click="copyFromDifficulty"
+        >
+          복사해 오기
+        </button>
       </section>
 
       <section class="slots">

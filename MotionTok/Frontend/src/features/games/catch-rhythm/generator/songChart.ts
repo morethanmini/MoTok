@@ -65,16 +65,16 @@ export interface SongChartOptions {
 
 /**
  * 곡 채보 난이도 — 자동 생성 3종(EASY/NORMAL/HARD) 위에 **직접 찍는 난이도 2종**을 얹는다.
- * SUPERHARD·EXTREME은 탭 백본(슬롯 녹음) 전용 — "내가 찍은 대로": 랜덤 양손·크로스가
+ * MANUAL·EXTREME은 탭 백본(슬롯 녹음) 전용 — "내가 찍은 대로": 랜덤 양손·크로스가
  * 꺼지는 건 물론, **물리 제약도 전부 없다** — 연타 간격 0, 도달 보정 없음, 홀드 무제한
  * ("인간에게 한계는 없다" — 유저 지시). 친 것은 무조건 전부 노트가 된다.
  * 두 난이도의 차이는 엔진이 아니라 **사람이 무엇을 찍었는가**다.
  */
-export type SongDifficulty = Difficulty | 'SUPERHARD' | 'EXTREME'
+export type SongDifficulty = Difficulty | 'MANUAL' | 'EXTREME'
 
 /** 직접 찍는(탭 백본) 난이도인가 */
-export function isTappedDifficulty(d: SongDifficulty): d is 'SUPERHARD' | 'EXTREME' {
-  return d === 'SUPERHARD' || d === 'EXTREME'
+export function isTappedDifficulty(d: SongDifficulty): d is 'MANUAL' | 'EXTREME' {
+  return d === 'MANUAL' || d === 'EXTREME'
 }
 
 const TAPPED_PRESET: Preset = {
