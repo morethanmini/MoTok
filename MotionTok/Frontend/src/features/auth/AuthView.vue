@@ -17,6 +17,7 @@ import {
   consumeAuthorizeContext,
   isSocialConfigured,
   startSocialAuthorize,
+  stashLinkedExistingNotice,
   stashWithdrawProof,
 } from './socialAuthorize'
 
@@ -433,6 +434,8 @@ onMounted(async () => {
       router.replace({ name: RouteName.NicknameSetup })
       return
     }
+    // 같은 이메일의 기존 계정에 방금 처음 연동됐다 — 안내는 로비가 뜬 뒤에 한 번만 띄운다.
+    if (token.linkedExistingAccount) stashLinkedExistingNotice()
     // 로그인 경로(소셜/일반)와 무관하게 로비 진입 스플래시에서 손 인식 모델을 받도록 스킵하지 않는다.
     router.replace({ name: RouteName.Lobby })
   } catch (e) {
