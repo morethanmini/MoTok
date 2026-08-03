@@ -64,14 +64,20 @@ export interface SongChartOptions {
 }
 
 /**
- * 곡 채보 난이도 — 게임 프리셋 3종에 **MANUAL**(탭 백본 전용)을 얹는다.
- * MANUAL은 난이도가 아니라 "내가 찍은 대로": 랜덤 양손·크로스가 꺼지는 건 물론,
- * **물리 제약도 전부 없다** — 연타 간격 0, 도달 보정 없음, 홀드 길이 무제한
+ * 곡 채보 난이도 — 자동 생성 3종(EASY/NORMAL/HARD) 위에 **직접 찍는 난이도 2종**을 얹는다.
+ * SUPERHARD·EXTREME은 탭 백본(슬롯 녹음) 전용 — "내가 찍은 대로": 랜덤 양손·크로스가
+ * 꺼지는 건 물론, **물리 제약도 전부 없다** — 연타 간격 0, 도달 보정 없음, 홀드 무제한
  * ("인간에게 한계는 없다" — 유저 지시). 친 것은 무조건 전부 노트가 된다.
+ * 두 난이도의 차이는 엔진이 아니라 **사람이 무엇을 찍었는가**다.
  */
-export type SongDifficulty = Difficulty | 'MANUAL'
+export type SongDifficulty = Difficulty | 'SUPERHARD' | 'EXTREME'
 
-const MANUAL_PRESET: Preset = {
+/** 직접 찍는(탭 백본) 난이도인가 */
+export function isTappedDifficulty(d: SongDifficulty): d is 'SUPERHARD' | 'EXTREME' {
+  return d === 'SUPERHARD' || d === 'EXTREME'
+}
+
+const TAPPED_PRESET: Preset = {
   density: 0, // 백본 모드에서는 안 쓰인다
   simultaneous: 0,
   crossRate: 0,
@@ -84,12 +90,12 @@ const MANUAL_PRESET: Preset = {
 }
 
 function presetFor(difficulty: SongDifficulty): Preset {
-  return difficulty === 'MANUAL' ? MANUAL_PRESET : PRESETS[difficulty]
+  return isTappedDifficulty(difficulty) ? TAPPED_PRESET : PRESETS[difficulty]
 }
 
-/** MANUAL은 자동 선택 몫 계산에서 NORMAL로 취급한다(백본 없이 골랐을 때의 안전망) */
+/** 직접 찍는 난이도를 자동 선택 몫 계산에서는 HARD로 취급한다(백본 없이 골랐을 때의 안전망) */
 function autoDifficulty(difficulty: SongDifficulty): Difficulty {
-  return difficulty === 'MANUAL' ? 'NORMAL' : difficulty
+  return isTappedDifficulty(difficulty) ? 'HARD' : difficulty
 }
 
 /** 난이도별 목표 노트 밀도(개/초) — 기존 프리셋의 슬롯 확률 × 슬롯 수와 같은 대역이다 */
@@ -428,7 +434,7 @@ export function generateSongCatchChart(
   let nextHand: Hand = rng() < 0.5 ? 'left' : 'right'
   /** 직전 연결 노트가 끝난 시각 — 연결 노트 간 최소 간격(쿨다운)의 기준 */
   let lastTrailEndMs = -Infinity
-  const manual = difficulty === 'MANUAL'
+  const limitless = isTappedDifficulty(difficulty)
   /** 지금까지 만든 가장 긴 연결 노트 — 장애물 스캔 창이 이보다 좁으면 산 노트를 놓친다 */
   let maxTrailMsSeen = MAX_TRAIL_MS
 
@@ -482,13 +488,13 @@ export function generateSongCatchChart(
         ...placedThisOnset,
         ...occupiedPoints(notes, timeMs, maxTrailMsSeen),
       ]
-      // MANUAL은 도달 보정도 없다 — 화면 반대편 연타든 뭐든 친 대로 놓는다
+      // 직접 찍는 난이도는 도달 보정도 없다 — 화면 반대편 연타든 뭐든 친 대로 놓는다
       const { x, y } = choosePlacement(
         rng,
         spawnSide,
         yTarget,
         obstacles,
-        manual ? null : usedPrev ? endOf(usedPrev) : null,
+        limitless ? null : usedPrev ? endOf(usedPrev) : null,
         usedDt,
       )
 
@@ -522,8 +528,8 @@ export function generateSongCatchChart(
           ? true
           : onset.sustain.durationMs >= durLo * 0.8 && timeMs - lastTrailEndMs >= TRAIL_GAP_MS)
       if (wantTrail && onset.sustain) {
-        // MANUAL 홀드는 길이 무제한 — 누른 만큼이 곧 리본 길이다
-        const tapCapMs = manual ? Number.POSITIVE_INFINITY : MAX_TRAIL_MS
+        // 직접 찍는 난이도의 홀드는 길이 무제한 — 누른 만큼이 곧 리본 길이다
+        const tapCapMs = limitless ? Number.POSITIVE_INFINITY : MAX_TRAIL_MS
         let dur = tapped
           ? Math.min(tapCapMs, Math.max(400, onset.sustain.durationMs))
           : Math.min(durHi, Math.max(durLo, onset.sustain.durationMs))
@@ -661,8 +667,8 @@ export function generateSongRingChart(
     const useSide: 'R' | 'L' = opts.handByTrack ? (onset.source === 'perc' ? 'L' : 'R') : side
     // melody: 음높이 등고선(멜로디를 따라 부르는 느낌) / perc: 시드 난수 — 리듬 뼈대는 자유 배치
     let lane = laneFor(onset.source === 'melody' ? onset.pitch : rng(), useSide)
-    // MANUAL은 레인 이동 상한도 없다 — 등고선 그대로("인간에게 한계는 없다")
-    if (prevLane !== null && difficulty !== 'MANUAL') {
+    // 직접 찍는 난이도는 레인 이동 상한도 없다 — 등고선 그대로("인간에게 한계는 없다")
+    if (prevLane !== null && !isTappedDifficulty(difficulty)) {
       const dt = timeMs - prevEndMs
       const diff = laneDiff(prevLane, lane)
       const cap = allowedSteps(dt)

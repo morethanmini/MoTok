@@ -138,12 +138,12 @@ describe('백본 채보 생성', () => {
     expect(trails[2]!.durationMs!).toBeLessThanOrEqual(1700) // 물리 한계(MAX_TRAIL_MS)는 지킨다
   })
 
-  it('MANUAL: 난이도 프리셋과 분리 — 탭 그대로, 랜덤 양손 동시·크로스 없음', () => {
+  it('SUPERHARD: 난이도 프리셋과 분리 — 탭 그대로, 랜덤 양손 동시·크로스 없음', () => {
     const taps = [700, 1400, 2200, 3100, 3800].map((t) => tap(t))
     const corr = correctTapTracks({ perc: taps, melody: [] }, analysis)
-    const chart = generateSongCatchChart(analysis, 'MANUAL', 42, { backbone: corr.onsets })
+    const chart = generateSongCatchChart(analysis, 'SUPERHARD', 42, { backbone: corr.onsets })
     expect(chart.notes.length).toBe(taps.length) // 동시 노트로 불어나지도, 잘리지도 않는다
-    expect(chart.title).toContain('MANUAL')
+    expect(chart.title).toContain('SUPERHARD')
     // 크로스 없음 — 스폰이 항상 자기(owner) 쪽 영역에서 나온다(오른손 x≥-0.1, 왼손 x≤0.1)
     for (const n of chart.notes) {
       if (n.owner === 'right') expect(n.x).toBeGreaterThanOrEqual(-0.1 - 1e-9)
@@ -151,19 +151,21 @@ describe('백본 채보 생성', () => {
     }
   })
 
-  it('MANUAL은 물리 하한도 없다 — 기관총 연타·초장 홀드 전부 그대로', () => {
+  it('직접 찍는 난이도는 물리 하한도 없다 — 기관총 연타·초장 홀드 전부 그대로', () => {
     // 120ms 간격 연타 10개 — NORMAL은 같은손 최소 간격(380ms)에 걸려 일부가 떨어진다
     const rapid = Array.from({ length: 10 }, (_, i) => tap(700 + i * 120))
     const corrRapid = correctTapTracks({ perc: rapid, melody: [] }, analysis)
     const normal = generateSongCatchChart(analysis, 'NORMAL', 42, { backbone: corrRapid.onsets })
-    const manual = generateSongCatchChart(analysis, 'MANUAL', 42, { backbone: corrRapid.onsets })
+    const superhard = generateSongCatchChart(analysis, 'SUPERHARD', 42, {
+      backbone: corrRapid.onsets,
+    })
     expect(corrRapid.onsets.length).toBe(10)
     expect(normal.notes.length).toBeLessThan(10)
-    expect(manual.notes.length).toBe(10)
+    expect(superhard.notes.length).toBe(10)
 
-    // 5초 홀드 — MANUAL은 1.7초 상한 없이 누른 만큼
+    // 5초 홀드 — EXTREME도 같은 엔진: 1.7초 상한 없이 누른 만큼
     const corrHold = correctTapTracks({ perc: [], melody: [tap(3950 + 60, 5000)] }, analysis)
-    const holdChart = generateSongCatchChart(analysis, 'MANUAL', 42, { backbone: corrHold.onsets })
+    const holdChart = generateSongCatchChart(analysis, 'EXTREME', 42, { backbone: corrHold.onsets })
     const trail = holdChart.notes.find((n) => n.kind === 'trail')
     expect(trail).toBeDefined()
     expect(trail!.durationMs).toBeGreaterThanOrEqual(4990)
