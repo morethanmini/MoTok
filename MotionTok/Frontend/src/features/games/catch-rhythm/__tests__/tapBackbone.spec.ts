@@ -127,6 +127,19 @@ describe('백본 채보 생성', () => {
     expect(trails[2]!.durationMs!).toBeLessThanOrEqual(1700) // 물리 한계(MAX_TRAIL_MS)는 지킨다
   })
 
+  it('MANUAL: 난이도 프리셋과 분리 — 탭 그대로, 랜덤 양손 동시·크로스 없음', () => {
+    const taps = [700, 1400, 2200, 3100, 3800].map((t) => tap(t))
+    const corr = correctTapTracks({ perc: taps, melody: [] }, analysis)
+    const chart = generateSongCatchChart(analysis, 'MANUAL', 42, { backbone: corr.onsets })
+    expect(chart.notes.length).toBe(taps.length) // 동시 노트로 불어나지도, 잘리지도 않는다
+    expect(chart.title).toContain('MANUAL')
+    // 크로스 없음 — 스폰이 항상 자기(owner) 쪽 영역에서 나온다(오른손 x≥-0.1, 왼손 x≤0.1)
+    for (const n of chart.notes) {
+      if (n.owner === 'right') expect(n.x).toBeGreaterThanOrEqual(-0.1 - 1e-9)
+      else expect(n.x).toBeLessThanOrEqual(0.1 + 1e-9)
+    }
+  })
+
   it('handByTrack은 성향이다 — 여유 있으면 드럼=왼손·보컬=오른손, 라벨은 강제 없음', () => {
     // 손이 넉넉히 돌아오는 간격 — 성향대로 배정돼야 한다
     const corr = correctTapTracks(

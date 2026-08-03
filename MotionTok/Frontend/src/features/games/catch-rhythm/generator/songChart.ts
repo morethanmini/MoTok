@@ -32,6 +32,7 @@ import {
   TRAIL_SEG_BUDGET,
   TRAIL_ANGLE_CANDIDATES,
   type Difficulty,
+  type Preset,
 } from './presets'
 import type { AnalyzedOnset, SongAnalysis, Sustain } from '../analysis/analyzeSong'
 import type { RingBeatmap, RingNote } from '../ring/ringLogic'
@@ -60,6 +61,34 @@ export interface SongChartOptions {
    * 기존처럼 대부분 any라 플레이어는 아무 손으로나 칠 수 있다.
    */
   handByTrack?: boolean
+}
+
+/**
+ * 곡 채보 난이도 — 게임 프리셋 3종에 **MANUAL**(탭 백본 전용)을 얹는다.
+ * MANUAL은 난이도가 아니라 "내가 찍은 대로": 랜덤 양손·크로스·손 셔플이 전부 꺼지고
+ * 물리 하한(연타 300ms·도달 속도)만 지킨다. 밀도는 어차피 백본이 정한다.
+ */
+export type SongDifficulty = Difficulty | 'MANUAL'
+
+const MANUAL_PRESET: Preset = {
+  density: 0, // 백본 모드에서는 안 쓰인다
+  simultaneous: 0,
+  crossRate: 0,
+  anyRate: 0.75,
+  kinds: { swipe: 1, trail: 0, catch: 0 },
+  trailDurationMs: [400, MAX_TRAIL_MS],
+  minSameHandGapMs: 300,
+  crossMinGapMs: 700,
+  approachTimeMs: 1300,
+}
+
+function presetFor(difficulty: SongDifficulty): Preset {
+  return difficulty === 'MANUAL' ? MANUAL_PRESET : PRESETS[difficulty]
+}
+
+/** MANUAL은 자동 선택 몫 계산에서 NORMAL로 취급한다(백본 없이 골랐을 때의 안전망) */
+function autoDifficulty(difficulty: SongDifficulty): Difficulty {
+  return difficulty === 'MANUAL' ? 'NORMAL' : difficulty
 }
 
 /** 난이도별 목표 노트 밀도(개/초) — 기존 프리셋의 슬롯 확률 × 슬롯 수와 같은 대역이다 */
@@ -364,11 +393,11 @@ export interface SongCatchChart extends Beatmap {
  */
 export function generateSongCatchChart(
   analysis: SongAnalysis,
-  difficulty: Difficulty,
+  difficulty: SongDifficulty,
   seed: number | string,
   options: SongChartOptions = {},
 ): SongCatchChart {
-  const preset = PRESETS[difficulty]
+  const preset = presetFor(difficulty)
   const rng = mulberry32(foldSeed(seed))
   const opts = {
     subdivision: options.subdivision ?? (4 as const),
@@ -382,10 +411,10 @@ export function generateSongCatchChart(
 
   const picked = pickOnsets(
     analysis,
-    TARGET_NOTES_PER_SEC[difficulty].catch,
+    TARGET_NOTES_PER_SEC[autoDifficulty(difficulty)].catch,
     // 스트림 내 최소 간격 — 좌우 교대를 전제로 같은 손 간격의 절반. 16분 연타 대역까지 허용한다.
     Math.max(110, preset.minSameHandGapMs / 2),
-    MELODY_SHARE[difficulty],
+    MELODY_SHARE[autoDifficulty(difficulty)],
     opts,
   )
 
@@ -575,7 +604,7 @@ function laneDiff(from: number, to: number): number {
  */
 export function generateSongRingChart(
   analysis: SongAnalysis,
-  difficulty: Difficulty,
+  difficulty: SongDifficulty,
   seed: number | string,
   options: SongChartOptions & { audio?: string | null } = {},
 ): RingDraftChart {
@@ -590,9 +619,9 @@ export function generateSongRingChart(
   const minGapMs: Record<Difficulty, number> = { EASY: 280, NORMAL: 210, HARD: 160 }
   const picked = pickOnsets(
     analysis,
-    TARGET_NOTES_PER_SEC[difficulty].ring,
-    minGapMs[difficulty],
-    MELODY_SHARE[difficulty],
+    TARGET_NOTES_PER_SEC[autoDifficulty(difficulty)].ring,
+    minGapMs[autoDifficulty(difficulty)],
+    MELODY_SHARE[autoDifficulty(difficulty)],
     opts,
   )
 
