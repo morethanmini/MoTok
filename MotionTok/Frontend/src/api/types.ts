@@ -321,15 +321,18 @@ export interface LiveRoomUpdatedEvent {
 }
 
 /**
- * /topic/rooms/{roomId}/members 로 오는 방장 변경 알림 (LiveRoomHostChangedEvent, -72).
- * 방장이 나가면 서버가 남은 참가자 중 가장 먼저 들어온 사람에게 위임하고 이 이벤트를 쏜다.
+ * /topic/rooms/{roomId}/members 로 오는 방장 변경 알림 (LiveRoomHostChangedEvent, -72/-180).
+ * 방장이 나가면 남은 참가자 중 가장 먼저 들어온 사람에게 자동 위임되고(HOST_LEFT),
+ * 방장이 직접 지목해 넘기면 DELEGATED로 온다 — 안내 문구의 원인이 정반대라 갈라야 한다.
  *
  * 이 토픽에는 판별용 type 필드가 없어 필드 모양으로 가른다 — hostUserId를 갖는 건 이 이벤트뿐이다
  * (퇴장·강퇴는 userId/participantCount 계열, 방 정보 수정은 title/maxPlayers).
+ * 사유 필드명이 reason이 아니라 hostReason인 것도 그래서다 — 강퇴 이벤트가 이미 reason을 쓴다.
  */
 export interface LiveRoomHostChangedEvent {
   hostUserId: string
   hostDisplayName: string
+  hostReason: 'HOST_LEFT' | 'DELEGATED'
 }
 
 /**

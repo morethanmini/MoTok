@@ -1684,11 +1684,13 @@ watch(
 )
 
 /**
- * 방장 위임(-72) 반영. 방장이 나가면 서버가 남은 참가자 중 가장 먼저 들어온 사람에게 넘기고
+ * 방장 변경(-72 자동 이양 / -180 수동 위임) 반영. 서버가 hostUserId를 바꾸고
  * LiveRoomHostChangedEvent를 쏜다. 이걸 반영하지 않으면 서버 hostUserId는 바뀌었는데 화면은
  * 입장 시 조회한 값을 계속 들고 있어 <b>아무에게도 시작 권한이 안 보인다</b>(새로고침해야 정상화).
  *
  * 방장이 바뀌는 건 조용히 지나가면 안 되는 변화라 안내도 띄운다 — 특히 내가 방장이 된 경우.
+ * 원인(hostReason)까지 실어야 하는 이유: 자동 이양은 방장이 <b>없어서</b> 넘어간 것이고 수동
+ * 위임은 방장이 <b>있는 채로</b> 넘긴 것이라, "방장이 나가서"를 그대로 쓰면 후자에선 거짓말이 된다.
  */
 watch(
   () => roomChat.hostChanged.value,
@@ -1699,11 +1701,14 @@ watch(
     // 아직 공개되지 않은 방(방장이 기기 점검 중에 나가 버린 경우)이라면 여기서 목록에 올린다 —
     // 내가 방장이 됐고 나는 이 화면에 있으니 공개 조건을 그대로 만족한다. 이미 공개된 방이면 서버가 무시한다.
     if (e.hostUserId === myParticipantId.value) void publishRoom()
-    // 결과만 알리면 "왜 갑자기?"가 되므로 원인(방장 퇴장)을 함께 붙인다.
+    // 결과만 알리면 "왜 갑자기?"가 되므로 원인(방장 퇴장 / 위임)을 함께 붙인다.
+    const delegated = e.hostReason === 'DELEGATED'
     flash(
       e.hostUserId === myParticipantId.value
-        ? '방장이 나가서 내가 새 방장이 되었어요'
-        : `방장이 나가서 ${e.hostDisplayName}님이 새 방장이 되었어요`,
+        ? (delegated ? '방장을 넘겨받았어요' : '방장이 나가서 내가 새 방장이 되었어요')
+        : (delegated
+            ? `${e.hostDisplayName}님이 새 방장이 되었어요`
+            : `방장이 나가서 ${e.hostDisplayName}님이 새 방장이 되었어요`),
     )
   },
 )
@@ -1820,6 +1825,22 @@ async function addFriend(target: ParticipantView | null) {
     flash(`${target.name}님에게 친구 요청을 보냈어요`)
   } catch (e) {
     flash(e instanceof ApiError ? e.message : '친구 요청을 보내지 못했어요')
+  }
+}
+
+/**
+ * 방장을 이 참가자에게 넘긴다(-180). 되돌리려면 새 방장이 다시 넘겨줘야 하므로 한 번 묻는다.
+ *
+ * 성공 안내는 여기서 띄우지 않는다 — 서버가 쏘는 HOST_CHANGED가 방 전원에게 돌아오고,
+ * hostChanged watch가 나를 포함한 모두에게 같은 문구로 알린다. 여기서도 띄우면 나만 두 번 본다.
+ */
+async function delegateHost(target: ParticipantView | null) {
+  if (!amRoomHost.value || !target) return
+  if (!confirm(`${target.name}님에게 방장을 넘길까요? 되돌리려면 새 방장이 다시 넘겨줘야 해요.`)) return
+  try {
+    await roomsApi.delegateHost(roomCode.value, target.identity)
+  } catch (e) {
+    flash(e instanceof ApiError ? e.message : '방장을 넘기지 못했어요')
   }
 }
 
@@ -1981,8 +2002,10 @@ const startHint = computed(() =>
             compact
             :can-kick="amRoomHost && !!slot.view"
             :can-invite="!activeGame"
+            :can-delegate="amRoomHost && !activeGame && !!slot.view"
             @kick="openKick(slot.view)"
             @friend="addFriend(slot.view)"
+            @delegate="delegateHost(slot.view)"
             @volume="changeVolume(slot, $event)"
           />
         </div>
@@ -2205,8 +2228,10 @@ const startHint = computed(() =>
             compact
             :can-kick="amRoomHost && !!slot.view"
             :can-invite="!activeGame"
+            :can-delegate="amRoomHost && !activeGame && !!slot.view"
             @kick="openKick(slot.view)"
             @friend="addFriend(slot.view)"
+            @delegate="delegateHost(slot.view)"
             @volume="changeVolume(slot, $event)"
           />
         </div>
@@ -2225,8 +2250,10 @@ const startHint = computed(() =>
             mirror
             :can-kick="amRoomHost && !!slot.view"
             :can-invite="!activeGame"
+            :can-delegate="amRoomHost && !activeGame && !!slot.view"
             @kick="openKick(slot.view)"
             @friend="addFriend(slot.view)"
+            @delegate="delegateHost(slot.view)"
             @volume="changeVolume(slot, $event)"
           />
         </div>
