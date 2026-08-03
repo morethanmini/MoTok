@@ -95,10 +95,21 @@ deploy-backend:
       # fal 크레딧 키. 프론트에는 절대 넣지 않는다(번들에 노출되면 남이 우리 크레딧을 쓴다).
       # 미등록이면 AI_PROVIDER가 FAL/AUTO여도 fal 경로가 켜지지 않는다(FalImageClient.available()=false).
       add FAL_KEY "$FAL_KEY"
-      # 모델·호스트는 application.yaml 기본값(fal-ai/qwen-image-edit-2511, https://fal.run)을 쓴다.
+      # 모델·호스트는 application.yaml 기본값(fal-ai/qwen-image-edit-2511/lora, https://fal.run)을 쓴다.
       # 모델을 바꾸거나 큐 호스트로 옮길 때만 등록한다.
+      # LoRA를 쓰는 동안에는 /lora 로 끝나는 엔드포인트여야 한다(기본 쪽에는 loras 필드가 없다).
       add FAL_MODEL "$FAL_MODEL"
       add FAL_BASE_URL "$FAL_BASE_URL"
+      # LoRA 세트 — 세 값은 함께 켜고 함께 끈다. 워커와 같은 Lightning LoRA를 얹어야 "다시 생성"이
+      # 원본에서 멀어지지 않는다. FAL_LORA_PATH를 빈 값으로 두면 스텝·guidance도 보내지 않고
+      # fal 기본값(28 / 4.5)으로 돈다 — 4스텝 전용 LoRA에 28스텝을 시키는 반쪽 설정을 막는다.
+      # 미등록이면 yaml 기본값(4스텝 / guidance 1.0 / scale 1.0)이라 워커와 같은 조건이다.
+      add FAL_LORA_PATH "$FAL_LORA_PATH"
+      add FAL_LORA_SCALE "$FAL_LORA_SCALE"
+      add FAL_STEPS "$FAL_STEPS"
+      add FAL_GUIDANCE_SCALE "$FAL_GUIDANCE_SCALE"
+      # 흰 배경 제거 임계값(0~255, 기본 240). 배경이 남으면 내리고, 그림의 밝은 부분이 파먹히면 올린다.
+      add FAL_BACKGROUND_THRESHOLD "$FAL_BACKGROUND_THRESHOLD"
       # AUTO에서 GPU에게 먼저 주는 시간(초). 프론트가 60초에 포기하므로
       # (이 대기 + fal 생성 10~20초)가 그 안에 들어와야 한다. 기본 20.
       # 생성 지시문 — 결과 품질을 좌우한다. 재빌드 없이 CI 변수만 바꿔 재배포하면 반영된다.
