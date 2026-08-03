@@ -141,6 +141,8 @@ async function start() {
     }
   }
   soloSeed.value = Math.floor(Math.random() * 2 ** 31)
+  // 솔로는 서버 라운드가 없어 위 감시자를 타지 않는다 — 여기서 직접 알려야 로비 테마가 내려간다
+  emit('started')
 }
 
 function onProgress(score: number, combo: number) {
@@ -149,7 +151,12 @@ function onProgress(score: number, combo: number) {
 
 function onFinished(r: { score: number; maxCombo: number; counts: Record<Judgement, number> }) {
   submitted.value = true
-  if (!isMultiplayer.value || !session.round.value) return
+  if (!isMultiplayer.value || !session.round.value) {
+    // 솔로는 서버 정산(RHYTHM_END)이 없어 ended가 영영 안 나간다 — started만 넣으면 로비 테마가
+    // 게임을 닫을 때까지 안 돌아온다. 지급 포인트는 0이다(서버를 안 거치므로 적립도 없다).
+    emit('ended', 0)
+    return
+  }
   session.sendFinish({
     score: r.score,
     maxCombo: r.maxCombo,
@@ -183,7 +190,18 @@ onMounted(async () => {
   if (ok) modelProgress.value = 1
 })
 
-// 방장이 시작하면 다른 참가자도 자동으로 라운드에 들어간다
+/**
+ * 방장이 시작하면 다른 참가자도 자동으로 라운드에 들어간다.
+ *
+ * <p><b>immediate가 필요하다.</b> 비방장은 시작 신호를 받은 <b>뒤에</b> 이 화면이 열리는데
+ * (useRhythmAutoJoin), 놓친 RHYTHM_START는 모듈 버퍼에 맡겨져 useRhythmSession()이
+ * 만들어지는 순간 <b>동기적으로</b> 꺼내 쓰인다. 즉 화면이 열릴 때 round는 이미 채워져 있고,
+ * 이 감시자는 그보다 아래에서 등록되므로 immediate 없이는 그 전이를 영영 못 본다.</p>
+ *
+ * <p>그때 started가 안 나가서 <b>비방장은 게임 내내 로비 테마가 겹쳐 들렸다</b> — 이 게임은
+ * started~ended 사이에만 오디오를 소유하기 때문이다(GameRoomView의 AUDIO_OWNING_GAMES 주석).
+ * 방장은 화면을 먼저 열고 시작을 눌러 null→id 전이가 등록 뒤에 생기므로 멀쩡했다.</p>
+ */
 watch(
   () => session.round.value?.sessionId,
   (id) => {
@@ -194,6 +212,7 @@ watch(
       emit('started')
     }
   },
+  { immediate: true },
 )
 
 // 곡 라운드면 전원이 같은 번들(정적 자산)을 읽는다 — 로드 전까지 스테이지는 열리지 않고,
