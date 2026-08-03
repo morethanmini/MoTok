@@ -43,11 +43,35 @@ export interface RhythmRound {
  * "방장이 시작하기를 기다리는 중"에 멈춘다. 그래서 방에 있는 동안 항상 듣고 있는
  * 감시자(useRhythmAutoJoin)가 여기에 이벤트를 맡겨 두고, 세션이 만들어질 때
  * 같은 방 + 아직 진행 중인 라운드면 꺼내 쓴다.
+ *
+ * ⚠️ <b>한 번만 꺼내 쓴다.</b> 이건 "화면이 신호보다 늦게 열리는" 한 순간을 잇는 다리이지
+ * 라운드 상태의 사본이 아니다. 소비 후에도 남겨 두면, 라운드가 끝나기 전에 게임을 닫았다
+ * 다시 열었을 때 같은 신호를 또 꺼내 쓴다 — 시작을 누르지도 않았는데 화면이 "진행 중"으로
+ * 열리고, 서버 세션은 이미 지워진 뒤라 점수도 올라가지 않는다.
  */
 let stashedStart: { roomId: string; event: RhythmStartEvent; receivedAtMs: number } | null = null
 
 export function stashRhythmStart(roomId: string, event: RhythmStartEvent): void {
   stashedStart = { roomId, event, receivedAtMs: Date.now() }
+}
+
+/**
+ * 맡겨 둔 신호를 꺼내면서 지운다. 꺼낼 게 없거나 다른 방 것이면 null.
+ * 읽기와 지우기를 나누면 "꺼내 놓고 안 지우는" 경로가 생긴다 — 그게 위 버그였다.
+ */
+function takeRhythmStart(roomId: string) {
+  if (!stashedStart || stashedStart.roomId !== roomId) return null
+  const taken = stashedStart
+  stashedStart = null
+  return taken
+}
+
+/**
+ * 라운드가 끝났으니 맡겨 둔 신호도 버린다(RHYTHM_END·RHYTHM_ABORTED).
+ * 화면을 한 번도 열지 않아 아무도 꺼내 가지 않은 신호가 남는 경우를 위한 것이다.
+ */
+export function clearRhythmStart(roomId: string): void {
+  if (stashedStart?.roomId === roomId) stashedStart = null
 }
 
 export function useRhythmSession(roomChat: StompLike, roomId: Ref<string>) {
@@ -71,6 +95,11 @@ export function useRhythmSession(roomChat: StompLike, roomId: Ref<string>) {
    */
   function handle(event: RhythmEvent, receivedAtMs = Date.now()) {
     if (event.type === 'RHYTHM_START') {
+      // 이 세션이 신호를 직접 받았으니 다리(맡겨 둔 사본)는 필요 없다.
+      // 방장은 화면을 먼저 열고 시작을 눌러 늘 이 경로로 들어오는데, 감시자는 같은 프레임을
+      // 맡겨 두기만 하고 아무도 꺼내 가지 않아 그 사본이 남았다 — 닫았다 다시 열면 그게
+      // 되살아나 "진행 중"으로 열렸다.
+      clearRhythmStart(roomId.value)
       clockOffset.value = event.serverNow - receivedAtMs
       results.value = null
       live.value = {}
@@ -120,6 +149,10 @@ export function useRhythmSession(roomChat: StompLike, roomId: Ref<string>) {
     if (event.type === 'RHYTHM_END') {
       results.value = event.results
     }
+    // 방장 강제종료(-164) — 정산이 없으니 결과를 띄우지 않고 라운드만 접는다
+    if (event.type === 'RHYTHM_ABORTED') {
+      reset()
+    }
   }
 
   function subscribe() {
@@ -151,8 +184,10 @@ export function useRhythmSession(roomChat: StompLike, roomId: Ref<string>) {
   // 구독 전에 도착해 놓친 RHYTHM_START가 있으면 그걸로 라운드를 연다.
   // 수신 시각 기준으로 시계를 보정하므로 화면이 늦게 열려도 t=0이 어긋나지 않고,
   // 라운드 중간이면 Stage가 그 시각부터 이어서 진행한다.
-  if (stashedStart && stashedStart.roomId === roomId.value) {
-    const { event, receivedAtMs } = stashedStart
+  // 꺼내는 순간 버려진다 — 다음 번에 화면을 열 때 다시 꺼내 쓰면 안 된다(위 주석 참고).
+  const stashed = takeRhythmStart(roomId.value)
+  if (stashed) {
+    const { event, receivedAtMs } = stashed
     const stillRunning = Date.now() < receivedAtMs + (event.endAt - event.serverNow)
     if (stillRunning) handle(event, receivedAtMs)
   }

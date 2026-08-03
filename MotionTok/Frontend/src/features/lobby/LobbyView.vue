@@ -10,6 +10,7 @@ import {
   ApiError,
   type LiveRoomSummary,
   type Friend as ApiFriend,
+  type FriendRequestItem,
   type InvitationItem,
   type KickReason,
   type LobbyRoomEvent,
@@ -33,6 +34,8 @@ import UserProfileModal from '@/components/common/UserProfileModal.vue'
 import RoomCard from './components/RoomCard.vue'
 import FriendItem from './components/FriendItem.vue'
 import InviteCardStack from './components/InviteCardStack.vue'
+import FriendRequestCardStack from './components/FriendRequestCardStack.vue'
+import { addDismissed, pruneDismissed } from './dismissedRequests'
 import LobbySplash from './components/LobbySplash.vue'
 import JoinRoomModal from './components/JoinRoomModal.vue'
 import CreateRoomModal, { type NewRoom } from './components/CreateRoomModal.vue'
@@ -112,12 +115,15 @@ const { data: friends, reload: reloadFriends } = useAsyncData(
   NO_FRIENDS,
 )
 
-// 받은 친구 요청 수 (GET /friends/requests?direction=received, -57)
-// 개수 전용 엔드포인트가 명세에 없어서 목록 길이를 센다(친구 화면 탭 배지와 같은 방식).
-const { data: pendingRequests, reload: reloadRequests } = useAsyncData(
-  async () => (await friendsApi.requests('received')).length,
-  0,
+// 받은 친구 요청 (GET /friends/requests?direction=received, -57)
+// 개수 전용 엔드포인트가 명세에 없어서 목록을 받아 길이를 센다(친구 화면 탭 배지와 같은 방식).
+// 목록 자체는 팝업 카드에도 쓴다 — 누가 보냈는지 알려면 어차피 필요하다.
+const NO_REQUESTS: FriendRequestItem[] = []
+const { data: receivedRequests, reload: reloadRequests } = useAsyncData(
+  () => friendsApi.requests('received'),
+  NO_REQUESTS,
 )
+const pendingRequests = computed(() => receivedRequests.value.length)
 
 // 받은 방 초대 (GET /invitations, -100)
 // 이제 전역 STOMP 개인 큐로 즉시 도착한다(-142). 이 조회는 진입·재연결 시의 스냅샷 역할만 한다 —
@@ -345,6 +351,68 @@ useLobbyLive({
 })
 
 /**
+ * 친구 요청 팝업 (-57).
+ *
+ * 요청은 수락·거절 전까지 서버에 남아 있어서 그것만 보고 띄우면 로비에 들어올 때마다 같은
+ * 카드가 다시 뜬다. 한 번 닫은 요청은 기억해 두고 배지로만 알린다(dismissedRequests).
+ */
+const dismissedRequestIds = ref<Set<number>>(new Set())
+/**
+ * 응답을 보내는 중인 요청들 — 같은 요청을 연타로 두 번 보내지 않게.
+ *
+ * 하나만 담으면 카드 두 장이 떠 있을 때 한 장을 처리하는 동안 다른 장의 클릭이 조용히 먹힌다.
+ * 서로 다른 요청이라 동시에 보내도 문제가 없으므로 요청별로 잠근다.
+ */
+const respondingRequestIds = ref<Set<number>>(new Set())
+
+const popupRequests = computed(() =>
+  receivedRequests.value.filter(
+    (r) => r.status === 'PENDING' && !dismissedRequestIds.value.has(r.requestId),
+  ),
+)
+
+// 요청 목록이 바뀔 때마다 죽은 id를 걷어낸다 — 안 그러면 저장소가 계속 자라고,
+// 언젠가 같은 번호의 새 요청이 오면 뜨지도 않고 묻힌다.
+//
+// 내 id도 같이 본다. 저장 키가 사용자별이라 프로필이 없으면 아무것도 못 읽는데, 목록만
+// 감시하면 프로필이 목록보다 늦게 온 경우 닫아 둔 기록을 영영 못 불러온다 — 닫은 카드가
+// 다시 뜬다. 지금은 라우터 가드가 프로필을 먼저 채우지만 그 순서에 기대지 않는다.
+watch(
+  [receivedRequests, () => session.profile?.id],
+  ([list, me]) => {
+    if (me == null) return
+    dismissedRequestIds.value = pruneDismissed(
+      me,
+      list.filter((r) => r.status === 'PENDING').map((r) => r.requestId),
+    )
+  },
+  { immediate: true },
+)
+
+function dismissRequest(request: FriendRequestItem) {
+  const me = session.profile?.id
+  if (me != null) addDismissed(me, request.requestId)
+  dismissedRequestIds.value = new Set([...dismissedRequestIds.value, request.requestId])
+}
+
+async function respondToRequest(request: FriendRequestItem, action: 'ACCEPT' | 'REJECT') {
+  if (respondingRequestIds.value.has(request.requestId)) return
+  respondingRequestIds.value = new Set([...respondingRequestIds.value, request.requestId])
+  try {
+    await friendsApi.respond(request.requestId, action)
+    // 서버가 처리했으니 목록에서 사라진다. 수락이면 친구 목록에 새로 들어온다.
+    await Promise.all([reloadRequests(), action === 'ACCEPT' ? reloadFriends() : Promise.resolve()])
+  } catch (e) {
+    // 실패하면 카드를 남긴다 — 조용히 지우면 처리된 줄 알고 넘어간다.
+    flash(e instanceof ApiError ? e.message : '요청을 처리하지 못했어요. 다시 시도해 주세요.')
+  } finally {
+    const next = new Set(respondingRequestIds.value)
+    next.delete(request.requestId)
+    respondingRequestIds.value = next
+  }
+}
+
+/**
  * 초대 수락 (-100) — 초대에 실린 초대코드로 기존 입장 흐름을 탄다.
  * 초대받아 들어가는 경로라 비밀방이어도 비밀번호를 묻지 않는다(방 안 사람이 허락한 입장이다).
  *
@@ -422,10 +490,7 @@ async function joinRoom(code: string) {
 const creating = ref(false)
 async function createRoom(payload: NewRoom) {
   if (creating.value) return // 요청 중 중복 제출 방지
-  if (!payload.title.trim()) {
-    flash('방 제목을 입력해 주세요')
-    return
-  }
+  // 빈 제목 검사는 없다 — 모달이 비어 있으면 placeholder에 보여 준 기본 제목으로 채워 보낸다(-175).
   if (containsProfanity(payload.title)) {
     flash('방 제목에 사용할 수 없는 단어가 있어요')
     return
@@ -544,6 +609,7 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
               :friend="f"
               :unread="whisper.unreadWith(f.userId)"
               @open="openWhisper(f)"
+              @profile="viewer.open(f.userId, f.name)"
             />
             <p v-if="friends.length === 0" class="friends-empty">
               <img class="friends-empty-toys pixel-image" :src="lobbyEmptyCatToys" alt="" aria-hidden="true" />
@@ -588,11 +654,24 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
     </PixelModal>
 
     <!-- 받은 방 초대 (-100) — 모달이 아니라 쌓이는 카드. 배경 조작을 막지 않는다. -->
-    <InviteCardStack
-      :invitations="invitations"
-      @accept="acceptInvitation"
-      @reject="dismissInvitation"
-    />
+    <!--
+      알림 카드는 한 열에 모아 흘린다. 각 스택이 따로 fixed면 둘 다 같은 자리(top 96px)에서
+      시작해 겹친다 — 방 초대와 친구 요청이 동시에 오면 뒤쪽 카드가 통째로 가려졌다.
+    -->
+    <div class="notice-stacks">
+      <InviteCardStack
+        :invitations="invitations"
+        @accept="acceptInvitation"
+        @reject="dismissInvitation"
+      />
+      <FriendRequestCardStack
+        :requests="popupRequests"
+        :busy-ids="[...respondingRequestIds]"
+        @accept="respondToRequest($event, 'ACCEPT')"
+        @reject="respondToRequest($event, 'REJECT')"
+        @dismiss="dismissRequest"
+      />
+    </div>
 
     <!-- 친구 박스를 누르면 공개 프로필(-96). 친구·랭킹 화면과 같은 모달·같은 조회 규칙을 쓴다. -->
     <UserProfileModal
@@ -1038,6 +1117,42 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   font-size: 14px;
 }
 .refresh-btn { color: #69513e; }
+/*
+ * 알림 카드 한 열 — 방 초대·친구 요청이 같이 와도 겹치지 않게 위에서부터 쌓는다.
+ * 각 스택은 혼자서도 쓸 수 있게 자기 fixed 좌표를 들고 있으므로, 묶을 때만 여기서 푼다.
+ */
+.notice-stacks {
+  position: fixed;
+  top: 96px;
+  right: 20px;
+  z-index: 250;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 236px;
+  /* 카드가 없는 빈 자리가 뒤쪽 클릭을 먹지 않게 */
+  pointer-events: none;
+}
+.notice-stacks :deep(.invite-stack),
+.notice-stacks :deep(.req-stack) {
+  position: static;
+  width: 100%;
+  z-index: auto;
+}
+.notice-stacks :deep(.invite-card),
+.notice-stacks :deep(.req-card) { pointer-events: auto; }
+/*
+ * 헤더 한 줄 유지 — 좁아지면 글자가 접히는 대신 검색창만 줄어든다.
+ * flex-wrap은 원래 nowrap이라 줄이 바뀌는 게 아니라, 버튼들이 같이 찌그러지며 그 안의
+ * 글자가 접혔다("방 만들기"·"새로고침"·"n개의 방"). 그래서 나머지는 flex:none으로 고정하고
+ * 검색창 하나만 줄어들 수 있게 남긴다.
+ */
+.section-head > * { flex: none; white-space: nowrap; }
+.section-head > .room-search { flex: 0 1 auto; min-width: 0; }
+/* 미디어 쿼리가 정한 input width는 '선호 크기'로 남기고, 모자라면 그 아래로 줄어들게 한다 */
+.section-head .room-search input { min-width: 0; }
+.room-list-title span,
+.room-pager-inline .pager-btn { white-space: nowrap; }
 .room-list-wrap { padding: 10px; border: 2px dashed #dfc9a6; border-radius: 18px; background: rgba(255, 253, 247, .65); }
 .room-list { gap: 13px; }
 .empty { min-height: 170px; display: grid; place-content: center; gap: 10px; border-color: #dfc9a6; background: #fffdf8; color: var(--lobby-muted); }

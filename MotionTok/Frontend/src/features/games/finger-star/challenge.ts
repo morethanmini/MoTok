@@ -22,8 +22,16 @@ export function mulberry32(seed: number): () => number {
 }
 
 /**
+ * 쉬운 별자리로 여는 판 수 — 이만큼 지나면 별 개수·난이도를 가리지 않는다.
+ *
+ * 손이 풀릴 만큼은 쉽게 가되, 60초 안에 여기까지 오는 사람이 5별만 보고 끝나지는 않을 만큼.
+ * 지금 데이터로는 최소 개수(5별)가 7개라 여는 판을 다 채우고도 매번 조합이 달라진다.
+ */
+const OPENER_COUNT = 4
+
+/**
  * 매치 동안 별자리를 뽑는 순서 생성기.
- * - 처음 3개: 쉬움(EASY)·보통(NORMAL) 풀에서만 출제
+ * - 처음 {@link OPENER_COUNT}개: 별이 가장 적은 것부터(쉬움·보통 풀 안에서)
  * - 이후: 전체 풀에서 아직 안 나온 것 우선, 풀 소진 시 재셔플(직전 별자리 연속 방지)
  */
 export class StarSequence {
@@ -38,14 +46,19 @@ export class StarSequence {
   constructor(pool: Constellation[], rng: () => number = Math.random) {
     this.rng = rng
     this.allKeys = pool.map((c) => c.key)
-    this.openers = this.shuffled(
-      pool.filter((c) => c.difficulty !== 'HARD').map((c) => c.key),
-    )
+    // 여는 판은 별이 적은 것부터 — 별 개수가 이 게임의 체감 난이도를 사실상 정한다.
+    // 별 하나에 손가락 하나라 8별은 두 손을 다 펴야 하고 5별은 한 손으로도 닿는다.
+    // HARD만 빼고 섞던 때는 첫 판에 7별 북두칠성이 나올 수 있어 너무 어렵다는 말을 들었다.
+    // 섞은 뒤 개수로 정렬한다 — sort가 안정 정렬이라 같은 개수끼리는 섞인 순서가 남고,
+    // 그래서 매번 같은 별자리로 시작하지는 않는다.
+    const stars = new Map(pool.map((c) => [c.key, c.pts.length]))
+    this.openers = this.shuffled(pool.filter((c) => c.difficulty !== 'HARD').map((c) => c.key))
+      .sort((a, b) => stars.get(a)! - stars.get(b)!)
   }
 
   next(): string {
     let key: string
-    if (this.drawn < 3 && this.drawn < this.openers.length) {
+    if (this.drawn < OPENER_COUNT && this.drawn < this.openers.length) {
       key = this.openers[this.drawn]!
     } else {
       if (this.queue.length === 0) {

@@ -162,6 +162,21 @@ watch(
 
 <template>
   <div class="rhythm-game">
+    <!--
+      상시 종료 — 시작 화면과 결과 화면에는 자체 나가기 버튼이 있다.
+      별자리·낚시와 같게 close만 쏜다. backToLobby 는 session.reset() 이 먼저라
+      호출부가 확인 모달을 띄우기도 전에 판이 사라진다("계속 하기"가 무의미해진다).
+    -->
+    <button
+      v-if="playing && !submitted"
+      type="button"
+      class="close"
+      title="게임 종료"
+      @click="emit('close')"
+    >
+      ✕
+    </button>
+
     <!-- 대전: 서버 시드·서버 t=0 / 솔로: 로컬 시드 -->
     <CatchRhythmStage
       v-if="playing"
@@ -272,6 +287,27 @@ watch(
   z-index: 2;
   background: #fff3ea url('/assets/games/catch-rhythm/background-peach-weave.png') center / cover no-repeat;
   font-family: var(--font-pixel);
+}
+/* 상시 종료. Stage HUD 가 상단 전폭을 쓰므로 :deep 으로 오른쪽을 비워 자리를 낸다 */
+.close {
+  position: absolute;
+  z-index: 4;
+  top: 0.6rem;
+  right: 0.6rem;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 2px solid #5a392d;
+  border-radius: 6px;
+  background: rgba(255, 246, 238, 0.85);
+  color: #5a392d;
+  font-family: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.rhythm-game :deep(.hud) {
+  right: 3.1rem;
 }
 .ready {
   position: relative;

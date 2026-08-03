@@ -27,6 +27,7 @@ import {
 } from '@/composables/usePoseLandmarker'
 import type { GameResultEntry } from '@/api/types'
 import EarnedPoints from '../EarnedPoints.vue'
+import { GameBgm } from '../gameBgm'
 import type { ActiveGameSession } from '../session'
 import { createCast, DEFAULT_CAST } from './cast'
 import { createHook, DEFAULT_HOOK } from './hook'
@@ -410,7 +411,12 @@ defineExpose({ canvas: canvasRef })
 
 let stageRO: ResizeObserver | null = null
 
+/** 인게임 루프 한 곡 — 볼륨은 게임 음악 설정을 따른다 */
+const bgm = new GameBgm('/assets/sfx/fishing/ingame-loop.mp3')
+
 onMounted(async () => {
+  // await 뒤에 두면 조기 반환 경로에서 곡이 안 뜬다
+  bgm.start()
   lastT = 0
   // 캔버스가 놓인 칸의 비율을 따라간다 — 레터박스 없이 꽉 채우려면 무대 비율이 같아야 한다
   const host = canvasRef.value?.parentElement
@@ -452,6 +458,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stageRO?.disconnect()
   cancelAnimationFrame(rafId)
+  bgm.dispose()
   pose.stop()
   stream?.getTracks().forEach((t) => t.stop())
   clearInterval(mpTicker)

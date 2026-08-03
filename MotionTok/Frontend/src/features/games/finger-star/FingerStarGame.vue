@@ -9,7 +9,8 @@
  *
  * 매치 룰(개선안): 60초 동안 별자리를 연속으로 완성한다 — 모든 별을 켠 채 3초 유지하면
  * 그 즉시 점수를 확정하고 다음 별자리가 나온다. 승부는 완성 개수(1순위) → 평균 점수(2순위).
- * 처음 3개는 쉬움·보통에서만 출제된다(StarSequence).
+ * 처음 4개는 별이 가장 적은 별자리로 열고(쉬움·보통 안에서), 5판째부터는 개수·난이도를
+ * 가리지 않는다(StarSequence).
  *
  * 모드:
  * - 솔로 연습(session=null): 별자리를 골라 한 판(30초) — 서버 미연동 폴백 겸 연습.
@@ -727,9 +728,11 @@ function entryAvg(r: GameResultEntry): number {
   object-fit: contain;
 }
 
+/* 방 UI의 참가자명 박스(.self-label, top 8px · 높이 약 28px) 아래에서 시작한다 —
+   top:0이면 이름이 상단 바에 가린다 */
 .fs-topbar {
   position: absolute;
-  top: 0;
+  top: 40px;
   left: 0;
   right: 0;
   display: flex;
@@ -745,7 +748,7 @@ function entryAvg(r: GameResultEntry): number {
 .fs-timer { font-size: 11px; min-width: 52px; text-align: right; color: #ff5d73; }
 .fs-flash {
   position: absolute;
-  top: 44px;
+  top: 92px;
   left: 50%;
   transform: translateX(-50%);
   padding: 8px 14px;

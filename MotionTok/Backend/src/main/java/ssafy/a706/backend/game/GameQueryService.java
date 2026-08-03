@@ -1,6 +1,7 @@
 package ssafy.a706.backend.game;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
@@ -9,6 +10,7 @@ import ssafy.a706.backend.game.dto.GameDetailResponse;
 import ssafy.a706.backend.game.dto.GameSummaryResponse;
 import ssafy.a706.backend.game.dto.LeaderboardEntryResponse;
 import ssafy.a706.backend.game.dto.LeaderboardResponse;
+import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.entity.Leaderboard;
 import ssafy.a706.backend.game.model.LeaderboardMode;
 import ssafy.a706.backend.game.repository.GameRankRedisRepository;
@@ -55,10 +57,15 @@ public class GameQueryService {
      * <p>관리자가 닫은 게임(is_active=false)을 <b>걸러내지 않는다</b> — 목록에서 지워 버리면
      * 어제까지 있던 게임이 흔적 없이 사라져 사용자가 "왜 없어졌나"를 알 수 없다. 대신
      * playable=false·active=false로 내려보내 화면이 잠긴 카드로 그리게 한다(-106).</p>
+     *
+     * <p><b>id 순으로 정렬해 내려보낸다.</b> 정렬 없는 {@code findAll()}은 SQL이 순서를 보장하지
+     * 않는다 — 지금은 대개 PK 순으로 오지만 실행 계획이 바뀌면 조회마다 달라질 수 있다. 화면은
+     * 이 목록을 카드 그리드로 그리고 게임 id를 key로 쓰므로, 순서가 흔들리면 같은 목록인데도
+     * 카드가 재정렬되며 화면이 튄다.</p>
      */
     @Transactional(readOnly = true)
     public List<GameSummaryResponse> list(Integer playerCount) {
-        return gameRepository.findAll().stream()
+        return gameRepository.findAll(Sort.by(Sort.Direction.ASC, "id")).stream()
                 .map(game -> GameSummaryResponse.of(game, playerCount))
                 .toList();
     }
@@ -76,11 +83,19 @@ public class GameQueryService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
     }
 
-    /** GET /games/{gameId}/leaderboard — 모드(솔로/멀티)별 상위 N + 내 순위. */
+    /**
+     * GET /games/{gameId}/leaderboard — 모드(솔로/멀티)별 상위 N + 내 순위.
+     *
+     * <p>그 게임에 없는 모드면 빈 순위표다({@link Game#hasLeaderboard}) — 혼자 시작할 수 없는
+     * 게임의 솔로 순위 같은 것. 404가 아니라 200+빈 목록인 이유는 게임도 모드도 실재하는
+     * 값이라서다. 없는 건 기록뿐이고, 화면은 "아직 기록이 없어요"를 이미 그릴 줄 안다.</p>
+     */
     @Transactional(readOnly = true)
     public LeaderboardResponse leaderboard(long gameId, LeaderboardMode mode, int limit, AuthPrincipal principal) {
-        if (!gameRepository.existsById(gameId)) {
-            throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
+        if (!game.hasLeaderboard(mode)) {
+            return new LeaderboardResponse(gameId, List.of(), null);
         }
         int capped = Math.max(1, Math.min(MAX_LIMIT, limit));
         warmUpIfEmpty(gameId, mode);

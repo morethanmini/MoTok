@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.test.context.TestPropertySource;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
 import ssafy.a706.backend.liveroom.repository.LiveRoomRepository;
 
@@ -31,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * mesh 전환 경로는 VideoAccessMeshIntegrationTest.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@TestPropertySource(properties = "app.shop.ai-provider=GPU")
 class VideoAccessIntegrationTest {
 
     private static final String MEMBER_ID = "guest-member";

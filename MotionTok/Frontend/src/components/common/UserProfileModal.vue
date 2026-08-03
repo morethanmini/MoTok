@@ -39,6 +39,31 @@ const emit = defineEmits<{ close: []; reported: [message: string] }>()
 
 const joinedAt = (iso: string) => iso.slice(0, 10).replace(/-/g, '.')
 
+/**
+ * 마지막 접속 시각(-179) — 닉네임 밑에 붙는 한 줄.
+ *
+ * <p>가입일·총 접속시간과 같은 성격의 <b>기록</b>이라 접속 여부를 가리지 않는다. 지금 접속
+ * 중인지는 친구 목록의 상태 점이 알려주고, 여기서 또 판정하려면 프로필 조회가 프레즌스까지
+ * 읽어야 한다.</p>
+ *
+ * <p>오늘·어제만 말로 바꾸고 그보다 오래면 날짜를 쓴다 — "5일 전"류는 며칠인지 세게 만든다.
+ * 서버가 타임존 없는 로컬 시각을 주므로 Date가 브라우저 로컬(=KST)로 읽어 그대로 맞는다.</p>
+ */
+const lastSeenLabel = computed(() => {
+  const raw = props.profile?.lastSeenAt
+  if (!raw) return ''
+  const seen = new Date(raw)
+  if (Number.isNaN(seen.getTime())) return ''
+
+  const time = seen.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })
+  const midnight = new Date()
+  midnight.setHours(0, 0, 0, 0)
+  if (seen >= midnight) return `오늘 ${time}`
+  const yesterday = new Date(midnight.getTime() - 86_400_000)
+  if (seen >= yesterday) return `어제 ${time}`
+  return `${seen.getFullYear()}.${seen.getMonth() + 1}.${seen.getDate()} ${time}`
+})
+
 /** 총 접속시간 — 초를 사람이 읽는 단위로. 집계 시작(배포) 전 가입자는 0이라 '1분 미만'이 뜬다. */
 const connectTime = (seconds: number) => {
   const hours = Math.floor(seconds / 3600)
@@ -117,6 +142,8 @@ function onReported() {
       <p class="profile-kicker">FRIEND PROFILE</p>
       <UserAvatar class="avatar" :src="profile?.avatarUrl" :alt="`${nickname} 프로필 사진`" />
       <h3>{{ nickname }}</h3>
+      <!-- 최근 접속(-179) — 닉네임 바로 밑. 조회 전·실패·기록 없음이면 자리를 비운다(v-if) -->
+      <p v-if="lastSeenLabel" class="last-seen">최근 접속 · {{ lastSeenLabel }}</p>
       <!-- 상태 줄 — 항상 같은 높이를 차지해 아래 내용이 밀리지 않는다 -->
       <p class="state" :class="{ err: error }">{{ loading ? '불러오는 중…' : error }}</p>
 
@@ -208,6 +235,8 @@ function onReported() {
 h3 { margin: 0; font-size: 16px; }
 
 /* 상태 줄 — 빈 내용이어도 높이를 차지해 레이아웃이 안 흔들린다 */
+/* 닉네임과 상태 줄 사이. 이름이 주(主)라 한 톤 흐리게 두고, 없으면 자리를 차지하지 않는다. */
+.last-seen { margin: 4px 0 0; font-size: 11px; color: var(--c-muted); }
 .state { height: 14px; margin: 2px 0 8px; font-size: 10px; color: var(--c-muted); }
 .state.err { color: var(--c-coral); }
 
@@ -299,6 +328,7 @@ h3 { margin: 0; font-size: 16px; }
 .close { top: -10px; right: -10px; border-color: #8d6048; border-radius: 7px; background: #fff0b6; color: #6a4533; box-shadow: 3px 3px 0 #c79b77; }
 .avatar { width: 76px; height: 76px; margin-bottom: 10px; border: 3px solid #8d6048; background: #fff0b6; box-shadow: 3px 3px 0 #d0a47a; }
 h3 { color: #51382c; font-family: var(--font-pixel); font-size: 17px; font-weight: 400; }
+.last-seen { color: #9c8471; }
 .state { color: #896e5d; }
 .hero { gap: 10px; margin-bottom: 13px; }
 .hero > div { height: 61px; padding-top: 9px; border-color: #c79b77; border-radius: 8px; background: #fff8e9; box-shadow: 3px 3px 0 #e4c8a8; }

@@ -29,6 +29,19 @@ function submit() {
   draft.value = ''
 }
 
+/**
+ * Enter 전송 — 한글 IME 조합을 커밋하는 Enter는 무시한다(-178).
+ *
+ * macOS IME는 조합을 열어둔 채 유지해서 조합 중 Enter 시 keydown이 두 번 온다
+ * (커밋용 isComposing/229 + 실제 Enter). 그대로 두면 귓속말이 두 번 발행되고,
+ * 서버는 서로 다른 whisperId로 두 건을 쌓아 useWhisper의 중복 제거가 잡지 못한다.
+ * 대기실 채팅(GameRoomView.sendOnEnter)이 같은 이유로 이미 이 가드를 쓴다.
+ */
+function submitOnEnter(e: KeyboardEvent) {
+  if (e.isComposing || e.keyCode === 229) return
+  submit()
+}
+
 function timeOf(sentAt: string) {
   return new Date(sentAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
 }
@@ -69,7 +82,7 @@ watch(
         v-model="draft"
         :disabled="!connected"
         placeholder="귓속말 보내기"
-        @keydown.enter="submit"
+        @keydown.enter="submitOnEnter"
       />
       <PixelButton variant="primary" :disabled="!connected || tooLong" @click="submit">보내기</PixelButton>
     </div>
