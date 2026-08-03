@@ -80,15 +80,23 @@ interface PickedOnset extends AnalyzedOnset {
 }
 
 /**
- * 온셋 세기 내림차순 그리디 선택.
- * ① 격자 스냅(옵션) ② 같은 칸 중복 제거 ③ 전역 최소 간격 ④ 목표 개수 도달 시 중단.
- * 세기 순으로 뽑으므로 "곡에서 큰 소리 순서대로" 채워지고, 난이도가 낮을수록
- * 목표 개수가 작아 강한 온셋만 남는다.
+ * 난이도별 멜로디 스트림 몫 — 밀도를 스트림별로 따로 자른다.
+ * 전체를 세기로 한 번에 자르면 플럭스가 작은 보컬이 또 밀려난다(보컬온셋-개선제안.md).
+ * EASY는 멜로디 위주(따라 부르기 쉬움), HARD로 갈수록 타악 밀도가 는다.
+ */
+const MELODY_SHARE: Record<Difficulty, number> = { EASY: 0.6, NORMAL: 0.5, HARD: 0.4 }
+
+/**
+ * 온셋 세기 내림차순 그리디 선택 — **스트림별로 따로** 뽑아 병합한다.
+ * ① 격자 스냅(옵션) ② 스트림 내 최소 간격 ③ 스트림별 목표 개수(한쪽이 모자라면
+ * 남는 몫을 다른 쪽에) ④ 병합 후 시각 순.
+ * 스트림 간 간격은 일부러 안 본다 — 킥 옆의 보컬은 양손 동시 노트 재료다.
  */
 function pickOnsets(
   analysis: SongAnalysis,
   targetPerSec: number,
   minGapMs: number,
+  melodyShare: number,
   options: Required<Pick<SongChartOptions, 'subdivision' | 'snap' | 'maxDurationMs'>>,
 ): PickedOnset[] {
   const { gridOriginMs, beatMs, sustains } = analysis
@@ -112,13 +120,32 @@ function pickOnsets(
   }
 
   const targetCount = Math.round(((endMs - gridOriginMs) / 1000) * targetPerSec)
-  const byStrength = [...candidates].sort((a, b) => b.strength - a.strength)
-  const picked: PickedOnset[] = []
-  for (const c of byStrength) {
-    if (picked.length >= targetCount) break
-    if (picked.some((p) => Math.abs(p.pickedMs - c.pickedMs) < minGapMs)) continue
-    picked.push(c)
+  const perc = candidates.filter((c) => c.source === 'perc')
+  const melody = candidates.filter((c) => c.source === 'melody')
+  // 스트림별 몫 — 한쪽 후보가 모자라면 남는 몫을 다른 쪽으로 넘긴다
+  let melodyTarget = Math.round(targetCount * melodyShare)
+  let percTarget = targetCount - melodyTarget
+  if (melody.length < melodyTarget) {
+    percTarget += melodyTarget - melody.length
+    melodyTarget = melody.length
   }
+  if (perc.length < percTarget) {
+    melodyTarget = Math.min(melody.length, melodyTarget + (percTarget - perc.length))
+    percTarget = perc.length
+  }
+
+  const pickStream = (list: PickedOnset[], count: number): PickedOnset[] => {
+    const byStrength = [...list].sort((a, b) => b.strength - a.strength)
+    const out: PickedOnset[] = []
+    for (const c of byStrength) {
+      if (out.length >= count) break
+      if (out.some((p) => Math.abs(p.pickedMs - c.pickedMs) < minGapMs)) continue
+      out.push(c)
+    }
+    return out
+  }
+
+  const picked = [...pickStream(perc, percTarget), ...pickStream(melody, melodyTarget)]
   picked.sort((a, b) => a.pickedMs - b.pickedMs)
   return picked
 }
@@ -282,9 +309,11 @@ function makeTrailPath(
   return path
 }
 
-/** 초안 노트 — battleChart의 GeneratedNote처럼 검증·디버그용 owner를 남긴다 */
+/** 초안 노트 — battleChart의 GeneratedNote처럼 검증·디버그용 owner·source를 남긴다 */
 export interface SongCatchNote extends CatchNote {
   owner: Hand
+  /** 어느 검출 스트림에서 온 노트인가 (perc=리듬 뼈대 / melody=보컬·멜로디) */
+  source: 'perc' | 'melody'
 }
 
 export interface SongCatchChart extends Beatmap {
@@ -317,8 +346,9 @@ export function generateSongCatchChart(
   const picked = pickOnsets(
     analysis,
     TARGET_NOTES_PER_SEC[difficulty].catch,
-    // 전역 최소 간격 — 좌우 교대를 전제로 같은 손 간격의 절반. 16분 연타 대역까지 허용한다.
+    // 스트림 내 최소 간격 — 좌우 교대를 전제로 같은 손 간격의 절반. 16분 연타 대역까지 허용한다.
     Math.max(110, preset.minSameHandGapMs / 2),
+    MELODY_SHARE[difficulty],
     opts,
   )
 
@@ -360,8 +390,12 @@ export function generateSongCatchChart(
       const cross = usedDt >= preset.crossMinGapMs && rng() < preset.crossRate
       const spawnSide = cross ? other(usedOwner) : usedOwner
 
-      // 음높이 → 높이(+y가 위). 0.5(중앙)를 기준으로 펼친다
-      const yTarget = Y_RANGE[0] + onset.pitch * (Y_RANGE[1] - Y_RANGE[0])
+      // melody: 음높이 → 높이(+y가 위) — 멜로디가 오르내리는 등고선.
+      // perc: 하단 안정 위치 — 발 구르듯 낮게 깔려 리듬 뼈대라는 감각을 준다.
+      const yTarget =
+        onset.source === 'melody'
+          ? Y_RANGE[0] + onset.pitch * (Y_RANGE[1] - Y_RANGE[0])
+          : Y_RANGE[0] + 0.3 * (Y_RANGE[1] - Y_RANGE[0])
 
       const obstacles: Obstacle[] = [...placedThisOnset, ...occupiedPoints(notes, timeMs)]
       const { x, y } = choosePlacement(
@@ -374,7 +408,15 @@ export function generateSongCatchChart(
       )
 
       const hand: NoteHand = rng() < preset.anyRate ? 'any' : usedOwner
-      const note: SongCatchNote = { timeMs, x, y, hand, kind: 'swipe', owner: usedOwner }
+      const note: SongCatchNote = {
+        timeMs,
+        x,
+        y,
+        hand,
+        kind: 'swipe',
+        owner: usedOwner,
+        source: onset.source,
+      }
 
       // 지속음이면 연결(trail) 노트 — 길이는 지속음을 따르되 프리셋 대역으로 제한한다.
       //
@@ -498,6 +540,7 @@ export function generateSongRingChart(
     analysis,
     TARGET_NOTES_PER_SEC[difficulty].ring,
     minGapMs[difficulty],
+    MELODY_SHARE[difficulty],
     opts,
   )
 
@@ -517,7 +560,8 @@ export function generateSongRingChart(
 
   for (const onset of picked) {
     const timeMs = Math.round(onset.pickedMs)
-    let lane = laneFor(onset.pitch, side)
+    // melody: 음높이 등고선(멜로디를 따라 부르는 느낌) / perc: 시드 난수 — 리듬 뼈대는 자유 배치
+    let lane = laneFor(onset.source === 'melody' ? onset.pitch : rng(), side)
     if (prevLane !== null) {
       const dt = timeMs - prevEndMs
       const diff = laneDiff(prevLane, lane)

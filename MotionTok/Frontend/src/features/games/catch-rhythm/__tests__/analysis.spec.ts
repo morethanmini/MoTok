@@ -37,12 +37,19 @@ function addClick(samples: Float32Array, atMs: number, gain = 0.8) {
 }
 
 /** t(ms)부터 durMs 동안 지속되는 톤을 얹는다 */
-function addTone(samples: Float32Array, atMs: number, durMs: number, freq: number, gain = 0.5) {
+function addTone(
+  samples: Float32Array,
+  atMs: number,
+  durMs: number,
+  freq: number,
+  gain = 0.5,
+  attackMs = 5, // 보컬 흉내는 60쯤 — 느린 어택은 선형 플럭스가 놓친다
+) {
   const start = Math.round((atMs / 1000) * SR)
   const durSamples = Math.round((durMs / 1000) * SR)
   for (let i = 0; i < durSamples && start + i < samples.length; i++) {
     const t = i / SR
-    const attack = Math.min(1, t / 0.005) // 5ms 어택 — 온셋이 잡히게
+    const attack = Math.min(1, t / (attackMs / 1000))
     samples[start + i]! += gain * attack * Math.sin(2 * Math.PI * freq * t)
   }
 }
@@ -157,6 +164,47 @@ describe('analyzeSong (합성 클릭 트랙)', () => {
     const snippet = formatSongAccentsSnippet(analysis, '합성 클릭 트랙')
     expect(snippet).toContain(`CHART_BPM = ${analysis.bpm}`)
     expect(snippet).toContain('SLOT_ACCENTS: readonly number[]')
+  }, 30_000)
+
+  it('드럼에 묻힌 부드러운 보컬이 melody 스트림으로 잡히고 롱노트도 산다', async () => {
+    // 실곡 문제 재현: 큰 킥(저역 위주 — 실제 킥의 스펙트럼)이 박마다 때리는 위에,
+    // 작은 소리(0.3)가 60ms 느린 어택으로 올라오는 700ms 톤(보컬 프레이즈)을 얹는다.
+    // 결합 곡선에서는 크기·임계·국소 최대에 밀려 사라지던 소리다.
+    const addKick = (samples: Float32Array, atMs: number) => {
+      const start = Math.round((atMs / 1000) * SR)
+      for (let i = 0; i < SR * 0.08 && start + i < samples.length; i++) {
+        const t = i / SR
+        const env = Math.exp(-t * 60)
+        samples[start + i]! +=
+          0.9 * env * (0.85 * Math.sin(2 * Math.PI * 70 * t) + 0.15 * Math.sin(2 * Math.PI * 900 * t))
+      }
+    }
+    const beatMs = 60000 / 129
+    const samples = new Float32Array(SR * 12)
+    const toneStarts: number[] = []
+    for (let k = 0; ; k++) {
+      const t = 154 + k * beatMs
+      if (t > 11_000) break
+      addKick(samples, t)
+      if (k % 2 === 1) {
+        // 킥에서 150ms 떨어진 자리(스트림 병합창 25ms 밖) — 밀고 당기는 보컬 위치
+        addTone(samples, t + 150, 700, 500, 0.3, 60)
+        toneStarts.push(t + 150)
+      }
+    }
+    const analysis = await analyzeSong(fakeBuffer(samples))
+
+    const melody = analysis.onsets.filter((o) => o.source === 'melody')
+    // 모든 톤 시작이 melody 온셋으로 잡혀야 한다 (어택이 느려 ±60ms 여유)
+    for (const start of toneStarts) {
+      expect(
+        melody.some((o) => Math.abs(o.timeMs - start) <= 60),
+        `톤 ${start}ms가 melody 스트림에 없음`,
+      ).toBe(true)
+    }
+    // 드럼이 8분마다 때려도 보컬 롱노트가 잘리지 않는다
+    const long = analysis.sustains.filter((s) => s.durationMs >= 450)
+    expect(long.length).toBeGreaterThanOrEqual(toneStarts.length - 1)
   }, 30_000)
 
   it('엇박 8분음표까지 꽉 찬 곡에서도 4/3배 템포(172)로 새지 않는다 — Neon_Pulse 실곡 회귀', async () => {
