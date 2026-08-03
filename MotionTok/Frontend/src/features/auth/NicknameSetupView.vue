@@ -10,6 +10,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 import { usersApi, authApi, ApiError, forceRefreshAccessToken } from '@/api'
+import { reconnectGlobalStomp } from '@/composables/useGlobalStomp'
 import { useSessionStore } from '@/stores/session'
 import { containsProfanity } from '@/utils/profanity'
 import BrandLogo from '@/components/common/BrandLogo.vue'
@@ -83,6 +84,9 @@ async function submit() {
     // 지금 액세스 토큰의 name 클레임에는 임시 닉네임(pending_*)이 남아 있다.
     // 방 참가·채팅 표시명은 서버가 이 클레임에서 읽으므로, 새 닉네임이 실린 토큰으로 회전시킨다.
     await forceRefreshAccessToken()
+    // 전역 STOMP는 로그인 순간(= pending 토큰)에 이미 붙어 있고, 서버는 CONNECT 때의
+    // 이름을 세션에 고정한다 — 토큰만 회전시키면 채팅이 pending_*으로 계속 나간다.
+    reconnectGlobalStomp()
     router.replace({ name: RouteName.Lobby })
   } catch (e) {
     error.value =
