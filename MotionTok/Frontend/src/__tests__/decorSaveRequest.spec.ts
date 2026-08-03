@@ -40,8 +40,17 @@ const item = (itemId: number, category: InventoryItem['category'], equipped = fa
 
 /** 저장 요청에 실린 배치 목록 */
 function sentItems() {
-  const body = saveDecoration.mock.calls.at(-1)?.[0] as DecorationConfig
+  const calls = saveDecoration.mock.calls
+  const body = calls[calls.length - 1]?.[0] as DecorationConfig | undefined
+  if (!body) throw new Error('저장 요청이 나가지 않았다')
   return body.config.items
+}
+
+/** 저장 요청의 배치 한 칸 — 없으면 그 자리에서 실패하게 둔다(뒤에서 undefined로 새지 않도록) */
+function sentItem(index = 0) {
+  const item = sentItems()[index]
+  if (!item) throw new Error(`저장 요청에 배치 ${index}번이 없다`)
+  return item
 }
 
 beforeEach(() => {
@@ -103,7 +112,7 @@ describe('꾸미기 저장 요청', () => {
     decor.setScale(3, Number.NaN)
     await decor.save()
 
-    const sent = sentItems()[0]
+    const sent = sentItem()
     expect(Number.isFinite(sent.x)).toBe(true)
     expect(Number.isFinite(sent.y)).toBe(true)
     expect(Number.isFinite(sent.scale)).toBe(true)
