@@ -6,7 +6,7 @@ import { isChunkLoadError, markBuildOutdated, reloadForNewBuild } from '@/compos
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ConnectionState } from 'livekit-client'
 import { RouteName } from '@/router/routeNames'
-import { roomsApi, friendsApi, reportsApi, chatReportsApi, gamesApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason, type InventoryItem } from '@/api'
+import { roomsApi, friendsApi, reportsApi, chatReportsApi, ApiError, readAccessClaims, type ChatMessage, type ChatReportReason, type KickReason, type InventoryItem } from '@/api'
 import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } from '@/api/types'
 import type { ActiveGameSession } from '@/features/games/session'
 import { preferredAudioDeviceId, useCamera } from '@/composables/useCamera'
@@ -24,7 +24,8 @@ import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
 import { containsProfanity } from '@/utils/profanity'
-import { GAME_CATALOG, type GameEntry } from './data'
+import { toGameEntries, type GameEntry } from './data'
+import { useGameCatalog } from '@/composables/useGameCatalog'
 import { CHAT_REPORT_REASONS, CHAT_REPORT_DETAIL_MAX, canSubmitChatReport, chatReportErrorMessage } from './chatReport'
 import ParticipantTile from './components/ParticipantTile.vue'
 import GamePicker from './components/GamePicker.vue'
@@ -932,7 +933,7 @@ watch(roomChat.gameEvents, (all, prev) => {
 function applyGameEvent(e: GameEvent) {
   // ── 시작 준비 확인(-162) — 세션이 만들어지기 전 단계라 sessionId 필터보다 앞에서 처리 ──
   if (e.type === 'GAME_PREPARE') {
-    const entry = GAME_CATALOG.find((g) => g.gameId === e.gameId)
+    const entry = gameEntries.value.find((g) => g.gameId === e.gameId)
     if (!entry) return
     picker.value = false
     // 설명은 시작과 함께 사라진다. 방장은 이미 닫고 왔지만, 그 프레임이 유실됐거나
@@ -975,7 +976,7 @@ function applyGameEvent(e: GameEvent) {
   }
   if (e.type === 'GAME_START') {
     clearStartAck()
-    const entry = GAME_CATALOG.find((g) => g.gameId === e.gameId)
+    const entry = gameEntries.value.find((g) => g.gameId === e.gameId)
     if (!entry) return
     gameResults.value = null
     liveScores.value = {}
@@ -1055,7 +1056,7 @@ function applyGameEvent(e: GameEvent) {
 // 방장이 리듬 라운드를 시작하면 방 전원이 자동 입장한다.
 // (비방장은 게임 화면을 열 이유가 없어 스스로 구독하지 못한다 — 그래서 여기서 듣는다)
 useRhythmAutoJoin(roomChat, roomCode, () => {
-  const entry = GAME_CATALOG.find((g) => g.id === 'rhythm')
+  const entry = gameEntries.value.find((g) => g.id === 'rhythm')
   // 리듬은 공용 세션이 없어 sessionId 대신 고정 키 — 준비 게이트(-161)는 동일하게 거친다
   if (entry) mountWhenReady(entry, 'rhythm-auto-join')
   picker.value = false
@@ -1105,11 +1106,11 @@ watch(
 
 const guideGame = computed(() => {
   const id = guideState.value?.gameId
-  return id == null ? null : (GAME_CATALOG.find((g) => g.gameId === id) ?? null)
+  return id == null ? null : (gameEntries.value.find((g) => g.gameId === id) ?? null)
 })
 const guidePages = computed(() => {
   const g = guideGame.value
-  return g ? guidePagesOrFallback(g.gameId, g.emoji, [g.description, ...g.howToPlay]) : []
+  return g ? guidePagesOrFallback(g.gameId, g.emoji, [g.description]) : []
 })
 /** 방장에게는 닫기가 없다(다른 게임·바로 시작으로 빠져나간다) — dismiss는 참가자 얘기다. */
 const guideOpen = computed(() => !!guideGame.value && (selfIsHost.value || !guideDismissed.value))
@@ -1145,25 +1146,23 @@ function guideBackToPicker() {
 }
 
 /**
- * 관리자가 닫은 게임(-106) — 서버 카탈로그의 `active=false`.
+ * 방 안에서 고를 수 있는 게임 — <b>서버 카탈로그</b>에서 온다(하드코딩 목록을 없앤 자리).
  *
- * <p>방 안 게임 목록(GAME_CATALOG)은 하드코딩이라 서버 상태를 모른다. 그대로 두면 관리자가
- * 게임을 닫아도 목록에 멀쩡히 보이고, 방장이 고른 뒤 시작 시점에야 서버 에러를 받는다.
- * 여기서 한 번 받아 두고 선택창·자동 시작 양쪽에 같은 집합을 쓴다.</p>
+ * <p>전에는 프론트 배열이 목록의 출처였고, 서버 상태를 모르니 관리자가 닫은 게임(-106)을 알아내려고
+ * 여기서 `gamesApi.list()`를 <b>따로 한 번 더</b> 불러 닫힌 id 집합만 덧씌웠다. 이제 목록 자체가
+ * 서버에서 오므로 그 이중 조회가 사라지고, 이름·인원·점검 여부가 한 출처에서 온다.</p>
  *
- * <p>조회 실패는 <b>조용히 넘긴다</b> — 이 값은 안내용이고 강제는 서버가 한다(닫힌 게임을
- * 시작하면 GAME_CLOSED로 거부된다). 실패했다고 게임 선택 자체를 막으면 관리자가 아무것도
- * 닫지 않은 평시에 방이 못 놀게 된다.</p>
+ * <p>조회가 실패해도 게임 선택을 막지 않는다 — {@link useGameCatalog}가 직전에 성공한 목록을
+ * 그대로 내준다(오래됐을 수는 있어도 없는 게임을 만들어 내지는 않는다). 게임 시작은 REST가 아니라
+ * STOMP로 나가므로 목록 조회 실패가 곧 놀 수 없음을 뜻하지도 않는다.</p>
  */
-const closedGameIds = ref<Set<number>>(new Set())
-onMounted(async () => {
-  try {
-    const catalog = await gamesApi.list()
-    closedGameIds.value = new Set(catalog.filter((g) => !g.active).map((g) => g.id))
-  } catch {
-    closedGameIds.value = new Set()
-  }
-})
+const catalog = useGameCatalog()
+const gameEntries = computed(() => toGameEntries(catalog.games.value))
+
+/** 관리자가 닫은 게임 id(-106) — 목록에 함께 실려 온다. 안내용이고 강제는 서버가 한다. */
+const closedGameIds = computed(
+  () => new Set(gameEntries.value.filter((g) => !g.active).map((g) => g.gameId)),
+)
 
 /**
  * 게임 목록에서 고른 게임 자동 시작 — 헤더 ▸ 게임 ▸ 게임 선택 ▸ 대기실 ▸ 입장하면
@@ -1194,10 +1193,19 @@ function autostartBlocker(): string | null {
   if (!roomChat.joined.value) return '방에 아직 입장하지 못해'
   if (!detailLoaded.value) return '방 정보를 불러오지 못해'
   if (!captureOn.value) return '카메라를 켤 수 없어'
-  if (!GAME_CATALOG.some((g) => g.gameId === autostartGameId.value)) return '게임을 찾지 못해'
+  // 목록이 아직 없으면 "못 찾았다"가 아니라 "아직 모른다"다 — 도착하면 감시자가 다시 부른다.
+  if (catalog.loading.value) return '게임 목록을 불러오는 중이라'
+  // 그릴 수 있는 게임인지까지 본다. 목록에 있다는 것만으로 통과시키면, 이 클라이언트가 모르는
+  // 게임(서버에 새로 붙은 게임)이 자동 시작으로 열려 게임 화면이 빈 채로 뜬다.
+  const target = gameEntries.value.find((g) => g.gameId === autostartGameId.value)
+  if (!target) return '게임을 찾지 못해'
+  if (!target.implemented) return '아직 만들고 있는 게임이라'
   // 관리자가 닫은 게임(-106)이면 서버가 시작을 거부한다. 먼저 걸러야 8초를 기다린 끝에
   // "응답을 받지 못해"라는 엉뚱한 이유가 뜨지 않는다.
-  if (closedGameIds.value.has(autostartGameId.value!)) return '점검 중인 게임이라'
+  if (!target.active) return '점검 중인 게임이라'
+  // 목록이 직전 성공 값(오래된 값)이면 자동 시작을 붙이지 않는다 — 그 사이 관리자가 닫았을 수
+  // 있고, 서버가 거부하면 사용자에게는 그냥 "안 열리는 화면"이 된다. 직접 고르면 그때 판정된다.
+  if (catalog.stale.value) return '게임 목록이 최신이 아니라'
   return null
 }
 
@@ -1208,7 +1216,7 @@ function autostartBlocker(): string | null {
  */
 function tryAutostart() {
   if (autostarted || !autostartGameId.value || autostartBlocker()) return
-  const entry = GAME_CATALOG.find((g) => g.gameId === autostartGameId.value)
+  const entry = gameEntries.value.find((g) => g.gameId === autostartGameId.value)
   if (!entry) return
   autostarted = true
   void launch(entry)
@@ -1222,6 +1230,9 @@ watch(
     roomChat.connected.value,
     roomChat.joined.value,
     captureOn.value,
+    // 게임 목록도 마지막으로 갖춰지는 조건이 될 수 있다 — 서버 카탈로그를 기다려야 하기 때문이다.
+    catalog.loading.value,
+    gameEntries.value.length,
   ] as const,
   tryAutostart,
   { immediate: true },
@@ -1255,11 +1266,17 @@ function roomPlayerCount(): number {
 function pick(g: GameEntry) {
   // 선택창이 이미 잠긴 게임의 시작 버튼을 감추지만, 여기서도 막는다 — 게임 제안(비방장) 경로도
   // 이 함수를 지나가고, 카탈로그 조회가 늦게 도착했으면 선택창은 잠기지 않은 상태로 열려 있다.
+  // 그릴 줄 모르는 게임은 여기서 끝낸다 — 아래로 흘려보내면 비방장 경로가 '게임 제안'을 발신해,
+  // 방 전원에게 아무도 플레이할 수 없는 게임을 제안하게 된다.
+  if (!g.implemented) {
+    flash(`${g.name}은(는) 아직 만들고 있어요`)
+    return
+  }
   if (closedGameIds.value.has(g.gameId)) {
     flash(`${g.name}은(는) 점검 중이라 지금은 시작할 수 없어요`)
     return
   }
-  if (g.id === 'shape' && g.playable && roomChat.connected.value && selfIsHost.value) {
+  if (g.id === 'shape' && g.implemented && roomChat.connected.value && selfIsHost.value) {
     picker.value = false
     setupGame.value = g
     return
@@ -1290,7 +1307,7 @@ async function launch(g: GameEntry, difficulty?: string, mode?: string, wallCoun
     return
   }
   // 방장 + 서버 연결 + 플레이 가능 → 서버에 시작 요청. GAME_START가 방 전체에 돌아와 마운트된다.
-  if (g.playable && roomChat.connected.value && selfIsHost.value) {
+  if (g.implemented && roomChat.connected.value && selfIsHost.value) {
     if (!captureOn.value) {
       flash('카메라를 켜고 시작해 주세요')
       return
@@ -1319,11 +1336,11 @@ async function launch(g: GameEntry, difficulty?: string, mode?: string, wallCoun
   }
   // 서버 미연동 데모 — 로컬 솔로 플레이 폴백. 멀티 전용 게임(minPlayers>1)은 혼자
   // 진행할 수 없으므로 폴백에서 제외한다(그림으로 말해요는 이어그리기라 3인부터).
-  if (g.playable && !roomChat.connected.value && (g.minPlayers ?? 1) > 1) {
+  if (g.implemented && !roomChat.connected.value && (g.minPlayers ?? 1) > 1) {
     flash(`${g.name} 는 실시간 서버에 연결된 뒤 ${g.minPlayers}명부터 시작할 수 있어요`)
     return
   }
-  if (g.playable && !roomChat.connected.value) {
+  if (g.implemented && !roomChat.connected.value) {
     if (!captureOn.value) {
       flash('카메라를 켜야 게임을 플레이할 수 있어요')
       return
@@ -2298,7 +2315,7 @@ const startHint = computed(() =>
     <!-- 게임 선택 모달 -->
     <GamePicker
       v-if="picker"
-      :closed-game-ids="closedGameIds"
+      :games="gameEntries"
       :is-host="selfIsHost"
       @close="picker = false"
       @launch="pick"
