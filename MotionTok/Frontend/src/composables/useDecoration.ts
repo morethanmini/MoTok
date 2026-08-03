@@ -93,11 +93,19 @@ export function useDecoration() {
     return list
   })
 
+/**
+   * 쓰고 있는 가면. 한도가 1개라 하나만 나온다.
+   *
+   * `sprites`에서 따로 꺼내 두는 이유 — 남에게 알릴 때 가면은 <b>그림만</b> 보내고 좌표는
+   * 앵커 토픽으로 따로 보낸다(decorSync). 좌표를 실어 보내면 상대 화면에서 엉뚱한 자리에 뜬다.
+   */
+  const faceSprite = computed(() => sprites.value.find((s) => s.anchor === 'FACE') ?? null)
+
   /**
    * 얼굴 추적이 필요한 아이템을 장착 중인지 — 화면이 얼굴 검출기를 켤지 정하는 데 쓴다.
    * 가면을 안 쓴 사람에게까지 모델을 물리고 GPU를 돌릴 이유가 없다.
    */
-  const hasFaceItem = computed(() => sprites.value.some((s) => s.anchor === 'FACE'))
+  const hasFaceItem = computed(() => faceSprite.value !== null)
 
   /**
    * 걸려 있는 프레임 효과(뽀샤시). 한도가 1개라 하나만 나온다.
@@ -225,7 +233,7 @@ export function useDecoration() {
   }
 
   return {
-    inventory, placements, sprites, cameraEffect, equippedCount, hasFaceItem,
+    inventory, placements, sprites, cameraEffect, equippedCount, faceSprite, hasFaceItem,
     loading, saving, dirty, error,
     load, setEquipped, canEquip, move, setScale, setIntensity, save,
   }

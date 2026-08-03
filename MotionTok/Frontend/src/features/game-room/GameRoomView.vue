@@ -94,10 +94,8 @@ const CAMERA_CONSTRAINTS = { video: { width: 640, height: 400 }, audio: false } 
 // 캔버스 합성으로 발행하던 예전 방식은 다른 오리진(S3)에 있는 AI 아이템 이미지를 읽지 못해
 // (버킷 CORS 없음) 내 화면에만 보였다.
 const decor = useDecoration()
-const decorSync = useDecorSync(lk, () => ({
-  sprites: decor.sprites.value,
-  effect: decor.cameraEffect.value,
-}))
+// decorSync·selfFace 는 activeGame(게임 세션 블록) 뒤에 만든다 — 얼굴 추적을 게임 중에 끄므로
+// 그 ref 가 먼저 있어야 한다. 여기서 만들면 초기화 전에 읽어 TDZ 로 죽는다.
 const showDecorInventory = ref(false)
 const decorBusyItemId = ref<number | null>(null)
 const selectedDecorId = ref<number | null>(null)
@@ -135,6 +133,14 @@ function spritesFor(slot: Slot) {
 /** 그 참가자 영상에 걸 프레임 효과(뽀샤시) — 스티커와 같은 이유로 여기 한 곳에서 본다. */
 function effectFor(slot: Slot) {
   return slot.view ? decorSync.effectOf(slot.view.identity) : null
+}
+
+/**
+ * 그 참가자의 얼굴 앵커 — 그 사람 가면을 얹을 자리. 앵커가 끊기면 null 이고,
+ * 그러면 spritesFor 도 가면을 빼므로 게임 중(상대가 추적을 끈 동안)에는 자연히 사라진다.
+ */
+function faceFor(slot: Slot) {
+  return slot.view ? decorSync.faceOf(slot.view.identity) : null
 }
 
 /** 내 캠에 거는 뽀샤시의 영상 쪽 절반(빛 레이어는 CameraEffectLayer가 맡는다). */
@@ -336,18 +342,6 @@ watch(
     })
   },
   { immediate: true },
-)
-
-/**
- * 가면(FACE 앵커)은 저장 좌표가 아니라 내 얼굴을 따라간다.
- *
- * 이 타일에만 건다 — 상대 타일은 남의 영상이라 여기서 잡은 내 얼굴 좌표를 얹을 수 없고,
- * 검출기 인스턴스도 영상 하나만 다룰 수 있다(타임스탬프 단조 증가). 그래서 지금 가면은
- * 나에게만 보인다(decorSync가 FACE를 보내지 않는 것과 같은 이유).
- */
-const selfFace = useFaceAnchor(
-  () => selfVideoEl.value,
-  () => selfCamOn.value && decor.hasFaceItem.value,
 )
 
 // ── 데모 상태 ────────────────────────────────
@@ -701,6 +695,39 @@ const suggestCooldown = ref(false)
 // STOMP 미연결(백엔드 미연동 데모)일 때는 로컬 솔로 플레이로 폴백.
 const activeGame = ref<GameEntry | null>(null)
 const activeSession = ref<ActiveGameSession | null>(null)
+
+/**
+ * 가면(FACE 앵커)은 저장 좌표가 아니라 내 얼굴을 따라간다.
+ *
+ * 검출은 <b>내 영상에서만</b> 한다 — 검출기 인스턴스가 영상 하나만 다룰 수 있고(타임스탬프
+ * 단조 증가) 8명분을 각자 돌리는 비용도 감당할 수 없다. 그래서 남에게 보이게 하려면 잡은
+ * 앵커를 데이터 채널로 흘려보낸다(아래 useDecorSync 의 세 번째 인자).
+ *
+ * <b>게임 중에는 돌리지 않는다.</b> 셀프 타일은 게임 중에도 카메라지만, 손·자세 추론이 도는
+ * 동안 얼굴 검출까지 매 프레임 얹으면 저사양에서 fps 를 깎는다 — 꾸미기가 게임을 느리게
+ * 만드는 건 맞바꿀 거래가 아니다. 대신 게임 중에는 가면이 <b>내 화면에서도 남의 화면에서도</b>
+ * 보이지 않는다(앵커가 끊기면 받는 쪽도 그리지 않는다).
+ *
+ * ⚠ 이 선언은 activeGame 뒤에 있어야 한다 — useFaceAnchor 가 즉시 한 번 읽는다.
+ */
+const selfFace = useFaceAnchor(
+  () => selfVideoEl.value,
+  () => selfCamOn.value && decor.hasFaceItem.value && !activeGame.value,
+)
+
+/**
+ * 내 꾸미기를 방에 알린다. 스티커·효과·<b>어떤 가면</b>은 바뀔 때 한 번(신뢰 전송),
+ * 얼굴 앵커는 매 프레임(유실 허용) — 나누는 이유는 decorSync.ts 의 토픽 주석에 있다.
+ */
+const decorSync = useDecorSync(
+  lk,
+  () => ({
+    sprites: decor.sprites.value,
+    effect: decor.cameraEffect.value,
+    faceSprite: decor.faceSprite.value,
+  }),
+  () => selfFace.anchor.value,
+)
 /**
  * START를 보낸 뒤 GAME_START를 기다리는 시간. 넘기면 "전달되지 않았다"고 알린다.
  *
@@ -1909,6 +1936,7 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             :effect="effectFor(slot)"
+            :face="faceFor(slot)"
             play-audio
             mirror
             compact
@@ -2134,6 +2162,7 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             :effect="effectFor(slot)"
+            :face="faceFor(slot)"
             play-audio
             mirror
             compact
@@ -2155,6 +2184,7 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             :effect="effectFor(slot)"
+            :face="faceFor(slot)"
             play-audio
             mirror
             :can-kick="amRoomHost && !!slot.view"
