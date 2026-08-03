@@ -236,11 +236,18 @@ function tapNowMs(): number {
   return tapCtx ? playFromMs + (tapCtx.currentTime - tapStartCtxSec) * 1000 : 0
 }
 
+type RecordMode = 'replace' | 'overdub' | 'L' | 'R'
+/** 이번 녹음 세션이 입력을 받는 트랙들 — 한 손만 재녹음할 때 반대 손 키를 무시한다 */
+let recTracks: Set<TapTrack> = new Set(['L', 'R'])
+
 /**
- * 슬롯 녹음. overdub=true면 기존 탭을 지우지 않고 위에 겹친다 — 왼손 패스를 먼저 찍고
- * **들으면서** 오른손 패스를 얹는 용도. 겹녹음 중에는 기존 탭이 비프로 함께 재생된다.
+ * 슬롯 녹음.
+ * - replace: 슬롯의 양 트랙을 지우고 새로 (기본)
+ * - overdub: 아무것도 안 지우고 위에 겹침 — 기존 탭이 비프로 들린다
+ * - 'L'/'R': **그 트랙의 슬롯 탭만** 지우고 그 손 키만 받는다 — 겹녹음한 레이어만
+ *   다시 찍는 용도. 남은 트랙은 비프로 들리고, 반대 손 키는 무시돼 오염되지 않는다.
  */
-function startSlotRecord(overdub = false) {
+function startSlotRecord(mode: RecordMode = 'replace') {
   const s = currentSlot.value
   if (!audioBuffer.value || !s || tapping.value) return
   stop()
@@ -257,8 +264,15 @@ function startSlotRecord(overdub = false) {
   const playToMs = Math.min(songLengthMs(), s.to + CTX_AFTER_MS)
   tapSource.start(tapStartCtxSec, playFromMs / 1000, Math.max(0.05, (playToMs - playFromMs) / 1000))
   tapSource.onended = () => stopTapping()
-  if (overdub && backbone.value) {
-    // 이미 찍어둔 탭을 비프로 들려준다 — 겹쳐 칠 기준이 된다
+
+  // 지우기 — 모드별 범위. 슬롯 밖은 항상 보존
+  const inSlot = (e: TapEvent) => e.t >= s.from && e.t < s.to
+  if (mode === 'replace' || mode === 'L') tapsL.value = tapsL.value.filter((e) => !inSlot(e))
+  if (mode === 'replace' || mode === 'R') tapsR.value = tapsR.value.filter((e) => !inSlot(e))
+  recTracks = mode === 'L' ? new Set(['L']) : mode === 'R' ? new Set(['R']) : new Set(['L', 'R'])
+
+  // 남아 있는 탭을 비프로 들려준다 — 겹쳐 칠 기준이 된다 (교체 모드는 침묵)
+  if (mode !== 'replace' && backbone.value) {
     for (const o of backbone.value.onsets) {
       if (o.timeMs < playFromMs || o.timeMs > playToMs) continue
       const at = tapStartCtxSec + (o.timeMs - playFromMs) / 1000
@@ -272,11 +286,6 @@ function startSlotRecord(overdub = false) {
       osc.start(at)
       osc.stop(at + 0.06)
     }
-  }
-  if (!overdub) {
-    // 다시 친다 = 이 슬롯을 대체한다(양 트랙 모두) — 슬롯 밖은 보존
-    tapsL.value = tapsL.value.filter((e) => e.t < s.from || e.t >= s.to)
-    tapsR.value = tapsR.value.filter((e) => e.t < s.from || e.t >= s.to)
   }
   selectedTap.value = null
   pendingDowns.clear()
@@ -317,7 +326,7 @@ function onTapKey(e: KeyboardEvent) {
     : RIGHT_KEYS.has(e.code)
       ? 'R'
       : null
-  if (track === null) return
+  if (track === null || !recTracks.has(track)) return
   e.preventDefault()
   if (!tapCtx || pendingDowns.has(e.code)) return
   const ms = tapNowMs()
@@ -1177,7 +1186,7 @@ onBeforeUnmount(() => {
           ♪ 미리듣기
         </button>
         <button v-if="previewing" type="button" @click="stopPreview">■ 정지</button>
-        <button v-if="!tapping" type="button" class="primary" :disabled="running" @click="startSlotRecord(false)">
+        <button v-if="!tapping" type="button" class="primary" :disabled="running" @click="startSlotRecord('replace')">
           ● {{ slotDone(slotIdx) ? '재녹음(교체)' : '녹음' }} — 왼손 ASDF·오른손 JKL; · 누르면 홀드 · ⌫ 무르기
         </button>
         <button
@@ -1185,9 +1194,27 @@ onBeforeUnmount(() => {
           type="button"
           :disabled="running"
           title="기존 탭을 비프로 들으며 위에 겹쳐 친다 — 왼손 먼저, 오른손 나중 같은 이중 녹음용"
-          @click="startSlotRecord(true)"
+          @click="startSlotRecord('overdub')"
         >
           ● 겹녹음
+        </button>
+        <button
+          v-if="!tapping && slotDone(slotIdx)"
+          type="button"
+          :disabled="running"
+          title="이 슬롯의 왼손 트랙만 지우고 다시 — 오른손은 비프로 들리고 보존된다"
+          @click="startSlotRecord('L')"
+        >
+          ● 왼손만
+        </button>
+        <button
+          v-if="!tapping && slotDone(slotIdx)"
+          type="button"
+          :disabled="running"
+          title="이 슬롯의 오른손 트랙만 지우고 다시 — 왼손은 비프로 들리고 보존된다"
+          @click="startSlotRecord('R')"
+        >
+          ● 오른손만
         </button>
         <button v-else-if="tapping" type="button" @click="stopTapping">
           ■ 정지 {{ (tapPosMs / 1000).toFixed(1) }}s
