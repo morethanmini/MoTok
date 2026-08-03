@@ -29,6 +29,8 @@ const props = withDefaults(
     compact?: boolean
     canKick?: boolean
     canInvite?: boolean
+    /** 방장 위임(-180) 노출 여부 — 방장 본인에게만, 대기실에서만 켠다. */
+    canDelegate?: boolean
     /**
      * 영상을 가려야 할 때의 안내 문구(null이면 그대로 보여준다).
      * 게임④ 출제 중인 출제자 캠처럼 "보이면 안 되는" 화면에 쓴다 — 트랙은 그대로 붙여두고
@@ -58,6 +60,7 @@ const props = withDefaults(
     compact: false,
     canKick: false,
     canInvite: false,
+    canDelegate: false,
     cover: null,
     volume: 1,
     preferCam: false,
@@ -65,7 +68,7 @@ const props = withDefaults(
     effect: null,
   },
 )
-const emit = defineEmits<{ kick: []; friend: []; volume: [value: number] }>()
+const emit = defineEmits<{ kick: []; friend: []; delegate: []; volume: [value: number] }>()
 
 const occupied = computed(() => !!props.view)
 const hasVideo = computed(() => !!props.view?.cameraOn && !!props.view?.videoTrack)
@@ -240,7 +243,7 @@ function onVolumeInput(e: Event) {
 
       <!-- 개인 볼륨 — 이 참가자 소리를 내 쪽에서만 줄인다(상대 마이크 설정과 무관) -->
       <button
-        v-if="canAdjustVolume || canInvite || canKick"
+        v-if="canAdjustVolume || canInvite || canDelegate || canKick"
         class="vol-btn"
         :class="{ open: menuOpen }"
         :title="`${view?.name} 메뉴`"
@@ -268,6 +271,7 @@ function onVolumeInput(e: Event) {
         />
         </div>
         <button v-if="canInvite" type="button" class="menu-action invite" @click="emit('friend')">친구 추가</button>
+        <button v-if="canDelegate" type="button" class="menu-action" @click="emit('delegate')">방장 위임</button>
         <button v-if="canKick" type="button" class="menu-action kick" @click="emit('kick')">강퇴하기</button>
       </div>
 
