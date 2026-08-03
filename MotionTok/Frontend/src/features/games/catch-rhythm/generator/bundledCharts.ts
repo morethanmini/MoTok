@@ -21,6 +21,7 @@ export interface BundledSongEntry {
 /** 방 시작 UI에 노출되는 곡 목록 — 자산을 추가하면 여기 한 줄 늘리면 된다 */
 export const BUNDLED_SONGS: BundledSongEntry[] = [
   { id: 'ssafy-fighting-manual', label: 'SSAFY Fighting · MANUAL' },
+  { id: 'ssafy-fighting-manual-verse1', label: 'SSAFY Fighting · MANUAL (1절)' },
   { id: 'ssafy-fighting-extreme', label: 'SSAFY Fighting · EXTREME' },
 ]
 

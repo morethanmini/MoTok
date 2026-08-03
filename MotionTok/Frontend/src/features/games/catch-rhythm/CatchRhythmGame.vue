@@ -46,10 +46,14 @@ const mode = ref<GameMode>('catch')
 const songPick = ref<'random' | 'ssafy'>('random')
 /** 응원가 전용 난이도 — 어려움(MANUAL 채보) / 익스트림 */
 const songDifficulty = ref<'manual' | 'extreme'>('manual')
+/** 어려움 전용 길이 — 풀곡 / 1절(80.5초 컷 번들). 익스트림은 하프코스 하나뿐 */
+const songLength = ref<'full' | 'verse1'>('full')
 /** 시작·로드에 쓰는 번들 id. null = 랜덤 채보 */
-const selectedSong = computed(() =>
-  songPick.value === 'ssafy' ? `ssafy-fighting-${songDifficulty.value}` : null,
-)
+const selectedSong = computed(() => {
+  if (songPick.value !== 'ssafy') return null
+  if (songDifficulty.value === 'extreme') return 'ssafy-fighting-extreme'
+  return songLength.value === 'verse1' ? 'ssafy-fighting-manual-verse1' : 'ssafy-fighting-manual'
+})
 /** 이번 라운드에 쓸 번들 — 곡 라운드는 이게 로드돼야 스테이지를 연다 */
 const activeBundle = shallowRef<LoadedBundle | null>(null)
 const errorMsg = ref('')
@@ -377,6 +381,30 @@ watch(
         </button>
       </div>
 
+      <!-- 어려움 전용 길이 선택 — 익스트림은 하프코스 채보 하나뿐이라 숨긴다 -->
+      <div v-if="songPick === 'ssafy' && songDifficulty === 'manual'" class="levels row-len">
+        <button
+          type="button"
+          class="px level"
+          :class="{ on: songLength === 'full' }"
+          :disabled="isMultiplayer && !isHost"
+          title="곡 전체 (약 2분)"
+          @click="songLength = 'full'"
+        >
+          풀곡
+        </button>
+        <button
+          type="button"
+          class="px level"
+          :class="{ on: songLength === 'verse1' }"
+          :disabled="isMultiplayer && !isHost"
+          title="1절까지만 (약 1분 20초)"
+          @click="songLength = 'verse1'"
+        >
+          1절
+        </button>
+      </div>
+
       <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
 
       <div class="actions">
@@ -482,6 +510,7 @@ watch(
 .row-song::before { content: '곡'; }
 .row-mode::before { content: '플레이 모드'; }
 .row-diff::before { content: '난이도'; }
+.row-len::before { content: '길이'; }
 .level {
   flex: 1 1 0;
   min-width: 0;

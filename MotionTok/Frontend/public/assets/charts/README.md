@@ -21,4 +21,5 @@ public/assets/charts/<id>/
 | id | 내용 |
 |---|---|
 | `ssafy-fighting-manual` | SSAFY Fighting 풀버전 · MANUAL 수제 채보 |
+| `ssafy-fighting-manual-verse1` | 위 MANUAL을 1절(80.5초)에서 자른 버전 — `docs-personal/S15P11A706-168/채보들/make-verse1.mjs`로 생성. 풀곡 채보를 갈아끼우면 이것도 재생성할 것 |
 | `ssafy-fighting-extreme` | SSAFY Fighting 컷버전 · EXTREME 수제 채보 |
