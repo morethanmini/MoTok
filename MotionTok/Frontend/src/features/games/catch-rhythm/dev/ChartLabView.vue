@@ -24,6 +24,7 @@ import {
   ringDraftToGameChart,
   songStartMs,
   type SongChartOptions,
+  type SongDifficulty,
 } from '../generator/songChart'
 import type { Beatmap } from '../core/beatmap'
 import type { RingBeatmap } from '../ring/ringLogic'
@@ -38,7 +39,11 @@ const progress = ref(0)
 const errorMsg = ref('')
 
 // ── 초안 옵션 ──
-const difficulty = ref<Difficulty>('NORMAL')
+const difficulty = ref<SongDifficulty>('NORMAL')
+/** 스테이지 prop용 — MANUAL은 스테이지가 모르는 값이고, 커스텀 채보에선 어차피 안 쓴다 */
+const stageDifficulty = computed<Difficulty>(() =>
+  difficulty.value === 'MANUAL' ? 'NORMAL' : difficulty.value,
+)
 const subdivision = ref<2 | 3 | 4 | 6 | 8>(4)
 const snap = ref<'hybrid' | 'grid' | 'free'>('free')
 const seed = ref<string>('20260731')
@@ -70,6 +75,19 @@ let tapStartCtxSec = 0
 let tapRaf = 0
 /** 눌린 채인 키들 — keyup에서 길이를 계산한다 (코드별이라 두 손가락 겹침도 된다) */
 const pendingDowns = new Map<string, number>()
+
+/** 탭 자동 저장 키 — 파일명 기준. 다운로드 안 해도 새로고침·재방문에 살아남는다 */
+const TAPS_STORE = 'chart-lab:taps:'
+watch([percTaps, melodyTaps], () => {
+  if (!fileName.value) return
+  const key = TAPS_STORE + fileName.value
+  if (percTaps.value.length + melodyTaps.value.length === 0) localStorage.removeItem(key)
+  else
+    localStorage.setItem(
+      key,
+      JSON.stringify({ perc: percTaps.value, melody: melodyTaps.value }),
+    )
+})
 
 /** 탭 보정 결과 — 분석·탭이 바뀔 때마다 다시 계산 */
 const backbone = computed(() => {
@@ -206,8 +224,12 @@ function deleteTap() {
   drawWave()
 }
 
-/** 구간(없으면 전체) 짤라듣기 — 탭 없이 귀로만 확인 */
-function playSection() {
+/**
+ * 구간(없으면 전체) 짤라듣기.
+ * withTaps면 보정된 탭 위치에 비프를 얹는다 — 드럼은 낮은 음, 보컬은 높은 음,
+ * 홀드는 길게 + 끝날 때 틱. "녹음한 걸 들으면서 조정"하는 핵심 루프다.
+ */
+function playSection(withTaps = false) {
   if (!audioBuffer.value || previewing.value) return
   stop()
   stopTapping()
@@ -217,8 +239,31 @@ function playSection() {
   previewSource.connect(previewCtx.destination)
   const from = selStartMs.value ?? 0
   const to = selEndMs.value ?? songLengthMs()
+  // 곡·비프를 같은 클럭의 절대 시각으로 예약한다 — 어긋나면 미리듣기의 의미가 없다
+  const startAt = previewCtx.currentTime + 0.08
   previewSource.onended = () => stopPreview()
-  previewSource.start(0, from / 1000, Math.max(0.05, (to - from) / 1000))
+  previewSource.start(startAt, from / 1000, Math.max(0.05, (to - from) / 1000))
+
+  if (withTaps && backbone.value) {
+    const beep = (atSec: number, freq: number, durSec: number, gain: number) => {
+      if (!previewCtx) return
+      const osc = previewCtx.createOscillator()
+      const g = previewCtx.createGain()
+      osc.frequency.value = freq
+      g.gain.setValueAtTime(gain, atSec)
+      g.gain.exponentialRampToValueAtTime(0.001, atSec + durSec)
+      osc.connect(g).connect(previewCtx.destination)
+      osc.start(atSec)
+      osc.stop(atSec + durSec + 0.01)
+    }
+    for (const o of backbone.value.onsets) {
+      if (o.timeMs < from || o.timeMs > to) continue
+      const at = startAt + (o.timeMs - from) / 1000
+      const isPerc = o.source === 'perc'
+      beep(at, isPerc ? 700 : 1568, o.holdMs ? 0.12 : 0.045, 0.3)
+      if (o.holdMs) beep(at + o.holdMs / 1000, isPerc ? 520 : 1175, 0.06, 0.22) // 홀드 끝 틱
+    }
+  }
   previewing.value = true
 }
 
@@ -400,6 +445,21 @@ async function onFile(e: Event) {
     const ctx = new AudioContext()
     audioBuffer.value = await ctx.decodeAudioData(await file.arrayBuffer())
     void ctx.close()
+    // 같은 곡을 다시 열면 이전에 친 탭이 자동으로 돌아온다(파일명 기준 localStorage)
+    const saved = localStorage.getItem(TAPS_STORE + file.name)
+    if (saved) {
+      try {
+        const json = JSON.parse(saved) as { perc?: unknown; melody?: unknown }
+        percTaps.value = parseTapList(json.perc)
+        melodyTaps.value = parseTapList(json.melody)
+      } catch {
+        percTaps.value = []
+        melodyTaps.value = []
+      }
+    } else {
+      percTaps.value = []
+      melodyTaps.value = []
+    }
   } catch {
     errorMsg.value = '오디오를 디코드할 수 없어요 (mp3/ogg/wav 지원)'
     audioBuffer.value = null
@@ -678,10 +738,18 @@ onBeforeUnmount(() => {
           ● {{ selStartMs !== null ? '구간 녹음' : '녹음' }} — 키 짧게=탭 · 누르면=홀드 · ⌫ 무르기 · Esc 종료
         </button>
         <button v-else type="button" @click="stopTapping">■ 정지 {{ (tapPosMs / 1000).toFixed(1) }}s</button>
-        <button v-if="!previewing" type="button" :disabled="tapping" @click="playSection">
+        <button v-if="!previewing" type="button" :disabled="tapping" @click="playSection(false)">
           ▶ {{ selStartMs !== null ? '구간 듣기' : '전체 듣기' }}
         </button>
-        <button v-else type="button" @click="stopPreview">■ 듣기 정지</button>
+        <button
+          v-if="!previewing"
+          type="button"
+          :disabled="tapping || !backbone"
+          @click="playSection(true)"
+        >
+          ♪ 탭 미리듣기
+        </button>
+        <button v-if="previewing" type="button" @click="stopPreview">■ 듣기 정지</button>
         <template v-if="selStartMs !== null && selEndMs !== null">
           <span class="dim">
             구간 {{ (selStartMs / 1000).toFixed(1) }}–{{ (selEndMs / 1000).toFixed(1) }}s
@@ -733,6 +801,7 @@ onBeforeUnmount(() => {
           난이도
           <select v-model="difficulty" :disabled="running">
             <option v-for="d in DIFFICULTIES" :key="d" :value="d">{{ d }}</option>
+            <option v-if="backbone" value="MANUAL">MANUAL — 내가 찍은 대로</option>
           </select>
         </label>
         <label>
@@ -782,7 +851,7 @@ onBeforeUnmount(() => {
         v-if="running && playChart && fileUrl && analysis"
         :key="runKey"
         :seed="seed"
-        :difficulty="difficulty"
+        :difficulty="stageDifficulty"
         :duration-ms="playDurationMs"
         :mode="playMode"
         :chart="playChart"
