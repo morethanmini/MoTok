@@ -1809,7 +1809,7 @@ function reloadPage() {
   window.location.reload()
 }
 
-const startLabel = computed(() => 'GAME')
+const startLabel = computed(() => 'GAME START')
 /**
  * 게임 선택 버튼 잠금 — 서버 연결 중에는 방장 여부를 알기 전까지 잠근다(제안 오발신 방지).
  * STOMP 미연결(백엔드 미연동 로컬 데모)에서는 상세 조회가 영영 안 끝나므로 잠그지 않는다 —
@@ -2342,38 +2342,39 @@ const startHint = computed(() =>
           </div>
         </template>
       </div>
-      <!--
-        1인 플레이 방에서 한 판을 하고 나면 게임 선택(GAME) 대신 다시하기다.
-        게임을 골라 들어온 방이라 여기서 다른 게임까지 고를 수 있으면 고른 게 무의미해진다.
-        나가는 길은 따로 두지 않는다 — 오른쪽 LEAVE가 이미 그 자리다.
-        아직 한 판도 안 돈 방(자동 시작 실패 등)은 골라야 하므로 GAME 그대로 둔다.
-      -->
-      <button
-        v-if="isSoloPlay && lastPlayed"
-        class="px start-btn footer-start-btn solo-replay"
-        :disabled="pickerLocked || gameInProgress"
-        :title="gameInProgress ? startHint : `${lastPlayed.name} 다시하기`"
-        :aria-disabled="gameInProgress"
-        @click="replaySolo"
-      >
-        <span class="play-ico">↻</span>
-        <span class="start-title">다시하기</span>
-      </button>
-      <button
-        v-else
-        class="px start-btn footer-start-btn"
-        :class="{ suggest: !amRoomHost }"
-        :disabled="pickerLocked || gameInProgress || (detailLoaded && !amRoomHost && suggestCooldown)"
-        :title="startHint"
-        :aria-disabled="gameInProgress"
-        @click="openPicker"
-      >
-        <span class="play-ico">▶</span>
-        <span class="start-title">{{ startLabel }}</span>
-      </button>
       </div>
 
+      <!-- 게임 시작·나가기는 한 쌍으로 오른쪽에 세운다 — 채팅 그룹에 끼워 두면 가운데 컨트롤에
+           시선을 빼앗겨 주 행동이 눈에 안 들어온다.
+
+           1인 플레이 방에서 한 판을 하고 나면 게임 선택(GAME START) 대신 다시하기다(-109).
+           게임을 골라 들어온 방이라 여기서 다른 게임까지 고를 수 있으면 고른 게 무의미해진다.
+           아직 한 판도 안 돈 방(자동 시작 실패 등)은 골라야 하므로 GAME START 그대로 둔다.
+           둘은 v-if/v-else 한 쌍이라 반드시 같은 부모 안에 나란히 있어야 한다. -->
       <div class="footer-right">
+        <button
+          v-if="isSoloPlay && lastPlayed"
+          class="px start-btn footer-start-btn solo-replay"
+          :disabled="pickerLocked || gameInProgress"
+          :title="gameInProgress ? startHint : `${lastPlayed.name} 다시하기`"
+          :aria-disabled="gameInProgress"
+          @click="replaySolo"
+        >
+          <span class="play-ico">↻</span>
+          <span class="start-title">다시하기</span>
+        </button>
+        <button
+          v-else
+          class="px start-btn footer-start-btn"
+          :class="{ suggest: !amRoomHost }"
+          :disabled="pickerLocked || gameInProgress || (detailLoaded && !amRoomHost && suggestCooldown)"
+          :title="startHint"
+          :aria-disabled="gameInProgress"
+          @click="openPicker"
+        >
+          <span class="play-ico">▶</span>
+          <span class="start-title">{{ startLabel }}</span>
+        </button>
         <button class="px leave" @click="leave">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4M9 16l4-4-4-4M13 12H3" /></svg>
           LEAVE
@@ -2979,7 +2980,11 @@ const startHint = computed(() =>
 .bubble.full.suggest { background: rgba(214, 244, 233, 0.9); }
 
 .footer-right { grid-row: 1; grid-column: 3; justify-self: end; display: flex; align-items: center; gap: 10px; }
-.leave { display: flex; align-items: center; gap: 9px; padding: 0 18px; height: 52px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; background: var(--c-coral); color: #fff; font-size: 9px; box-shadow: var(--shadow-sm); }
+/* GAME START와 LEAVE는 한 쌍이라 규격을 공유한다 — 한쪽만 고치면 짝이 어긋난다. */
+/* min-width로 폭까지 맞춘다 — 안 잡으면 글자 수 차이(GAME START vs LEAVE)만큼 폭이 어긋난다.
+   내용이 넘치면 padding이 밀어내므로 짧은 쪽만 늘어나고 긴 쪽은 그대로다. */
+.footer-right > .px { display: flex; align-items: center; justify-content: center; gap: 9px; padding: 0 24px; min-width: 158px; height: 56px; border: 3px solid var(--c-ink-soft); border-radius: 14px 14px 10px 14px; color: #fff; font-size: 11px; box-shadow: var(--shadow-sm); }
+.leave { background: var(--c-coral); }
 
 .room-toast { position: fixed; top: 50%; left: 50%; z-index: 90; padding: 13px 20px; transform: translate(-50%, -50%); background: rgba(56, 38, 61, .9); border: 0; border-radius: 9px; color: #fff; font-size: 11px; line-height: 1.7; box-shadow: none; }
 
@@ -3115,10 +3120,11 @@ const startHint = computed(() =>
   padding: 0 16px;
   white-space: nowrap;
 }
-.footer-start-btn, .footer-start-btn.suggest { position: static; flex: none; height: 50px; padding: 0 12px; border: 3px solid #4e67a3; border-radius: 7px; background: #7195df; color: #fff; box-shadow: 3px 3px 0 #4e67a3; white-space: nowrap; transform: none; }
-/* 1인 플레이 다시하기 — 한 판이 끝난 자리에서 할 일이 이것뿐이라 GAME보다 크게 잡는다 */
-.footer-start-btn.solo-replay { height: 60px; padding: 0 26px; border-radius: 9px; }
-.footer-start-btn .start-title { font-size: 10px; }
+/* 크기·여백은 .footer-right > .px(LEAVE와 공유하는 규격)에서 온다 — 여기서는 색만 정한다.
+   나가기와 같은 코랄로 두면 시작과 나가기가 구분되지 않아 파랑을 유지한다. */
+.footer-start-btn, .footer-start-btn.suggest { position: static; flex: none; border: 3px solid #4e67a3; border-radius: 7px; background: #7195df; color: #fff; box-shadow: 3px 3px 0 #4e67a3; white-space: nowrap; transform: none; }
+/* 1인 플레이 다시하기(-109) — 원래 GAME보다 크게 잡았지만, 지금은 LEAVE와 나란히 서므로
+   높이·폭은 공유 규격을 따른다. 한 판이 끝난 자리의 유일한 할 일이라는 무게는 글자 크기로 준다. */
 .footer-start-btn.solo-replay .play-ico { font-size: 20px; }
 .footer-start-btn.solo-replay .start-title { font-size: 14px; }
 
@@ -3443,7 +3449,8 @@ const startHint = computed(() =>
   .controls { gap: 7px; }
   .ctrl { width: 42px; height: 42px; border-width: 2px; border-radius: 11px 11px 8px 11px; }
   .chat-dock { height: 44px; padding: 0 6px 0 11px; }
-  .leave { height: 44px; padding: 0 13px; }
+  /* 좁은 화면에서도 둘은 같은 규격을 유지한다 */
+  .footer-right > .px { min-width: 132px; height: 48px; padding: 0 15px; font-size: 10px; }
   /* chat-log는 chat-dock 높이에 맞춰 띄운다 — 52+10 이었으므로 44+10 */
   .chat-log { bottom: 54px; }
 
