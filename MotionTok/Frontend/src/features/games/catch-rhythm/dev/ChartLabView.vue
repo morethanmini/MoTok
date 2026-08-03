@@ -63,10 +63,20 @@ const songLengthMs = () =>
   audioBuffer.value ? (audioBuffer.value.length / audioBuffer.value.sampleRate) * 1000 : 0
 
 // ═══════════════════ 슬롯 채보 (SUPERHARD/EXTREME) ═══════════════════
-// 탭은 난이도별 단일 스트림(TapEvent[]) — 슬롯은 "녹음 범위"일 뿐, 저장은 하나로 합친다.
-// 트랙(드럼/보컬) 구분은 버렸다 — 손·레인 배치는 기계가 알아서("니가 자의적으로").
+// 탭은 **두 트랙**: 왼손(asdf…) / 오른손(jkl;…). 단일 스트림이면 동시 입력이
+// 이중 입력 제거(100ms)에 접혀 동타·"홀드 중 다른 손 연주"가 불가능하다(실사용 발견).
+// 두 트랙은 리듬 입력용일 뿐 — 게임 손·레인 배치는 여전히 생성기가 자유롭게 정한다.
 
-const taps = ref<TapEvent[]>([])
+type TapTrack = 'L' | 'R'
+const tapsL = ref<TapEvent[]>([]) // 왼손 패스 → 생성기에는 perc 스트림으로
+const tapsR = ref<TapEvent[]>([]) // 오른손 패스 → melody 스트림으로
+const trackArr = (track: TapTrack) => (track === 'L' ? tapsL : tapsR)
+const totalTaps = computed(() => tapsL.value.length + tapsR.value.length)
+
+/** 왼손/오른손 키 배치 — 이 밖의 키는 무시한다(Backspace·Esc 제외) */
+const LEFT_KEYS = new Set(['KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG', 'KeyQ', 'KeyW', 'KeyE', 'KeyR'])
+const RIGHT_KEYS = new Set(['KeyH', 'KeyJ', 'KeyK', 'KeyL', 'Semicolon', 'KeyU', 'KeyI', 'KeyO', 'KeyP'])
+
 const slotIdx = ref(0)
 /**
  * 보정 모드 — 기본 '없음'(친 그대로). 지연 보정은 검출 온셋 기준이라 사람의 기준과
@@ -113,7 +123,7 @@ const currentSlot = computed<Slot | null>(() => slots.value[slotIdx.value] ?? nu
 function slotDone(i: number): boolean {
   const s = slots.value[i]
   if (!s) return false
-  return taps.value.some((e) => e.t >= s.from && e.t < s.to)
+  return [...tapsL.value, ...tapsR.value].some((e) => e.t >= s.from && e.t < s.to)
 }
 
 const doneCount = computed(() => slots.value.filter((_, i) => slotDone(i)).length)
@@ -129,10 +139,14 @@ function selectSlot(i: number) {
   drawWave()
 }
 
-/** 탭 보정 결과 — 직접 찍는 난이도에서만 쓴다 */
+/** 탭 보정 결과 — 직접 찍는 난이도에서만 쓴다. 왼손=perc, 오른손=melody 스트림으로 */
 const backbone = computed(() => {
-  if (!analysis.value || !isTapped.value || taps.value.length === 0) return null
-  return correctTapTracks({ perc: [], melody: taps.value }, analysis.value, correctionOpts.value)
+  if (!analysis.value || !isTapped.value || totalTaps.value === 0) return null
+  return correctTapTracks(
+    { perc: tapsL.value, melody: tapsR.value },
+    analysis.value,
+    correctionOpts.value,
+  )
 })
 
 // ── 탭 자동 저장 — 곡 파일명 + 난이도별로 따로 산다 ──
@@ -140,24 +154,37 @@ const TAPS_STORE = 'chart-lab:slots:'
 const tapsKey = () =>
   fileName.value && isTapped.value ? `${TAPS_STORE}${fileName.value}:${difficulty.value}` : null
 
-watch([taps], () => {
+watch([tapsL, tapsR], () => {
   const key = tapsKey()
   if (!key) return
-  if (taps.value.length === 0) localStorage.removeItem(key)
-  else localStorage.setItem(key, JSON.stringify({ taps: taps.value }))
+  if (totalTaps.value === 0) localStorage.removeItem(key)
+  else localStorage.setItem(key, JSON.stringify({ l: tapsL.value, r: tapsR.value }))
 })
 
 function loadTapsFromStore() {
   const key = tapsKey()
   if (!key) {
-    taps.value = []
+    tapsL.value = []
+    tapsR.value = []
     return
   }
   try {
     const raw = localStorage.getItem(key)
-    taps.value = raw ? parseTapList((JSON.parse(raw) as { taps?: unknown }).taps) : []
+    const json = raw ? (JSON.parse(raw) as { l?: unknown; r?: unknown; taps?: unknown }) : null
+    if (json && (json.l !== undefined || json.r !== undefined)) {
+      tapsL.value = parseTapList(json.l)
+      tapsR.value = parseTapList(json.r)
+    } else if (json?.taps !== undefined) {
+      // 구버전(단일 스트림)은 왼손 트랙으로 승계한다
+      tapsL.value = parseTapList(json.taps)
+      tapsR.value = []
+    } else {
+      tapsL.value = []
+      tapsR.value = []
+    }
   } catch {
-    taps.value = []
+    tapsL.value = []
+    tapsR.value = []
   }
 }
 
@@ -199,7 +226,9 @@ let playFromMs = 0
 /** 입력을 기록으로 인정하는 범위 = 현재 슬롯 */
 let recFromMs = 0
 let recToMs = 0
-const pendingDowns = new Map<string, number>()
+const pendingDowns = new Map<string, { t: number; track: TapTrack }>()
+/** 이번 세션에 확정된 탭의 트랙 순서 — Backspace 무르기가 마지막 것을 정확히 지운다 */
+let pushHistory: TapTrack[] = []
 
 function tapNowMs(): number {
   return tapCtx ? playFromMs + (tapCtx.currentTime - tapStartCtxSec) * 1000 : 0
@@ -222,10 +251,12 @@ function startSlotRecord() {
   const playToMs = Math.min(songLengthMs(), s.to + CTX_AFTER_MS)
   tapSource.start(tapStartCtxSec, playFromMs / 1000, Math.max(0.05, (playToMs - playFromMs) / 1000))
   tapSource.onended = () => stopTapping()
-  // 다시 친다 = 이 슬롯을 대체한다 — 슬롯 밖은 보존
-  taps.value = taps.value.filter((e) => e.t < s.from || e.t >= s.to)
+  // 다시 친다 = 이 슬롯을 대체한다(양 트랙 모두) — 슬롯 밖은 보존
+  tapsL.value = tapsL.value.filter((e) => e.t < s.from || e.t >= s.to)
+  tapsR.value = tapsR.value.filter((e) => e.t < s.from || e.t >= s.to)
   selectedTap.value = null
   pendingDowns.clear()
+  pushHistory = []
   tapping.value = true
   window.addEventListener('keydown', onTapKey)
   window.addEventListener('keyup', onTapKeyUp)
@@ -247,17 +278,28 @@ function onTapKey(e: KeyboardEvent) {
     return
   }
   if (e.code === 'Backspace') {
-    // 방금 친 게 틀렸을 때 — 녹음을 끊지 않고 마지막 탭만 무른다
+    // 방금 친 게 틀렸을 때 — 녹음을 끊지 않고 마지막 탭만 무른다(그 탭의 트랙에서)
     e.preventDefault()
-    taps.value = taps.value.slice(0, -1)
+    const track = pushHistory.pop()
+    if (track) {
+      const arrRef = trackArr(track)
+      arrRef.value = arrRef.value.slice(0, -1)
+    }
     return
   }
+  // 왼손(asdf…) / 오른손(jkl;…) 트랙 분기 — 그 밖의 키는 무시
+  const track: TapTrack | null = LEFT_KEYS.has(e.code)
+    ? 'L'
+    : RIGHT_KEYS.has(e.code)
+      ? 'R'
+      : null
+  if (track === null) return
   e.preventDefault()
   if (!tapCtx || pendingDowns.has(e.code)) return
   const ms = tapNowMs()
   // 문맥 구간의 입력은 버린다 — 슬롯 범위 안만 진짜 노트다
   if (ms < recFromMs || ms >= recToMs) return
-  pendingDowns.set(e.code, ms)
+  pendingDowns.set(e.code, { t: ms, track })
 }
 
 function onTapKeyUp(e: KeyboardEvent) {
@@ -265,8 +307,13 @@ function onTapKeyUp(e: KeyboardEvent) {
   if (down === undefined) return
   pendingDowns.delete(e.code)
   if (!tapCtx) return
-  const d = Math.max(0, tapNowMs() - down)
-  taps.value = [...taps.value, { t: Math.round(down), d: d >= HOLD_MIN_MS ? Math.round(d) : 0 }]
+  const d = Math.max(0, tapNowMs() - down.t)
+  const arrRef = trackArr(down.track)
+  arrRef.value = [
+    ...arrRef.value,
+    { t: Math.round(down.t), d: d >= HOLD_MIN_MS ? Math.round(d) : 0 },
+  ]
+  pushHistory.push(down.track)
 }
 
 function stopTapping() {
@@ -274,11 +321,14 @@ function stopTapping() {
   // 아직 눌린 채인 키(슬롯 끝까지 잡고 있던 홀드)는 지금 시각까지로 확정한다
   if (pendingDowns.size > 0 && tapCtx) {
     const now = tapNowMs()
-    const flushed = [...pendingDowns.values()].map((down) => {
-      const d = Math.max(0, now - down)
-      return { t: Math.round(down), d: d >= HOLD_MIN_MS ? Math.round(d) : 0 }
-    })
-    taps.value = [...taps.value, ...flushed]
+    for (const down of pendingDowns.values()) {
+      const d = Math.max(0, now - down.t)
+      const arrRef = trackArr(down.track)
+      arrRef.value = [
+        ...arrRef.value,
+        { t: Math.round(down.t), d: d >= HOLD_MIN_MS ? Math.round(d) : 0 },
+      ]
+    }
     pendingDowns.clear()
   }
   tapping.value = false
@@ -339,8 +389,9 @@ function playRange(from: number, to: number, withTaps: boolean) {
     for (const o of backbone.value.onsets) {
       if (o.timeMs < from || o.timeMs > to) continue
       const at = startAt + (o.timeMs - from) / 1000
-      beep(at, o.holdMs ? 988 : 1568, o.holdMs ? 0.12 : 0.05, 0.55)
-      if (o.holdMs) beep(at + o.holdMs / 1000, 1175, 0.06, 0.4) // 홀드 끝 틱
+      const isLeft = o.source === 'perc' // 왼손 트랙 — 낮은 음으로 구분
+      beep(at, isLeft ? 700 : 1568, o.holdMs ? 0.12 : 0.05, 0.55)
+      if (o.holdMs) beep(at + o.holdMs / 1000, isLeft ? 520 : 1175, 0.06, 0.4) // 홀드 끝 틱
     }
   }
   previewFromMs = from
@@ -386,11 +437,13 @@ function stopPreview() {
 }
 
 // ── 탭 미세수정 (확대 뷰와 연동) ──
-const selectedTap = ref<number | null>(null)
+const selectedTap = ref<{ track: TapTrack; index: number } | null>(null)
 
-const selectedTapEvent = computed(() =>
-  selectedTap.value === null ? null : (taps.value[selectedTap.value] ?? null),
-)
+const selectedTapEvent = computed(() => {
+  const sel = selectedTap.value
+  if (!sel) return null
+  return trackArr(sel.track).value[sel.index] ?? null
+})
 
 const latencyNow = () => backbone.value?.latencyMs ?? 0
 
@@ -400,24 +453,29 @@ const selectedTapMs = computed(() =>
 
 function selectTapNear(ms: number, tolMs = 80) {
   const lat = latencyNow()
-  let best: number | null = null
+  let best: { track: TapTrack; index: number } | null = null
   let bestDist = tolMs
-  for (let i = 0; i < taps.value.length; i++) {
-    const dist = Math.abs(taps.value[i]!.t - lat - ms)
-    if (dist < bestDist) {
-      bestDist = dist
-      best = i
+  for (const track of ['L', 'R'] as const) {
+    const arr = trackArr(track).value
+    for (let i = 0; i < arr.length; i++) {
+      const dist = Math.abs(arr[i]!.t - lat - ms)
+      if (dist < bestDist) {
+        bestDist = dist
+        best = { track, index: i }
+      }
     }
   }
   selectedTap.value = best
 }
 
 function editSelected(mutate: (e: TapEvent) => TapEvent) {
-  const i = selectedTap.value
-  if (i === null || taps.value[i] === undefined) return
-  const next = [...taps.value]
-  next[i] = mutate(next[i]!)
-  taps.value = next
+  const sel = selectedTap.value
+  if (!sel) return
+  const arrRef = trackArr(sel.track)
+  if (arrRef.value[sel.index] === undefined) return
+  const next = [...arrRef.value]
+  next[sel.index] = mutate(next[sel.index]!)
+  arrRef.value = next
   drawWave()
 }
 
@@ -434,15 +492,17 @@ function toggleHold() {
 }
 
 function deleteTap() {
-  const i = selectedTap.value
-  if (i === null) return
-  taps.value = taps.value.filter((_, idx) => idx !== i)
+  const sel = selectedTap.value
+  if (!sel) return
+  const arrRef = trackArr(sel.track)
+  arrRef.value = arrRef.value.filter((_, idx) => idx !== sel.index)
   selectedTap.value = null
   drawWave()
 }
 
 function clearTaps() {
-  taps.value = []
+  tapsL.value = []
+  tapsR.value = []
   selectedTap.value = null
   drawWave()
 }
@@ -450,7 +510,12 @@ function clearTaps() {
 function exportTaps() {
   download(
     `${base()}-${difficulty.value}-taps.json`,
-    JSON.stringify({ audio: fileName.value, difficulty: difficulty.value, taps: taps.value }),
+    JSON.stringify({
+      audio: fileName.value,
+      difficulty: difficulty.value,
+      l: tapsL.value,
+      r: tapsR.value,
+    }),
   )
 }
 
@@ -458,13 +523,23 @@ async function importTaps(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
   try {
-    const json = JSON.parse(await file.text()) as { taps?: unknown; melody?: unknown; perc?: unknown }
-    // 현행 {taps} + 구버전 {perc, melody} 둘 다 수용
-    taps.value = [
-      ...parseTapList(json.taps),
-      ...parseTapList(json.perc),
-      ...parseTapList(json.melody),
-    ].sort((a, b) => a.t - b.t)
+    const json = JSON.parse(await file.text()) as {
+      l?: unknown
+      r?: unknown
+      taps?: unknown
+      perc?: unknown
+      melody?: unknown
+    }
+    if (json.l !== undefined || json.r !== undefined) {
+      tapsL.value = parseTapList(json.l)
+      tapsR.value = parseTapList(json.r)
+    } else {
+      // 구버전: 단일 {taps} 또는 {perc, melody} — 왼손/오른손으로 승계
+      tapsL.value = [...parseTapList(json.taps), ...parseTapList(json.perc)].sort(
+        (a, b) => a.t - b.t,
+      )
+      tapsR.value = parseTapList(json.melody)
+    }
     drawWave()
   } catch {
     errorMsg.value = '탭 파일을 읽을 수 없어요'
@@ -827,23 +902,29 @@ function drawZoom() {
     }
   }
 
-  // 탭 마커 — 세로 막대 + 홀드 바 + 선택 테두리
+  // 탭 마커 — 왼손 주황(위쪽 절반), 오른손 하늘(아래쪽 절반)으로 겹침 없이 보인다
   const lat = latencyNow()
-  for (let i = 0; i < taps.value.length; i++) {
-    const ev = taps.value[i]!
-    const t = ev.t - lat
-    if (t < r.from - 200 || t > r.to + 200) continue
-    const x = msToX(t)
-    if (ev.d >= HOLD_MIN_MS) {
-      ctx.fillStyle = 'rgba(110,190,255,0.35)'
-      ctx.fillRect(x, 10, Math.max(3, msToX(t + ev.d) - x), 16)
-    }
-    ctx.fillStyle = 'rgba(110,190,255,0.95)'
-    ctx.fillRect(x - 2, 6, 4, h - 24)
-    if (selectedTap.value === i) {
-      ctx.strokeStyle = '#fff'
-      ctx.lineWidth = 2
-      ctx.strokeRect(x - 5, 4, 10, h - 20)
+  for (const track of ['L', 'R'] as const) {
+    const arr = trackArr(track).value
+    const color = track === 'L' ? 'rgba(255,150,80,0.95)' : 'rgba(110,190,255,0.95)'
+    const yTop = track === 'L' ? 6 : h * 0.5
+    const yLen = h * 0.5 - 22
+    for (let i = 0; i < arr.length; i++) {
+      const ev = arr[i]!
+      const t = ev.t - lat
+      if (t < r.from - 200 || t > r.to + 200) continue
+      const x = msToX(t)
+      if (ev.d >= HOLD_MIN_MS) {
+        ctx.fillStyle = color.replace('0.95', '0.35')
+        ctx.fillRect(x, yTop + 4, Math.max(3, msToX(t + ev.d) - x), 12)
+      }
+      ctx.fillStyle = color
+      ctx.fillRect(x - 2, yTop, 4, yLen)
+      if (selectedTap.value?.track === track && selectedTap.value.index === i) {
+        ctx.strokeStyle = '#fff'
+        ctx.lineWidth = 2
+        ctx.strokeRect(x - 5, yTop - 2, 10, yLen + 4)
+      }
     }
   }
 
@@ -883,12 +964,16 @@ function onZoomUp() {
   zoomDragging = false
 }
 
-/** 더블클릭 = 탭 추가 — 빠진 노트를 마우스로 채워 넣는다 */
+/** 더블클릭 = 탭 추가 — 위쪽 절반 = 왼손, 아래쪽 절반 = 오른손 (마커 표시와 같은 규칙) */
 function onZoomDbl(e: MouseEvent) {
   const ms = zoomMsOf(e)
-  if (ms === null || !isTapped.value) return
-  taps.value = [...taps.value, { t: Math.round(ms + latencyNow()), d: 0 }]
-  selectedTap.value = taps.value.length - 1
+  const c = zoomCanvas.value
+  if (ms === null || !isTapped.value || !c) return
+  const rect = c.getBoundingClientRect()
+  const track: TapTrack = e.clientY - rect.top < rect.height / 2 ? 'L' : 'R'
+  const arrRef = trackArr(track)
+  arrRef.value = [...arrRef.value, { t: Math.round(ms + latencyNow()), d: 0 }]
+  selectedTap.value = { track, index: arrRef.value.length - 1 }
   drawZoom()
 }
 
@@ -969,7 +1054,9 @@ onBeforeUnmount(() => {
     <template v-if="analysis && isTapped">
       <section class="controls tapbox">
         <b>{{ difficulty }} 슬롯 채보</b>
-        <span class="dim">{{ doneCount }}/{{ slots.length }} 슬롯 완료</span>
+        <span class="dim">
+          {{ doneCount }}/{{ slots.length }} 슬롯 · 왼손(ASDF) {{ tapsL.length }} · 오른손(JKL;) {{ tapsR.length }}
+        </span>
         <span v-if="backbone && correction !== 'none'" class="dim">
           · 지연 보정 {{ backbone.latencyMs }}ms · 온셋 일치 {{ Math.round(backbone.matchedRatio * 100) }}%
         </span>
@@ -982,16 +1069,16 @@ onBeforeUnmount(() => {
             <option value="snap70">지연 + 온셋 스냅 ±70ms</option>
           </select>
         </label>
-        <button v-if="!previewing" type="button" :disabled="tapping || !taps.length" @click="previewAll(true)">
+        <button v-if="!previewing" type="button" :disabled="tapping || !totalTaps" @click="previewAll(true)">
           ♪ 전체 미리듣기
         </button>
         <button v-else type="button" @click="stopPreview">■ 정지</button>
-        <button type="button" :disabled="!taps.length" @click="exportTaps">탭 저장</button>
+        <button type="button" :disabled="!totalTaps" @click="exportTaps">탭 저장</button>
         <label>
           <button type="button" @click="tapFile?.click()">탭 불러오기</button>
           <input ref="tapFile" type="file" accept=".json" style="display: none" @change="importTaps" />
         </label>
-        <button type="button" :disabled="!taps.length" @click="clearTaps">전체 지우기</button>
+        <button type="button" :disabled="!totalTaps" @click="clearTaps">전체 지우기</button>
       </section>
 
       <section class="slots">
@@ -1020,7 +1107,7 @@ onBeforeUnmount(() => {
         </button>
         <button v-if="previewing" type="button" @click="stopPreview">■ 정지</button>
         <button v-if="!tapping" type="button" class="primary" :disabled="running" @click="startSlotRecord">
-          ● {{ slotDone(slotIdx) ? '재녹음' : '녹음' }} — 짧게=탭 · 누르면=홀드 · ⌫ 무르기 · Esc 종료
+          ● {{ slotDone(slotIdx) ? '재녹음' : '녹음' }} — 왼손 ASDF·오른손 JKL; · 누르면 홀드 · ⌫ 무르기 · Esc 종료
         </button>
         <button v-else type="button" @click="stopTapping">■ 정지 {{ (tapPosMs / 1000).toFixed(1) }}s</button>
         <button
@@ -1035,6 +1122,7 @@ onBeforeUnmount(() => {
       <div v-if="selectedTap !== null && selectedTapMs !== null && selectedTapEvent" class="controls tapedit">
         <b>탭 미세수정</b>
         <span class="dim">
+          {{ selectedTap.track === 'L' ? '왼손' : '오른손' }} ·
           {{ (selectedTapMs / 1000).toFixed(3) }}s ·
           {{ selectedTapEvent.d >= 250 ? `홀드 ${selectedTapEvent.d}ms` : '탭' }}
         </span>
@@ -1063,7 +1151,8 @@ onBeforeUnmount(() => {
         @dblclick="onZoomDbl"
       ></canvas>
       <p class="legend">
-        <b>확대</b> — 마커 드래그 = 이동 · 더블클릭 = 탭 추가 · 클릭 = 선택 · 하단 틱 = 검출 온셋 · 격자 = 16분음표
+        <b>확대</b> — <span class="dot kick"></span>왼손(위) <span class="dot tap"></span>오른손(아래) ·
+        마커 드래그 = 이동 · 더블클릭 = 탭 추가(위쪽 절반 = 왼손, 아래쪽 = 오른손) · 클릭 = 선택 · 격자 = 16분음표
       </p>
     </section>
 
