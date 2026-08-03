@@ -27,14 +27,47 @@ describe('mulberry32', () => {
 })
 
 describe('StarSequence', () => {
-  it('처음 3개는 쉬움·보통에서만 출제된다', () => {
+  it('여는 4판은 쉬움·보통에서만 출제된다', () => {
     for (let seed = 0; seed < 20; seed++) {
       const seq = new StarSequence(CONSTELLATIONS, mulberry32(seed))
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 4; i++) {
         const difficulty = byKey.get(seq.next())?.difficulty
         expect(difficulty, `seed ${seed} draw ${i}`).not.toBe('HARD')
       }
     }
+  })
+
+  /**
+   * 별 개수가 체감 난이도를 사실상 정한다 — 별 하나에 손가락 하나라, 8별은 두 손을 다 펴야 한다.
+   * 난이도 등급만 보고 뽑던 때는 첫 판에 7별 북두칠성이 나올 수 있어 "너무 어렵다"는 말을 들었다.
+   */
+  it('여는 4판은 모두 별이 가장 적은 별자리다', () => {
+    const fewest = Math.min(...CONSTELLATIONS.map((c) => c.pts.length))
+    for (let seed = 0; seed < 20; seed++) {
+      const seq = new StarSequence(CONSTELLATIONS, mulberry32(seed))
+      for (let i = 0; i < 4; i++) {
+        expect(byKey.get(seq.next())!.pts.length, `seed ${seed} draw ${i}`).toBe(fewest)
+      }
+    }
+  })
+
+  it('여는 판이라도 매번 같은 별자리로 시작하지는 않는다', () => {
+    const first = new Set(
+      Array.from({ length: 20 }, (_, seed) =>
+        new StarSequence(CONSTELLATIONS, mulberry32(seed)).next(),
+      ),
+    )
+    expect(first.size).toBeGreaterThan(1)
+  })
+
+  it('5판째부터는 별 개수를 가리지 않는다 — 계속 쉬우면 판이 늘어지기만 한다', () => {
+    const fewest = Math.min(...CONSTELLATIONS.map((c) => c.pts.length))
+    const fifth = Array.from({ length: 20 }, (_, seed) => {
+      const seq = new StarSequence(CONSTELLATIONS, mulberry32(seed))
+      for (let i = 0; i < 4; i++) seq.next()
+      return byKey.get(seq.next())!.pts.length
+    })
+    expect(fifth.some((n) => n > fewest)).toBe(true)
   })
 
   it('풀이 소진되기 전까지 같은 별자리가 반복되지 않는다', () => {
