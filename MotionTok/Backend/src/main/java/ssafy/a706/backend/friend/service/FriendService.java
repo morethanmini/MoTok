@@ -4,7 +4,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import ssafy.a706.backend.conntime.service.ConnectTimeService;
 import ssafy.a706.backend.friend.controller.dto.CreateFriendRequest;
 import ssafy.a706.backend.friend.controller.dto.FriendRequestItemResponse;
 import ssafy.a706.backend.friend.controller.dto.FriendResponse;
@@ -24,7 +23,6 @@ import ssafy.a706.backend.user.entity.User;
 import ssafy.a706.backend.user.enums.UserStatus;
 import ssafy.a706.backend.user.repository.UserRepository;
 
-import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -55,8 +53,6 @@ public class FriendService {
     private final FriendshipRepository friendshipRepository;
     private final UserRepository userRepository;
     private final PresenceService presenceService;
-    /** 오프라인 친구의 "N분 전 접속"(-179) — user_connect_times.updated_at이 곧 마지막 접속 종료 시각이다. */
-    private final ConnectTimeService connectTimeService;
     /** 요청·수락·해제를 상대 화면에 즉시 반영한다(-149) — 12초 폴링을 대신한다. */
     private final UserNotifier userNotifier;
 
@@ -75,11 +71,6 @@ public class FriendService {
 
         Map<Long, User> users = visibleUsersById(counterpartIds);
         Map<Long, PresenceSnapshot> presences = presenceService.findAll(users.keySet());
-        // 마지막 접속 시각은 오프라인 친구에게만 쓴다(-179). 전원이 접속 중이면 조회 자체를 건너뛴다.
-        Set<Long> offlineIds = users.keySet().stream()
-                .filter(id -> presences.getOrDefault(id, PresenceSnapshot.OFFLINE).state() == PresenceState.OFFLINE)
-                .collect(Collectors.toSet());
-        Map<Long, LocalDateTime> lastSeen = connectTimeService.lastSeenOf(offlineIds);
 
         // 정렬은 매핑 전 스냅샷(enum)으로 판단한다 — 응답 문자열("OFFLINE")과 비교하면
         // PresenceState 이름이 바뀔 때 컴파일은 통과하고 정렬만 조용히 망가진다.
@@ -91,8 +82,7 @@ public class FriendService {
                         u.getId(),
                         u.getNickname(),
                         u.getAvatarUrl(),
-                        presences.getOrDefault(u.getId(), PresenceSnapshot.OFFLINE),
-                        lastSeen.get(u.getId())))
+                        presences.getOrDefault(u.getId(), PresenceSnapshot.OFFLINE)))
                 .toList();
     }
 
