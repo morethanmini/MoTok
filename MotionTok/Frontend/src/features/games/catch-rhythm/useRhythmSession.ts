@@ -11,7 +11,7 @@
 
 import { onScopeDispose, ref, shallowRef, watch, type Ref } from 'vue'
 import type { RhythmEvent, RhythmLiveRow, RhythmResultEntry, RhythmStartEvent } from './rhythmTypes'
-import type { Difficulty } from './generator/presets'
+import { DIFFICULTIES, type Difficulty } from './generator/presets'
 import type { GameMode } from './core/types'
 
 interface StompLike {
@@ -27,12 +27,22 @@ interface StompLike {
 export interface RhythmRound {
   sessionId: string
   seed: string
+  /** 시드 생성 경로용 — 곡 라운드의 수제 난이도(MANUAL 등)는 HARD로 접힌다(스테이지가 안 씀) */
   difficulty: Difficulty
+  /** 서버가 에코한 원문 — 곡 라운드의 결과 화면 등 표시용 */
+  difficultyLabel: string
   mode: GameMode
+  /** 곡 지정 라운드(-168)의 번들 채보 id. null이면 기존 시드 채보 */
+  song: string | null
   /** 게임 시각 t=0에 해당하는 **로컬** 타임스탬프 (= 서버 serverNow) */
   epochZeroMs: number
   /** 채보 길이 = endAt - serverNow. 전원이 같은 값을 계산한다 */
   durationMs: number
+}
+
+/** 곡 라운드의 수제 난이도(MANUAL/EXTREME)는 시드 생성 타입에 없다 — 표시용과 분리해 접는다 */
+function toStageDifficulty(d: string): Difficulty {
+  return (DIFFICULTIES as string[]).includes(d) ? (d as Difficulty) : 'HARD'
 }
 
 /**
@@ -106,8 +116,10 @@ export function useRhythmSession(roomChat: StompLike, roomId: Ref<string>) {
       round.value = {
         sessionId: event.sessionId,
         seed: event.seed,
-        difficulty: event.difficulty,
+        difficulty: toStageDifficulty(event.difficulty),
+        difficultyLabel: event.difficulty,
         mode: event.mode ?? 'catch',
+        song: event.song ?? null,
         // 서버의 serverNow 시점을 t=0으로 잡는다(로컬로는 수신 시각). 채보 앞 유예
         // LEAD_IN이 카운트다운을 겸하므로 전원이 같은 순간에 첫 노트를 본다.
         epochZeroMs: receivedAtMs,
@@ -194,8 +206,17 @@ export function useRhythmSession(roomChat: StompLike, roomId: Ref<string>) {
 
   // ── 발행 ──────────────────────────────────────────────
 
-  const start = (difficulty: Difficulty, mode: GameMode) =>
-    roomChat.publishRaw(`/app/rooms/${roomId.value}/rhythm/start`, { difficulty, mode })
+  const start = (
+    difficulty: string,
+    mode: GameMode,
+    song?: { id: string; durationSec: number },
+  ) =>
+    roomChat.publishRaw(`/app/rooms/${roomId.value}/rhythm/start`, {
+      difficulty,
+      mode,
+      song: song?.id ?? null,
+      durationSec: song?.durationSec ?? null,
+    })
 
   const sendProgress = (score: number, combo: number) =>
     roomChat.publishRaw(`/app/rooms/${roomId.value}/rhythm/progress`, { score, combo })

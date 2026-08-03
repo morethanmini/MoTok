@@ -116,7 +116,7 @@ class RhythmSessionServiceTest {
         when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
         when(membershipReader.isMember(eq(ROOM_ID), anyString())).thenReturn(true);
 
-        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch"), guest))
+        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch", null, null), guest))
                 .isInstanceOf(RhythmException.class)
                 .hasFieldOrPropertyWithValue("code", "RHYTHM_NOT_HOST");
         verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
@@ -129,7 +129,7 @@ class RhythmSessionServiceTest {
         when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
         when(membershipReader.isMember(eq(ROOM_ID), anyString())).thenReturn(false);
 
-        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch"), host))
+        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch", null, null), host))
                 .isInstanceOf(RhythmException.class)
                 .hasFieldOrPropertyWithValue("code", "RHYTHM_NOT_IN_ROOM");
     }
@@ -139,7 +139,7 @@ class RhythmSessionServiceTest {
         givenRoomWithHost();
         givenNoActiveSession();
 
-        service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch"), host);
+        service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch", null, null), host);
 
         RhythmEventResponse event = lastEvent();
         assertThat(event.type()).isEqualTo("RHYTHM_START");
@@ -163,7 +163,7 @@ class RhythmSessionServiceTest {
         givenRoomWithHost();
         givenNoActiveSession();
 
-        service.start(ROOM_ID, new RhythmRequests.Start("IMPOSSIBLE", "catch"), host);
+        service.start(ROOM_ID, new RhythmRequests.Start("IMPOSSIBLE", "catch", null, null), host);
 
         assertThat(lastEvent().difficulty()).isEqualTo("NORMAL");
     }
@@ -176,7 +176,7 @@ class RhythmSessionServiceTest {
         when(membershipReader.isMember(eq(ROOM_ID), anyString())).thenReturn(true);
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(playingSession()));
 
-        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("EASY", "catch"), host))
+        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("EASY", "catch", null, null), host))
                 .isInstanceOf(RhythmException.class)
                 .hasFieldOrPropertyWithValue("code", "RHYTHM_ALREADY_ACTIVE");
     }
@@ -191,7 +191,7 @@ class RhythmSessionServiceTest {
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.empty());
         givenGameOpen(false);
 
-        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch"), host))
+        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch", null, null), host))
                 .isInstanceOf(RhythmException.class)
                 .hasFieldOrPropertyWithValue("code", "RHYTHM_GAME_CLOSED");
         verify(sessionRepository, never()).saveSession(anyString(), any(RhythmSession.class));
