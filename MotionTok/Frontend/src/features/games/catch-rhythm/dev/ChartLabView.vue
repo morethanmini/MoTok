@@ -76,25 +76,167 @@ const backbone = computed(() => {
   )
 })
 
+// ── 구간 선택 — 짤라듣기·구간 녹음·미세수정의 공통 기반 (파형 드래그) ──
+const selStartMs = ref<number | null>(null)
+const selEndMs = ref<number | null>(null)
+const previewing = ref(false)
+/** 클릭으로 고른 탭 — 미세수정(±ms·삭제) 대상. index는 원본 배열 기준 */
+const selectedTap = ref<{ track: 'perc' | 'melody'; index: number } | null>(null)
+let previewCtx: AudioContext | null = null
+let previewSource: AudioBufferSourceNode | null = null
+/** 구간 녹음 시 탭 시각의 원점(구간 시작) */
+let tapRangeFromMs = 0
+let dragStartMs: number | null = null
+let dragged = false
+
+const songLengthMs = () =>
+  audioBuffer.value ? (audioBuffer.value.length / audioBuffer.value.sampleRate) * 1000 : 0
+const latencyNow = () => backbone.value?.latencyMs ?? 0
+
+function canvasMs(e: MouseEvent): number {
+  const canvas = waveCanvas.value
+  if (!canvas) return 0
+  const rect = canvas.getBoundingClientRect()
+  const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
+  return ratio * songLengthMs()
+}
+
+function onWaveDown(e: MouseEvent) {
+  if (!audioBuffer.value) return
+  dragStartMs = canvasMs(e)
+  dragged = false
+}
+
+function onWaveMove(e: MouseEvent) {
+  if (dragStartMs === null) return
+  const ms = canvasMs(e)
+  if (dragged || Math.abs(ms - dragStartMs) > 80) {
+    dragged = true
+    selStartMs.value = Math.round(Math.min(dragStartMs, ms))
+    selEndMs.value = Math.round(Math.max(dragStartMs, ms))
+    drawWave()
+  }
+}
+
+function onWaveUp(e: MouseEvent) {
+  if (dragStartMs === null) return
+  if (!dragged) selectTapNear(canvasMs(e))
+  dragStartMs = null
+  drawWave()
+}
+
+function clearSelection() {
+  selStartMs.value = null
+  selEndMs.value = null
+  drawWave()
+}
+
+function onWaveLeave() {
+  dragStartMs = null
+}
+
+/** 클릭 지점에서 가장 가까운 탭(보정 표시 위치 기준, ±80ms)을 고른다 */
+function selectTapNear(ms: number) {
+  const lat = latencyNow()
+  let best: { track: 'perc' | 'melody'; index: number } | null = null
+  let bestDist = 80
+  for (const track of ['perc', 'melody'] as const) {
+    const arr = track === 'perc' ? percTaps.value : melodyTaps.value
+    for (let index = 0; index < arr.length; index++) {
+      const dist = Math.abs(arr[index]! - lat - ms)
+      if (dist < bestDist) {
+        bestDist = dist
+        best = { track, index }
+      }
+    }
+  }
+  selectedTap.value = best
+}
+
+/** 선택한 탭의 화면 시각(지연 보정 후) — 수정 UI 표시용 */
+const selectedTapMs = computed(() => {
+  const sel = selectedTap.value
+  if (!sel) return null
+  const arr = sel.track === 'perc' ? percTaps.value : melodyTaps.value
+  const t = arr[sel.index]
+  return t === undefined ? null : Math.round(t - latencyNow())
+})
+
+function nudgeTap(deltaMs: number) {
+  const sel = selectedTap.value
+  if (!sel) return
+  const arrRef = sel.track === 'perc' ? percTaps : melodyTaps
+  if (arrRef.value[sel.index] === undefined) return
+  const next = [...arrRef.value]
+  next[sel.index] = Math.max(0, next[sel.index]! + deltaMs)
+  arrRef.value = next
+  drawWave()
+}
+
+function deleteTap() {
+  const sel = selectedTap.value
+  if (!sel) return
+  const arrRef = sel.track === 'perc' ? percTaps : melodyTaps
+  arrRef.value = arrRef.value.filter((_, i) => i !== sel.index)
+  selectedTap.value = null
+  drawWave()
+}
+
+/** 구간(없으면 전체) 짤라듣기 — 탭 없이 귀로만 확인 */
+function playSection() {
+  if (!audioBuffer.value || previewing.value) return
+  stop()
+  stopTapping()
+  previewCtx = new AudioContext()
+  previewSource = previewCtx.createBufferSource()
+  previewSource.buffer = audioBuffer.value
+  previewSource.connect(previewCtx.destination)
+  const from = selStartMs.value ?? 0
+  const to = selEndMs.value ?? songLengthMs()
+  previewSource.onended = () => stopPreview()
+  previewSource.start(0, from / 1000, Math.max(0.05, (to - from) / 1000))
+  previewing.value = true
+}
+
+function stopPreview() {
+  if (!previewing.value) return
+  previewing.value = false
+  try {
+    previewSource?.stop()
+  } catch {
+    // 이미 끝났으면 무시
+  }
+  previewSource = null
+  void previewCtx?.close()
+  previewCtx = null
+}
+
 function startTapping() {
   if (!audioBuffer.value || tapping.value) return
   stop()
+  stopPreview()
   ;(document.activeElement as HTMLElement | null)?.blur?.()
   tapCtx = new AudioContext()
   tapSource = tapCtx.createBufferSource()
   tapSource.buffer = audioBuffer.value
   tapSource.connect(tapCtx.destination)
   tapStartCtxSec = tapCtx.currentTime + 0.1 // 예약 재생 — 시작 지연이 탭 시각을 흔들지 않게
-  tapSource.start(tapStartCtxSec)
+  // 구간이 선택돼 있으면 그 구간만 재생·기록한다 — 원테이크 강요 금지
+  const from = selStartMs.value ?? 0
+  const to = selEndMs.value ?? songLengthMs()
+  tapRangeFromMs = from
+  tapSource.start(tapStartCtxSec, from / 1000, Math.max(0.05, (to - from) / 1000))
   tapSource.onended = () => stopTapping()
-  // 이 트랙을 다시 친다 = 이전 기록을 대체한다
-  if (tapTrack.value === 'perc') percTaps.value = []
-  else melodyTaps.value = []
+  // 다시 친다 = 대체한다 — 전체 녹음이면 트랙 전체를, 구간 녹음이면 그 구간만 비운다
+  const arrRef = tapTrack.value === 'perc' ? percTaps : melodyTaps
+  arrRef.value =
+    selStartMs.value === null ? [] : arrRef.value.filter((t) => t < from || t > to)
+  selectedTap.value = null
   tapping.value = true
   window.addEventListener('keydown', onTapKey)
   const tick = () => {
     if (!tapping.value || !tapCtx) return
-    tapPosMs.value = Math.max(0, (tapCtx.currentTime - tapStartCtxSec) * 1000)
+    tapPosMs.value = tapRangeFromMs + Math.max(0, (tapCtx.currentTime - tapStartCtxSec) * 1000)
     tapRaf = requestAnimationFrame(tick)
   }
   tick()
@@ -108,13 +250,19 @@ function onTapKey(e: KeyboardEvent) {
     stopTapping()
     return
   }
+  const arr = tapTrack.value === 'perc' ? percTaps : melodyTaps
+  if (e.code === 'Backspace') {
+    // 방금 친 게 틀렸을 때 — 녹음을 끊지 않고 마지막 탭만 무른다
+    e.preventDefault()
+    arr.value = arr.value.slice(0, -1)
+    return
+  }
   e.preventDefault()
   if (!tapCtx) return
   // 판정 시계와 같은 오디오 클럭으로 기록 — 계통 지연은 보정(correctTapTracks)이 흡수한다
   const ms = (tapCtx.currentTime - tapStartCtxSec) * 1000
   if (ms < 0) return
-  const arr = tapTrack.value === 'perc' ? percTaps : melodyTaps
-  arr.value = [...arr.value, Math.round(ms)]
+  arr.value = [...arr.value, Math.round(tapRangeFromMs + ms)]
 }
 
 function stopTapping() {
@@ -357,12 +505,39 @@ function drawWave() {
       ctx.fillRect(x - 1, 12, 2, h * 0.3)
     }
   }
+
+  // 선택 구간 (짤라듣기·구간 녹음 대상)
+  if (selStartMs.value !== null && selEndMs.value !== null) {
+    const x0 = msToX(selStartMs.value)
+    const x1 = msToX(selEndMs.value)
+    ctx.fillStyle = 'rgba(255, 207, 125, 0.12)'
+    ctx.fillRect(x0, 0, x1 - x0, h)
+    ctx.strokeStyle = 'rgba(255, 207, 125, 0.85)'
+    ctx.lineWidth = 1.5
+    for (const x of [x0, x1]) {
+      ctx.beginPath()
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x, h)
+      ctx.stroke()
+    }
+  }
+
+  // 미세수정 대상으로 고른 탭 — 흰 링
+  if (selectedTapMs.value !== null) {
+    const x = msToX(selectedTapMs.value)
+    ctx.strokeStyle = '#fff'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.arc(x, 24, 8, 0, Math.PI * 2)
+    ctx.stroke()
+  }
 }
 
 watch([analysis, audioBuffer, backbone], drawWave)
 window.addEventListener('resize', drawWave)
 onBeforeUnmount(() => {
   stopTapping()
+  stopPreview()
   window.removeEventListener('resize', drawWave)
   if (fileUrl.value) URL.revokeObjectURL(fileUrl.value)
 })
@@ -389,10 +564,18 @@ onBeforeUnmount(() => {
     <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
 
     <section v-if="audioBuffer" class="wave-wrap">
-      <canvas ref="waveCanvas" class="wave"></canvas>
+      <canvas
+        ref="waveCanvas"
+        class="wave"
+        @mousedown="onWaveDown"
+        @mousemove="onWaveMove"
+        @mouseup="onWaveUp"
+        @mouseleave="onWaveLeave"
+      ></canvas>
       <p class="legend">
         <span class="dot kick"></span>저역 온셋(킥) <span class="dot mel"></span>온셋
-        <span class="dot sus"></span>지속음 · 세로선 = 검출된 박자 격자
+        <span class="dot sus"></span>지속음 · 세로선 = 박자 격자 ·
+        <b>드래그 = 구간 선택 · 탭 마커 클릭 = 미세수정</b>
       </p>
     </section>
 
@@ -417,9 +600,19 @@ onBeforeUnmount(() => {
           </select>
         </label>
         <button v-if="!tapping" type="button" class="primary" :disabled="running" @click="startTapping">
-          ● 녹음 — 재생하며 아무 키나 (Esc 종료)
+          ● {{ selStartMs !== null ? '구간 녹음' : '녹음' }} — 아무 키나 · ⌫ 무르기 · Esc 종료
         </button>
         <button v-else type="button" @click="stopTapping">■ 정지 {{ (tapPosMs / 1000).toFixed(1) }}s</button>
+        <button v-if="!previewing" type="button" :disabled="tapping" @click="playSection">
+          ▶ {{ selStartMs !== null ? '구간 듣기' : '전체 듣기' }}
+        </button>
+        <button v-else type="button" @click="stopPreview">■ 듣기 정지</button>
+        <template v-if="selStartMs !== null && selEndMs !== null">
+          <span class="dim">
+            구간 {{ (selStartMs / 1000).toFixed(1) }}–{{ (selEndMs / 1000).toFixed(1) }}s
+          </span>
+          <button type="button" @click="clearSelection">구간 해제</button>
+        </template>
         <span class="dim">드럼 {{ percTaps.length }} · 보컬 {{ melodyTaps.length }}</span>
         <template v-if="backbone">
           <span class="dim">
@@ -437,6 +630,20 @@ onBeforeUnmount(() => {
         <button type="button" :disabled="!percTaps.length && !melodyTaps.length" @click="clearTaps">
           지우기
         </button>
+      </div>
+
+      <div v-if="selectedTap && selectedTapMs !== null" class="controls tapedit">
+        <b>탭 미세수정</b>
+        <span class="dim">
+          {{ selectedTap.track === 'perc' ? '드럼' : '보컬' }} ·
+          {{ (selectedTapMs / 1000).toFixed(3) }}s
+        </span>
+        <button type="button" @click="nudgeTap(-20)">−20ms</button>
+        <button type="button" @click="nudgeTap(-5)">−5ms</button>
+        <button type="button" @click="nudgeTap(5)">+5ms</button>
+        <button type="button" @click="nudgeTap(20)">+20ms</button>
+        <button type="button" @click="deleteTap">삭제</button>
+        <button type="button" @click="selectedTap = null">선택 해제</button>
       </div>
 
       <div class="controls">
@@ -655,6 +862,19 @@ dd.warn {
 .tapbox b {
   color: #ffcf7d;
   font-size: 0.85rem;
+}
+.tapedit {
+  border: 1px solid #2c3648;
+  border-radius: 8px;
+  padding: 0.4rem 0.7rem;
+  background: #131a26;
+}
+.tapedit b {
+  color: #9fd8ff;
+  font-size: 0.85rem;
+}
+.wave {
+  cursor: crosshair;
 }
 .dim {
   color: #8b97a6;
