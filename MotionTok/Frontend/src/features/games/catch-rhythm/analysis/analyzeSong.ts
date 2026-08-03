@@ -15,6 +15,11 @@ import { estimateTempo, type TempoEstimate } from './tempo'
 export interface AnalyzedOnset extends Onset {
   /** 스펙트럼 센트로이드의 곡 내 백분위(0=낮은 음, 1=높은 음). 무음이면 0.5 */
   pitch: number
+  /**
+   * 탭 백본 전용 — 사람이 키를 누르고 있던 길이(ms). 있으면 생성기가 검출 지속음보다
+   * 우선해 홀드/연결 노트로 만든다. 자동 분석은 이 필드를 쓰지 않는다.
+   */
+  holdMs?: number
 }
 
 /** 지속음 — 홀드(링)/연결(캐치) 노트 후보 */

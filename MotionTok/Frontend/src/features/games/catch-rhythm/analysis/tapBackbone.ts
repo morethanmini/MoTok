@@ -6,17 +6,24 @@
  * ① 사람 손의 지연·오차 보정 ② 그 시각의 소리 정보(세기·음높이·지속음) 붙이기.
  *
  * 두 트랙으로 나눠 친다: 드럼 패스(perc)와 보컬/멜로디 패스(melody).
+ * **키를 누르고 있으면(≥250ms) 홀드 탭**이 되어 롱노트(캐치 연결/링 홀드) 재료가 된다.
  * 보정된 탭은 AnalyzedOnset 형태가 되어 songChart의 backbone 옵션으로 들어간다 —
  * 이때 자동 선택(밀도 컷)은 완전히 꺼지고 탭한 것 전부가 노트가 된다.
  */
 
 import type { AnalyzedOnset, SongAnalysis } from './analyzeSong'
 
+/** 탭 한 번 — t = 누른 시각(파일 내 ms), d = 누르고 있던 길이(짧으면 0 = 그냥 탭) */
+export interface TapEvent {
+  t: number
+  d: number
+}
+
 export interface TapTracks {
-  /** 드럼 패스 — 파일 내 시각(ms), 정렬 무관 */
-  percMs: number[]
+  /** 드럼 패스 */
+  perc: TapEvent[]
   /** 보컬/멜로디 패스 */
-  melodyMs: number[]
+  melody: TapEvent[]
 }
 
 export interface TapCorrection {
@@ -28,6 +35,8 @@ export interface TapCorrection {
   matchedRatio: number
 }
 
+/** 이 이상 누르고 있어야 홀드 — 그 밑은 손이 느렸을 뿐인 탭이다 */
+export const HOLD_MIN_MS = 250
 /** 같은 트랙에서 이보다 가까운 연타는 이중 입력으로 보고 앞 것만 남긴다 */
 const DOUBLE_TAP_MS = 100
 /** 지연 추정에 쓸 탭↔온셋 최대 거리 — 이보다 멀면 "그 소리를 친 것"이라 볼 수 없다 */
@@ -57,9 +66,9 @@ function nearestOnset(onsets: AnalyzedOnset[], tMs: number): AnalyzedOnset | nul
   return cand[0] ?? null
 }
 
-function dedupe(taps: number[]): number[] {
-  const sorted = [...taps].sort((a, b) => a - b)
-  return sorted.filter((t, i) => i === 0 || t - sorted[i - 1]! > DOUBLE_TAP_MS)
+function dedupe(taps: TapEvent[]): TapEvent[] {
+  const sorted = [...taps].sort((a, b) => a.t - b.t)
+  return sorted.filter((e, i) => i === 0 || e.t - sorted[i - 1]!.t > DOUBLE_TAP_MS)
 }
 
 /**
@@ -71,30 +80,33 @@ function dedupe(taps: number[]): number[] {
  *    사람은 "어느 소리인지"를 알려줬고 정확한 시각은 기계가 안다.
  * 3. 온셋이 없는 자리(검출이 놓친 보컬 등)는 지연만 뺀 시각을 그대로 쓴다 —
  *    이게 이 방식의 존재 이유다. 세기·음높이는 이웃 온셋에서 빌린다.
+ *
+ * 홀드 길이(d)는 지연이 시작·끝에 똑같이 얹혀 상쇄되므로 보정 없이 그대로 쓴다.
  */
 export function correctTapTracks(taps: TapTracks, analysis: SongAnalysis): TapCorrection {
   const sortedOnsets = [...analysis.onsets].sort((a, b) => a.timeMs - b.timeMs)
-  const perc = dedupe(taps.percMs)
-  const melody = dedupe(taps.melodyMs)
+  const perc = dedupe(taps.perc)
+  const melody = dedupe(taps.melody)
 
   // ── 1. 계통 지연 추정 ──
   const deltas: number[] = []
-  for (const t of [...perc, ...melody]) {
-    const near = nearestOnset(sortedOnsets, t)
-    if (near && Math.abs(t - near.timeMs) <= LATENCY_MATCH_MS) deltas.push(t - near.timeMs)
+  for (const e of [...perc, ...melody]) {
+    const near = nearestOnset(sortedOnsets, e.t)
+    if (near && Math.abs(e.t - near.timeMs) <= LATENCY_MATCH_MS) deltas.push(e.t - near.timeMs)
   }
   const latencyMs = Math.round(median(deltas))
 
   // ── 2·3. 트랙별 보정·스냅 ──
   let matched = 0
-  const convert = (trackTaps: number[], source: 'perc' | 'melody'): AnalyzedOnset[] =>
-    trackTaps.map((raw) => {
-      const t = raw - latencyMs
+  const convert = (trackTaps: TapEvent[], source: 'perc' | 'melody'): AnalyzedOnset[] =>
+    trackTaps.map((e) => {
+      const t = e.t - latencyMs
+      const holdMs = e.d >= HOLD_MIN_MS ? Math.round(e.d) : undefined
       const near = nearestOnset(sortedOnsets, t)
       if (near && Math.abs(near.timeMs - t) <= SNAP_TO_ONSET_MS) {
         matched++
-        // 시각·소리 정보는 검출 온셋에서, 스트림은 사람의 판단에서 — 사람이 우선이다
-        return { ...near, source }
+        // 시각·소리 정보는 검출 온셋에서, 스트림·홀드는 사람의 판단에서 — 사람이 우선이다
+        return { ...near, source, ...(holdMs !== undefined ? { holdMs } : {}) }
       }
       return {
         timeMs: Math.round(t),
@@ -105,6 +117,7 @@ export function correctTapTracks(taps: TapTracks, analysis: SongAnalysis): TapCo
             : { low: 0.1, mid: 0.6, high: 0.3 },
         pitch: near?.pitch ?? 0.5,
         source,
+        ...(holdMs !== undefined ? { holdMs } : {}),
       }
     })
 
