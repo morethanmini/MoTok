@@ -41,8 +41,18 @@ export const HOLD_MIN_MS = 250
 const DOUBLE_TAP_MS = 100
 /** 지연 추정에 쓸 탭↔온셋 최대 거리 — 이보다 멀면 "그 소리를 친 것"이라 볼 수 없다 */
 const LATENCY_MATCH_MS = 150
-/** 보정 후 이 안에 검출 온셋이 있으면 그 시각으로 스냅한다(소리의 실제 시각이 정답) */
-const SNAP_TO_ONSET_MS = 70
+/**
+ * 보정 후 이 안에 검출 온셋이 있으면 그 시각으로 스냅한다(소리의 실제 시각이 정답).
+ * 기본 ±30ms — 처음의 ±70ms는 옆의 **다른 소리**(엇박 드럼 등)까지 빨아들여서
+ * "맞게 쳤는데 보정 때문에 어긋나는" 역효과가 났다(실사용 피드백). 0이면 스냅 없이
+ * 지연 제거만 한다.
+ */
+export const DEFAULT_SNAP_WINDOW_MS = 30
+
+export interface TapCorrectionOptions {
+  /** 온셋 스냅 창(±ms). 0 = 지연 보정만 */
+  snapWindowMs?: number
+}
 
 function median(values: number[]): number {
   if (values.length === 0) return 0
@@ -83,7 +93,12 @@ function dedupe(taps: TapEvent[]): TapEvent[] {
  *
  * 홀드 길이(d)는 지연이 시작·끝에 똑같이 얹혀 상쇄되므로 보정 없이 그대로 쓴다.
  */
-export function correctTapTracks(taps: TapTracks, analysis: SongAnalysis): TapCorrection {
+export function correctTapTracks(
+  taps: TapTracks,
+  analysis: SongAnalysis,
+  options: TapCorrectionOptions = {},
+): TapCorrection {
+  const snapWindowMs = options.snapWindowMs ?? DEFAULT_SNAP_WINDOW_MS
   const sortedOnsets = [...analysis.onsets].sort((a, b) => a.timeMs - b.timeMs)
   const perc = dedupe(taps.perc)
   const melody = dedupe(taps.melody)
@@ -103,7 +118,7 @@ export function correctTapTracks(taps: TapTracks, analysis: SongAnalysis): TapCo
       const t = e.t - latencyMs
       const holdMs = e.d >= HOLD_MIN_MS ? Math.round(e.d) : undefined
       const near = nearestOnset(sortedOnsets, t)
-      if (near && Math.abs(near.timeMs - t) <= SNAP_TO_ONSET_MS) {
+      if (near && snapWindowMs > 0 && Math.abs(near.timeMs - t) <= snapWindowMs) {
         matched++
         // 시각·소리 정보는 검출 온셋에서, 스트림·홀드는 사람의 판단에서 — 사람이 우선이다
         return { ...near, source, ...(holdMs !== undefined ? { holdMs } : {}) }

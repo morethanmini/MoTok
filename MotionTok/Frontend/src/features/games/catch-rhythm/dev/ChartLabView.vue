@@ -89,13 +89,17 @@ watch([percTaps, melodyTaps], () => {
     )
 })
 
-/** 탭 보정 결과 — 분석·탭이 바뀔 때마다 다시 계산 */
+/** 온셋 스냅 창 — 0이면 지연 보정만. 넓으면 옆의 다른 소리로 빨려간다(실사용 피드백) */
+const snapWindow = ref<0 | 30 | 70>(30)
+
+/** 탭 보정 결과 — 분석·탭·스냅 창이 바뀔 때마다 다시 계산 */
 const backbone = computed(() => {
   if (!analysis.value) return null
   if (percTaps.value.length + melodyTaps.value.length === 0) return null
   return correctTapTracks(
     { perc: percTaps.value, melody: melodyTaps.value },
     analysis.value,
+    { snapWindowMs: snapWindow.value },
   )
 })
 
@@ -111,6 +115,14 @@ let previewSource: AudioBufferSourceNode | null = null
 let tapRangeFromMs = 0
 let dragStartMs: number | null = null
 let dragged = false
+// 재생 헤드(확대 뷰) — 미리듣기 진행 위치
+const previewPosMs = ref(0)
+let previewFromMs = 0
+let previewStartAtSec = 0
+let previewRaf = 0
+/** 확대 뷰에서 마커를 드래그 중인가 */
+let zoomDragging = false
+const zoomCanvas = ref<HTMLCanvasElement | null>(null)
 
 const songLengthMs = () =>
   audioBuffer.value ? (audioBuffer.value.length / audioBuffer.value.sampleRate) * 1000 : 0
@@ -158,11 +170,11 @@ function onWaveLeave() {
   dragStartMs = null
 }
 
-/** 클릭 지점에서 가장 가까운 탭(보정 표시 위치 기준, ±80ms)을 고른다 */
-function selectTapNear(ms: number) {
+/** 클릭 지점에서 가장 가까운 탭(보정 표시 위치 기준)을 고른다 */
+function selectTapNear(ms: number, tolMs = 80) {
   const lat = latencyNow()
   let best: { track: 'perc' | 'melody'; index: number } | null = null
-  let bestDist = 80
+  let bestDist = tolMs
   for (const track of ['perc', 'melody'] as const) {
     const arr = track === 'perc' ? percTaps.value : melodyTaps.value
     for (let index = 0; index < arr.length; index++) {
@@ -242,6 +254,11 @@ function playSection(withTaps = false) {
   // 곡·비프를 같은 클럭의 절대 시각으로 예약한다 — 어긋나면 미리듣기의 의미가 없다
   const startAt = previewCtx.currentTime + 0.08
   previewSource.onended = () => stopPreview()
+  // 탭 미리듣기에서는 곡을 낮춘다(덕킹) — 안 그러면 비프가 곡에 묻혀 안 들린다
+  const songGain = previewCtx.createGain()
+  songGain.gain.value = withTaps ? 0.35 : 1
+  previewSource.disconnect()
+  previewSource.connect(songGain).connect(previewCtx.destination)
   previewSource.start(startAt, from / 1000, Math.max(0.05, (to - from) / 1000))
 
   if (withTaps && backbone.value) {
@@ -249,6 +266,7 @@ function playSection(withTaps = false) {
       if (!previewCtx) return
       const osc = previewCtx.createOscillator()
       const g = previewCtx.createGain()
+      osc.type = 'triangle' // 사인보다 배음이 있어 곡을 뚫고 들린다
       osc.frequency.value = freq
       g.gain.setValueAtTime(gain, atSec)
       g.gain.exponentialRampToValueAtTime(0.001, atSec + durSec)
@@ -260,16 +278,27 @@ function playSection(withTaps = false) {
       if (o.timeMs < from || o.timeMs > to) continue
       const at = startAt + (o.timeMs - from) / 1000
       const isPerc = o.source === 'perc'
-      beep(at, isPerc ? 700 : 1568, o.holdMs ? 0.12 : 0.045, 0.3)
-      if (o.holdMs) beep(at + o.holdMs / 1000, isPerc ? 520 : 1175, 0.06, 0.22) // 홀드 끝 틱
+      beep(at, isPerc ? 700 : 1568, o.holdMs ? 0.12 : 0.05, 0.55)
+      if (o.holdMs) beep(at + o.holdMs / 1000, isPerc ? 520 : 1175, 0.06, 0.4) // 홀드 끝 틱
     }
   }
+  // 재생 헤드 — 확대 뷰에서 노트와 함께 움직인다
+  previewFromMs = from
+  previewStartAtSec = startAt
   previewing.value = true
+  const tick = () => {
+    if (!previewing.value || !previewCtx) return
+    previewPosMs.value = previewFromMs + Math.max(0, (previewCtx.currentTime - previewStartAtSec) * 1000)
+    drawZoom()
+    previewRaf = requestAnimationFrame(tick)
+  }
+  tick()
 }
 
 function stopPreview() {
   if (!previewing.value) return
   previewing.value = false
+  cancelAnimationFrame(previewRaf)
   try {
     previewSource?.stop()
   } catch {
@@ -278,6 +307,158 @@ function stopPreview() {
   previewSource = null
   void previewCtx?.close()
   previewCtx = null
+  drawZoom()
+}
+
+// ── 확대 편집 뷰 — 선택 구간을 크게 보고 마커를 직접 만진다 ──
+// "키보드로 한 번에 찍고, 마우스로 세부 조정"의 마우스 쪽 절반.
+
+function zoomRect(): { from: number; to: number } | null {
+  if (selStartMs.value === null || selEndMs.value === null) return null
+  return { from: selStartMs.value, to: selEndMs.value }
+}
+
+function zoomMsOf(e: MouseEvent): number | null {
+  const r = zoomRect()
+  const c = zoomCanvas.value
+  if (!r || !c) return null
+  const rect = c.getBoundingClientRect()
+  const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
+  return r.from + ratio * (r.to - r.from)
+}
+
+function drawZoom() {
+  const c = zoomCanvas.value
+  const buffer = audioBuffer.value
+  const r = zoomRect()
+  if (!c || !buffer || !r) return
+  const dpr = window.devicePixelRatio || 1
+  const w = c.clientWidth
+  const h = c.clientHeight
+  c.width = w * dpr
+  c.height = h * dpr
+  const ctx = c.getContext('2d')!
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, w, h)
+  const span = Math.max(1, r.to - r.from)
+  const msToX = (ms: number) => ((ms - r.from) / span) * w
+
+  // 파형
+  const data = buffer.getChannelData(0)
+  const sr = buffer.sampleRate
+  const mid = h * 0.5
+  const amp = h * 0.42
+  ctx.fillStyle = 'rgba(90, 130, 180, 0.45)'
+  for (let x = 0; x < w; x++) {
+    const t0 = r.from + (x / w) * span
+    const t1 = r.from + ((x + 1) / w) * span
+    const s0 = Math.max(0, Math.floor((t0 / 1000) * sr))
+    const s1 = Math.min(data.length, Math.floor((t1 / 1000) * sr))
+    let min = 0
+    let max = 0
+    const stride = Math.max(1, Math.floor((s1 - s0) / 32))
+    for (let s = s0; s < s1; s += stride) {
+      const v = data[s]!
+      if (v < min) min = v
+      if (v > max) max = v
+    }
+    ctx.fillRect(x, mid + min * amp, 1, Math.max(1, (max - min) * amp))
+  }
+
+  const a = analysis.value
+  if (a) {
+    // 격자 — 박은 진하게, 현재 분할 설정 칸은 연하게
+    const stepMs = a.beatMs / subdivision.value
+    for (let k = Math.floor((r.from - a.gridOriginMs) / stepMs); ; k++) {
+      const t = a.gridOriginMs + k * stepMs
+      if (t > r.to) break
+      if (t < r.from) continue
+      const beatIdx = k / subdivision.value
+      const onBeat = Math.abs(beatIdx - Math.round(beatIdx)) < 1e-6
+      ctx.strokeStyle = onBeat ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.1)'
+      ctx.beginPath()
+      const x = Math.round(msToX(t)) + 0.5
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x, h)
+      ctx.stroke()
+    }
+    // 검출 온셋 — 하단 짧은 틱(참고용)
+    for (const o of a.onsets) {
+      if (o.timeMs < r.from || o.timeMs > r.to) continue
+      ctx.fillStyle = o.bands.low > 0.45 ? 'rgba(255,150,60,0.8)' : 'rgba(120,220,160,0.8)'
+      ctx.fillRect(msToX(o.timeMs) - 1, h - 18, 2, 14)
+    }
+  }
+
+  // 탭 마커 — 트랙 색 세로 막대 + 홀드 바 + 선택 테두리
+  const lat = latencyNow()
+  for (const track of ['perc', 'melody'] as const) {
+    const arr = track === 'perc' ? percTaps.value : melodyTaps.value
+    for (let i = 0; i < arr.length; i++) {
+      const ev = arr[i]!
+      const t = ev.t - lat
+      if (t < r.from - 200 || t > r.to + 200) continue
+      const x = msToX(t)
+      const color = track === 'perc' ? 'rgba(255,120,80,0.95)' : 'rgba(110,190,255,0.95)'
+      if (ev.d >= 250) {
+        ctx.fillStyle = color.replace('0.95', '0.35')
+        ctx.fillRect(x, 10, Math.max(3, msToX(t + ev.d) - x), 16)
+      }
+      ctx.fillStyle = color
+      ctx.fillRect(x - 2, 6, 4, h - 24)
+      if (selectedTap.value?.track === track && selectedTap.value.index === i) {
+        ctx.strokeStyle = '#fff'
+        ctx.lineWidth = 2
+        ctx.strokeRect(x - 5, 4, 10, h - 20)
+      }
+    }
+  }
+
+  // 재생 헤드 — 녹음·미리듣기 진행 위치
+  const pos = tapping.value ? tapPosMs.value : previewing.value ? previewPosMs.value : null
+  if (pos !== null && pos >= r.from && pos <= r.to) {
+    ctx.strokeStyle = '#ff5370'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    const x = msToX(pos)
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, h)
+    ctx.stroke()
+  }
+}
+
+function onZoomDown(e: MouseEvent) {
+  const ms = zoomMsOf(e)
+  const r = zoomRect()
+  const c = zoomCanvas.value
+  if (ms === null || !r || !c) return
+  // 12px 안의 마커를 잡는다 — 확대 배율에 맞춘 허용치
+  const tolMs = Math.max(8, (12 / c.clientWidth) * (r.to - r.from))
+  selectTapNear(ms, tolMs)
+  if (selectedTap.value) zoomDragging = true
+  drawZoom()
+}
+
+function onZoomMove(e: MouseEvent) {
+  if (!zoomDragging) return
+  const ms = zoomMsOf(e)
+  if (ms === null) return
+  editSelected((ev) => ({ ...ev, t: Math.max(0, Math.round(ms + latencyNow())) }))
+  drawZoom()
+}
+
+function onZoomUp() {
+  zoomDragging = false
+}
+
+/** 더블클릭 = 현재 트랙에 탭 추가 — 빠진 노트를 마우스로 채워 넣는다 */
+function onZoomDbl(e: MouseEvent) {
+  const ms = zoomMsOf(e)
+  if (ms === null) return
+  const arrRef = tapTrack.value === 'perc' ? percTaps : melodyTaps
+  arrRef.value = [...arrRef.value, { t: Math.round(ms + latencyNow()), d: 0 }]
+  selectedTap.value = { track: tapTrack.value, index: arrRef.value.length - 1 }
+  drawZoom()
 }
 
 function startTapping() {
@@ -308,6 +489,7 @@ function startTapping() {
   const tick = () => {
     if (!tapping.value || !tapCtx) return
     tapPosMs.value = tapRangeFromMs + Math.max(0, (tapCtx.currentTime - tapStartCtxSec) * 1000)
+    drawZoom() // 확대 뷰의 재생 헤드·방금 친 탭이 실시간으로 보인다
     tapRaf = requestAnimationFrame(tick)
   }
   tick()
@@ -666,9 +848,13 @@ function drawWave() {
     ctx.arc(x, 24, 8, 0, Math.PI * 2)
     ctx.stroke()
   }
+
+  // 확대 뷰도 같이 — 캔버스가 이 프레임에 막 생겼을 수 있어 다음 프레임에 그린다
+  requestAnimationFrame(() => drawZoom())
 }
 
 watch([analysis, audioBuffer, backbone], drawWave)
+watch([subdivision, tapTrack], () => drawZoom())
 window.addEventListener('resize', drawWave)
 onBeforeUnmount(() => {
   stopTapping()
@@ -714,6 +900,22 @@ onBeforeUnmount(() => {
       </p>
     </section>
 
+    <section v-if="audioBuffer && selStartMs !== null && selEndMs !== null" class="wave-wrap">
+      <canvas
+        ref="zoomCanvas"
+        class="zoom"
+        @mousedown="onZoomDown"
+        @mousemove="onZoomMove"
+        @mouseup="onZoomUp"
+        @mouseleave="onZoomUp"
+        @dblclick="onZoomDbl"
+      ></canvas>
+      <p class="legend">
+        <b>확대 편집</b> — 마커 드래그 = 이동 · 더블클릭 = 현재 트랙({{ tapTrack === 'perc' ? '드럼' : '보컬' }})에 탭 추가 ·
+        클릭 = 선택(아래 수정 바) · 격자 = 분할 설정 기준 · 하단 틱 = 검출 온셋
+      </p>
+    </section>
+
     <section v-if="analysis" class="report">
       <dl>
         <div><dt>BPM</dt><dd>{{ analysis.bpm }}</dd></div>
@@ -732,6 +934,14 @@ onBeforeUnmount(() => {
           <select v-model="tapTrack" :disabled="tapping">
             <option value="melody">보컬/멜로디</option>
             <option value="perc">드럼</option>
+          </select>
+        </label>
+        <label>
+          보정
+          <select v-model.number="snapWindow" :disabled="tapping">
+            <option :value="0">지연만 제거 (스냅 없음)</option>
+            <option :value="30">온셋 스냅 ±30ms</option>
+            <option :value="70">온셋 스냅 ±70ms</option>
           </select>
         </label>
         <button v-if="!tapping" type="button" class="primary" :disabled="running" @click="startTapping">
@@ -1025,6 +1235,15 @@ dd.warn {
   font-size: 0.85rem;
 }
 .wave {
+  cursor: crosshair;
+}
+.zoom {
+  width: 100%;
+  height: 190px;
+  display: block;
+  background: #0b0f16;
+  border: 1px solid #3a4658;
+  border-radius: 8px;
   cursor: crosshair;
 }
 .dim {
