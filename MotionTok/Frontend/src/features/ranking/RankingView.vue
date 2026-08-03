@@ -49,6 +49,21 @@ const MODES = [
   { value: 'SOLO', label: '혼자 플레이' },
 ] as const
 const mode = ref<LeaderboardMode>('MULTI')
+/**
+ * 혼자 플레이 순위표를 열어 줄 게임인가 — minPlayers가 2 이상이면 혼자서는 시작조차 못 한다.
+ *
+ * 그런 게임에도 솔로 기록이 남아 있다(개발 중 인원 제한을 잠깐 풀고 테스트한 것). 토글을
+ * 열어 두면 이제는 아무도 세울 수 없는 기록이 순위표로 보이므로 멀티만 남긴다.
+ *
+ * 목록에 없는 id는 막지 않는다 — /games가 실패해 폴백 목록(MOCK_GAMES)을 쓰는 중일 수 있다.
+ */
+function soloPlayable(gameId: number) {
+  const game = games.value.find((g) => g.id === gameId)
+  return !game || game.minPlayers <= 1
+}
+const availableModes = computed(() =>
+  MODES.filter((item) => item.value === 'MULTI' || soloPlayable(selected.value)),
+)
 const gameMenuOpen = ref(false)
 const FETCH_LIMIT = 100
 const PAGE_SIZE = 10
@@ -108,7 +123,11 @@ const modeLabel = (value: LeaderboardMode) => MODES.find((m) => m.value === valu
 async function bestRankElsewhere(query: string) {
   const waves: LeaderboardMode[] = [mode.value, mode.value === 'MULTI' ? 'SOLO' : 'MULTI']
   for (const wave of waves) {
-    const targets = games.value.filter((g) => !(g.id === selected.value && wave === mode.value))
+    // 솔로 순위표가 없는 게임은 그 물결에서 뺀다 — 훑어 봐야 남은 테스트 기록뿐이고,
+    // 거기서 찾으면 그 게임에서는 고를 수도 없는 모드로 옮겨 놓게 된다
+    const targets = games.value.filter(
+      (g) => !(g.id === selected.value && wave === mode.value) && (wave === 'MULTI' || soloPlayable(g.id)),
+    )
     const found = (
       await Promise.all(
         targets.map((game) =>
@@ -214,6 +233,9 @@ function rankMark(rank: number) {
 }
 function selectGame(gameId: number) {
   selected.value = gameId
+  // 혼자 플레이가 없는 게임으로 옮기면 그 토글이 사라진다 — 모드도 같이 되돌려야
+  // 고를 수 없게 된 모드의 순위표를 그대로 보고 있지 않는다
+  if (!soloPlayable(gameId)) mode.value = 'MULTI'
   gameMenuOpen.value = false
 }
 </script>
@@ -281,7 +303,7 @@ function selectGame(gameId: number) {
           </div>
         </div>
         <div class="mode-switch" aria-label="랭킹 모드 선택">
-          <button v-for="item in MODES" :key="item.value" :class="{ active: mode === item.value }" @click="mode = item.value">
+          <button v-for="item in availableModes" :key="item.value" :class="{ active: mode === item.value }" @click="mode = item.value">
             {{ item.label }}
           </button>
         </div>
