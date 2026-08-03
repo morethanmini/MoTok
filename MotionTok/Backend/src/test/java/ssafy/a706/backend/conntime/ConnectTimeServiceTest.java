@@ -11,7 +11,9 @@ import ssafy.a706.backend.conntime.repository.ConnectTimeRedisRepository;
 import ssafy.a706.backend.conntime.repository.UserConnectTimeRepository;
 import ssafy.a706.backend.conntime.service.ConnectTimeService;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -135,5 +137,25 @@ class ConnectTimeServiceTest {
         when(redisRepository.pendingOf(USER_ID)).thenReturn(0L);
 
         assertThat(service.totalSecondsOf(USER_ID)).isZero();
+    }
+
+    @Test
+    @DisplayName("마지막 접속 시각은 한 번의 IN 조회로 걷는다 — 친구 수만큼 부르지 않는다(-179)")
+    void lastSeenIsFetchedInOneQuery() {
+        UserConnectTime row = new UserConnectTime(USER_ID);
+        row.addSeconds(60);
+        when(connectTimeRepository.findAllById(Set.of(USER_ID, 8L))).thenReturn(List.of(row));
+
+        assertThat(service.lastSeenOf(Set.of(USER_ID, 8L)))
+                .containsOnlyKeys(USER_ID)          // 기록이 없는 8L은 결과에서 빠진다
+                .containsEntry(USER_ID, row.lastSeenAt());
+    }
+
+    @Test
+    @DisplayName("조회할 회원이 없으면 DB를 건드리지 않는다 — 친구가 전원 접속 중인 목록이 이 경로다(-179)")
+    void lastSeenSkipsQueryForEmptyInput() {
+        assertThat(service.lastSeenOf(Set.of())).isEmpty();
+
+        verify(connectTimeRepository, never()).findAllById(any());
     }
 }

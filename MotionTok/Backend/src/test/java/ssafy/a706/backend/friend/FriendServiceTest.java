@@ -10,6 +10,7 @@ import ssafy.a706.backend.friend.controller.dto.FriendRoomResponse;
 import ssafy.a706.backend.friend.model.Friendship;
 import ssafy.a706.backend.friend.model.FriendshipStatus;
 import ssafy.a706.backend.friend.model.RequestAction;
+import ssafy.a706.backend.conntime.service.ConnectTimeService;
 import ssafy.a706.backend.friend.repository.FriendshipRepository;
 import ssafy.a706.backend.friend.service.FriendService;
 import ssafy.a706.backend.global.exception.BusinessException;
@@ -51,8 +52,9 @@ class FriendServiceTest {
     private final UserRepository userRepository = mock(UserRepository.class);
     private final PresenceService presenceService = mock(PresenceService.class);
     private final UserNotifier userNotifier = mock(UserNotifier.class);
-    private final FriendService service =
-            new FriendService(friendshipRepository, userRepository, presenceService, userNotifier);
+    private final ConnectTimeService connectTimeService = mock(ConnectTimeService.class);
+    private final FriendService service = new FriendService(
+            friendshipRepository, userRepository, presenceService, connectTimeService, userNotifier);
 
     private static User user(long id, String nickname) {
         User u = User.builder().email(nickname + "@t.dev").nickname(nickname).build();

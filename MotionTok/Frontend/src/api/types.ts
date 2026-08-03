@@ -450,6 +450,12 @@ export interface Friend {
   currentRoomId: string | null
   /** 친구 프로필 사진 URL. null이면 기본 아바타(이모지)를 그린다. */
   avatarUrl?: string | null
+  /**
+   * 마지막 접속 종료 시각(-179). <b>오프라인 친구에게만 내려온다</b> — 온라인 친구의 값은
+   * 직전 접속의 종료 시각이라 지금과 무관해서 서버가 비운다. 배포 이후 한 번도 정산되지 않은
+   * 계정도 null. 타임존 없는 로컬 시각 문자열이라(`2026-08-03T09:30:00`) Date가 KST로 읽는다.
+   */
+  lastSeenAt?: string | null
 }
 export type FriendRequestStatus = 'PENDING' | 'ACCEPTED'
 export interface FriendRequestItem {
