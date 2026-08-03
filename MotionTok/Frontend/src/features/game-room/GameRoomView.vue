@@ -1829,18 +1829,32 @@ async function addFriend(target: ParticipantView | null) {
 }
 
 /**
- * 방장을 이 참가자에게 넘긴다(-180). 되돌리려면 새 방장이 다시 넘겨줘야 하므로 한 번 묻는다.
- *
+ * 방장 위임(-180) 확인 모달. 되돌리려면 새 방장이 다시 넘겨줘야 하므로 한 번 묻는다.
+ * 강퇴(openKick)와 같은 구조 — 브라우저 confirm()은 방 화면 밖으로 튀어나와 톤이 깨진다.
+ */
+const delegateTarget = ref<ParticipantView | null>(null)
+const delegating = ref(false)
+function openDelegate(target: ParticipantView | null) {
+  if (!amRoomHost.value || !target) return
+  delegateTarget.value = target
+}
+function closeDelegate() {
+  if (!delegating.value) delegateTarget.value = null
+}
+/**
  * 성공 안내는 여기서 띄우지 않는다 — 서버가 쏘는 HOST_CHANGED가 방 전원에게 돌아오고,
  * hostChanged watch가 나를 포함한 모두에게 같은 문구로 알린다. 여기서도 띄우면 나만 두 번 본다.
  */
-async function delegateHost(target: ParticipantView | null) {
-  if (!amRoomHost.value || !target) return
-  if (!confirm(`${target.name}님에게 방장을 넘길까요? 되돌리려면 새 방장이 다시 넘겨줘야 해요.`)) return
+async function confirmDelegate() {
+  if (!delegateTarget.value || delegating.value) return
+  delegating.value = true
   try {
-    await roomsApi.delegateHost(roomCode.value, target.identity)
+    await roomsApi.delegateHost(roomCode.value, delegateTarget.value.identity)
+    delegateTarget.value = null
   } catch (e) {
     flash(e instanceof ApiError ? e.message : '방장을 넘기지 못했어요')
+  } finally {
+    delegating.value = false
   }
 }
 
@@ -2005,7 +2019,7 @@ const startHint = computed(() =>
             :can-delegate="amRoomHost && !activeGame && !!slot.view"
             @kick="openKick(slot.view)"
             @friend="addFriend(slot.view)"
-            @delegate="delegateHost(slot.view)"
+            @delegate="openDelegate(slot.view)"
             @volume="changeVolume(slot, $event)"
           />
         </div>
@@ -2231,7 +2245,7 @@ const startHint = computed(() =>
             :can-delegate="amRoomHost && !activeGame && !!slot.view"
             @kick="openKick(slot.view)"
             @friend="addFriend(slot.view)"
-            @delegate="delegateHost(slot.view)"
+            @delegate="openDelegate(slot.view)"
             @volume="changeVolume(slot, $event)"
           />
         </div>
@@ -2253,7 +2267,7 @@ const startHint = computed(() =>
             :can-delegate="amRoomHost && !activeGame && !!slot.view"
             @kick="openKick(slot.view)"
             @friend="addFriend(slot.view)"
-            @delegate="delegateHost(slot.view)"
+            @delegate="openDelegate(slot.view)"
             @volume="changeVolume(slot, $event)"
           />
         </div>
@@ -2553,6 +2567,22 @@ const startHint = computed(() =>
         <div class="leave-confirm-actions">
           <PixelButton class="leave-cancel" block :disabled="kicking" @click="closeKick">취소</PixelButton>
           <PixelButton class="leave-submit" block :disabled="kicking" @click="confirmKick">강퇴하기</PixelButton>
+        </div>
+      </div>
+    </PixelModal>
+
+    <!-- 방장 위임 확인(-180) -->
+    <PixelModal v-if="delegateTarget" variant="lobby" @close="closeDelegate">
+      <div class="leave-confirm">
+        <span class="leave-icon" aria-hidden="true">👑</span>
+        <p class="leave-kicker">HOST CONTROL</p>
+        <h3 class="leave-title">{{ delegateTarget.name }}님에게 방장을 넘길까요?</h3>
+        <p class="leave-desc">
+          게임 시작·방 설정·강퇴 권한이 함께 넘어가요. 되돌리려면 새 방장이 다시 넘겨줘야 해요.
+        </p>
+        <div class="leave-confirm-actions">
+          <PixelButton class="leave-cancel" block :disabled="delegating" @click="closeDelegate">취소</PixelButton>
+          <PixelButton class="leave-submit" block :disabled="delegating" @click="confirmDelegate">넘기기</PixelButton>
         </div>
       </div>
     </PixelModal>
