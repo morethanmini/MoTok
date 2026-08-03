@@ -42,8 +42,8 @@ export interface SongChartOptions {
   /** 박자당 분할 수 — 4 = 16분음표, 6 = 셋잇단 16분. 곡 BPM 기준이다. */
   subdivision?: 2 | 3 | 4 | 6 | 8
   /**
-   * 'hybrid' 격자 허용창 안이면 스냅, 밖이면 원시 시각 유지(기본).
-   * 'grid' 전부 스냅 / 'free' 전부 원시 시각.
+   * 'free' 전부 원시 온셋 시각 그대로(기본 — 실플레이에서 곡을 제일 잘 따라간다) /
+   * 'hybrid' 격자 허용창 안만 스냅 / 'grid' 전부 스냅.
    */
   snap?: 'hybrid' | 'grid' | 'free'
   /** 라운드 길이 상한 — 없으면 곡 끝까지 */
@@ -62,6 +62,13 @@ const TARGET_NOTES_PER_SEC: Record<Difficulty, { catch: number; ring: number }> 
 export function songStartMs(analysis: SongAnalysis): number {
   return LEAD_IN_MS + Math.round(analysis.beatMs)
 }
+
+/**
+ * 연결(trail) 노트 사이 최소 간격 — 직전 트레일이 **끝난** 시각부터 잰다.
+ * 지속음이 많은 곡에서 초안이 리본 범벅이 되는 것과, 트레일의 손 점유로 뒤 온셋이
+ * 떨어져 나가는 것을 함께 누른다.
+ */
+const TRAIL_GAP_MS = 2000
 
 // ── 시각 선택 (캐치·링 공용) ──────────────────────────────────
 
@@ -301,7 +308,7 @@ export function generateSongCatchChart(
   const rng = mulberry32(foldSeed(seed))
   const opts = {
     subdivision: options.subdivision ?? (4 as const),
-    snap: options.snap ?? ('hybrid' as const),
+    snap: options.snap ?? ('free' as const),
     maxDurationMs: options.maxDurationMs ?? Infinity,
   }
   const offsetMs = songStartMs(analysis)
@@ -318,8 +325,11 @@ export function generateSongCatchChart(
   const notes: SongCatchNote[] = []
   const lastByHand: Record<Hand, SongCatchNote | null> = { left: null, right: null }
   let nextHand: Hand = rng() < 0.5 ? 'left' : 'right'
+  /** 직전 연결 노트가 끝난 시각 — 연결 노트 간 최소 간격(쿨다운)의 기준 */
+  let lastTrailEndMs = -Infinity
 
-  for (const onset of picked) {
+  for (let i = 0; i < picked.length; i++) {
+    const onset = picked[i]!
     const timeMs = toGame(onset.pickedMs)
     if (timeMs < LEAD_IN_MS) continue
 
@@ -366,18 +376,43 @@ export function generateSongCatchChart(
       const hand: NoteHand = rng() < preset.anyRate ? 'any' : usedOwner
       const note: SongCatchNote = { timeMs, x, y, hand, kind: 'swipe', owner: usedOwner }
 
-      // 지속음이면 연결(trail) 노트 — 길이는 지속음을 따르되 프리셋 대역으로 제한한다
+      // 지속음이면 연결(trail) 노트 — 길이는 지속음을 따르되 프리셋 대역으로 제한한다.
+      //
+      // ★ 억제 규칙 두 가지(실플레이 피드백: 링은 박이 맞는데 캐치만 어긋난다):
+      // 트레일은 손 하나를 오래 점유해서, 그동안 반대손 혼자 감당 못 하는 촘촘한 구간이
+      // 오면 온셋이 양손 만석으로 통째로 떨어진다 — "박이 빠지는" 체감의 주범.
+      // ① 쿨다운: 직전 트레일이 끝나고 일정 시간이 지나야 다음 트레일을 허용
+      // ② 길이 절단: 트레일 중에 같은손 최소 간격보다 촘촘한 온셋 쌍이 등장하면
+      //    그 앞에서 손을 놓도록 길이를 줄인다(줄여서 너무 짧아지면 스와이프로 강등)
       const [durLo, durHi] = preset.trailDurationMs
-      if (onset.sustain && onset.sustain.durationMs >= durLo * 0.8 && !simultaneous) {
-        note.kind = 'trail'
-        note.durationMs = Math.round(Math.min(durHi, Math.max(durLo, onset.sustain.durationMs)))
-        note.path = makeTrailPath(
-          rng,
-          { x, y },
-          note.durationMs,
-          onset.sustain.pitchDelta,
-          obstacles,
-        )
+      if (
+        onset.sustain &&
+        onset.sustain.durationMs >= durLo * 0.8 &&
+        !simultaneous &&
+        timeMs - lastTrailEndMs >= TRAIL_GAP_MS
+      ) {
+        let dur = Math.min(durHi, Math.max(durLo, onset.sustain.durationMs))
+        for (let j = i + 1; j + 1 < picked.length; j++) {
+          const a = toGame(picked[j]!.pickedMs)
+          if (a > timeMs + dur + preset.minSameHandGapMs) break
+          const b = toGame(picked[j + 1]!.pickedMs)
+          if (b - a < preset.minSameHandGapMs) {
+            dur = Math.min(dur, a - preset.minSameHandGapMs - timeMs)
+            break
+          }
+        }
+        if (dur >= durLo * 0.8) {
+          note.kind = 'trail'
+          note.durationMs = Math.round(dur)
+          note.path = makeTrailPath(
+            rng,
+            { x, y },
+            note.durationMs,
+            onset.sustain.pitchDelta,
+            obstacles,
+          )
+          lastTrailEndMs = timeMs + note.durationMs
+        }
       }
 
       notes.push(note)
@@ -455,7 +490,7 @@ export function generateSongRingChart(
   const rng = mulberry32(foldSeed(seed))
   const opts = {
     subdivision: options.subdivision ?? (4 as const),
-    snap: options.snap ?? ('hybrid' as const),
+    snap: options.snap ?? ('free' as const),
     maxDurationMs: options.maxDurationMs ?? Infinity,
   }
   const minGapMs: Record<Difficulty, number> = { EASY: 280, NORMAL: 210, HARD: 160 }
