@@ -773,20 +773,36 @@ function wavBlob(buffer: AudioBuffer, fromMs: number, toMs: number): Blob {
   return new Blob([ab], { type: 'audio/wav' })
 }
 
-/**
- * 선택 구간만 남긴다: ① 잘린 WAV 다운로드(보관용) ② 작업 곡을 잘린 버전으로 교체 + 재분석
- * ③ 탭 채보도 같은 구간으로 잘라 시간 이동 — 직접 찍는 두 난이도 모두 저장 키를 승계한다.
- */
+/** 선택 구간만 남기기 — 주의: 슬롯을 클릭해도 선택이 그 슬롯으로 잡힌다(확인창이 지켜준다) */
 async function trimToSelection() {
+  if (selStartMs.value === null || selEndMs.value === null) return
+  await doTrim(selStartMs.value, selEndMs.value)
+}
+
+/** 앞부분은 전부 유지하고 선택 **끝 지점**에서 뒤를 버린다 — "여기까지만 쓸래" 용 */
+async function trimKeepHead() {
+  if (selEndMs.value === null) return
+  await doTrim(0, selEndMs.value)
+}
+
+/**
+ * [from, to)만 남긴다: ① 잘린 WAV 다운로드(보관용) ② 작업 곡을 잘린 버전으로 교체 + 재분석
+ * ③ 탭 채보도 같은 구간으로 잘라 시간 이동 — 직접 찍는 두 난이도 모두 저장 키를 승계한다.
+ * 원본 파일명 키의 탭 저장은 지우지 않으므로, 원본 파일을 다시 열면 언제든 복구된다.
+ */
+async function doTrim(from: number, to: number) {
   const buf = audioBuffer.value
-  if (!buf || selStartMs.value === null || selEndMs.value === null) return
+  if (!buf) return
   if (tapping.value || previewing.value || running.value) return
-  const from = selStartMs.value
-  const to = selEndMs.value
   if (to - from < 3000) {
     errorMsg.value = '구간이 너무 짧아요 — 3초 이상 잡아주세요'
     return
   }
+  const ok = window.confirm(
+    `${(from / 1000).toFixed(1)}s ~ ${(to / 1000).toFixed(1)}s 만 남기고 나머지를 버릴까요?\n` +
+      `(잘린 WAV가 저장되고, 탭도 같이 잘립니다. 원본 파일을 다시 열면 이전 탭으로 돌아갈 수 있어요)`,
+  )
+  if (!ok) return
 
   const sr = buf.sampleRate
   const s0 = Math.max(0, Math.floor((from / 1000) * sr))
@@ -1228,6 +1244,14 @@ onBeforeUnmount(() => {
         @click="trimToSelection"
       >
         ✂ 구간만 남기기
+      </button>
+      <button
+        type="button"
+        :disabled="selEndMs === null || tapping || running || previewing"
+        title="앞부분은 전부 유지하고, 드래그 선택의 끝 지점에서 뒤를 버린다 — 곡이 너무 길 때"
+        @click="trimKeepHead"
+      >
+        ✂ 여기까지 남기기
       </button>
       <span v-if="lastResult" class="result">{{ lastResult }}</span>
     </section>
