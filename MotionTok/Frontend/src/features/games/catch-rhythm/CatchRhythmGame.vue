@@ -303,7 +303,7 @@ watch(
       <p class="title">캐치캐치리듬</p>
       <p class="desc">곡 · 모드 · 난이도 설정</p>
 
-      <div class="levels">
+      <div class="levels row-song">
         <button
           type="button"
           class="px level"
@@ -326,7 +326,7 @@ watch(
         </button>
       </div>
 
-      <div class="levels">
+      <div class="levels row-mode">
         <button
           v-for="m in MODES"
           :key="m.id"
@@ -342,7 +342,7 @@ watch(
         </button>
       </div>
 
-      <div v-if="songPick === 'random'" class="levels">
+      <div v-if="songPick === 'random'" class="levels row-diff">
         <button
           v-for="d in DIFFICULTIES"
           :key="d"
@@ -356,7 +356,7 @@ watch(
         </button>
       </div>
       <!-- 응원가 전용 난이도 — 어려움(수제 MANUAL) / 익스트림 -->
-      <div v-else class="levels">
+      <div v-else class="levels row-diff">
         <button
           type="button"
           class="px level difficulty-level difficulty-hard"
@@ -461,9 +461,9 @@ watch(
 }
 .levels {
   position: relative;
-  display: grid;
+  /* 버튼 개수만큼 균등 분할 — 3열 고정 그리드는 2개짜리 줄(곡·응원가 난이도)에 빈칸을 남긴다 */
+  display: flex;
   width: min(100%, 31rem);
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.5rem;
   padding: 1.25rem 0.8rem 0.8rem;
   border: 2px solid #e7c5b3;
@@ -479,12 +479,12 @@ watch(
   font-size: 0.68rem;
   letter-spacing: 0.08em;
 }
-.ready > .levels:first-of-type::before { content: '플레이 모드'; }
-.ready > .levels:nth-of-type(2)::before { content: '난이도'; }
-.ready > .levels:nth-of-type(2) {
-  padding-top: 1.1rem;
-}
+.row-song::before { content: '곡'; }
+.row-mode::before { content: '플레이 모드'; }
+.row-diff::before { content: '난이도'; }
 .level {
+  flex: 1 1 0;
+  min-width: 0;
   display: grid;
   min-height: 3.15rem;
   place-items: center;
@@ -593,8 +593,7 @@ watch(
   content: none;
   display: none;
 }
-.ready > .levels,
-.ready > .levels:nth-of-type(2) { padding-top: 0.5rem; }
+.ready > .levels { padding-top: 0.5rem; }
 .title { font-size: clamp(2rem, 4.5vw, 3rem); }
 .desc { font-size: 0.9rem; }
 .level {
