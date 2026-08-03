@@ -140,6 +140,24 @@ describe('백본 채보 생성', () => {
     }
   })
 
+  it('MANUAL은 물리 하한도 없다 — 기관총 연타·초장 홀드 전부 그대로', () => {
+    // 120ms 간격 연타 10개 — NORMAL은 같은손 최소 간격(380ms)에 걸려 일부가 떨어진다
+    const rapid = Array.from({ length: 10 }, (_, i) => tap(700 + i * 120))
+    const corrRapid = correctTapTracks({ perc: rapid, melody: [] }, analysis)
+    const normal = generateSongCatchChart(analysis, 'NORMAL', 42, { backbone: corrRapid.onsets })
+    const manual = generateSongCatchChart(analysis, 'MANUAL', 42, { backbone: corrRapid.onsets })
+    expect(corrRapid.onsets.length).toBe(10)
+    expect(normal.notes.length).toBeLessThan(10)
+    expect(manual.notes.length).toBe(10)
+
+    // 5초 홀드 — MANUAL은 1.7초 상한 없이 누른 만큼
+    const corrHold = correctTapTracks({ perc: [], melody: [tap(3950 + 60, 5000)] }, analysis)
+    const holdChart = generateSongCatchChart(analysis, 'MANUAL', 42, { backbone: corrHold.onsets })
+    const trail = holdChart.notes.find((n) => n.kind === 'trail')
+    expect(trail).toBeDefined()
+    expect(trail!.durationMs).toBeGreaterThanOrEqual(4990)
+  })
+
   it('handByTrack은 성향이다 — 여유 있으면 드럼=왼손·보컬=오른손, 라벨은 강제 없음', () => {
     // 손이 넉넉히 돌아오는 간격 — 성향대로 배정돼야 한다
     const corr = correctTapTracks(

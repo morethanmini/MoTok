@@ -65,8 +65,9 @@ export interface SongChartOptions {
 
 /**
  * 곡 채보 난이도 — 게임 프리셋 3종에 **MANUAL**(탭 백본 전용)을 얹는다.
- * MANUAL은 난이도가 아니라 "내가 찍은 대로": 랜덤 양손·크로스·손 셔플이 전부 꺼지고
- * 물리 하한(연타 300ms·도달 속도)만 지킨다. 밀도는 어차피 백본이 정한다.
+ * MANUAL은 난이도가 아니라 "내가 찍은 대로": 랜덤 양손·크로스가 꺼지는 건 물론,
+ * **물리 제약도 전부 없다** — 연타 간격 0, 도달 보정 없음, 홀드 길이 무제한
+ * ("인간에게 한계는 없다" — 유저 지시). 친 것은 무조건 전부 노트가 된다.
  */
 export type SongDifficulty = Difficulty | 'MANUAL'
 
@@ -77,7 +78,7 @@ const MANUAL_PRESET: Preset = {
   anyRate: 0.75,
   kinds: { swipe: 1, trail: 0, catch: 0 },
   trailDurationMs: [400, MAX_TRAIL_MS],
-  minSameHandGapMs: 300,
+  minSameHandGapMs: 0, // 연타 무제한
   crossMinGapMs: 700,
   approachTimeMs: 1300,
 }
@@ -276,11 +277,15 @@ function endOf(note: CatchNote): Point {
   return last ?? { x: note.x, y: note.y }
 }
 
-function occupiedPoints(notes: CatchNote[], timeMs: number): Obstacle[] {
+function occupiedPoints(
+  notes: CatchNote[],
+  timeMs: number,
+  maxTrailMs = MAX_TRAIL_MS, // MANUAL 홀드는 상한이 없다 — 실제 최장 길이를 받아 스캔을 넓힌다
+): Obstacle[] {
   const out: Obstacle[] = []
   for (let i = notes.length - 1; i >= 0; i--) {
     const n = notes[i]!
-    if (timeMs - n.timeMs > OVERLAP_WINDOW_MS + MAX_TRAIL_MS) break
+    if (timeMs - n.timeMs > OVERLAP_WINDOW_MS + maxTrailMs) break
     const dt = timeMs - endTimeOf(n)
     if (dt > OVERLAP_WINDOW_MS) continue
     const needGap = requiredGap(Math.max(0, dt))
@@ -423,6 +428,9 @@ export function generateSongCatchChart(
   let nextHand: Hand = rng() < 0.5 ? 'left' : 'right'
   /** 직전 연결 노트가 끝난 시각 — 연결 노트 간 최소 간격(쿨다운)의 기준 */
   let lastTrailEndMs = -Infinity
+  const manual = difficulty === 'MANUAL'
+  /** 지금까지 만든 가장 긴 연결 노트 — 장애물 스캔 창이 이보다 좁으면 산 노트를 놓친다 */
+  let maxTrailMsSeen = MAX_TRAIL_MS
 
   for (let i = 0; i < picked.length; i++) {
     const onset = picked[i]!
@@ -470,13 +478,17 @@ export function generateSongCatchChart(
           ? Y_RANGE[0] + onset.pitch * (Y_RANGE[1] - Y_RANGE[0])
           : Y_RANGE[0] + 0.3 * (Y_RANGE[1] - Y_RANGE[0])
 
-      const obstacles: Obstacle[] = [...placedThisOnset, ...occupiedPoints(notes, timeMs)]
+      const obstacles: Obstacle[] = [
+        ...placedThisOnset,
+        ...occupiedPoints(notes, timeMs, maxTrailMsSeen),
+      ]
+      // MANUAL은 도달 보정도 없다 — 화면 반대편 연타든 뭐든 친 대로 놓는다
       const { x, y } = choosePlacement(
         rng,
         spawnSide,
         yTarget,
         obstacles,
-        usedPrev ? endOf(usedPrev) : null,
+        manual ? null : usedPrev ? endOf(usedPrev) : null,
         usedDt,
       )
 
@@ -510,8 +522,10 @@ export function generateSongCatchChart(
           ? true
           : onset.sustain.durationMs >= durLo * 0.8 && timeMs - lastTrailEndMs >= TRAIL_GAP_MS)
       if (wantTrail && onset.sustain) {
+        // MANUAL 홀드는 길이 무제한 — 누른 만큼이 곧 리본 길이다
+        const tapCapMs = manual ? Number.POSITIVE_INFINITY : MAX_TRAIL_MS
         let dur = tapped
-          ? Math.min(MAX_TRAIL_MS, Math.max(400, onset.sustain.durationMs))
+          ? Math.min(tapCapMs, Math.max(400, onset.sustain.durationMs))
           : Math.min(durHi, Math.max(durLo, onset.sustain.durationMs))
         for (let j = i + 1; j + 1 < picked.length; j++) {
           const a = toGame(picked[j]!.pickedMs)
@@ -533,6 +547,7 @@ export function generateSongCatchChart(
             obstacles,
           )
           lastTrailEndMs = timeMs + note.durationMs
+          maxTrailMsSeen = Math.max(maxTrailMsSeen, note.durationMs)
         }
       }
 
@@ -646,7 +661,8 @@ export function generateSongRingChart(
     const useSide: 'R' | 'L' = opts.handByTrack ? (onset.source === 'perc' ? 'L' : 'R') : side
     // melody: 음높이 등고선(멜로디를 따라 부르는 느낌) / perc: 시드 난수 — 리듬 뼈대는 자유 배치
     let lane = laneFor(onset.source === 'melody' ? onset.pitch : rng(), useSide)
-    if (prevLane !== null) {
+    // MANUAL은 레인 이동 상한도 없다 — 등고선 그대로("인간에게 한계는 없다")
+    if (prevLane !== null && difficulty !== 'MANUAL') {
       const dt = timeMs - prevEndMs
       const diff = laneDiff(prevLane, lane)
       const cap = allowedSteps(dt)
