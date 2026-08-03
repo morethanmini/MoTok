@@ -9,6 +9,8 @@ import ssafy.a706.backend.conntime.repository.ConnectTimeRedisRepository;
 import ssafy.a706.backend.conntime.repository.UserConnectTimeRepository;
 import ssafy.a706.backend.presence.repository.PresenceRepository;
 
+import java.time.LocalDateTime;
+
 /**
  * 총 접속시간 집계(S15P11A706-141) — 하트비트 델타 누적(Redis) + 오프라인 시 정산(RDB).
  *
@@ -61,6 +63,20 @@ public class ConnectTimeService {
             redisRepository.increment(userId, pending);
             log.warn("접속시간 flush 실패 — 버퍼 복원 후 다음 스윕에 재시도 (userId={}, pending={}s)", userId, pending, e);
         }
+    }
+
+    /**
+     * 마지막 접속 종료 시각(-179) — 공개 프로필이 가입일·총 접속시간과 함께 보여준다.
+     *
+     * <p>기록이 없으면(배포 이후 한 번도 정산되지 않음) null이다. 접속 중인 회원의 값은
+     * <b>직전</b> 접속의 종료 시각이지만, 프로필은 "이 사람의 기록"을 보는 화면이라 그대로 싣는다 —
+     * 지금 접속 중인지는 친구 목록의 상태 점이 알려준다.</p>
+     */
+    @Transactional(readOnly = true)
+    public LocalDateTime lastSeenOf(Long userId) {
+        return connectTimeRepository.findById(userId)
+                .map(UserConnectTime::lastSeenAt)
+                .orElse(null);
     }
 
     /** 총 접속시간(초) = RDB 확정치 + 아직 걷지 않은 버퍼. 기록이 없는(신규·미접속) 회원은 0. */

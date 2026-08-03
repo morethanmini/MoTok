@@ -14,6 +14,7 @@ import ssafy.a706.backend.shop.controller.dto.AiItemSaveResponse;
 import ssafy.a706.backend.shop.controller.dto.InternalAiJobCompleteResponse;
 import ssafy.a706.backend.shop.controller.dto.InternalAiJobResponse;
 import ssafy.a706.backend.shop.model.AiItemJob;
+import ssafy.a706.backend.shop.model.AiJobProvider;
 import ssafy.a706.backend.shop.model.AiJobStatus;
 import ssafy.a706.backend.shop.model.Item;
 import ssafy.a706.backend.shop.model.ItemType;
@@ -24,6 +25,7 @@ import ssafy.a706.backend.shop.repository.AiItemJobRepository;
 import ssafy.a706.backend.shop.repository.ItemRepository;
 import ssafy.a706.backend.shop.repository.PointHistoryRepository;
 import ssafy.a706.backend.shop.repository.UserItemRepository;
+import ssafy.a706.backend.shop.service.ai.AiProviderMode;
 import ssafy.a706.backend.storage.StorageService;
 import ssafy.a706.backend.storage.UploadPurpose;
 import ssafy.a706.backend.user.repository.UserRepository;
@@ -55,6 +57,10 @@ public class AiItemJobService {
 
     /** 워커는 항상 PNG로 생성 결과를 보낸다(합의된 고정 포맷) — UploadPurpose.AI_ITEM이 png/webp만 허용. */
     private static final String GENERATED_IMAGE_CONTENT_TYPE = "image/png";
+
+    /** app.shop.ai-provider — FAL이면 GPU 워커 폴링 창구를 닫는다. */
+    @Value("${app.shop.ai-provider}")
+    private AiProviderMode providerMode;
 
     private final AiItemJobRepository aiItemJobRepository;
     private final ItemRepository itemRepository;
@@ -181,17 +187,58 @@ public class AiItemJobService {
      */
     @Transactional
     public Optional<InternalAiJobResponse> claimNext() {
+        // FAL 모드면 창구를 닫는다 — 안 닫으면 살아 있는 워커가 계속 집어가 설정이 무의미해진다.
+        if (!providerMode.allowsGpuWorker()) {
+            return Optional.empty();
+        }
         Optional<AiItemJob> candidate = aiItemJobRepository.findFirstByStatusOrderByCreatedAtAsc(AiJobStatus.PENDING);
         if (candidate.isEmpty()) {
             return Optional.empty();
         }
 
         AiItemJob job = candidate.get();
-        if (aiItemJobRepository.claim(job.getId()) == 0) {
+        if (aiItemJobRepository.claim(job.getId(), AiJobProvider.GPU) == 0) {
             return Optional.empty();
         }
 
         return Optional.of(new InternalAiJobResponse(job.getId(), job.getCategory(), job.getSketchBase64()));
+    }
+
+    /**
+     * 시작조차 못 하는 job을 PENDING에서 바로 실패시키고 환불한다(fal 일일 상한 등).
+     *
+     * <p>{@link #fail}은 PROCESSING만 받는다. 그렇다고 claim을 먼저 하면 그 job이 fal 사용량으로
+     * 잡혀 상한이 스스로를 밀어 올린다 — 취소한 건이 다음 취소를 부른다. 환불은 같은 경로를 쓴다.</p>
+     *
+     * @return 이번 호출이 실제로 실패 처리했는지(그 사이 워커가 가져갔으면 false)
+     */
+    @Transactional
+    public boolean failPending(Long jobId, String message) {
+        AiItemJob job = aiItemJobRepository.findById(jobId).orElse(null);
+        if (job == null || aiItemJobRepository.failPending(jobId, message) == 0) {
+            return false;
+        }
+        if (job.getPointsCharged() != null && job.getPointsCharged() > 0) {
+            refundPoints(job.getUserId(), job.getId(), job.getPointsCharged());
+        }
+        return true;
+    }
+
+    /**
+     * fal 인계 — PENDING 한 건을 PROCESSING으로 바꿔 이 서버가 맡는다. 성공하면 true.
+     *
+     * <p><b>PENDING만 대상이다.</b> 워커가 이미 가져간 job을 뺏으면 같은 job을 둘이 만들게 되고,
+     * 늦게 온 결과를 가려내려면 claim 토큰 같은 장치가 또 필요해진다. 조건부 UPDATE가 0을
+     * 돌려주면 그 사이 워커가 먼저 가져간 것이므로 이번 차례는 넘긴다.</p>
+     *
+     * <p>디스패처의 스케줄 메서드는 트랜잭션이 없어서 여기(다른 빈의 @Transactional 메서드)로
+     * 나와야 한다 — {@code @Modifying} 쿼리는 활성 트랜잭션 없이는 flush에서 실패한다.
+     * 커밋을 여기서 끝내는 것도 중요하다: 커밋 전에 작업을 넘기면 fal 스레드가 아직 PENDING인
+     * job을 보고 complete에서 AI_JOB_INVALID_STATE로 튕긴다.</p>
+     */
+    @Transactional
+    public boolean claimForFal(Long jobId) {
+        return aiItemJobRepository.claim(jobId, AiJobProvider.FAL) > 0;
     }
 
     /**

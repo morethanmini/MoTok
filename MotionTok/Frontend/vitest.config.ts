@@ -28,7 +28,13 @@ export default mergeConfig(
       environment: 'jsdom',
       /** jsdom에 없는 브라우저 API를 채운다 — 무엇을 왜 채우는지는 그 파일 주석 참고. */
       setupFiles: [fileURLToPath(new URL('./vitest.setup.ts', import.meta.url))],
-      exclude: [...configDefaults.exclude, 'e2e/**'],
+      /**
+       * `.claude/worktrees/**`를 빼는 이유 — 작업용 git 워크트리가 이 아래에 생기고, 그 안에는
+       * 이 저장소의 <b>옛 사본</b>이 통째로 들어 있다. 빼지 않으면 파일명으로 테스트를 고를 때
+       * (`vitest run src/__tests__/foo.spec.ts`) 같은 이름의 옛 사본까지 함께 실행돼, 지금 코드는
+       * 멀쩡한데 실패가 뜬다. 워크트리를 지우면 사라지는 문제지만 다음에 또 만들면 되돌아온다.
+       */
+      exclude: [...configDefaults.exclude, 'e2e/**', '**/.claude/worktrees/**'],
       root: fileURLToPath(new URL('./', import.meta.url)),
     },
   }),

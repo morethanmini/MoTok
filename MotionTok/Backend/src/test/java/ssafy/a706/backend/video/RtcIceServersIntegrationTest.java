@@ -8,6 +8,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.web.client.RestClient;
+import org.springframework.test.context.TestPropertySource;
 import ssafy.a706.backend.auth.jwt.JwtTokenProvider;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -23,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "turn.secret=it-secret",
                 "turn.credential-ttl-seconds=600"
         })
+@TestPropertySource(properties = "app.shop.ai-provider=GPU")
 class RtcIceServersIntegrationTest {
 
     private static final String PATH = "/api/v1/rtc/ice-servers";

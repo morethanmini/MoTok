@@ -31,6 +31,38 @@ export const EQUIP_LIMIT: Record<ItemCategory, number> = {
   BACKGROUND: 1,
 }
 
+/**
+ * 서버로 보낼 배치 한 칸 — <b>숫자 네 개를 빠짐없이 채운다</b>.
+ *
+ * 백엔드 Placement는 x·y·scale·intensity가 primitive double이라, 필드가 빠지거나 값이 null이면
+ * (자바스크립트 NaN은 JSON에서 null이 된다) Jackson이 본문 전체를 못 읽어 400이 된다 —
+ * 스티커 한 칸 때문에 효과 세기까지 저장되지 않는다. 화면 상태를 그대로 싣지 않고 여기서 한 번
+ * 채우는 이유: 저장을 부르는 화면이 인벤토리·장치 설정·게임룸 셋이라 각자 챙기면 또 빠진다.
+ *
+ * 효과의 x·y·scale을 0으로 보내는 건 서버의 정규화(DecorService.saveDecoration)와 같은 규칙이다 —
+ * 붙는 자리도 크기도 없는 물건에 의미 없는 좌표를 실어 보내지 않는다.
+ */
+function toRequestBody(p: DecorPlacement): Required<DecorPlacement> {
+  if (p.anchor === 'FRAME') {
+    return {
+      itemId: p.itemId,
+      anchor: 'FRAME',
+      x: 0,
+      y: 0,
+      scale: 0,
+      intensity: clampIntensity(p.intensity ?? DEFAULT_INTENSITY),
+    }
+  }
+  return {
+    itemId: p.itemId,
+    anchor: p.anchor,
+    x: clamp01(p.x),
+    y: clamp01(p.y),
+    scale: clampScale(p.scale),
+    intensity: 0,
+  }
+}
+
 export function useDecoration() {
   const inventory = ref<InventoryItem[]>([])
   const placements = ref<DecorPlacement[]>([])
@@ -107,7 +139,7 @@ export function useDecoration() {
           ...placements.value,
           isEffect
             ? { itemId, anchor: 'FRAME', x: 0, y: 0, scale: 0, intensity: DEFAULT_INTENSITY }
-            : { itemId, anchor: 'FIXED', ...DEFAULT_PLACEMENT },
+            : { itemId, anchor: 'FIXED', ...DEFAULT_PLACEMENT, intensity: 0 },
         ]
       }
     } else {
@@ -163,7 +195,9 @@ export function useDecoration() {
     if (saving.value) return false
     saving.value = true
     try {
-      const res = await usersApi.saveDecoration({ config: { version: 1, items: placements.value } })
+      const res = await usersApi.saveDecoration({
+        config: { version: 1, items: placements.value.map(toRequestBody) },
+      })
       placements.value = res.config?.items ?? []
       dirty.value = false
       return true

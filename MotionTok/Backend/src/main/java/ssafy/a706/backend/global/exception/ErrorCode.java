@@ -80,6 +80,7 @@ public enum ErrorCode {
     INVITE_CODE_NOT_FOUND(HttpStatus.NOT_FOUND, "INVITE_CODE_NOT_FOUND", "초대코드가 유효하지 않습니다."),
     ROOM_MEMBER_NOT_FOUND(HttpStatus.NOT_FOUND, "ROOM_MEMBER_NOT_FOUND", "방에 존재하지 않는 참가자입니다."),
     ROOM_CANNOT_KICK_SELF(HttpStatus.BAD_REQUEST, "ROOM_CANNOT_KICK_SELF", "자기 자신은 강퇴할 수 없습니다."),
+    ROOM_CANNOT_DELEGATE_SELF(HttpStatus.BAD_REQUEST, "ROOM_CANNOT_DELEGATE_SELF", "자기 자신에게는 방장을 위임할 수 없습니다."),
     ROOM_KICKED(HttpStatus.FORBIDDEN, "ROOM_KICKED", "강퇴된 방에는 재입장할 수 없습니다."),
     ROOM_GAME_IN_PROGRESS(HttpStatus.CONFLICT, "ROOM_GAME_IN_PROGRESS", "게임이 진행 중인 방에는 입장할 수 없습니다."),
     ROOM_MAX_PLAYERS_BELOW_CURRENT(HttpStatus.CONFLICT, "ROOM_MAX_PLAYERS_BELOW_CURRENT", "최대 인원은 현재 참가자 수보다 작게 설정할 수 없습니다."),

@@ -13,7 +13,7 @@ import { useScrollLock } from '@/composables/useScrollLock'
  * 문장 단위로 쪼갠 대체 페이지가 나온다(guidePagesOrFallback).
  */
 import { computed, ref, type Component } from 'vue'
-import { GAME_CATALOG, type GameEntry } from '../data'
+import type { GameEntry } from '../data'
 import GameGuideCarousel from '@/features/games-catalog/guide/GameGuideCarousel.vue'
 import { guidePagesOrFallback } from '@/features/games-catalog/guide/pages'
 import FingerStarThumbnail from '@/features/games-catalog/components/FingerStarThumbnail.vue'
@@ -23,22 +23,24 @@ import DrawingThumbnail from '@/features/games-catalog/components/DrawingThumbna
 import FishingThumbnail from '@/features/games-catalog/components/FishingThumbnail.vue'
 
 /**
- * `closedGameIds` — 관리자가 카탈로그에서 닫은 서버 게임 id(-106).
+ * 목록은 <b>서버 카탈로그에서 온다</b>(감싼 쪽이 넘겨준다). 전에는 이 파일이 하드코딩 배열을
+ * 직접 import했는데, 그 배열에는 서버에 없는 게임이 6개 섞여 있었고 이름·인원이 서버와 어긋났다.
  *
- * <p>카탈로그의 `playable`과 <b>다른 축</b>이다. 그건 "이 게임이 만들어졌나"(미구현 게임은
- * 목록에 아예 안 나온다)이고, 이건 "지금 열려 있나"다. 닫힌 게임은 <b>목록에 남고 선택만
+ * <p>잠기는 이유가 두 가지고 문구도 다르다 —
+ * <b>준비 중</b>(`implemented: false`)은 이 클라이언트가 그 게임을 그릴 줄 모르는 것이고,
+ * <b>점검 중</b>(`active: false`, -106)은 관리자가 닫은 것이다. 둘 다 <b>목록에 남고 시작만
  * 막힌다</b> — 조용히 지우면 "어제 하던 게임이 왜 없지"에 답할 수 없다.</p>
  *
- * <p>비어 있는 집합(조회 실패 포함)이면 아무것도 잠기지 않는다. 그래도 안전한 이유는
- * 서버가 시작을 거부하기 때문이다 — 이 표시는 <b>안내</b>이고 강제는 서버가 한다.</p>
+ * <p>둘 다 <b>안내</b>이고 강제는 서버가 한다. 목록이 오래된 값이어서 잠기지 않은 채로 보여도
+ * 시작 시점에 서버가 거부한다.</p>
  */
-const props = withDefaults(
+withDefaults(
   defineProps<{
-    closedGameIds?: ReadonlySet<number>
+    games: GameEntry[]
     /** 방장만 시작할 수 있다. 아니면 아래 버튼이 '게임 제안'으로 바뀐다. */
     isHost?: boolean
   }>(),
-  { closedGameIds: () => new Set<number>(), isHost: false },
+  { isHost: false },
 )
 
 const emit = defineEmits<{
@@ -50,7 +52,6 @@ const emit = defineEmits<{
 }>()
 
 const selected = ref<GameEntry | null>(null)
-const playableGames = GAME_CATALOG.filter((game) => game.playable)
 
 /** 서버 게임 id → 게임 목록 페이지의 썸네일. 없는 게임은 이모지로 떨어진다. */
 const THUMBNAILS: Record<number, Component> = {
@@ -61,14 +62,19 @@ const THUMBNAILS: Record<number, Component> = {
   11: FishingThumbnail,
 }
 
-const isClosed = (game: GameEntry) => props.closedGameIds.has(game.gameId)
-/** 선택된 게임이 닫혔으면 시작 버튼을 감춘다 — 목록에서 막아도 미리 골라 둔 상태로 열릴 수 있다. */
-const selectedClosed = computed(() => !!selected.value && isClosed(selected.value))
+/** 잠긴 카드에 붙일 딱지 — 시작할 수 있으면 null. 준비 중을 먼저 본다(더 근본적인 이유다). */
+function lockLabel(game: GameEntry): string | null {
+  if (!game.implemented) return '준비 중'
+  if (!game.active) return '점검 중'
+  return null
+}
+/** 선택된 게임이 잠겼으면 시작 버튼을 감춘다 — 목록에서 막아도 미리 골라 둔 상태로 열릴 수 있다. */
+const selectedLock = computed(() => (selected.value ? lockLabel(selected.value) : null))
 
 const guidePages = computed(() => {
   const game = selected.value
   if (!game) return []
-  return guidePagesOrFallback(game.gameId, game.emoji, [game.description, ...game.howToPlay])
+  return guidePagesOrFallback(game.gameId, game.emoji, [game.description])
 })
 
 // 선택창이 떠 있는 동안 뒤 화면이 스크롤되지 않게 — 이 오버레이는 PixelModal이 아니라 직접 건다
@@ -98,13 +104,14 @@ useScrollLock()
         <nav class="game-nav" aria-label="게임 목록">
           <div class="nav-label"><span>GAME LIST</span></div>
           <ul class="game-list">
-            <li v-for="g in playableGames" :key="g.id">
-              <!-- 닫힌 게임도 목록에 남긴다. 눌러 설명은 볼 수 있고 시작만 막힌다 -->
+            <!-- key는 gameId다 — 슬러그(id)는 구현이 없는 게임에서 null이라 겹친다 -->
+            <li v-for="g in games" :key="g.gameId">
+              <!-- 잠긴 게임도 목록에 남긴다. 눌러 설명은 볼 수 있고 시작만 막힌다 -->
               <button
                 class="game-card"
-                :class="{ on: selected?.id === g.id, closed: isClosed(g) }"
+                :class="{ on: selected?.gameId === g.gameId, closed: !!lockLabel(g) }"
                 type="button"
-                :aria-pressed="selected?.id === g.id"
+                :aria-pressed="selected?.gameId === g.gameId"
                 @click="selected = g"
               >
                 <span class="card-visual" :style="{ background: g.thumb }">
@@ -112,7 +119,7 @@ useScrollLock()
                   <span v-else class="card-emoji">{{ g.emoji }}</span>
                 </span>
                 <span class="card-copy">
-                  <b>{{ g.name }}<span v-if="isClosed(g)" class="card-lock">점검 중</span></b>
+                  <b>{{ g.name }}<span v-if="lockLabel(g)" class="card-lock">{{ lockLabel(g) }}</span></b>
                   <small>{{ g.tag }}</small>
                 </span>
               </button>
@@ -133,13 +140,16 @@ useScrollLock()
             <div class="detail-scroll">
               <div class="detail-inner">
                 <div class="detail-guide">
-                  <GameGuideCarousel :key="selected.id" :pages="guidePages" />
+                  <GameGuideCarousel :key="selected.gameId" :pages="guidePages" />
                 </div>
               </div>
             </div>
 
-            <!-- 닫힌 게임은 버튼을 감춘다 — 눌러 보고 서버 에러를 받는 것보다 이유를 미리 말하는 게 낫다 -->
-            <p v-if="selectedClosed" class="detail-closed">점검 중이라 지금은 시작할 수 없어요</p>
+            <!-- 잠긴 게임은 버튼을 감춘다 — 눌러 보고 서버 에러를 받는 것보다 이유를 미리 말하는 게 낫다 -->
+            <p v-if="selectedLock === '준비 중'" class="detail-closed">
+              아직 만들고 있는 게임이라 지금은 플레이할 수 없어요
+            </p>
+            <p v-else-if="selectedLock" class="detail-closed">점검 중이라 지금은 시작할 수 없어요</p>
             <!-- 방장만 두 갈래를 고를 수 있다. '설명 함께 보기'는 방 전원 화면에 설명을 띄우고,
                  '바로 시작'은 지금까지대로 곧장 시작한다. -->
             <div v-else-if="isHost" class="detail-actions">

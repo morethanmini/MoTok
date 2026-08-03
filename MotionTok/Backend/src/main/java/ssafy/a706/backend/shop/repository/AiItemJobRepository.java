@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import ssafy.a706.backend.shop.model.AiItemJob;
+import ssafy.a706.backend.shop.model.AiJobProvider;
 import ssafy.a706.backend.shop.model.AiJobStatus;
 
 import java.time.LocalDateTime;
@@ -32,9 +33,21 @@ public interface AiItemJobRepository extends JpaRepository<AiItemJob, Long> {
      */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE AiItemJob j SET j.status = ssafy.a706.backend.shop.model.AiJobStatus.PROCESSING, "
-            + "j.updatedAt = CURRENT_TIMESTAMP "
+            + "j.provider = :provider, j.updatedAt = CURRENT_TIMESTAMP "
             + "WHERE j.id = :id AND j.status = ssafy.a706.backend.shop.model.AiJobStatus.PENDING")
-    int claim(@Param("id") Long id);
+    int claim(@Param("id") Long id, @Param("provider") AiJobProvider provider);
+
+    /**
+     * AUTO/FAL 인계 후보 — 아직 아무도 가져가지 않은 채 cutoff보다 오래된 job.
+     *
+     * <p>PENDING만 본다. 워커가 이미 가져간(PROCESSING) job을 뺏으면 같은 job을 둘이 동시에
+     * 만들게 되고, 늦게 온 결과를 가려내려면 claim 토큰 같은 장치가 또 필요해진다.
+     * 가져가 놓고 죽은 job은 AiItemJobTimeoutSweeper가 정리·환불한다.</p>
+     */
+    List<AiItemJob> findAllByStatusAndCreatedAtBefore(AiJobStatus status, LocalDateTime cutoff);
+
+    /** 오늘 fal로 처리한 건수 — 크레딧 소진을 막는 일일 상한 검사에 쓴다. */
+    long countByProviderAndCreatedAtAfter(AiJobProvider provider, LocalDateTime from);
 
     /**
      * PROCESSING → DONE 조건부 UPDATE. Item/UserItem 생성은 더 이상 여기서 하지 않는다 —
@@ -56,6 +69,18 @@ public interface AiItemJobRepository extends JpaRepository<AiItemJob, Long> {
     @Query("UPDATE AiItemJob j SET j.itemId = :itemId, j.updatedAt = CURRENT_TIMESTAMP "
             + "WHERE j.id = :id AND j.itemId IS NULL")
     int attachItem(@Param("id") Long id, @Param("itemId") Long itemId);
+
+    /**
+     * PENDING → FAILED 조건부 UPDATE — 아예 시작할 수 없는 job을 바로 돌려준다(fal 일일 상한 등).
+     *
+     * <p>claim을 거쳐 PROCESSING으로 만든 뒤 실패시키면 그 job이 fal 사용량으로 집계돼
+     * 상한이 스스로를 밀어 올린다 — 취소한 건이 다음 취소를 부른다. 그래서 경로를 따로 둔다.</p>
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE AiItemJob j SET j.status = ssafy.a706.backend.shop.model.AiJobStatus.FAILED, "
+            + "j.errorMessage = :message, j.updatedAt = CURRENT_TIMESTAMP "
+            + "WHERE j.id = :id AND j.status = ssafy.a706.backend.shop.model.AiJobStatus.PENDING")
+    int failPending(@Param("id") Long id, @Param("message") String message);
 
     /** PROCESSING → FAILED 조건부 UPDATE. */
     @Modifying(clearAutomatically = true, flushAutomatically = true)

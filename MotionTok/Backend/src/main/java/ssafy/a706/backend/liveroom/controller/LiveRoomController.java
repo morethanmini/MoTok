@@ -122,4 +122,14 @@ public class LiveRoomController {
         liveRoomService.kick(principal, roomId, userId, req.reason());
         return ApiResponse.ok("강퇴 완료");
     }
+
+    /** 방장이 대기실에서 지목한 참가자에게 방장을 넘긴다(S15P11A706-180). 방장·WAITING 전용. */
+    @PostMapping("/{roomId}/members/{userId}/delegate-host")
+    public ApiResponse<Void> delegateHost(
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @PathVariable String roomId,
+            @PathVariable String userId) {
+        liveRoomService.delegateHost(principal, roomId, userId);
+        return ApiResponse.ok("방장 위임 완료");
+    }
 }
