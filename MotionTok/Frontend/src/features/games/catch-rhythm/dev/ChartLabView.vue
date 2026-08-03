@@ -721,12 +721,121 @@ function onFinished(r: { score: number; maxCombo: number }) {
 
 // ── 내보내기 ──
 
-function download(name: string, text: string, type = 'application/json') {
+function downloadBlob(name: string, blob: Blob) {
   const a = document.createElement('a')
-  a.href = URL.createObjectURL(new Blob([text], { type }))
+  a.href = URL.createObjectURL(blob)
   a.download = name
   a.click()
   URL.revokeObjectURL(a.href)
+}
+
+function download(name: string, text: string, type = 'application/json') {
+  downloadBlob(name, new Blob([text], { type }))
+}
+
+// ── 곡 자르기 — 긴 곡은 필요한 구간만 남기고 작업한다 ──
+
+/** AudioBuffer의 [from, to) 구간을 16bit PCM WAV로 인코드 */
+function wavBlob(buffer: AudioBuffer, fromMs: number, toMs: number): Blob {
+  const sr = buffer.sampleRate
+  const s0 = Math.max(0, Math.floor((fromMs / 1000) * sr))
+  const s1 = Math.min(buffer.length, Math.ceil((toMs / 1000) * sr))
+  const len = Math.max(0, s1 - s0)
+  const ch = Math.min(2, buffer.numberOfChannels)
+  const dataSize = len * ch * 2
+  const ab = new ArrayBuffer(44 + dataSize)
+  const dv = new DataView(ab)
+  const writeStr = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i))
+  }
+  writeStr(0, 'RIFF')
+  dv.setUint32(4, 36 + dataSize, true)
+  writeStr(8, 'WAVE')
+  writeStr(12, 'fmt ')
+  dv.setUint32(16, 16, true)
+  dv.setUint16(20, 1, true)
+  dv.setUint16(22, ch, true)
+  dv.setUint32(24, sr, true)
+  dv.setUint32(28, sr * ch * 2, true)
+  dv.setUint16(32, ch * 2, true)
+  dv.setUint16(34, 16, true)
+  writeStr(36, 'data')
+  dv.setUint32(40, dataSize, true)
+  const chans = Array.from({ length: ch }, (_, c) => buffer.getChannelData(c))
+  let off = 44
+  for (let i = s0; i < s1; i++) {
+    for (let c = 0; c < ch; c++) {
+      const v = Math.max(-1, Math.min(1, chans[c]![i]!))
+      dv.setInt16(off, v < 0 ? v * 0x8000 : v * 0x7fff, true)
+      off += 2
+    }
+  }
+  return new Blob([ab], { type: 'audio/wav' })
+}
+
+/**
+ * 선택 구간만 남긴다: ① 잘린 WAV 다운로드(보관용) ② 작업 곡을 잘린 버전으로 교체 + 재분석
+ * ③ 탭 채보도 같은 구간으로 잘라 시간 이동 — 직접 찍는 두 난이도 모두 저장 키를 승계한다.
+ */
+async function trimToSelection() {
+  const buf = audioBuffer.value
+  if (!buf || selStartMs.value === null || selEndMs.value === null) return
+  if (tapping.value || previewing.value || running.value) return
+  const from = selStartMs.value
+  const to = selEndMs.value
+  if (to - from < 3000) {
+    errorMsg.value = '구간이 너무 짧아요 — 3초 이상 잡아주세요'
+    return
+  }
+
+  const sr = buf.sampleRate
+  const s0 = Math.max(0, Math.floor((from / 1000) * sr))
+  const s1 = Math.min(buf.length, Math.ceil((to / 1000) * sr))
+  const tmp = new AudioContext()
+  const cut = tmp.createBuffer(buf.numberOfChannels, s1 - s0, sr)
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    cut.copyToChannel(buf.getChannelData(c).slice(s0, s1), c)
+  }
+  void tmp.close()
+
+  const blob = wavBlob(buf, from, to)
+  const oldName = fileName.value
+  const newName = `${base()}-cut.wav`
+  downloadBlob(newName, blob) // 보관용 — 다음에 이 파일로 이어서 작업하면 된다
+
+  // 탭 이동: [from, to) 안만 남기고 시간을 −from. 경계에 걸린 홀드는 끝을 자른다
+  const shift = (list: TapEvent[]): TapEvent[] =>
+    list
+      .filter((e) => e.t >= from && e.t < to)
+      .map((e) => ({ t: Math.round(e.t - from), d: Math.round(Math.min(e.d, to - e.t)) }))
+  for (const diff of ['SUPERHARD', 'EXTREME'] as const) {
+    if (!oldName) break
+    try {
+      const raw = localStorage.getItem(`${TAPS_STORE}${oldName}:${diff}`)
+      if (!raw) continue
+      const j = JSON.parse(raw) as { l?: unknown; r?: unknown; taps?: unknown }
+      const l = shift(parseTapList(j.l ?? j.taps))
+      const r = shift(parseTapList(j.r))
+      if (l.length + r.length > 0) {
+        localStorage.setItem(`${TAPS_STORE}${newName}:${diff}`, JSON.stringify({ l, r }))
+      }
+    } catch {
+      // 깨진 저장분은 승계하지 않는다
+    }
+  }
+
+  // 작업 상태 교체 — 이후 분석·슬롯·탭이 전부 잘린 곡 기준이 된다
+  if (fileUrl.value) URL.revokeObjectURL(fileUrl.value)
+  fileUrl.value = URL.createObjectURL(blob)
+  fileName.value = newName
+  audioBuffer.value = cut
+  analysis.value = null
+  selStartMs.value = null
+  selEndMs.value = null
+  selectedTap.value = null
+  slotIdx.value = 0
+  loadTapsFromStore()
+  await analyze()
 }
 
 function base(): string {
@@ -1112,6 +1221,14 @@ onBeforeUnmount(() => {
       <button type="button" @click="exportCatch">캐치 JSON</button>
       <button type="button" @click="exportRing">링 JSON(에디터)</button>
       <button type="button" @click="exportAccents">songAccents</button>
+      <button
+        type="button"
+        :disabled="selStartMs === null || tapping || running || previewing"
+        title="파형에서 드래그한 구간만 남긴다 — 잘린 WAV 다운로드 + 작업 곡 교체 + 탭도 같이 잘려 이동"
+        @click="trimToSelection"
+      >
+        ✂ 구간만 남기기
+      </button>
       <span v-if="lastResult" class="result">{{ lastResult }}</span>
     </section>
 
