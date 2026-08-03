@@ -9,6 +9,7 @@ import ssafy.a706.backend.game.dto.GameDetailResponse;
 import ssafy.a706.backend.game.dto.GameSummaryResponse;
 import ssafy.a706.backend.game.dto.LeaderboardEntryResponse;
 import ssafy.a706.backend.game.dto.LeaderboardResponse;
+import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.entity.Leaderboard;
 import ssafy.a706.backend.game.model.LeaderboardMode;
 import ssafy.a706.backend.game.repository.GameRankRedisRepository;
@@ -76,11 +77,19 @@ public class GameQueryService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
     }
 
-    /** GET /games/{gameId}/leaderboard — 모드(솔로/멀티)별 상위 N + 내 순위. */
+    /**
+     * GET /games/{gameId}/leaderboard — 모드(솔로/멀티)별 상위 N + 내 순위.
+     *
+     * <p>그 게임에 없는 모드면 빈 순위표다({@link Game#hasLeaderboard}) — 혼자 시작할 수 없는
+     * 게임의 솔로 순위 같은 것. 404가 아니라 200+빈 목록인 이유는 게임도 모드도 실재하는
+     * 값이라서다. 없는 건 기록뿐이고, 화면은 "아직 기록이 없어요"를 이미 그릴 줄 안다.</p>
+     */
     @Transactional(readOnly = true)
     public LeaderboardResponse leaderboard(long gameId, LeaderboardMode mode, int limit, AuthPrincipal principal) {
-        if (!gameRepository.existsById(gameId)) {
-            throw new BusinessException(ErrorCode.GAME_NOT_FOUND);
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
+        if (!game.hasLeaderboard(mode)) {
+            return new LeaderboardResponse(gameId, List.of(), null);
         }
         int capped = Math.max(1, Math.min(MAX_LIMIT, limit));
         warmUpIfEmpty(gameId, mode);
