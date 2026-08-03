@@ -115,6 +115,27 @@ class UserRecordServiceTest {
                 });
     }
 
+    /**
+     * 리더보드(-96)와 같은 선 — 혼자 시작할 수 없는 게임(minPlayers ≥ 2)의 솔로 기록은 전적에도 없다.
+     * 개발 중 최소 인원을 잠깐 풀고 테스트한 잔재라, 두면 "3명부터"라는 규칙 안내와 어긋난다.
+     */
+    @Test
+    void 혼자_할_수_없는_게임의_솔로_기록은_전적에서_뺀다() {
+        givenActiveUser();
+        List<Leaderboard> rows = new ArrayList<>(List.of(
+                row(10L, LeaderboardMode.MULTI, 500, 2),
+                row(10L, LeaderboardMode.SOLO, 300, 1)));
+        when(leaderboardRepository.findAllByUserId(USER_ID)).thenReturn(rows);
+        when(gameRepository.findAllById(anyList())).thenReturn(List.of(
+                Game.builder().id(10L).name("그림으로 말해요").minPlayers(3).maxPlayers(8).build()));
+        when(rankRepository.size(10L, LeaderboardMode.MULTI)).thenReturn(5L);
+        when(rankRepository.reverseRankOf(10L, LeaderboardMode.MULTI, USER_ID)).thenReturn(Optional.of(0L));
+
+        List<GameRecordResponse> records = service.records(USER_ID);
+
+        assertThat(records).extracting(GameRecordResponse::mode).containsExactly("MULTI");
+    }
+
     @Test
     void 카탈로그에서_내려간_게임은_노출하지_않는다() {
         givenActiveUser();
