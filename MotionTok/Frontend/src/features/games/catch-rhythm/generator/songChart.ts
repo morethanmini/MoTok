@@ -780,11 +780,15 @@ export function generateSongRingChart(
     }
 
     const note: RingDraftNote = { timeMs, lane }
-    // 탭 홀드(사람 의도)는 문턱을 낮춰서 존중한다
+    // 탭 홀드(사람 의도)는 문턱을 낮춰서 존중하고, 길이도 누른 만큼 그대로 둔다 —
+    // 4박 상한은 검출 지속음(자동)에만 적용한다(실사용: 긴 홀드가 잘려 "고장"처럼 보임)
     if (onset.sustain && onset.sustain.durationMs >= (onset.holdMs ? 300 : 500)) {
       note.type = 'hold'
       note.durationMs = Math.round(
-        Math.min(analysis.beatMs * 4, Math.max(400, onset.sustain.durationMs)),
+        Math.min(
+          onset.holdMs ? Number.MAX_SAFE_INTEGER : analysis.beatMs * 4,
+          Math.max(400, onset.sustain.durationMs),
+        ),
       )
       // 멜로디가 움직이면 슬라이드 — 방향은 음높이 변화, 폭은 변화량에 비례(최대 2칸)
       const delta = Math.round(onset.sustain.pitchDelta * 4)
@@ -842,6 +846,7 @@ export function ringDraftToGameChart(
   return {
     approachTimeMs: draft.approachTimeMs,
     notes,
-    durationMs: notes[notes.length - 1]?.timeMs ?? 0,
+    // 홀드 꼬리까지 포함해야 마지막 노트가 홀드일 때 라운드 종료가 홀드를 자르지 않는다
+    durationMs: notes.reduce((m, n) => Math.max(m, n.timeMs + (n.durationMs ?? 0)), 0),
   }
 }

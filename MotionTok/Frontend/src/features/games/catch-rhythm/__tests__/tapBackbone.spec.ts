@@ -6,7 +6,13 @@ import { describe, expect, it } from 'vitest'
 
 import type { SongAnalysis } from '../analysis/analyzeSong'
 import { correctTapTracks, type TapEvent } from '../analysis/tapBackbone'
-import { generateSongCatchChart, generateSongRingChart } from '../generator/songChart'
+import {
+  generateSongCatchChart,
+  generateSongRingChart,
+  ringDraftToGameChart,
+} from '../generator/songChart'
+import { RingLogic, holdBearingDeg, laneAngleDeg } from '../ring/ringLogic'
+import { RING_RADIUS } from '../ring/ringConfig'
 
 const tap = (t: number, d = 0): TapEvent => ({ t, d })
 
@@ -199,6 +205,37 @@ describe('백본 채보 생성', () => {
       expect(d).toBeGreaterThanOrEqual(0.24 * 0.75) // 등간격 — 뭉치지 않고
       expect(d).toBeLessThanOrEqual(0.24 * 1.05) // 벌어지지도 않는다
     }
+  })
+
+  it('백본 홀드 → 링 게임 채보 → 판정까지 전 사슬이 통과한다 (홀드 고장 회귀)', () => {
+    const corr = correctTapTracks({ perc: [], melody: [tap(5000, 900)] }, analysis, {
+      applyLatency: false,
+      snapWindowMs: 0,
+    })
+    const draft = generateSongRingChart(analysis, 'EXTREME', 42, { backbone: corr.onsets })
+    const dHold = draft.notes.find((n) => n.type === 'hold')
+    expect(dHold, '초안에 홀드가 없다').toBeDefined()
+    expect(dHold!.durationMs).toBeGreaterThanOrEqual(400)
+
+    const game = ringDraftToGameChart(draft, analysis)
+    const gHold = game.notes.find((n) => n.type === 'hold')
+    expect(gHold, '게임 채보에 홀드가 없다').toBeDefined()
+
+    const logic = new RingLogic(game)
+    const handAt = (deg: number) => {
+      const rad = (deg * Math.PI) / 180
+      return {
+        left: null,
+        right: { x: Math.sin(rad) * RING_RADIUS, y: Math.cos(rad) * RING_RADIUS, grabbed: false },
+      }
+    }
+    // head 잡기 → 이동 존을 정확히 따라가기
+    logic.update(gHold!.timeMs, handAt(laneAngleDeg(gHold!.lane)))
+    const events = []
+    for (let t = gHold!.timeMs + 30; t <= gHold!.timeMs + (gHold!.durationMs ?? 0) + 60; t += 30) {
+      events.push(...logic.update(t, handAt(holdBearingDeg(gHold!, t))))
+    }
+    expect(events.some((e) => e.type === 'hit')).toBe(true)
   })
 
   it('링(EXTREME): 고밀도에서는 레인 이동이 1칸까지만 묶인다', () => {
