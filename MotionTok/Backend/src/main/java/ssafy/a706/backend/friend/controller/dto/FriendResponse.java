@@ -2,6 +2,8 @@ package ssafy.a706.backend.friend.controller.dto;
 
 import ssafy.a706.backend.presence.model.PresenceSnapshot;
 
+import java.time.LocalDateTime;
+
 /**
  * API 명세 §6 Friend. presence·currentRoomId는 Redis presence:{userId}에서 온다.
  * 하트비트가 끊긴 친구는 키가 없어 OFFLINE으로 내려간다.
@@ -15,10 +17,18 @@ public record FriendResponse(
         String nickname,
         String presence,
         String currentRoomId,
-        String avatarUrl
+        String avatarUrl,
+        LocalDateTime lastSeenAt
 ) {
 
-    public static FriendResponse of(Long userId, String nickname, String avatarUrl, PresenceSnapshot presence) {
-        return new FriendResponse(userId, nickname, presence.state().name(), presence.roomId(), avatarUrl);
+    /**
+     * @param lastSeenAt 마지막 접속 종료 시각(-179). <b>오프라인일 때만 의미가 있다</b> —
+     *                   온라인 친구의 값은 직전 접속의 종료 시각이라 지금과 무관하다.
+     *                   배포 이후 한 번도 정산되지 않은 회원은 null.
+     */
+    public static FriendResponse of(Long userId, String nickname, String avatarUrl,
+                                    PresenceSnapshot presence, LocalDateTime lastSeenAt) {
+        return new FriendResponse(
+                userId, nickname, presence.state().name(), presence.roomId(), avatarUrl, lastSeenAt);
     }
 }
