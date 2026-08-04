@@ -20,19 +20,41 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import RankingView from '@/features/ranking/RankingView.vue'
 import { routes } from '@/router/routes'
 import { useSessionStore } from '@/stores/session'
-import type { Game, LeaderboardEntry, LeaderboardMode, LeaderboardResponse, PublicUserProfile } from '@/api'
+import type {
+  Game,
+  GameMode,
+  LeaderboardEntry,
+  LeaderboardMode,
+  LeaderboardPeriod,
+  LeaderboardResponse,
+  PublicUserProfile,
+} from '@/api'
 
 const { leaderboard, getProfile } = vi.hoisted(() => ({
-  leaderboard: vi.fn<(gameId: number, mode: LeaderboardMode, limit?: number) => Promise<LeaderboardResponse>>(),
+  leaderboard:
+    vi.fn<
+      (
+        gameId: number,
+        mode: LeaderboardMode,
+        limit?: number,
+        period?: LeaderboardPeriod,
+        week?: string,
+      ) => Promise<LeaderboardResponse>
+    >(),
   getProfile: vi.fn<() => Promise<PublicUserProfile>>(),
 }))
 
-const game = (id: number, name: string, minPlayers = 1): Game => ({
-  id, name, description: '', mode: 'VERSUS', minPlayers, maxPlayers: 8,
+const game = (id: number, name: string, minPlayers = 1, mode: GameMode = 'VERSUS'): Game => ({
+  id, name, description: '', mode, minPlayers, maxPlayers: 8,
   supportsBot: true, category: '모션', thumbnailUrl: '', playable: true, active: true,
 })
-// 그림으로 말해요는 minPlayers 3 — 혼자서는 시작할 수 없는 게임이다
-const GAMES = [game(1, '핑거 스타'), game(3, '리듬 터치'), game(11, '모션 낚시'), game(10, '그림으로 말해요', 3)]
+// 그림으로 말해요는 minPlayers 3(혼자서는 시작 불가) + COOP(전원 동점이라 역대 순위표가 없다)
+const GAMES = [
+  game(1, '핑거 스타'),
+  game(3, '리듬 터치'),
+  game(11, '모션 낚시'),
+  game(10, '그림으로 말해요', 3, 'COOP'),
+]
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -44,7 +66,7 @@ vi.mock('@/api', async () => {
 })
 
 const entry = (rank: number, nickname: string): LeaderboardEntry => ({
-  rank, nickname, userId: 1000 + rank, bestScore: 1000 - rank * 10, playCount: 3,
+  rank, nickname, userId: 1000 + rank, score: 1000 - rank * 10, playCount: 3,
 })
 
 /** 기본 순위표(핑거 스타·멀티) 11명 — PAGE_SIZE(10)를 넘겨 마지막 사람이 2페이지로 밀린다. */
@@ -71,10 +93,31 @@ const BOARDS: Record<string, LeaderboardEntry[]> = {
   '10:SOLO': [entry(2, '테스트잔재')],
 }
 
+/** 주간 순위표 — 역대와 다른 사람이 1위여야 탭이 실제로 다른 데이터를 받는지 확인할 수 있다. */
+const WEEKLY_BOARDS: Record<string, LeaderboardEntry[]> = {
+  '1:MULTI': [entry(1, '이번주강자'), entry(2, '유저3')],
+  // 협동 게임은 주간만 있다 — 역대는 전원 동점이라 순위표가 성립하지 않는다
+  '10:MULTI': [entry(1, '그림왕')],
+}
+
+const board = (
+  gameId: number,
+  mode: LeaderboardMode,
+  period: LeaderboardPeriod = 'ALLTIME',
+): LeaderboardResponse =>
+  period === 'WEEKLY'
+    ? {
+        gameId,
+        period,
+        weekStart: '2026-08-03',
+        entries: WEEKLY_BOARDS[`${gameId}:${mode}`] ?? [],
+      }
+    : { gameId, period, entries: BOARDS[`${gameId}:${mode}`] ?? [] }
+
 beforeEach(() => {
   leaderboard.mockReset()
-  leaderboard.mockImplementation((gameId, mode) =>
-    Promise.resolve({ gameId, entries: BOARDS[`${gameId}:${mode}`] ?? [] }),
+  leaderboard.mockImplementation((gameId, mode, _limit, period) =>
+    Promise.resolve(board(gameId, mode, period)),
   )
   getProfile.mockReset()
   getProfile.mockResolvedValue({ id: 1003, nickname: '유저3', createdAt: '2026-01-01T00:00:00Z', totalConnectSeconds: 0 })
@@ -257,7 +300,7 @@ describe('랭킹 닉네임 검색', () => {
     // 다른 게임 조회를 붙잡아 둬서 "훑는 중" 상태를 만든다
     leaderboard.mockImplementation(async (gameId, mode) => {
       if (!(gameId === 1 && mode === 'MULTI')) await gate
-      return { gameId, entries: BOARDS[`${gameId}:${mode}`] ?? [] }
+      return board(gameId, mode)
     })
 
     await wrapper.find('.search-box input').setValue('떠돌이')
@@ -289,10 +332,11 @@ describe('랭킹 닉네임 검색', () => {
         elevenCalls += 1
         return Promise.resolve({
           gameId,
+          period: 'ALLTIME' as const,
           entries: elevenCalls === 1 ? BOARDS['11:MULTI']! : [entry(1, '남')],
         })
       }
-      return Promise.resolve({ gameId, entries: BOARDS[`${gameId}:${mode}`] ?? [] })
+      return Promise.resolve(board(gameId, mode))
     })
 
     await search(wrapper, '떠돌이')
@@ -328,7 +372,7 @@ describe('랭킹 닉네임 검색', () => {
     leaderboard.mockImplementation((gameId, mode) =>
       gameId === 11
         ? Promise.reject(new Error('boom')) // 최고 순위였던 곳이 죽었다
-        : Promise.resolve({ gameId, entries: BOARDS[`${gameId}:${mode}`] ?? [] }),
+        : Promise.resolve(board(gameId, mode)),
     )
 
     await search(wrapper, '떠돌이')
@@ -366,7 +410,8 @@ describe('멀티 전용 게임의 랭킹 모드', () => {
 
     // 고를 수 없게 된 모드의 순위표를 그대로 보고 있으면 안 된다
     expect(wrapper.find('.mode-switch button.active').text()).toBe('멀티 플레이')
-    expect(leaderboard).toHaveBeenLastCalledWith(10, 'MULTI', expect.anything())
+    // 그림으로 말해요는 COOP이라 역대 탭도 같이 사라진다 — 기간도 주간으로 따라 내려간다
+    expect(leaderboard).toHaveBeenLastCalledWith(10, 'MULTI', expect.anything(), 'WEEKLY')
   })
 
   it('검색도 그 게임의 남은 솔로 기록으로는 옮기지 않는다', async () => {
@@ -375,6 +420,109 @@ describe('멀티 전용 게임의 랭킹 모드', () => {
 
     expect(result(wrapper)).toContain('없어요')
     expect(shownGame(wrapper)).toBe('핑거 스타')
-    expect(leaderboard).not.toHaveBeenCalledWith(10, 'SOLO', expect.anything())
+    // 인자 개수까지 맞아야 한다 — 개수가 어긋나면 .not 단언이 언제나 통과해 검증이 사라진다
+    expect(leaderboard.mock.calls.some(([id, m]) => id === 10 && m === 'SOLO')).toBe(false)
+  })
+})
+
+/**
+ * 기간 탭 — 역대(단일 판 최고)와 주간(이번 주 합계)은 서로 다른 질문에 대한 답이다.
+ *
+ * 역대는 "같은 점수면 먼저 달성한 사람이 위"라 점수 상한이 있는 게임에서 상위권이 굳는다.
+ * 주간은 매주 0에서 시작하니 그 굳음을 풀어 주는 짝이고, 그래서 둘을 나란히 둔다.
+ */
+describe('랭킹 기간 탭', () => {
+  const tabs = (wrapper: View) => wrapper.findAll('.period-tabs button')
+  const activeTab = (wrapper: View) => wrapper.find('.period-tabs button.active b').text()
+  const names = (wrapper: View) => wrapper.findAll('.score-row .player b').map((b) => b.text())
+
+  it('기본은 역대 기록이다 — 주간 집계는 이번 주부터라 첫 방문에 빈 표를 보이면 안 된다', async () => {
+    const wrapper = await mountView()
+
+    expect(tabs(wrapper).map((b) => b.text())).toHaveLength(2)
+    expect(activeTab(wrapper)).toBe('역대 기록')
+    expect(leaderboard).toHaveBeenCalledWith(1, 'MULTI', expect.anything(), 'ALLTIME')
+  })
+
+  it('주간 탭을 누르면 주간 순위표를 새로 받고 집계한 주를 보여준다', async () => {
+    const wrapper = await mountView()
+    expect(names(wrapper)).toContain('유저1')
+
+    await tabs(wrapper)[1]!.trigger('click')
+    await flushPromises()
+
+    expect(activeTab(wrapper)).toBe('주간 랭킹')
+    expect(leaderboard).toHaveBeenLastCalledWith(1, 'MULTI', expect.anything(), 'WEEKLY')
+    expect(names(wrapper)).toEqual(['이번주강자', '유저3'])
+    // 8/3(월) ~ 8/9(일) — 서버가 스냅해 준 weekStart 기준
+    expect(wrapper.find('.period-tabs .week-range').text()).toBe('8/3 ~ 8/9')
+    expect(wrapper.find('.board-head h2').text()).toContain('주간 순위')
+  })
+
+  it('검색은 기간을 넘지 않는다 — 누르지 않은 탭으로 저절로 넘어가면 안 된다', async () => {
+    const wrapper = await mountView()
+    await tabs(wrapper)[1]!.trigger('click')
+    await flushPromises()
+    leaderboard.mockClear()
+
+    // 역대에는 있지만(핑거 스타 2위) 주간 어디에도 없는 사람
+    await search(wrapper, 'Alex')
+
+    expect(result(wrapper)).toContain('없어요')
+    expect(activeTab(wrapper)).toBe('주간 랭킹')
+    expect(leaderboard.mock.calls.every((call) => call[3] === 'WEEKLY')).toBe(true)
+  })
+
+  /**
+   * 협동 게임에는 역대 탭이 없다.
+   *
+   * 전원이 같은 점수를 받고 그 점수도 여섯 값(100·80·60·40·20·0)뿐이라, 역대 최고점은 사람이
+   * 늘면 전부 100점에 몰려 "100점을 제일 먼저 겪은 사람"으로 굳는다. 눌렀는데 빈 표가 나오는
+   * 것보다 탭 자체를 없애는 쪽이 낫다.
+   */
+  it('협동 게임을 고르면 역대 탭이 사라지고 주간만 남는다', async () => {
+    const wrapper = await mountView()
+    expect(tabs(wrapper)).toHaveLength(2)
+
+    await pickGame(wrapper, '그림으로 말해요')
+
+    expect(tabs(wrapper)).toHaveLength(1)
+    expect(activeTab(wrapper)).toBe('주간 랭킹')
+    expect(names(wrapper)).toEqual(['그림왕'])
+  })
+
+  it('협동 게임에서 다른 게임으로 돌아오면 역대 탭이 다시 생긴다', async () => {
+    const wrapper = await mountView()
+    await pickGame(wrapper, '그림으로 말해요')
+    expect(tabs(wrapper)).toHaveLength(1)
+
+    await pickGame(wrapper, '핑거 스타')
+
+    expect(tabs(wrapper)).toHaveLength(2)
+    // 협동 게임 때문에 주간으로 내려간 상태는 유지된다 — 되돌리면 사용자가 안 누른 탭이 또 바뀐다
+    expect(activeTab(wrapper)).toBe('주간 랭킹')
+  })
+
+  it('역대 탭에서 검색할 때 협동 게임은 훑지 않는다 — 응답이 언제나 비어 있다', async () => {
+    const wrapper = await mountView()
+    expect(activeTab(wrapper)).toBe('역대 기록')
+    leaderboard.mockClear()
+
+    await search(wrapper, '없는사람')
+
+    expect(leaderboard.mock.calls.some(([id]) => id === 10)).toBe(false)
+  })
+
+  /** 주간의 빈 표는 정상 상태다 — 여기에 예시를 그리면 사용자가 이번 주 실제 순위로 읽는다. */
+  it('주간 조회가 실패해도 예시 순위표로 채우지 않는다', async () => {
+    const wrapper = await mountView()
+    leaderboard.mockImplementation(() => Promise.reject(new Error('boom')))
+
+    await tabs(wrapper)[1]!.trigger('click')
+    await flushPromises()
+
+    expect(names(wrapper)).toEqual([])
+    expect(wrapper.find('.empty').text()).toContain('이번 주엔 아직 기록이 없어요')
+    expect(names(wrapper)).not.toContain('민수') // 폴백에 들어 있는 이름
   })
 })

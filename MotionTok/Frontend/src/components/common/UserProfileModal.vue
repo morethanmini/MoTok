@@ -182,7 +182,8 @@ function onReported() {
             </button>
           </div>
           <dl v-if="selectedRecord" class="stats">
-            <div><dt>순위</dt><dd>#{{ selectedRecord.rankNo }}</dd></div>
+            <!-- rankNo 0 = 순위 없음(협동 게임). 전원이 같은 점수를 받아 역대 순위가 성립하지 않는다 -->
+            <div><dt>순위</dt><dd>{{ selectedRecord.rankNo ? `#${selectedRecord.rankNo}` : '—' }}</dd></div>
             <div><dt>최고 점수</dt><dd>{{ selectedRecord.bestScore.toLocaleString() }}</dd></div>
             <div><dt>플레이</dt><dd>{{ selectedRecord.playCount }}회</dd></div>
           </dl>
