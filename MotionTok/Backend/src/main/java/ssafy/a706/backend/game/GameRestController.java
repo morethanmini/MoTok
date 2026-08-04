@@ -82,8 +82,9 @@ public class GameRestController {
                                            @RequestParam(defaultValue = "ALLTIME") LeaderboardPeriod period,
                                            @RequestParam(required = false)
                                            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate week,
+                                           @RequestParam(required = false) String chart,
                                            @RequestParam(defaultValue = "20") int limit,
                                            @AuthenticationPrincipal AuthPrincipal principal) {
-        return gameQueryService.leaderboard(gameId, mode, period, week, limit, principal);
+        return gameQueryService.leaderboard(gameId, mode, period, week, chart, limit, principal);
     }
 }

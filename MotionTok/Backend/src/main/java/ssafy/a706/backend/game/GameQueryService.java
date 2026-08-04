@@ -16,6 +16,7 @@ import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.entity.LeaderboardWeekly;
 import ssafy.a706.backend.game.model.LeaderboardMode;
 import ssafy.a706.backend.game.model.LeaderboardPeriod;
+import ssafy.a706.backend.game.repository.ChartLeaderboardRepository;
 import ssafy.a706.backend.game.repository.GameRepository;
 import ssafy.a706.backend.game.repository.LeaderboardRepository;
 import ssafy.a706.backend.game.repository.LeaderboardWeeklyRepository;
@@ -42,6 +43,8 @@ public class GameQueryService {
     private final GameRepository gameRepository;
     private final LeaderboardRepository leaderboardRepository;
     private final LeaderboardWeeklyRepository weeklyRepository;
+    /** 이벤트용(-186). 접을 때 이 의존성과 CHART 분기만 지우면 된다. */
+    private final ChartLeaderboardRepository chartRepository;
 
     /**
      * GET /games — 게임 목록. playerCount가 오면 인원 조건도 playable에 반영한다.
@@ -88,38 +91,41 @@ public class GameQueryService {
      */
     @Transactional(readOnly = true)
     public LeaderboardResponse leaderboard(long gameId, LeaderboardMode mode, LeaderboardPeriod period,
-                                           LocalDate week, int limit, AuthPrincipal principal) {
+                                           LocalDate week, String chart, int limit, AuthPrincipal principal) {
         Game game = gameRepository.findById(gameId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.GAME_NOT_FOUND));
-        boolean weekly = period == LeaderboardPeriod.WEEKLY;
-        LocalDate weekStart = weekly
+        LocalDate weekStart = period == LeaderboardPeriod.WEEKLY
                 ? LeaderboardWeekly.weekStartOf(week == null ? LocalDate.now() : week)
                 : null;
-        if (!game.hasLeaderboard(mode, period)) {
+        // 채보 보드는 어느 채보인지 있어야 성립한다 — 없으면 빈 순위표(400을 던질 만큼 잘못된 요청은 아니다)
+        boolean unusable = !game.hasLeaderboard(mode, period)
+                || (period == LeaderboardPeriod.CHART && (chart == null || chart.isBlank()));
+        if (unusable) {
             return new LeaderboardResponse(gameId, period, weekStart, List.of(), null);
         }
         int capped = Math.max(1, Math.min(MAX_LIMIT, limit));
 
-        List<LeaderboardRow> top = weekly
-                ? weeklyRepository.findTopRows(gameId, mode, weekStart, PageRequest.of(0, capped))
-                : leaderboardRepository.findTopRows(gameId, mode, PageRequest.of(0, capped));
+        List<LeaderboardRow> top = switch (period) {
+            case WEEKLY -> weeklyRepository.findTopRows(gameId, mode, weekStart, PageRequest.of(0, capped));
+            case CHART -> chartRepository.findTopRows(gameId, chart, PageRequest.of(0, capped));
+            case ALLTIME -> leaderboardRepository.findTopRows(gameId, mode, PageRequest.of(0, capped));
+        };
         List<LeaderboardEntryResponse> entries = new ArrayList<>(top.size());
         for (LeaderboardRow row : top) {
             // 전순서로 정렬돼 오므로 순번이 곧 순위다 — 동점이라고 같은 번호를 주지 않는다
             entries.add(LeaderboardEntryResponse.of(entries.size() + 1, row));
         }
         return new LeaderboardResponse(gameId, period, weekStart, entries,
-                myRank(gameId, mode, weekStart, principal, entries));
+                myRank(gameId, mode, period, weekStart, chart, principal, entries));
     }
 
     /**
      * 내 순위 — 회원만. 노출 목록 안에 있으면 그 항목을 그대로 쓰고, 밖이면 COUNT로 센다.
      * 게스트·비로그인·기록 없음·탈퇴/정지면 null.
-     *
-     * @param weekStart 주간이면 그 주 월요일, 전체기간이면 null
      */
-    private LeaderboardEntryResponse myRank(long gameId, LeaderboardMode mode, LocalDate weekStart,
-                                            AuthPrincipal principal, List<LeaderboardEntryResponse> entries) {
+    private LeaderboardEntryResponse myRank(long gameId, LeaderboardMode mode, LeaderboardPeriod period,
+                                            LocalDate weekStart, String chart, AuthPrincipal principal,
+                                            List<LeaderboardEntryResponse> entries) {
         if (!(principal instanceof MemberPrincipal member)) {
             return null;
         }
@@ -128,17 +134,22 @@ public class GameQueryService {
                 return entry;
             }
         }
-        LeaderboardRow mine = (weekStart != null
-                ? weeklyRepository.findRow(gameId, mode, weekStart, member.id())
-                : leaderboardRepository.findRow(gameId, mode, member.id())).orElse(null);
+        LeaderboardRow mine = switch (period) {
+            case WEEKLY -> weeklyRepository.findRow(gameId, mode, weekStart, member.id()).orElse(null);
+            case CHART -> chartRepository.findRow(gameId, chart, member.id()).orElse(null);
+            case ALLTIME -> leaderboardRepository.findRow(gameId, mode, member.id()).orElse(null);
+        };
         if (mine == null) {
             return null;
         }
-        long ahead = weekStart != null
-                ? weeklyRepository.countAhead(
-                        gameId, mode, weekStart, mine.score(), mine.achievedAt(), mine.userId())
-                : leaderboardRepository.countAhead(
-                        gameId, mode, mine.score(), mine.achievedAt(), mine.userId());
+        long ahead = switch (period) {
+            case WEEKLY -> weeklyRepository.countAhead(
+                    gameId, mode, weekStart, mine.score(), mine.achievedAt(), mine.userId());
+            case CHART -> chartRepository.countAhead(
+                    gameId, chart, mine.score(), mine.achievedAt(), mine.userId());
+            case ALLTIME -> leaderboardRepository.countAhead(
+                    gameId, mode, mine.score(), mine.achievedAt(), mine.userId());
+        };
         return LeaderboardEntryResponse.of((int) (ahead + 1), mine);
     }
 }

@@ -2,13 +2,16 @@ package ssafy.a706.backend.game;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import ssafy.a706.backend.game.dto.GameResultEntry;
+import ssafy.a706.backend.game.entity.ChartLeaderboard;
 import ssafy.a706.backend.game.entity.Leaderboard;
 import ssafy.a706.backend.game.entity.LeaderboardWeekly;
 import ssafy.a706.backend.game.model.LeaderboardMode;
+import ssafy.a706.backend.game.repository.ChartLeaderboardRepository;
 import ssafy.a706.backend.game.repository.LeaderboardRepository;
 import ssafy.a706.backend.game.repository.LeaderboardWeeklyRepository;
 
@@ -37,6 +40,7 @@ class GameSettlementServiceTest {
 
     @Mock LeaderboardRepository leaderboardRepository;
     @Mock LeaderboardWeeklyRepository weeklyRepository;
+    @Mock ChartLeaderboardRepository chartRepository;
     @InjectMocks GameSettlementService service;
 
     private GameResultEntry result(String userId, int score) {
@@ -54,7 +58,7 @@ class GameSettlementServiceTest {
     void 회원만_적재하고_게스트는_제외한다() {
         givenNoExistingRows();
 
-        int members = service.settleToDb(SESSION, GAME, MODE, List.of(
+        int members = service.settleToDb(SESSION, GAME, null, MODE, List.of(
                 result("2", 88),
                 result("guest-ab12", 50)));
 
@@ -72,7 +76,7 @@ class GameSettlementServiceTest {
         when(weeklyRepository.findByGameIdAndUserIdAndModeAndWeekStart(anyLong(), anyLong(), any(), any()))
                 .thenReturn(Optional.empty());
 
-        service.settleToDb(SESSION, GAME, MODE, List.of(result("2", 88)));
+        service.settleToDb(SESSION, GAME, null, MODE, List.of(result("2", 88)));
 
         assertThat(existing.getBestScore()).isEqualTo(88);
         assertThat(existing.getPlayCount()).isEqualTo(2);
@@ -86,7 +90,7 @@ class GameSettlementServiceTest {
         when(weeklyRepository.findByGameIdAndUserIdAndModeAndWeekStart(anyLong(), anyLong(), any(), any()))
                 .thenReturn(Optional.empty());
 
-        service.settleToDb(SESSION, GAME, MODE, List.of(result("2", 40)));
+        service.settleToDb(SESSION, GAME, null, MODE, List.of(result("2", 40)));
 
         assertThat(existing.getBestScore()).isEqualTo(90); // 유지
         assertThat(existing.getPlayCount()).isEqualTo(2);
@@ -101,7 +105,7 @@ class GameSettlementServiceTest {
         when(weeklyRepository.findByGameIdAndUserIdAndModeAndWeekStart(anyLong(), anyLong(), any(), any()))
                 .thenReturn(Optional.of(weekly));
 
-        service.settleToDb(SESSION, GAME, MODE, List.of(result("2", 300)));
+        service.settleToDb(SESSION, GAME, null, MODE, List.of(result("2", 300)));
 
         assertThat(weekly.getScoreSum()).isEqualTo(800);
         assertThat(weekly.getPlayCount()).isEqualTo(2);
@@ -120,12 +124,46 @@ class GameSettlementServiceTest {
         when(weeklyRepository.findByGameIdAndUserIdAndModeAndWeekStart(anyLong(), anyLong(), any(), any()))
                 .thenReturn(Optional.of(weekly));
 
-        int members = service.settleToDb(SESSION, GAME, MODE, List.of(result("2", 300)));
+        int members = service.settleToDb(SESSION, GAME, null, MODE, List.of(result("2", 300)));
 
         assertThat(members).isZero();
         assertThat(weekly.getScoreSum()).isEqualTo(300); // 600이 되지 않는다
         assertThat(weekly.getPlayCount()).isEqualTo(1);
         verify(leaderboardRepository, never()).save(any());
         verify(weeklyRepository, never()).save(any());
+    }
+
+    /**
+     * 곡 지정 라운드(-186 이벤트)는 채보별 보드에도 쌓는다 — 본 랭킹과 <b>둘 다</b>.
+     *
+     * <p>중복 저장이 의도다. 이 테이블을 통째로 버려도 leaderboards·leaderboard_weekly가
+     * 멀쩡한 것이 "이벤트를 언제든 접을 수 있다"의 조건이다.</p>
+     */
+    @Test
+    void 곡_지정_라운드는_채보별_보드에도_쌓는다() {
+        givenNoExistingRows();
+        when(chartRepository.findByGameIdAndChartIdAndUserId(GAME, "ssafy-fighting-manual", 2L))
+                .thenReturn(Optional.empty());
+
+        service.settleToDb(SESSION, GAME, "ssafy-fighting-manual", MODE, List.of(result("2", 41_200)));
+
+        ArgumentCaptor<ChartLeaderboard> saved = ArgumentCaptor.forClass(ChartLeaderboard.class);
+        verify(chartRepository).save(saved.capture());
+        assertThat(saved.getValue().getChartId()).isEqualTo("ssafy-fighting-manual");
+        assertThat(saved.getValue().getBestScore()).isEqualTo(41_200);
+        assertThat(saved.getValue().getPlayCount()).isEqualTo(1);
+        // 본 랭킹에도 그대로 들어간다
+        verify(leaderboardRepository).save(any());
+        verify(weeklyRepository).save(any());
+    }
+
+    /** 채보 없는 라운드(랜덤 채보·다른 게임)는 이벤트 테이블을 건드리지 않는다. */
+    @Test
+    void 채보가_없으면_이벤트_보드에는_쓰지_않는다() {
+        givenNoExistingRows();
+
+        service.settleToDb(SESSION, GAME, null, MODE, List.of(result("2", 500)));
+
+        verify(chartRepository, never()).save(any());
     }
 }

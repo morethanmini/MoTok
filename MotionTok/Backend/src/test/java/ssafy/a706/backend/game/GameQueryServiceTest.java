@@ -16,6 +16,7 @@ import ssafy.a706.backend.game.dto.LeaderboardRow;
 import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.model.LeaderboardMode;
 import ssafy.a706.backend.game.model.LeaderboardPeriod;
+import ssafy.a706.backend.game.repository.ChartLeaderboardRepository;
 import ssafy.a706.backend.game.repository.GameRepository;
 import ssafy.a706.backend.game.repository.LeaderboardRepository;
 import ssafy.a706.backend.game.repository.LeaderboardWeeklyRepository;
@@ -55,6 +56,7 @@ class GameQueryServiceTest {
     @Mock GameRepository gameRepository;
     @Mock LeaderboardRepository leaderboardRepository;
     @Mock LeaderboardWeeklyRepository weeklyRepository;
+    @Mock ChartLeaderboardRepository chartRepository;
 
     @InjectMocks GameQueryService service;
 
@@ -77,7 +79,7 @@ class GameQueryServiceTest {
     }
 
     private LeaderboardResponse allTime(int limit, AuthPrincipal principal) {
-        return service.leaderboard(GAME_ID, MODE, LeaderboardPeriod.ALLTIME, null, limit, principal);
+        return service.leaderboard(GAME_ID, MODE, LeaderboardPeriod.ALLTIME, null, null, limit, principal);
     }
 
     @Test
@@ -196,7 +198,7 @@ class GameQueryServiceTest {
 
         // 2026-08-05는 수요일 — 그 주 월요일(08-03)로 스냅된다
         LeaderboardResponse response = service.leaderboard(
-                GAME_ID, MODE, LeaderboardPeriod.WEEKLY, LocalDate.of(2026, 8, 5), 20, null);
+                GAME_ID, MODE, LeaderboardPeriod.WEEKLY, LocalDate.of(2026, 8, 5), null, 20, null);
 
         assertThat(response.period()).isEqualTo(LeaderboardPeriod.WEEKLY);
         assertThat(response.weekStart()).isEqualTo(LocalDate.of(2026, 8, 3));
@@ -215,13 +217,43 @@ class GameQueryServiceTest {
         when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game(GAME_ID, "그림으로 말해요", 3)));
 
         LeaderboardResponse response = service.leaderboard(
-                GAME_ID, LeaderboardMode.SOLO, LeaderboardPeriod.ALLTIME, null, 20,
+                GAME_ID, LeaderboardMode.SOLO, LeaderboardPeriod.ALLTIME, null, null, 20,
                 new MemberPrincipal(10L, "나"));
 
         assertThat(response.entries()).isEmpty();
         assertThat(response.myRank()).isNull();
         // 남은 기록을 읽지도 않는다 — 비어 있는 건 조회 결과가 아니라 규칙이다
         verifyNoInteractions(leaderboardRepository, weeklyRepository);
+    }
+
+    /** 채보 보드(-186 이벤트)는 전용 테이블만 본다 — 본 랭킹이 섞이면 곡별로 나눈 의미가 없다. */
+    @Test
+    void 채보_보드는_채보_전용_테이블에서_읽는다() {
+        givenGameExists();
+        when(chartRepository.findTopRows(eq(GAME_ID), eq("ssafy-fighting-manual"), any(Pageable.class)))
+                .thenReturn(List.of(row(10L, "만점러", 41_200, 12, 0), row(11L, "추격자", 39_800, 30, 5)));
+
+        LeaderboardResponse response = service.leaderboard(
+                GAME_ID, MODE, LeaderboardPeriod.CHART, null, "ssafy-fighting-manual", 20, null);
+
+        assertThat(response.period()).isEqualTo(LeaderboardPeriod.CHART);
+        assertThat(response.entries()).extracting(e -> e.nickname()).containsExactly("만점러", "추격자");
+        assertThat(response.entries().get(0).score()).isEqualTo(41_200);
+        assertThat(response.entries().get(0).playCount()).isEqualTo(12); // 확인용 표시값
+        verifyNoInteractions(leaderboardRepository, weeklyRepository);
+    }
+
+    /** 어느 채보인지 없으면 세울 순위가 없다. 400을 던질 만큼 잘못된 요청은 아니라 빈 표로 답한다. */
+    @Test
+    void 채보_없이_CHART를_요청하면_빈_순위표다() {
+        givenGameExists();
+
+        LeaderboardResponse response = service.leaderboard(
+                GAME_ID, MODE, LeaderboardPeriod.CHART, null, null, 20, new MemberPrincipal(10L, "나"));
+
+        assertThat(response.entries()).isEmpty();
+        assertThat(response.myRank()).isNull();
+        verifyNoInteractions(chartRepository, leaderboardRepository, weeklyRepository);
     }
 
     /**
@@ -253,7 +285,7 @@ class GameQueryServiceTest {
                 .thenReturn(List.of(row(10L, "그림왕", 340, 5, 0)));
 
         LeaderboardResponse response = service.leaderboard(
-                GAME_ID, MODE, LeaderboardPeriod.WEEKLY, LocalDate.of(2026, 8, 5), 20, null);
+                GAME_ID, MODE, LeaderboardPeriod.WEEKLY, LocalDate.of(2026, 8, 5), null, 20, null);
 
         assertThat(response.entries()).hasSize(1);
         assertThat(response.entries().get(0).score()).isEqualTo(340);

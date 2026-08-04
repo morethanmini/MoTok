@@ -4,9 +4,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ssafy.a706.backend.game.dto.GameResultEntry;
+import ssafy.a706.backend.game.entity.ChartLeaderboard;
 import ssafy.a706.backend.game.entity.Leaderboard;
 import ssafy.a706.backend.game.entity.LeaderboardWeekly;
 import ssafy.a706.backend.game.model.LeaderboardMode;
+import ssafy.a706.backend.game.repository.ChartLeaderboardRepository;
 import ssafy.a706.backend.game.repository.LeaderboardRepository;
 import ssafy.a706.backend.game.repository.LeaderboardWeeklyRepository;
 
@@ -31,6 +33,8 @@ public class GameSettlementService {
 
     private final LeaderboardRepository leaderboardRepository;
     private final LeaderboardWeeklyRepository weeklyRepository;
+    /** 이벤트용(-186). 접을 때 이 의존성과 아래 upsert 한 블록만 지우면 된다. */
+    private final ChartLeaderboardRepository chartRepository;
 
     /**
      * 회원 결과를 최고점·주간 누적에 반영하고 적재한 회원 수를 돌려준다.
@@ -41,7 +45,8 @@ public class GameSettlementService {
      * 컬럼을 늘리지 않는다.</p>
      */
     @Transactional
-    public int settleToDb(String sessionId, long gameId, LeaderboardMode mode, List<GameResultEntry> results) {
+    public int settleToDb(String sessionId, long gameId, String chartId, LeaderboardMode mode,
+                          List<GameResultEntry> results) {
         LocalDate weekStart = LeaderboardWeekly.currentWeekStart();
         int members = 0;
         for (GameResultEntry result : results) {
@@ -63,6 +68,16 @@ public class GameSettlementService {
 
             weekly.record(sessionId, result.score());
             weeklyRepository.save(weekly);
+
+            // 곡 지정 라운드면 채보별 보드에도 쌓는다(-186 이벤트). 위 가드 안이라 중복 합산이 없고,
+            // 본 랭킹과 분리돼 있어 이벤트를 접을 때 이 테이블만 버리면 된다.
+            if (chartId != null) {
+                ChartLeaderboard chart = chartRepository
+                        .findByGameIdAndChartIdAndUserId(gameId, chartId, userId)
+                        .orElseGet(() -> new ChartLeaderboard(gameId, chartId, userId));
+                chart.record(result.score());
+                chartRepository.save(chart);
+            }
             members++;
         }
         return members;
