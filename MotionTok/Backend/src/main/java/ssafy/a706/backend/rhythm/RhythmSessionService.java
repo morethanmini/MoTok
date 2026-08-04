@@ -59,8 +59,11 @@ public class RhythmSessionService {
 
     private static final String TOPIC = "/topic/rooms/%s/rhythm";
 
-    /** endAt 경과 후 정산까지의 유예 — 마지막 순간 finish 프레임의 전송 지연 흡수. */
-    private static final long END_GRACE_MILLIS = 1_500;
+    /** endAt 경과 후 정산 확인까지의 유예 — 상수 값과 사연은 {@link RhythmSession}으로 옮겼다(-187). */
+    private static final long END_GRACE_MILLIS = RhythmSession.END_GRACE_MILLIS;
+
+    /** 정산 대기(-187) 중 재확인 간격 — 미제출자의 방 이탈(재실 reap)을 이 주기로 알아챈다. */
+    private static final long SETTLE_RECHECK_MILLIS = 2_500;
 
     /**
      * 점수 상한(치팅 방어) — 모든 슬롯이 동시 노트인 극단 가정.
@@ -127,8 +130,10 @@ public class RhythmSessionService {
         }
 
         long now = System.currentTimeMillis();
+        // 정산 대기(-187) 중에도 활성으로 본다 — 이 사이 새 라운드를 받으면 saveSession이
+        // 이전 라운드 점수를 지워 버려, 기다리던 정산이 빈손으로 끝난다.
         boolean activeExists = sessionRepository.findSession(roomId)
-                .map(s -> s.isPlaying(now, END_GRACE_MILLIS))
+                .map(s -> s.isActiveOrSettling(now))
                 .orElse(false);
         if (activeExists) {
             throw RhythmException.alreadyActive();
@@ -168,7 +173,8 @@ public class RhythmSessionService {
         liveRoomService.changeStatus(roomId, "PLAYING");
 
         broadcast(roomId, RhythmEventResponse.start(sessionId, seed, difficulty, mode, song, now, startAt, endAt));
-        scheduleEnd(roomId, sessionId, endAt + END_GRACE_MILLIS);
+        scheduleSettleCheck(roomId, sessionId, endAt + END_GRACE_MILLIS,
+                endAt + END_GRACE_MILLIS + RhythmSession.SETTLE_WAIT_MILLIS);
         log.info("rhythm session started: room={} session={} mode={} difficulty={} song={} seed={}",
                 roomId, sessionId, mode, difficulty, song, seed);
     }
@@ -226,7 +232,8 @@ public class RhythmSessionService {
             throw RhythmException.notHost();
         }
         RhythmSession session = sessionRepository.findSession(roomId).orElse(null);
-        if (session == null || !session.isPlaying(System.currentTimeMillis(), END_GRACE_MILLIS)) {
+        // 정산 대기(-187) 중에도 강제종료가 통해야 방장이 대기를 끊을 수 있다.
+        if (session == null || !session.isActiveOrSettling(System.currentTimeMillis())) {
             return; // 이미 정산됐거나 세션 없음 — 멱등(시작 화면에서 눌러도 안전)
         }
         // 정산 타이머·전원 완주 조기 정산과 경합해도 가드를 선점한 한쪽만 실행된다.
@@ -314,11 +321,49 @@ public class RhythmSessionService {
         return out;
     }
 
-    private void scheduleEnd(String roomId, String sessionId, long atMillis) {
+    /**
+     * 정산 시각 도달 — 전원 제출이면 즉시 정산, 미제출자가 있으면 재접속 유예(-187) 동안 기다린다.
+     *
+     * <p>프로젝트 내 선례는 시작측 준비 게이트다(GameSessionService: GAME_PREPARE →
+     * GAME_READY_PROGRESS 진행 브로드캐스트 → 15초 타임아웃 후 준비된 인원만으로 시작).
+     * 같은 모양을 정산측에 둔다: 대기 진입을 브로드캐스트하고, 재확인을 돌리다,
+     * 상한(hardDeadline)에서 미제출자를 0점 미완주로 접는다 — 무한 대기는 없다.</p>
+     *
+     * <p>기다리는 대상은 "라운드 막판에 잠깐 끊긴 참가자"다. FE가 finish를 재전송하므로
+     * 재접속만 되면 유예 안에 제출이 도착하고, 유예(10s)를 넘겨 끊긴 참가자는 재실
+     * 추적기가 방에서 내보내므로 다음 재확인에서 대기가 저절로 풀린다.</p>
+     */
+    void settleOrWait(String roomId, String sessionId, long hardDeadline) {
+        RhythmSession session = sessionRepository.findSession(roomId).orElse(null);
+        if (session == null || !session.sessionId().equals(sessionId)
+                || !RhythmSession.STATUS_PLAYING.equals(session.status())) {
+            return; // 이미 정산·강제종료됐거나 새 세션으로 대체된 stale 예약
+        }
+        Map<String, RhythmPlayerScore> scores = sessionRepository.findScores(roomId);
+        List<String> waitingNames = new ArrayList<>();
+        for (LiveRoomMemberValue m : liveRoomRepository.findMembers(roomId)) {
+            if (!scores.containsKey(m.userId())) {
+                waitingNames.add(m.displayName());
+            }
+        }
+        long now = System.currentTimeMillis();
+        if (waitingNames.isEmpty() || now >= hardDeadline) {
+            endRound(roomId, sessionId);
+            return;
+        }
+        // 재확인마다 최신 명단을 다시 싣는다 — FE가 누구를 기다리는지 그대로 보여 준다.
+        broadcast(roomId, RhythmEventResponse.waiting(sessionId, waitingNames, hardDeadline));
+        scheduleSettleCheck(roomId, sessionId,
+                Math.min(now + SETTLE_RECHECK_MILLIS, hardDeadline), hardDeadline);
+        log.info("rhythm settlement waiting: room={} session={} missing={}",
+                roomId, sessionId, waitingNames.size());
+    }
+
+    private void scheduleSettleCheck(String roomId, String sessionId, long atMillis, long hardDeadline) {
         cancelScheduledEnd(roomId);
         ScheduledFuture<?> future = rhythmTaskScheduler.schedule(() -> {
             try {
-                endRound(roomId, sessionId);
+                settleOrWait(roomId, sessionId, hardDeadline);
             } catch (Exception e) {
                 log.error("rhythm settlement failed: room={} session={}", roomId, sessionId, e);
             }
@@ -340,8 +385,10 @@ public class RhythmSessionService {
     }
 
     private RhythmSession requireActiveSession(String roomId) {
+        // 정산 대기(-187)까지 수리 창이다 — 창만 열어 두고 제출을 거절하면 기다린 의미가 없다.
+        // 정산되면 status가 ENDED로 바뀌어 그 뒤 제출은 여전히 거절된다.
         return sessionRepository.findSession(roomId)
-                .filter(s -> s.isPlaying(System.currentTimeMillis(), END_GRACE_MILLIS))
+                .filter(s -> s.isActiveOrSettling(System.currentTimeMillis()))
                 .orElseThrow(RhythmException::sessionNotFound);
     }
 

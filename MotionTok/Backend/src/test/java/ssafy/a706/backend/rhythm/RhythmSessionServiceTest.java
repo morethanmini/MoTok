@@ -304,6 +304,102 @@ class RhythmSessionServiceTest {
         verify(eventPublisher, never()).publishEvent(any(GameSettledEvent.class));
     }
 
+    // ── 정산 대기(재접속 유예, -187) ──────────────────────
+
+    @Test
+    void 전원_제출이면_대기_없이_즉시_정산한다() {
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(playingSession()));
+        when(sessionRepository.tryAcquireEndGuard(ROOM_ID, "S1")).thenReturn(true);
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue(host.userId(), "호스트", false, 0L)));
+        when(sessionRepository.findScores(ROOM_ID)).thenReturn(Map.of(
+                host.userId(),
+                new RhythmPlayerScore(host.userId(), "호스트", 8_000, 30, 60, 10, 5, 1L)));
+
+        service.settleOrWait(ROOM_ID, "S1", System.currentTimeMillis() + 10_000);
+
+        assertThat(lastEvent().type()).isEqualTo("RHYTHM_END");
+        verify(sessionRepository).markEnded(ROOM_ID);
+    }
+
+    @Test
+    void 미제출자가_있으면_정산_대신_대기를_알리고_재확인을_예약한다() {
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(playingSession()));
+        when(rhythmTaskScheduler.schedule(any(Runnable.class), any(java.time.Instant.class)))
+                .thenReturn(mock(ScheduledFuture.class));
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue(host.userId(), "호스트", false, 0L),
+                new LiveRoomMemberValue(guest.userId(), "게스트", false, 0L)));
+        // 호스트만 제출 — 게스트는 잠깐 끊겨 미제출
+        when(sessionRepository.findScores(ROOM_ID)).thenReturn(Map.of(
+                host.userId(),
+                new RhythmPlayerScore(host.userId(), "호스트", 8_000, 30, 60, 10, 5, 1L)));
+        long hardDeadline = System.currentTimeMillis() + 10_000;
+
+        service.settleOrWait(ROOM_ID, "S1", hardDeadline);
+
+        RhythmEventResponse event = lastEvent();
+        assertThat(event.type()).isEqualTo("RHYTHM_WAITING");
+        assertThat(event.waitingNicknames()).containsExactly("게스트");
+        assertThat(event.waitUntil()).isEqualTo(hardDeadline);
+        verify(rhythmTaskScheduler).schedule(any(Runnable.class), any(java.time.Instant.class));
+        verify(sessionRepository, never()).markEnded(ROOM_ID);
+        verify(eventPublisher, never()).publishEvent(any(GameSettledEvent.class));
+    }
+
+    @Test
+    void 대기_상한에_도달하면_미제출자를_남긴_채_정산한다() {
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(playingSession()));
+        when(sessionRepository.tryAcquireEndGuard(ROOM_ID, "S1")).thenReturn(true);
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue(host.userId(), "호스트", false, 0L),
+                new LiveRoomMemberValue(guest.userId(), "게스트", false, 0L)));
+        when(sessionRepository.findScores(ROOM_ID)).thenReturn(Map.of(
+                host.userId(),
+                new RhythmPlayerScore(host.userId(), "호스트", 8_000, 30, 60, 10, 5, 1L)));
+
+        // 상한이 이미 지났다 — 더 기다리지 않고 0점 미완주 정산으로 접어야 한다
+        service.settleOrWait(ROOM_ID, "S1", System.currentTimeMillis() - 1);
+
+        RhythmEventResponse event = lastEvent();
+        assertThat(event.type()).isEqualTo("RHYTHM_END");
+        assertThat(event.results()).hasSize(2);
+        assertThat(event.results().get(1).finished()).isFalse();
+    }
+
+    @Test
+    void 이미_정산된_세션이면_대기_확인은_아무것도_하지_않는다() {
+        long now = System.currentTimeMillis();
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(new RhythmSession(
+                "S1", 42L, "HARD", "catch", null, now - 61_000, now - 1_000,
+                RhythmSession.STATUS_ENDED)));
+
+        service.settleOrWait(ROOM_ID, "S1", now + 10_000);
+
+        verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
+        verify(sessionRepository, never()).markEnded(ROOM_ID);
+    }
+
+    /** 잠깐 끊겼다 돌아온 참가자의 늦은 제출 — 대기 창 안이면 수리된다. */
+    @Test
+    void 정산_대기_창에서는_늦은_제출도_수리된다() {
+        when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
+        when(membershipReader.isMember(eq(ROOM_ID), anyString())).thenReturn(true);
+        long now = System.currentTimeMillis();
+        // endAt이 5초 전 — 기존 유예(1.5s)로는 거절, 대기 창(1.5s+10s)으로는 수리
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(new RhythmSession(
+                "S1", 42L, "HARD", "catch", null, now - 65_000, now - 5_000,
+                RhythmSession.STATUS_PLAYING)));
+        when(sessionRepository.saveScoreIfAbsent(eq(ROOM_ID), any())).thenReturn(true);
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue(host.userId(), "호스트", false, 0L),
+                new LiveRoomMemberValue(guest.userId(), "게스트", false, 0L)));
+
+        service.finish(ROOM_ID, new RhythmRequests.Finish(500, 20, 10, 5, 2), guest);
+
+        assertThat(lastEvent().type()).isEqualTo("PLAYER_FINISHED");
+    }
+
     @Test
     void 포인트는_실력과_순위를_비슷한_무게로_준다() {
         // HARD 전퍼펙트(~19,000) 8인 1등 — 실력 48 대 순위 42
