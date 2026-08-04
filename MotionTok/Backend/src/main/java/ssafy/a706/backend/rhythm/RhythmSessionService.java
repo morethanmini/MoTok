@@ -27,6 +27,7 @@ import ssafy.a706.backend.signal.RoomMembershipReader;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -277,17 +278,31 @@ public class RhythmSessionService {
                 roomId, sessionId, members.size(), scores.size());
     }
 
-    /** 점수 내림차순(동점은 먼저 제출한 쪽 우선). 방에 남은 전원 포함 — 미제출자는 0점. */
+    /**
+     * 점수 내림차순(동점은 먼저 제출한 쪽 우선). 명단은 방에 남은 전원 ∪ 점수 제출자(-187) —
+     * 잔류 미제출자는 0점 미완주로 포함한다.
+     *
+     * <p>제출자 합집합인 이유: 정산 대기 창이 생기면서 "제출까지 해놓고 그 사이 재실 유예를
+     * 넘겨 방에서 퇴장된" 참가자가 생길 수 있다. 정산 시점 멤버만 보면 그 사람의 라운드가
+     * 결과·포인트에서 통째로 증발한다 — 게임을 다 하고 나간 것이니 정산에 참여해야 한다.</p>
+     */
     private List<RhythmResultEntry> rank(List<LiveRoomMemberValue> members,
                                          Map<String, RhythmPlayerScore> scores) {
         record Row(String userId, String nickname, RhythmPlayerScore score, long finishedAt) {}
         List<Row> rows = new ArrayList<>();
+        Set<String> listed = new HashSet<>();
         for (LiveRoomMemberValue m : members) {
+            listed.add(m.userId());
             RhythmPlayerScore s = scores.get(m.userId());
             rows.add(s != null
                     ? new Row(m.userId(), s.nickname(), s, s.finishedAt())
                     : new Row(m.userId(), m.displayName(), null, Long.MAX_VALUE));
         }
+        scores.forEach((userId, s) -> {
+            if (!listed.contains(userId)) {
+                rows.add(new Row(userId, s.nickname(), s, s.finishedAt()));
+            }
+        });
         rows.sort(Comparator.comparingInt((Row r) -> r.score() == null ? 0 : r.score().score())
                 .reversed()
                 .thenComparingLong(Row::finishedAt));
