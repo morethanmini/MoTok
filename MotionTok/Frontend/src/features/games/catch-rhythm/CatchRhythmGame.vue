@@ -112,6 +112,15 @@ const liveRows = computed<RhythmLiveRow[]>(() =>
     .slice(0, 4),
 )
 
+/** 정산 대기 문구(-187) — 서버가 누구의 재접속을 기다리는지 그대로 보여 준다 */
+const waitingText = computed(() => {
+  const w = session.waiting.value
+  if (!w || w.nicknames.length === 0) return '다른 참가자를 기다리는 중…'
+  const names = w.nicknames.slice(0, 2).join(', ')
+  const more = w.nicknames.length > 2 ? ` 외 ${w.nicknames.length - 2}명` : ''
+  return `${names}${more} 님의 연결이 잠시 불안정해요 — 최대 10초만 더 기다릴게요`
+})
+
 async function start() {
   errorMsg.value = ''
   submitted.value = false
@@ -294,8 +303,10 @@ watch(
       @error="onError"
     >
       <template #result-actions>
+        <!-- 정산 대기(-187): 스피너로 "멈춘 게 아님"을 보인다. 형식은 기존 waiting 문단 그대로 -->
         <p v-if="isMultiplayer && !session.results.value" class="waiting">
-          다른 참가자를 기다리는 중…
+          <span class="spinner" aria-hidden="true"></span>
+          {{ waitingText }}
         </p>
         <div v-else-if="session.results.value" class="ranking">
           <p
@@ -703,8 +714,25 @@ watch(
   color: #9b8f88;
 }
 .waiting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
   font-size: 0.85rem;
   color: #7a6a60;
+}
+/* 정산 대기 중임을 보여 주는 회전자 — 화면이 멈춘 게 아니라 기다리는 중이다 */
+.waiting .spinner {
+  width: 0.85rem;
+  height: 0.85rem;
+  flex: none;
+  border: 2px solid #e6d5c9;
+  border-top-color: #a97c66;
+  border-radius: 50%;
+  animation: rhythm-wait-spin 0.8s linear infinite;
+}
+@keyframes rhythm-wait-spin {
+  to { transform: rotate(360deg); }
 }
 .live {
   position: absolute;
