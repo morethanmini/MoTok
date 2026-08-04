@@ -22,8 +22,10 @@ import EffectIntensitySlider from '@/features/decor/EffectIntensitySlider.vue'
 import {
   DEFAULT_INTENSITY,
   EFFECT_LABEL,
+  backgroundKindOf,
   effectKindOf,
   hasGlowLayer,
+  needsFaceAnchor,
   videoFilter,
 } from '@/features/decor/cameraEffect'
 import {
@@ -91,14 +93,26 @@ function fitScaleToLimit() {
 const effectKind = computed(() =>
   props.item.category === 'EFFECT' ? effectKindOf(props.item.imageUrl) : null,
 )
+/** 이 아이템이 배경이라면 그 종류. 효과와 나눠 두는 이유는 cameraEffect의 BackgroundKind 주석. */
+const backgroundKind = computed(() =>
+  props.item.category === 'BACKGROUND' ? backgroundKindOf(props.item.imageUrl) : null,
+)
 const isSticker = computed(() => props.item.category === 'STICKER' && !!props.item.imageUrl)
 /** 가면은 좌표를 조절하지 않는다 — 얼굴이 자리와 크기를 정한다. */
 const isMask = computed(() => props.item.category === 'MASK' && !!props.item.imageUrl)
 
+/** 얼굴을 찾아야 미리보기가 성립하는 아이템 — 가면과 어두운 배경. */
+const needsFace = computed(
+  () => isMask.value || (backgroundKind.value ? needsFaceAnchor(backgroundKind.value) : false),
+)
+
+/** 세기 슬라이더가 붙는 아이템 — 효과든 배경이든 세기를 갖는다. 한 창에 하나만 뜬다. */
+const adjustableKind = computed(() => effectKind.value ?? backgroundKind.value)
+
 // 사기 전에도 얼굴에 얹어 봐야 한다 — 어떻게 씌워지는지가 이 아이템의 전부다.
 const face = useFaceAnchor(
   () => videoEl.value,
-  () => camera.isOn.value && isMask.value,
+  () => camera.isOn.value && needsFace.value,
 )
 
 // ── 이 창에서만 사는 조절값 ──────────────────────────────
@@ -132,8 +146,10 @@ function onScale(_itemId: number, scale: number) {
   placement.value = { ...placement.value, scale: clampScale(scale) }
 }
 
-/** 그려서 보여 줄 수 있는 아이템인지 — 배경은 아직 렌더러가 없다. */
-const previewable = computed(() => isSticker.value || isMask.value || !!effectKind.value)
+/** 그려서 보여 줄 수 있는 아이템인지 — 렌더러가 없는 분류는 미리보기를 열지 않는다. */
+const previewable = computed(
+  () => isSticker.value || isMask.value || !!effectKind.value || !!backgroundKind.value,
+)
 </script>
 
 <template>
@@ -159,7 +175,17 @@ const previewable = computed(() => isSticker.value || isMask.value || !!effectKi
         />
         <CameraEffectLayer
           v-if="camera.isOn.value && effectKind && hasGlowLayer(effectKind)"
+          :kind="effectKind"
           :intensity="intensity"
+        />
+        <CameraEffectLayer
+          v-if="camera.isOn.value && backgroundKind"
+          :kind="backgroundKind"
+          :intensity="intensity"
+          :face="face.anchor.value"
+          mirrored
+          fit="cover"
+          :frame-aspect="aspect"
         />
         <StickerOverlay
           v-if="camera.isOn.value && sprites.length"
@@ -176,8 +202,8 @@ const previewable = computed(() => isSticker.value || isMask.value || !!effectKi
           @scale="onScale"
         />
 
-        <!-- 가면은 얼굴을 찾아야 보인다 — 아무것도 안 뜨면 아이템이 고장 난 줄 안다 -->
-        <p v-if="camera.isOn.value && isMask && !face.anchor.value" class="stage-hint">
+        <!-- 가면·어두운 배경은 얼굴을 찾아야 보인다 — 아무것도 안 뜨면 아이템이 고장 난 줄 안다 -->
+        <p v-if="camera.isOn.value && needsFace && !face.anchor.value" class="stage-hint">
           얼굴이 보이게 화면 가운데로 와 주세요
         </p>
 
@@ -187,12 +213,12 @@ const previewable = computed(() => isSticker.value || isMask.value || !!effectKi
         </div>
       </div>
 
-      <!-- 조절: 효과는 세기, 스티커는 화면에서 끌어 옮기고 핸들로 크기를 바꾼다 -->
+      <!-- 조절: 효과·배경은 세기, 스티커는 화면에서 끌어 옮기고 핸들로 크기를 바꾼다 -->
       <EffectIntensitySlider
-        v-if="effectKind"
+        v-if="adjustableKind"
         class="preview-slider"
         :intensity="intensity"
-        :label="`${EFFECT_LABEL[effectKind]} 세기`"
+        :label="`${EFFECT_LABEL[adjustableKind]} 세기`"
         @change="intensity = $event"
       />
       <p v-else-if="isSticker" class="hint">끌어서 옮기고, 모서리 손잡이로 크기를 바꿔 보세요.</p>

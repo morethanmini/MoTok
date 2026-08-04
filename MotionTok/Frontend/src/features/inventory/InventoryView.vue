@@ -28,10 +28,10 @@ const CATEGORY_LABEL: Record<ItemCategory, string> = { MASK: '가면', EFFECT: '
 // ── 데이터 ────────────────────────────────────────────────
 // 보유 목록·배치·장착 토글은 공용 컴포저블이 맡고, 이 화면은 그 위에 편집(끌기·크기·저장)을 얹는다.
 const {
-  inventory, placements, sprites, equippedCount, hasFaceItem,
+  inventory, placements, sprites, equippedCount, needsFaceTracking,
   loading, saving, dirty, error,
   load, setEquipped, canEquip, move, setScale, save,
-  cameraEffect, setIntensity,
+  cameraEffect, cameraBackground, setIntensity,
 } = useDecoration()
 /**
  * 목록을 못 불러온 상태만 따로 붙든다 — 장착 실패 같은 개별 오류까지 큰 배너로 띄우면
@@ -93,11 +93,11 @@ async function startCamera() {
 }
 onBeforeUnmount(() => camera.stop())
 
-// 가면(FACE 앵커)은 저장된 좌표가 아니라 얼굴을 따라간다.
-// 가면을 장착했고 카메라가 켜져 있을 때만 검출기를 돌린다 — 그 외에는 GPU를 물지 않는다.
+// 가면(FACE 앵커)과 어두운 배경 효과는 저장된 좌표가 아니라 얼굴을 따라간다.
+// 그런 아이템을 장착했고 카메라가 켜져 있을 때만 검출기를 돌린다 — 그 외에는 GPU를 물지 않는다.
 const face = useFaceAnchor(
   () => videoEl.value,
-  () => camera.isOn.value && hasFaceItem.value,
+  () => camera.isOn.value && needsFaceTracking.value,
 )
 
 // ── 편집 ────────────────────────────────────────────────
@@ -176,7 +176,17 @@ async function saveDecoration() {
             <!-- 슬라이더로 세기를 맞추려면 결과가 여기 보여야 한다 -->
             <CameraEffectLayer
               v-if="camera.isOn.value && cameraEffect && hasGlowLayer(cameraEffect.kind)"
+              :kind="cameraEffect.kind"
               :intensity="cameraEffect.intensity"
+            />
+            <!-- 배경은 효과 위에. .cam 박스가 영상 비율로 맞춰져 있어(aspectRatio) 박스가 곧
+                 프레임이다 — 그래서 아래 StickerOverlay처럼 frame-aspect를 넘기지 않는다. -->
+            <CameraEffectLayer
+              v-if="camera.isOn.value && cameraBackground"
+              :kind="cameraBackground.kind"
+              :intensity="cameraBackground.intensity"
+              :face="face.anchor.value"
+              mirrored
             />
             <div v-if="!camera.isOn.value" class="cam-placeholder">
               <img src="/assets/intro/person.png" alt="" />
@@ -221,6 +231,14 @@ async function saveDecoration() {
             :intensity="cameraEffect.intensity"
             :label="`${EFFECT_LABEL[cameraEffect.kind]} 세기`"
             @change="setIntensity(cameraEffect.itemId, $event)"
+          />
+          <!-- 배경도 세기를 갖는다 — 효과와 함께 걸릴 수 있어 슬라이더가 둘 다 뜬다 -->
+          <EffectIntensitySlider
+            v-if="cameraBackground"
+            class="fx-row"
+            :intensity="cameraBackground.intensity"
+            :label="`${EFFECT_LABEL[cameraBackground.kind]} 세기`"
+            @change="setIntensity(cameraBackground.itemId, $event)"
           />
         </div>
       </PixelCard>

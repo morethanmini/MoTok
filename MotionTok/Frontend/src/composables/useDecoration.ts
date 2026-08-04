@@ -15,8 +15,11 @@ import {
 } from '@/features/decor/sticker'
 import {
   DEFAULT_INTENSITY,
+  backgroundKindOf,
   clampIntensity,
   effectKindOf,
+  needsFaceAnchor,
+  type CameraBackground,
   type CameraEffect,
 } from '@/features/decor/cameraEffect'
 
@@ -43,10 +46,11 @@ export const EQUIP_LIMIT: Record<ItemCategory, number> = {
  * 붙는 자리도 크기도 없는 물건에 의미 없는 좌표를 실어 보내지 않는다.
  */
 function toRequestBody(p: DecorPlacement): Required<DecorPlacement> {
-  if (p.anchor === 'FRAME') {
+  // 효과·배경은 붙는 자리도 크기도 없고 세기만 갖는다 — 저장 형태가 같아 함께 다룬다.
+  if (p.anchor === 'FRAME' || p.anchor === 'BACKGROUND') {
     return {
       itemId: p.itemId,
-      anchor: 'FRAME',
+      anchor: p.anchor,
       x: 0,
       y: 0,
       scale: 0,
@@ -83,7 +87,7 @@ export function useDecoration() {
   const sprites = computed<StickerSprite[]>(() => {
     const list = placements.value.flatMap((p) => {
       // HAND는 아직 추적기가 없어 그리지 않는다 — 엉뚱한 자리에 고정되느니 빼는 게 낫다.
-      // FRAME(효과)은 그림이 아니라 CSS로 걸린다 — 여기 넣으면 아이콘이 영상에 붙어 버린다.
+      // FRAME(효과)·BACKGROUND(배경)은 그림이 아니라 CSS로 걸린다 — 여기 넣으면 아이콘이 영상에 붙어 버린다.
       // FACE(가면)는 그림으로 얹되 좌표를 저장값이 아니라 매 프레임 얼굴에서 잡는다(useFaceAnchor).
       if (p.anchor !== 'FIXED' && p.anchor !== 'FACE') return []
       const imageUrl = imageOf.value.get(p.itemId)
@@ -102,13 +106,14 @@ export function useDecoration() {
   const faceSprite = computed(() => sprites.value.find((s) => s.anchor === 'FACE') ?? null)
 
   /**
-   * 얼굴 추적이 필요한 아이템을 장착 중인지 — 화면이 얼굴 검출기를 켤지 정하는 데 쓴다.
-   * 가면을 안 쓴 사람에게까지 모델을 물리고 GPU를 돌릴 이유가 없다.
+   * 얼굴에 <b>그림을 얹는</b> 아이템(가면)을 장착 중인지.
+   * 검출기를 켤지 정하는 데는 이 값이 아니라 {@link needsFaceTracking}을 쓴다 — 얼굴을 쓰는
+   * 아이템이 가면뿐이 아니다.
    */
   const hasFaceItem = computed(() => faceSprite.value !== null)
 
   /**
-   * 걸려 있는 프레임 효과(뽀샤시). 한도가 1개라 하나만 나온다.
+   * 걸려 있는 프레임 효과(뽀샤시·흑백·어두운 배경). 한도가 1개라 하나만 나온다.
    * 스티커와 달리 이미지가 필요 없다 — 아이템 그림은 목록 아이콘일 뿐이다.
    */
   const cameraEffect = computed<CameraEffect | null>(() => {
@@ -119,6 +124,33 @@ export function useDecoration() {
     if (!kind) return null
     return { itemId: p.itemId, kind, intensity: clampIntensity(p.intensity ?? DEFAULT_INTENSITY) }
   })
+
+  /**
+   * 걸려 있는 배경. 한도가 1개라 하나만 나온다.
+   *
+   * {@link cameraEffect}와 <b>따로</b> 둔다 — 분류 한도가 각각 1이라 뽀샤시와 어두운 배경을
+   * 함께 걸 수 있고, 하나로 합치면 둘 중 하나만 그려진다. 서버도 같은 이유로 앵커를 갈라 둔다.
+   */
+  const cameraBackground = computed<CameraBackground | null>(() => {
+    const p = placements.value.find((it) => it.anchor === 'BACKGROUND')
+    if (!p) return null
+    const kind = backgroundKindOf(imageOf.value.get(p.itemId))
+    if (!kind) return null
+    return { itemId: p.itemId, kind, intensity: clampIntensity(p.intensity ?? DEFAULT_INTENSITY) }
+  })
+
+  /**
+   * 얼굴 검출기를 켜야 하는지 — <b>화면은 이 값을 봐야 한다</b>({@link hasFaceItem}이 아니라).
+   *
+   * 가면만 얼굴을 쓰는 게 아니다. 어두운 배경도 매 프레임 앵커가 있어야 구멍을 뚫는데,
+   * 가면 여부만 보면 배경만 장착한 사람은 검출기가 안 돌아 <b>아무 일도 일어나지 않는다</b> —
+   * 게다가 앵커를 안 보내므로 남의 화면에서도 안 보인다(decorSync는 이 앵커를 흘려보낸다).
+   */
+  const needsFaceTracking = computed(
+    () =>
+      hasFaceItem.value ||
+      (cameraBackground.value ? needsFaceAnchor(cameraBackground.value.kind) : false),
+  )
 
   /** 인벤토리·배치를 함께 읽는다. 실패해도 예외를 던지지 않는다(방 입장 흐름을 막지 않도록). */
   async function load(): Promise<void> {
@@ -160,9 +192,11 @@ export function useDecoration() {
           ...placements.value,
           category === 'EFFECT'
             ? { itemId, anchor: 'FRAME', x: 0, y: 0, scale: 0, intensity: DEFAULT_INTENSITY }
-            : category === 'MASK'
-              ? { itemId, anchor: 'FACE', x: 0, y: 0, scale: 0, intensity: 0 }
-              : { itemId, anchor: 'FIXED', ...DEFAULT_PLACEMENT, intensity: 0 },
+            : category === 'BACKGROUND'
+              ? { itemId, anchor: 'BACKGROUND', x: 0, y: 0, scale: 0, intensity: DEFAULT_INTENSITY }
+              : category === 'MASK'
+                ? { itemId, anchor: 'FACE', x: 0, y: 0, scale: 0, intensity: 0 }
+                : { itemId, anchor: 'FIXED', ...DEFAULT_PLACEMENT, intensity: 0 },
         ]
       }
     } else {
@@ -233,7 +267,8 @@ export function useDecoration() {
   }
 
   return {
-    inventory, placements, sprites, cameraEffect, equippedCount, faceSprite, hasFaceItem,
+    inventory, placements, sprites, cameraEffect, cameraBackground, equippedCount,
+    faceSprite, hasFaceItem, needsFaceTracking,
     loading, saving, dirty, error,
     load, setEquipped, canEquip, move, setScale, setIntensity, save,
   }

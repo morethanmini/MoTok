@@ -46,12 +46,20 @@ class DecorAnchorByCategoryTest {
     private static final Long MASK_ID = 1L;
     private static final Long STICKER_ID = 2L;
     private static final Long EFFECT_ID = 3L;
+    private static final Long BACKGROUND_ID = 4L;
 
     @Mock private UserItemRepository userItemRepository;
     @Mock private DecorSettingRepository decorSettingRepository;
 
     private DecorService decorService;
-    private String storedConfig;
+    /**
+     * 저장된 엔티티 <b>한 개</b>를 들고 있는다 — 새로 만들어 돌려주면 안 된다.
+     *
+     * DecorService.writeConfig 는 이미 있는 설정에는 save 를 부르지 않고 updateConfig 로만
+     * 바꾼다(JPA 더티 체킹). findById 가 매번 새 객체를 주면 그 변경이 버려져서, 한 테스트에서
+     * 장착을 <b>두 번</b> 하면 두 번째가 사라진다.
+     */
+    private DecorSetting stored;
 
     @BeforeEach
     void setUp() {
@@ -59,17 +67,17 @@ class DecorAnchorByCategoryTest {
         // 실제로 저장되는 값을 볼 수 있다(@InjectMocks로는 목이 아닌 것을 넣지 못한다).
         ObjectMapper objectMapper = JsonMapper.builder().build();
         decorService = new DecorService(userItemRepository, decorSettingRepository, objectMapper);
-        storedConfig = null;
+        stored = null;
         when(userItemRepository.findOwnedItems(USER_ID)).thenReturn(List.of(
                 row(MASK_ID, "고양이 가면", ItemCategory.MASK),
                 row(STICKER_ID, "하트 스티커", ItemCategory.STICKER),
-                row(EFFECT_ID, "뽀샤시 효과", ItemCategory.EFFECT)));
+                row(EFFECT_ID, "뽀샤시 효과", ItemCategory.EFFECT),
+                row(BACKGROUND_ID, "어두운 배경", ItemCategory.BACKGROUND)));
         when(decorSettingRepository.findById(USER_ID))
-                .thenAnswer(i -> Optional.ofNullable(storedConfig).map(c -> new DecorSetting(USER_ID, c)));
+                .thenAnswer(i -> Optional.ofNullable(stored));
         when(decorSettingRepository.save(any(DecorSetting.class))).thenAnswer(i -> {
-            DecorSetting setting = i.getArgument(0);
-            storedConfig = setting.getConfig();
-            return setting;
+            stored = i.getArgument(0);
+            return stored;
         });
     }
 
@@ -114,6 +122,44 @@ class DecorAnchorByCategoryTest {
 
         assertThat(effect.anchor()).isEqualTo(DecorAnchor.FRAME);
         assertThat(effect.intensity()).isPositive();
+    }
+
+    @Test
+    @DisplayName("배경은 BACKGROUND에 기본 세기 — FRAME(효과)과 갈라 둬야 둘을 함께 걸 수 있다")
+    void backgroundGetsOwnAnchor() {
+        DecorConfigPayload.Placement background = equipAndRead(BACKGROUND_ID);
+
+        assertThat(background.anchor()).isEqualTo(DecorAnchor.BACKGROUND);
+        assertThat(background.intensity()).isPositive();
+        // 붙는 자리도 크기도 없다 — 효과와 같은 규칙이다.
+        assertThat(background.x()).isZero();
+        assertThat(background.scale()).isZero();
+    }
+
+    @Test
+    @DisplayName("효과와 배경은 각각 1칸이라 함께 장착된다 — 앵커가 갈려 둘 다 남는다")
+    void effectAndBackgroundCoexist() {
+        decorService.setEquipped(USER_ID, EFFECT_ID, true);
+        decorService.setEquipped(USER_ID, BACKGROUND_ID, true);
+
+        assertThat(decorService.getDecoration(USER_ID).config().safeItems())
+                .extracting(DecorConfigPayload.Placement::itemId, DecorConfigPayload.Placement::anchor)
+                .contains(
+                        Tuple.tuple(EFFECT_ID, DecorAnchor.FRAME),
+                        Tuple.tuple(BACKGROUND_ID, DecorAnchor.BACKGROUND));
+    }
+
+    @Test
+    @DisplayName("저장할 때 배경을 FRAME으로 보내와도 BACKGROUND로 되돌린다 — 세기는 살린다")
+    void saveOverridesClientAnchorForBackground() {
+        DecorationResponse saved = decorService.saveDecoration(USER_ID, new DecorConfigPayload(1, List.of(
+                new DecorConfigPayload.Placement(BACKGROUND_ID, DecorAnchor.FRAME, 0.5, 0.5, 0.3, 0.7))));
+
+        DecorConfigPayload.Placement background = saved.config().safeItems().get(0);
+        assertThat(background.anchor()).isEqualTo(DecorAnchor.BACKGROUND);
+        assertThat(background.intensity()).isEqualTo(0.7);
+        assertThat(background.x()).isZero();
+        assertThat(background.scale()).isZero();
     }
 
     @Test
