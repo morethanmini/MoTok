@@ -1530,7 +1530,9 @@ function requestCloseGame() {
     guestWrapUp.value = true
     return
   }
-  if (gameResults.value) {
+  // 리듬은 전용 채널이라 gameResults를 안 채운다 — 정산 신호는 rhythmEnded가 같은 역할.
+  // 이걸 안 보면 정산이 끝난 결과 화면의 "대기실로"에도 종료 확인이 끼어든다(-187).
+  if (gameResults.value || (activeGame.value?.id === 'rhythm' && rhythmEnded.value)) {
     closeGame()
     return
   }
