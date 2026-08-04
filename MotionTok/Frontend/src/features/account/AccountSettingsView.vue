@@ -3,6 +3,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { usersApi, authApi, ApiError, forceRefreshAccessToken, type WithdrawRequest } from '@/api'
+import { reconnectGlobalStomp } from '@/composables/useGlobalStomp'
 import { RouteName } from '@/router/routeNames'
 import { useSessionStore } from '@/stores/session'
 import {
@@ -119,6 +120,8 @@ async function saveNickname() {
     // 액세스 토큰의 name 클레임에는 옛 닉네임이 남는다 — 방 참가·채팅 표시명은
     // 서버가 이 클레임에서 읽으므로, 새 닉네임이 실린 토큰으로 회전시킨다.
     await forceRefreshAccessToken()
+    // 열린 소켓의 프린시펄은 CONNECT 때 이름으로 고정 — 다시 붙여야 채팅에 새 닉네임이 실린다.
+    reconnectGlobalStomp()
   } catch {
     // 백엔드 인증 세션이 없는 로컬/게스트 환경에서도 화면에는 바로 반영한다.
   }

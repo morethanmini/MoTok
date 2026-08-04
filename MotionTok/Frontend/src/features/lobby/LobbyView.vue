@@ -24,6 +24,7 @@ import { useWhisper } from '@/composables/useWhisper'
 import { useBgm } from '@/composables/useBgm'
 import { useToast } from '@/composables/useToast'
 import { useUserProfile } from '@/composables/useUserProfile'
+import { consumeLinkedExistingNotice } from '@/features/auth/socialAuthorize'
 import type { Friend, Room } from './data'
 
 import AppHeader from '@/components/common/AppHeader.vue'
@@ -190,13 +191,25 @@ const filteredRooms = computed(() => {
   return rooms.value.filter((r) => !q || r.title.toLowerCase().includes(q))
 })
 
+// 소셜 로그인이 같은 이메일의 기존 계정에 처음 연동된 경우의 1회 안내(AuthView가 남긴 플래그).
+let linkedNoticePending = false
+
 onMounted(() => {
   bgm.setVolume(0.2)
+  linkedNoticePending = consumeLinkedExistingNotice()
+  // 스플래시가 떠 있으면 토스트(2.2초)가 그 아래에서 사라진다 — 입장(enterLobby) 시점으로 미룬다.
+  if (linkedNoticePending && !showSplash.value) flashLinkedNotice()
 })
+
+function flashLinkedNotice() {
+  linkedNoticePending = false
+  flash('이미 가입된 이메일이에요 · 기존 계정으로 로그인했어요')
+}
 
 function enterLobby() {
   showSplash.value = false
   void bgm.play()
+  if (linkedNoticePending) flashLinkedNotice()
 }
 
 // ── 네비게이션 ──────────────────────────────

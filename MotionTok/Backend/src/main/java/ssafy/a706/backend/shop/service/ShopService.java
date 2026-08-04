@@ -19,6 +19,7 @@ import ssafy.a706.backend.shop.repository.PointHistoryRepository;
 import ssafy.a706.backend.shop.repository.UserItemRepository;
 import ssafy.a706.backend.user.repository.UserRepository;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 
@@ -32,6 +33,24 @@ public class ShopService {
     private final PointHistoryRepository pointHistoryRepository;
     private final UserRepository userRepository;
 
+    /**
+     * 화면에 나가는 순서 — <b>분류 → id</b>.
+     *
+     * <p>정렬이 없으면 SQL은 순서를 보장하지 않으므로 실행 계획이 바뀔 때 조회마다 카드가
+     * 재배열된다. 상점은 목록이 곧 화면이라 그게 그대로 "순서가 튄다"로 보인다.</p>
+     *
+     * <p><b>DB 정렬(</b>{@code Sort.by("category", "id")}<b>)을 쓰지 않는다.</b> category는
+     * {@code @Enumerated(STRING)}로 저장돼 DB에서는 이름 알파벳순
+     * (BACKGROUND·EFFECT·MASK·STICKER)이 되는데, 화면 분류 탭은 가면·효과·스티커·배경 순이다.
+     * 맞는 것처럼 보이면서 틀린 정렬이 된다. {@link ItemCategory} <b>선언 순서가 곧 화면 순서</b>라
+     * enum의 자연 순서(ordinal)로 정렬하면 탭을 바꿀 때 자동으로 따라온다.</p>
+     *
+     * <p>메모리에서 정렬하는 비용은 무시할 수 있다 — 상점 목록은 손으로 큐레이션한 SHOP 타입만이고
+     * (AI로 만든 아이템은 {@code ItemType.AI}라 여기 들어오지 않는다) 수십 건 규모다.</p>
+     */
+    private static final Comparator<Item> DISPLAY_ORDER =
+            Comparator.comparing(Item::getCategory).thenComparing(Item::getId);
+
     /** GET /shop/items — item_type=SHOP·is_active만, category는 선택 필터. owned는 한 번에 조회해서 N+1을 피한다. */
     public List<ItemResponse> listItems(Long userId, ItemCategory category) {
         List<Item> items = category == null
@@ -39,6 +58,7 @@ public class ShopService {
                 : itemRepository.findAllByItemTypeAndCategoryAndActiveTrue(ItemType.SHOP, category);
         Set<Long> ownedItemIds = userItemRepository.findItemIdsByUserId(userId);
         return items.stream()
+                .sorted(DISPLAY_ORDER)
                 .map(item -> ItemResponse.of(item, ownedItemIds.contains(item.getId())))
                 .toList();
     }

@@ -1,0 +1,1764 @@
+<script setup lang="ts">
+/**
+ * 채보 랩 (/dev/chart-lab) — 곡 파일을 넣으면 분석해서 채보를 만드는 운영 도구.
+ *
+ * 난이도 두 갈래:
+ * - EASY/NORMAL/HARD: 곡 분석(온셋)만으로 자동 생성
+ * - MANUAL/EXTREME: **슬롯 채보** — 곡을 마디에 맞춰 ~10초 슬롯으로 쪼개고,
+ *   슬롯마다 사람이 키보드로 리듬을 친다(앞뒤 문맥을 들려주되 슬롯 범위 입력만 기록).
+ *   전 슬롯이 모여 하나의 채보가 되고, 아무 슬롯이나 다시 듣고 재녹음할 수 있다.
+ *
+ * 공통: 생성된 채보는 즉시 플레이(캐치/링)하거나 JSON으로 내보낸다.
+ * CatchRhythmDevView처럼 카탈로그에 노출되지 않는 dev 라우트다.
+ */
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import CatchRhythmStage from '../CatchRhythmStage.vue'
+import { DIFFICULTIES, type Difficulty } from '../generator/presets'
+import { analyzeSong, type SongAnalysis } from '../analysis/analyzeSong'
+import { correctTapTracks, HOLD_MIN_MS, type TapEvent } from '../analysis/tapBackbone'
+import { formatSongAccentsSnippet } from '../analysis/accentExport'
+import {
+  generateSongCatchChart,
+  generateSongRingChart,
+  isTappedDifficulty,
+  ringDraftToGameChart,
+  songStartMs,
+  type SongChartOptions,
+  type SongDifficulty,
+} from '../generator/songChart'
+import type { Beatmap } from '../core/beatmap'
+import type { RingBeatmap } from '../ring/ringLogic'
+
+// ── 곡 로드·분석 ──
+const fileName = ref<string | null>(null)
+const fileUrl = ref<string | null>(null)
+const audioBuffer = shallowRef<AudioBuffer | null>(null)
+const analysis = shallowRef<SongAnalysis | null>(null)
+const analyzing = ref(false)
+const progress = ref(0)
+const errorMsg = ref('')
+
+// ── 옵션 (간소화: 난이도·시드·모드가 전부) ──
+const difficulty = ref<SongDifficulty>('NORMAL')
+const isTapped = computed(() => isTappedDifficulty(difficulty.value))
+/** 스테이지 prop용 — 직접 찍는 난이도는 스테이지가 모르는 값이고, 커스텀 채보에선 안 쓴다 */
+const stageDifficulty = computed<Difficulty>(() =>
+  isTapped.value ? 'HARD' : (difficulty.value as Difficulty),
+)
+const seed = ref<string>('20260731')
+const playMode = ref<'catch' | 'ring'>('catch')
+
+// ── 플레이 ──
+const running = ref(false)
+const runKey = ref(0)
+const playChart = shallowRef<Beatmap | RingBeatmap | null>(null)
+/** 스테이지에 넣을 곡 정보 — 전체 플레이와 슬롯 플레이가 다른 원점을 쓴다 */
+const playSong = shallowRef<{ src: string; gridOriginMs: number; startMs: number } | null>(null)
+const playDurationMs = ref(0)
+const lastResult = ref<string | null>(null)
+
+const waveCanvas = ref<HTMLCanvasElement | null>(null)
+const zoomCanvas = ref<HTMLCanvasElement | null>(null)
+const tapFile = ref<HTMLInputElement | null>(null)
+
+const songLengthMs = () =>
+  audioBuffer.value ? (audioBuffer.value.length / audioBuffer.value.sampleRate) * 1000 : 0
+
+// ═══════════════════ 슬롯 채보 (MANUAL/EXTREME) ═══════════════════
+// 탭은 **두 트랙**: 왼손(asdf…) / 오른손(jkl;…). 단일 스트림이면 동시 입력이
+// 이중 입력 제거(100ms)에 접혀 동타·"홀드 중 다른 손 연주"가 불가능하다(실사용 발견).
+// 두 트랙은 리듬 입력용일 뿐 — 게임 손·레인 배치는 여전히 생성기가 자유롭게 정한다.
+
+type TapTrack = 'L' | 'R'
+const tapsL = ref<TapEvent[]>([]) // 왼손 패스 → 생성기에는 perc 스트림으로
+const tapsR = ref<TapEvent[]>([]) // 오른손 패스 → melody 스트림으로
+const trackArr = (track: TapTrack) => (track === 'L' ? tapsL : tapsR)
+const totalTaps = computed(() => tapsL.value.length + tapsR.value.length)
+
+/** 왼손/오른손 키 배치 — 이 밖의 키는 무시한다(Backspace·Esc 제외) */
+const LEFT_KEYS = new Set(['KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG', 'KeyQ', 'KeyW', 'KeyE', 'KeyR'])
+const RIGHT_KEYS = new Set(['KeyH', 'KeyJ', 'KeyK', 'KeyL', 'Semicolon', 'KeyU', 'KeyI', 'KeyO', 'KeyP'])
+
+const slotIdx = ref(0)
+/**
+ * 보정 모드 — 기본 '없음'(친 그대로). 지연 보정은 검출 온셋 기준이라 사람의 기준과
+ * 다르면 전체가 통째로 밀린다(실사용: 70ms 일괄 밀림 → 퍼펙트가 느려 보임).
+ */
+const correction = ref<'none' | 'latency' | 'snap30' | 'snap70'>('none')
+const correctionOpts = computed(() => ({
+  applyLatency: correction.value !== 'none',
+  snapWindowMs:
+    correction.value === 'snap30' ? 30 : correction.value === 'snap70' ? 70 : 0,
+}))
+
+/** 슬롯 목표 길이 — 마디 단위로 맞추되 이 근처가 되게 */
+const SLOT_TARGET_MS = 10_000
+/** 녹음·듣기 때 슬롯 앞뒤로 들려주는 문맥 */
+const CTX_BEFORE_MS = 3_000
+const CTX_AFTER_MS = 1_500
+
+interface Slot {
+  from: number
+  to: number
+}
+
+/** 곡을 마디(4박)에 맞춰 ~10초 슬롯으로 쪼갠다. 첫 슬롯은 인트로(격자 앞)까지 포함 */
+const slots = computed<Slot[]>(() => {
+  const a = analysis.value
+  const len = songLengthMs()
+  if (!a || len === 0) return []
+  const measureMs = a.beatMs * 4
+  const measuresPerSlot = Math.max(1, Math.round(SLOT_TARGET_MS / measureMs))
+  const stepMs = measuresPerSlot * measureMs
+  const out: Slot[] = []
+  let from = 0
+  for (let t = a.gridOriginMs + stepMs; t < len - 1000; t += stepMs) {
+    out.push({ from, to: Math.round(t) })
+    from = Math.round(t)
+  }
+  out.push({ from, to: Math.round(len) })
+  return out
+})
+
+const currentSlot = computed<Slot | null>(() => slots.value[slotIdx.value] ?? null)
+
+function slotDone(i: number): boolean {
+  const s = slots.value[i]
+  if (!s) return false
+  return [...tapsL.value, ...tapsR.value].some((e) => e.t >= s.from && e.t < s.to)
+}
+
+const doneCount = computed(() => slots.value.filter((_, i) => slotDone(i)).length)
+
+function selectSlot(i: number) {
+  slotIdx.value = Math.max(0, Math.min(slots.value.length - 1, i))
+  const s = slots.value[slotIdx.value]
+  if (s) {
+    selStartMs.value = s.from
+    selEndMs.value = s.to
+  }
+  selectedTap.value = null
+  drawWave()
+}
+
+/** 탭 보정 결과 — 직접 찍는 난이도에서만 쓴다. 왼손=perc, 오른손=melody 스트림으로 */
+const backbone = computed(() => {
+  if (!analysis.value || !isTapped.value || totalTaps.value === 0) return null
+  return correctTapTracks(
+    { perc: tapsL.value, melody: tapsR.value },
+    analysis.value,
+    correctionOpts.value,
+  )
+})
+
+// ── 탭 자동 저장 — 곡 파일명 + 난이도별로 따로 산다 ──
+const TAPS_STORE = 'chart-lab:slots:'
+const tapsKey = () =>
+  fileName.value && isTapped.value ? `${TAPS_STORE}${fileName.value}:${difficulty.value}` : null
+
+watch([tapsL, tapsR], () => {
+  const key = tapsKey()
+  if (!key) return
+  if (totalTaps.value === 0) localStorage.removeItem(key)
+  else localStorage.setItem(key, JSON.stringify({ l: tapsL.value, r: tapsR.value }))
+})
+
+function loadTapsFromStore() {
+  const key = tapsKey()
+  if (!key) {
+    tapsL.value = []
+    tapsR.value = []
+    return
+  }
+  try {
+    let raw = localStorage.getItem(key)
+    // 개명 승계: MANUAL(구 SUPERHARD) 저장이 없으면 옛 이름 키를 읽는다
+    if (!raw && difficulty.value === 'MANUAL' && fileName.value) {
+      raw = localStorage.getItem(`${TAPS_STORE}${fileName.value}:SUPERHARD`)
+    }
+    const json = raw ? (JSON.parse(raw) as { l?: unknown; r?: unknown; taps?: unknown }) : null
+    if (json && (json.l !== undefined || json.r !== undefined)) {
+      tapsL.value = parseTapList(json.l)
+      tapsR.value = parseTapList(json.r)
+    } else if (json?.taps !== undefined) {
+      // 구버전(단일 스트림)은 왼손 트랙으로 승계한다
+      tapsL.value = parseTapList(json.taps)
+      tapsR.value = []
+    } else {
+      tapsL.value = []
+      tapsR.value = []
+    }
+  } catch {
+    tapsL.value = []
+    tapsR.value = []
+  }
+}
+
+watch(difficulty, () => {
+  stopTapping()
+  stopPreview()
+  loadTapsFromStore()
+  selectedTap.value = null
+  if (isTapped.value && slots.value.length > 0) selectSlot(slotIdx.value)
+  drawWave()
+})
+
+/** 구버전(숫자 배열)·현행({t, d} 배열) 둘 다 받는다 */
+function parseTapList(raw: unknown): TapEvent[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((v): TapEvent | null => {
+      if (typeof v === 'number') return { t: v, d: 0 }
+      if (v && typeof v === 'object' && typeof (v as TapEvent).t === 'number') {
+        return {
+          t: (v as TapEvent).t,
+          d: typeof (v as TapEvent).d === 'number' ? (v as TapEvent).d : 0,
+        }
+      }
+      return null
+    })
+    .filter((v): v is TapEvent => v !== null)
+}
+
+// ── 슬롯 녹음 — 앞뒤 문맥을 들려주되 슬롯 범위 안의 입력만 기록한다 ──
+const tapping = ref(false)
+const tapPosMs = ref(0)
+let tapCtx: AudioContext | null = null
+let tapSource: AudioBufferSourceNode | null = null
+let tapStartCtxSec = 0
+let tapRaf = 0
+/** 재생이 시작되는 파일 내 시각(문맥 포함) */
+let playFromMs = 0
+/** 입력을 기록으로 인정하는 범위 = 현재 슬롯 */
+let recFromMs = 0
+let recToMs = 0
+const pendingDowns = new Map<string, { t: number; track: TapTrack }>()
+/** 이번 세션에 확정된 탭의 트랙 순서 — Backspace 무르기가 마지막 것을 정확히 지운다 */
+let pushHistory: TapTrack[] = []
+
+function tapNowMs(): number {
+  return tapCtx ? playFromMs + (tapCtx.currentTime - tapStartCtxSec) * 1000 : 0
+}
+
+type RecordMode = 'replace' | 'overdub' | 'L' | 'R'
+/** 이번 녹음 세션이 입력을 받는 트랙들 — 한 손만 재녹음할 때 반대 손 키를 무시한다 */
+let recTracks: Set<TapTrack> = new Set(['L', 'R'])
+
+/**
+ * 슬롯 녹음.
+ * - replace: 슬롯의 양 트랙을 지우고 새로 (기본)
+ * - overdub: 아무것도 안 지우고 위에 겹침 — 기존 탭이 비프로 들린다
+ * - 'L'/'R': **그 트랙의 슬롯 탭만** 지우고 그 손 키만 받는다 — 겹녹음한 레이어만
+ *   다시 찍는 용도. 남은 트랙은 비프로 들리고, 반대 손 키는 무시돼 오염되지 않는다.
+ */
+function startSlotRecord(mode: RecordMode = 'replace') {
+  const s = currentSlot.value
+  if (!audioBuffer.value || !s || tapping.value) return
+  stop()
+  stopPreview()
+  ;(document.activeElement as HTMLElement | null)?.blur?.()
+  tapCtx = new AudioContext()
+  tapSource = tapCtx.createBufferSource()
+  tapSource.buffer = audioBuffer.value
+  tapSource.connect(tapCtx.destination)
+  tapStartCtxSec = tapCtx.currentTime + 0.1
+  playFromMs = Math.max(0, s.from - CTX_BEFORE_MS)
+  recFromMs = s.from
+  recToMs = s.to
+  const playToMs = Math.min(songLengthMs(), s.to + CTX_AFTER_MS)
+  tapSource.start(tapStartCtxSec, playFromMs / 1000, Math.max(0.05, (playToMs - playFromMs) / 1000))
+  tapSource.onended = () => stopTapping()
+
+  // 지우기 — 모드별 범위. 슬롯 밖은 항상 보존
+  const inSlot = (e: TapEvent) => e.t >= s.from && e.t < s.to
+  if (mode === 'replace' || mode === 'L') tapsL.value = tapsL.value.filter((e) => !inSlot(e))
+  if (mode === 'replace' || mode === 'R') tapsR.value = tapsR.value.filter((e) => !inSlot(e))
+  recTracks = mode === 'L' ? new Set(['L']) : mode === 'R' ? new Set(['R']) : new Set(['L', 'R'])
+
+  // 남아 있는 탭을 비프로 들려준다 — 겹쳐 칠 기준이 된다 (교체 모드는 침묵)
+  if (mode !== 'replace' && backbone.value) {
+    for (const o of backbone.value.onsets) {
+      if (o.timeMs < playFromMs || o.timeMs > playToMs) continue
+      const at = tapStartCtxSec + (o.timeMs - playFromMs) / 1000
+      const osc = tapCtx.createOscillator()
+      const g = tapCtx.createGain()
+      osc.type = 'triangle'
+      osc.frequency.value = o.source === 'perc' ? 700 : 1568
+      g.gain.setValueAtTime(0.35, at)
+      g.gain.exponentialRampToValueAtTime(0.001, at + 0.05)
+      osc.connect(g).connect(tapCtx.destination)
+      osc.start(at)
+      osc.stop(at + 0.06)
+    }
+  }
+  selectedTap.value = null
+  pendingDowns.clear()
+  pushHistory = []
+  tapping.value = true
+  window.addEventListener('keydown', onTapKey)
+  window.addEventListener('keyup', onTapKeyUp)
+  const tick = () => {
+    if (!tapping.value || !tapCtx) return
+    tapPosMs.value = tapNowMs()
+    drawZoom()
+    tapRaf = requestAnimationFrame(tick)
+  }
+  tick()
+}
+
+function onTapKey(e: KeyboardEvent) {
+  if (e.repeat) return
+  const tag = (e.target as HTMLElement | null)?.tagName
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
+  if (e.code === 'Escape') {
+    stopTapping()
+    return
+  }
+  if (e.code === 'Backspace') {
+    // 방금 친 게 틀렸을 때 — 녹음을 끊지 않고 마지막 탭만 무른다(그 탭의 트랙에서)
+    e.preventDefault()
+    const track = pushHistory.pop()
+    if (track) {
+      const arrRef = trackArr(track)
+      arrRef.value = arrRef.value.slice(0, -1)
+    }
+    return
+  }
+  // 왼손(asdf…) / 오른손(jkl;…) 트랙 분기 — 그 밖의 키는 무시
+  const track: TapTrack | null = LEFT_KEYS.has(e.code)
+    ? 'L'
+    : RIGHT_KEYS.has(e.code)
+      ? 'R'
+      : null
+  if (track === null || !recTracks.has(track)) return
+  e.preventDefault()
+  if (!tapCtx || pendingDowns.has(e.code)) return
+  const ms = tapNowMs()
+  // 문맥 구간의 입력은 버린다 — 슬롯 범위 안만 진짜 노트다
+  if (ms < recFromMs || ms >= recToMs) return
+  pendingDowns.set(e.code, { t: ms, track })
+}
+
+function onTapKeyUp(e: KeyboardEvent) {
+  const down = pendingDowns.get(e.code)
+  if (down === undefined) return
+  pendingDowns.delete(e.code)
+  if (!tapCtx) return
+  const d = Math.max(0, tapNowMs() - down.t)
+  const arrRef = trackArr(down.track)
+  arrRef.value = [
+    ...arrRef.value,
+    { t: Math.round(down.t), d: d >= HOLD_MIN_MS ? Math.round(d) : 0 },
+  ]
+  pushHistory.push(down.track)
+}
+
+function stopTapping() {
+  if (!tapping.value) return
+  // 아직 눌린 채인 키(슬롯 끝까지 잡고 있던 홀드)는 지금 시각까지로 확정한다
+  if (pendingDowns.size > 0 && tapCtx) {
+    const now = tapNowMs()
+    for (const down of pendingDowns.values()) {
+      const d = Math.max(0, now - down.t)
+      const arrRef = trackArr(down.track)
+      arrRef.value = [
+        ...arrRef.value,
+        { t: Math.round(down.t), d: d >= HOLD_MIN_MS ? Math.round(d) : 0 },
+      ]
+    }
+    pendingDowns.clear()
+  }
+  tapping.value = false
+  window.removeEventListener('keydown', onTapKey)
+  window.removeEventListener('keyup', onTapKeyUp)
+  cancelAnimationFrame(tapRaf)
+  try {
+    tapSource?.stop()
+  } catch {
+    // 이미 끝났으면 무시
+  }
+  tapSource = null
+  void tapCtx?.close()
+  tapCtx = null
+  drawWave()
+}
+
+// ── 듣기·미리듣기 ──
+const previewing = ref(false)
+const previewPosMs = ref(0)
+let previewCtx: AudioContext | null = null
+let previewSource: AudioBufferSourceNode | null = null
+let previewFromMs = 0
+let previewStartAtSec = 0
+let previewRaf = 0
+
+/**
+ * range 재생. withTaps면 보정된 탭 위치에 비프를 얹는다(곡은 덕킹) —
+ * "듣고 → 마우스로 고치고 → 다시 듣는" 루프의 심장.
+ */
+function playRange(from: number, to: number, withTaps: boolean) {
+  if (!audioBuffer.value || previewing.value) return
+  stop()
+  stopTapping()
+  previewCtx = new AudioContext()
+  previewSource = previewCtx.createBufferSource()
+  previewSource.buffer = audioBuffer.value
+  const songGain = previewCtx.createGain()
+  songGain.gain.value = withTaps ? 0.35 : 1 // 덕킹 — 비프가 곡에 묻히지 않게
+  previewSource.connect(songGain).connect(previewCtx.destination)
+  const startAt = previewCtx.currentTime + 0.08
+  previewSource.onended = () => stopPreview()
+  previewSource.start(startAt, from / 1000, Math.max(0.05, (to - from) / 1000))
+
+  if (withTaps && backbone.value) {
+    const beep = (atSec: number, freq: number, durSec: number, gain: number) => {
+      if (!previewCtx) return
+      const osc = previewCtx.createOscillator()
+      const g = previewCtx.createGain()
+      osc.type = 'triangle'
+      osc.frequency.value = freq
+      g.gain.setValueAtTime(gain, atSec)
+      g.gain.exponentialRampToValueAtTime(0.001, atSec + durSec)
+      osc.connect(g).connect(previewCtx.destination)
+      osc.start(atSec)
+      osc.stop(atSec + durSec + 0.01)
+    }
+    for (const o of backbone.value.onsets) {
+      if (o.timeMs < from || o.timeMs > to) continue
+      const at = startAt + (o.timeMs - from) / 1000
+      const isLeft = o.source === 'perc' // 왼손 트랙 — 낮은 음으로 구분
+      beep(at, isLeft ? 700 : 1568, o.holdMs ? 0.12 : 0.05, 0.55)
+      if (o.holdMs) beep(at + o.holdMs / 1000, isLeft ? 520 : 1175, 0.06, 0.4) // 홀드 끝 틱
+    }
+  }
+  previewFromMs = from
+  previewStartAtSec = startAt
+  previewing.value = true
+  const tick = () => {
+    if (!previewing.value || !previewCtx) return
+    previewPosMs.value = previewFromMs + Math.max(0, (previewCtx.currentTime - previewStartAtSec) * 1000)
+    drawZoom()
+    previewRaf = requestAnimationFrame(tick)
+  }
+  tick()
+}
+
+/** 현재 슬롯을 앞뒤 문맥 포함으로 듣는다 */
+function listenSlot(withTaps: boolean) {
+  const s = currentSlot.value
+  if (!s) return
+  playRange(
+    Math.max(0, s.from - CTX_BEFORE_MS),
+    Math.min(songLengthMs(), s.to + CTX_AFTER_MS),
+    withTaps,
+  )
+}
+
+function previewAll(withTaps: boolean) {
+  playRange(0, songLengthMs(), withTaps)
+}
+
+function stopPreview() {
+  if (!previewing.value) return
+  previewing.value = false
+  cancelAnimationFrame(previewRaf)
+  try {
+    previewSource?.stop()
+  } catch {
+    // 이미 끝났으면 무시
+  }
+  previewSource = null
+  void previewCtx?.close()
+  previewCtx = null
+  drawZoom()
+}
+
+// ── 탭 미세수정 (확대 뷰와 연동) ──
+const selectedTap = ref<{ track: TapTrack; index: number } | null>(null)
+
+const selectedTapEvent = computed(() => {
+  const sel = selectedTap.value
+  if (!sel) return null
+  return trackArr(sel.track).value[sel.index] ?? null
+})
+
+const latencyNow = () => backbone.value?.latencyMs ?? 0
+
+const selectedTapMs = computed(() =>
+  selectedTapEvent.value === null ? null : Math.round(selectedTapEvent.value.t - latencyNow()),
+)
+
+function selectTapNear(ms: number, tolMs = 80) {
+  const lat = latencyNow()
+  let best: { track: TapTrack; index: number } | null = null
+  let bestDist = tolMs
+  for (const track of ['L', 'R'] as const) {
+    const arr = trackArr(track).value
+    for (let i = 0; i < arr.length; i++) {
+      const dist = Math.abs(arr[i]!.t - lat - ms)
+      if (dist < bestDist) {
+        bestDist = dist
+        best = { track, index: i }
+      }
+    }
+  }
+  selectedTap.value = best
+}
+
+function editSelected(mutate: (e: TapEvent) => TapEvent) {
+  const sel = selectedTap.value
+  if (!sel) return
+  const arrRef = trackArr(sel.track)
+  if (arrRef.value[sel.index] === undefined) return
+  const next = [...arrRef.value]
+  next[sel.index] = mutate(next[sel.index]!)
+  arrRef.value = next
+  drawWave()
+}
+
+function nudgeTap(deltaMs: number) {
+  editSelected((e) => ({ ...e, t: Math.max(0, e.t + deltaMs) }))
+}
+
+function adjustHold(deltaMs: number) {
+  editSelected((e) => ({ ...e, d: Math.max(0, e.d + deltaMs) }))
+}
+
+function toggleHold() {
+  editSelected((e) => ({ ...e, d: e.d >= HOLD_MIN_MS ? 0 : 600 }))
+}
+
+function deleteTap() {
+  const sel = selectedTap.value
+  if (!sel) return
+  const arrRef = trackArr(sel.track)
+  arrRef.value = arrRef.value.filter((_, idx) => idx !== sel.index)
+  selectedTap.value = null
+  drawWave()
+}
+
+function clearTaps() {
+  tapsL.value = []
+  tapsR.value = []
+  selectedTap.value = null
+  drawWave()
+}
+
+// ── 난이도 간 탭 복사 — "EXTREME의 왼손만 → MANUAL" 같은 파생 채보 제작용 ──
+const copySrcDiff = ref<'MANUAL' | 'EXTREME'>('EXTREME')
+const copyFilter = ref<'all' | 'L' | 'R'>('L')
+
+function copyFromDifficulty() {
+  if (!fileName.value || !isTapped.value) return
+  let raw = localStorage.getItem(`${TAPS_STORE}${fileName.value}:${copySrcDiff.value}`)
+  if (!raw && copySrcDiff.value === 'MANUAL') {
+    raw = localStorage.getItem(`${TAPS_STORE}${fileName.value}:SUPERHARD`)
+  }
+  if (!raw) {
+    errorMsg.value = `${copySrcDiff.value}에 저장된 탭이 없어요`
+    return
+  }
+  try {
+    const json = JSON.parse(raw) as { l?: unknown; r?: unknown; taps?: unknown }
+    const l = copyFilter.value !== 'R' ? parseTapList(json.l ?? json.taps) : []
+    const r = copyFilter.value !== 'L' ? parseTapList(json.r) : []
+    if (l.length + r.length === 0) {
+      errorMsg.value = '가져올 탭이 없어요'
+      return
+    }
+    const filterLabel =
+      copyFilter.value === 'all' ? '전체' : copyFilter.value === 'L' ? '왼손만' : '오른손만'
+    const ok = window.confirm(
+      `${copySrcDiff.value}의 ${filterLabel}(${l.length + r.length}개)로 현재 ${difficulty.value} 탭을 덮어쓸까요?`,
+    )
+    if (!ok) return
+    tapsL.value = l
+    tapsR.value = r
+    selectedTap.value = null
+    drawWave()
+  } catch {
+    errorMsg.value = '저장된 탭을 읽을 수 없어요'
+  }
+}
+
+/**
+ * 게임 번들 내보내기 — 곡 메타(격자 원점·시작 시각) + 캐치/링 게임 채보를 한 JSON으로.
+ * 이 파일과 음원을 public 자산으로 넣으면 게임 쪽 로더가 스테이지에 그대로 주입할 수 있다.
+ */
+function exportGameBundle() {
+  const a = analysis.value
+  if (!a) return
+  if (isTapped.value && !backbone.value) {
+    errorMsg.value = '먼저 슬롯을 녹음하세요'
+    return
+  }
+  const catchChart = buildCatch()
+  const ringGame = ringDraftToGameChart(
+    generateSongRingChart(a, difficulty.value, seed.value, options()),
+    a,
+  )
+  if (!catchChart) return
+  download(
+    `${base()}-${difficulty.value}-bundle.json`,
+    JSON.stringify(
+      {
+        version: 1,
+        song: {
+          file: fileName.value,
+          bpm: a.bpm,
+          gridOriginMs: a.gridOriginMs,
+          startMs: songStartMs(a),
+        },
+        difficulty: difficulty.value,
+        catch: catchChart,
+        ring: ringGame,
+      },
+      null,
+      2,
+    ),
+  )
+}
+
+function exportTaps() {
+  download(
+    `${base()}-${difficulty.value}-taps.json`,
+    JSON.stringify({
+      audio: fileName.value,
+      difficulty: difficulty.value,
+      l: tapsL.value,
+      r: tapsR.value,
+    }),
+  )
+}
+
+async function importTaps(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  try {
+    const json = JSON.parse(await file.text()) as {
+      l?: unknown
+      r?: unknown
+      taps?: unknown
+      perc?: unknown
+      melody?: unknown
+    }
+    if (json.l !== undefined || json.r !== undefined) {
+      tapsL.value = parseTapList(json.l)
+      tapsR.value = parseTapList(json.r)
+    } else {
+      // 구버전: 단일 {taps} 또는 {perc, melody} — 왼손/오른손으로 승계
+      tapsL.value = [...parseTapList(json.taps), ...parseTapList(json.perc)].sort(
+        (a, b) => a.t - b.t,
+      )
+      tapsR.value = parseTapList(json.melody)
+    }
+    drawWave()
+  } catch {
+    errorMsg.value = '탭 파일을 읽을 수 없어요'
+  }
+  ;(e.target as HTMLInputElement).value = ''
+}
+
+// ═══════════════════ 곡 로드·분석·생성 ═══════════════════
+
+async function onFile(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  errorMsg.value = ''
+  analysis.value = null
+  stop()
+  stopTapping()
+  stopPreview()
+  if (fileUrl.value) URL.revokeObjectURL(fileUrl.value)
+  fileUrl.value = URL.createObjectURL(file)
+  fileName.value = file.name
+  try {
+    // 디코드 전용 컨텍스트 — 재생은 각 기능이 자기 컨텍스트로 한다
+    const ctx = new AudioContext()
+    audioBuffer.value = await ctx.decodeAudioData(await file.arrayBuffer())
+    void ctx.close()
+    loadTapsFromStore()
+    slotIdx.value = 0
+  } catch {
+    errorMsg.value = '오디오를 디코드할 수 없어요 (mp3/ogg/wav 지원)'
+    audioBuffer.value = null
+  }
+}
+
+async function analyze() {
+  if (!audioBuffer.value || analyzing.value) return
+  analyzing.value = true
+  progress.value = 0
+  errorMsg.value = ''
+  try {
+    analysis.value = await analyzeSong(audioBuffer.value, (r) => (progress.value = r))
+    if (isTapped.value) selectSlot(0)
+  } catch (err) {
+    errorMsg.value = `분석 실패: ${(err as Error).message}`
+  } finally {
+    analyzing.value = false
+  }
+  drawWave()
+}
+
+function randomSeed() {
+  seed.value = String(Math.floor(Math.random() * 2 ** 31))
+}
+
+function options(): SongChartOptions {
+  return {
+    subdivision: 4,
+    snap: 'free',
+    title: fileName.value ? `${fileName.value} ${difficulty.value}` : undefined,
+    backbone: backbone.value ? backbone.value.onsets : null,
+  }
+}
+
+function buildCatch(): Beatmap | null {
+  if (!analysis.value) return null
+  return generateSongCatchChart(analysis.value, difficulty.value, seed.value, options())
+}
+
+function play() {
+  const a = analysis.value
+  if (!a || !fileUrl.value) return
+  if (isTapped.value && !backbone.value) {
+    errorMsg.value = '먼저 슬롯을 녹음하세요 — 직접 찍는 난이도는 탭이 곧 채보예요'
+    return
+  }
+  const chart =
+    playMode.value === 'catch'
+      ? buildCatch()
+      : ringDraftToGameChart(generateSongRingChart(a, difficulty.value, seed.value, options()), a)
+  if (!chart || chart.notes.length === 0) {
+    errorMsg.value = '채보에 노트가 없어요'
+    return
+  }
+  stopPreview()
+  stopTapping()
+  playChart.value = chart
+  playSong.value = { src: fileUrl.value, gridOriginMs: a.gridOriginMs, startMs: songStartMs(a) }
+  playDurationMs.value = chart.durationMs + 2000
+  lastResult.value = null
+  runKey.value += 1
+  running.value = true
+}
+
+/**
+ * 현재 슬롯 구간만 게임으로 테스트 — 곡은 슬롯 2초 앞부터 들어오고, 노트는 슬롯 것만 나온다.
+ * 트릭: 곡의 "격자 원점"을 슬롯 앞 프리롤 지점으로 속이면(pseudo origin) 스테이지 수정 없이
+ * 곡·노트가 같은 축으로 평행이동된다.
+ */
+function playSlot() {
+  const a = analysis.value
+  const s = currentSlot.value
+  if (!a || !fileUrl.value || !s) return
+  if (isTapped.value && !backbone.value) {
+    errorMsg.value = '먼저 슬롯을 녹음하세요'
+    return
+  }
+  const full =
+    playMode.value === 'catch'
+      ? buildCatch()
+      : ringDraftToGameChart(generateSongRingChart(a, difficulty.value, seed.value, options()), a)
+  if (!full) return
+  const offset = songStartMs(a)
+  const pseudoOriginMs = Math.max(0, s.from - 2000)
+  const toFile = (g: number) => g - offset + a.gridOriginMs
+  const srcNotes = full.notes as unknown as ({ timeMs: number; durationMs?: number } & Record<
+    string,
+    unknown
+  >)[]
+  const notes = srcNotes
+    .filter((n) => {
+      const f = toFile(n.timeMs)
+      return f >= s.from && f < s.to
+    })
+    .map((n) => ({ ...n, timeMs: Math.round(offset + (toFile(n.timeMs) - pseudoOriginMs)) }))
+  if (notes.length === 0) {
+    errorMsg.value = '이 슬롯에는 노트가 없어요'
+    return
+  }
+  const durationMs = Math.max(...notes.map((n) => n.timeMs + (n.durationMs ?? 0)))
+  stopPreview()
+  stopTapping()
+  playChart.value = { ...full, notes, durationMs } as unknown as Beatmap | RingBeatmap
+  playSong.value = { src: fileUrl.value, gridOriginMs: pseudoOriginMs, startMs: offset }
+  playDurationMs.value = durationMs + 1500
+  lastResult.value = null
+  runKey.value += 1
+  running.value = true
+}
+
+function stop() {
+  running.value = false
+}
+
+function onFinished(r: { score: number; maxCombo: number }) {
+  lastResult.value = `${r.score.toLocaleString()}점 / 최대 콤보 ${r.maxCombo}`
+}
+
+// ── 내보내기 ──
+
+function downloadBlob(name: string, blob: Blob) {
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = name
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+function download(name: string, text: string, type = 'application/json') {
+  downloadBlob(name, new Blob([text], { type }))
+}
+
+// ── 곡 자르기 — 긴 곡은 필요한 구간만 남기고 작업한다 ──
+
+/** AudioBuffer의 [from, to) 구간을 16bit PCM WAV로 인코드 */
+function wavBlob(buffer: AudioBuffer, fromMs: number, toMs: number): Blob {
+  const sr = buffer.sampleRate
+  const s0 = Math.max(0, Math.floor((fromMs / 1000) * sr))
+  const s1 = Math.min(buffer.length, Math.ceil((toMs / 1000) * sr))
+  const len = Math.max(0, s1 - s0)
+  const ch = Math.min(2, buffer.numberOfChannels)
+  const dataSize = len * ch * 2
+  const ab = new ArrayBuffer(44 + dataSize)
+  const dv = new DataView(ab)
+  const writeStr = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i))
+  }
+  writeStr(0, 'RIFF')
+  dv.setUint32(4, 36 + dataSize, true)
+  writeStr(8, 'WAVE')
+  writeStr(12, 'fmt ')
+  dv.setUint32(16, 16, true)
+  dv.setUint16(20, 1, true)
+  dv.setUint16(22, ch, true)
+  dv.setUint32(24, sr, true)
+  dv.setUint32(28, sr * ch * 2, true)
+  dv.setUint16(32, ch * 2, true)
+  dv.setUint16(34, 16, true)
+  writeStr(36, 'data')
+  dv.setUint32(40, dataSize, true)
+  const chans = Array.from({ length: ch }, (_, c) => buffer.getChannelData(c))
+  let off = 44
+  for (let i = s0; i < s1; i++) {
+    for (let c = 0; c < ch; c++) {
+      const v = Math.max(-1, Math.min(1, chans[c]![i]!))
+      dv.setInt16(off, v < 0 ? v * 0x8000 : v * 0x7fff, true)
+      off += 2
+    }
+  }
+  return new Blob([ab], { type: 'audio/wav' })
+}
+
+/**
+ * 현재 로드된 곡을 WAV로 저장 — ✂ 자르기의 다운로드가 취소·차단돼 컷 파일이 유실됐을 때의
+ * 구조선. 탭이 열려 있는 한 언제든 다시 받을 수 있다.
+ */
+function exportSongWav() {
+  const buf = audioBuffer.value
+  if (!buf) return
+  downloadBlob(fileName.value ?? 'song.wav', wavBlob(buf, 0, songLengthMs()))
+}
+
+/** 현재 난이도의 탭 전체를 일괄 이동 — 재컷 등으로 곡 시작점이 어긋났을 때 재정렬용 */
+function shiftAllTaps(deltaMs: number) {
+  const move = (list: TapEvent[]) => list.map((e) => ({ ...e, t: Math.max(0, e.t + deltaMs) }))
+  tapsL.value = move(tapsL.value)
+  tapsR.value = move(tapsR.value)
+  drawWave()
+}
+
+/** 선택 구간만 남기기 — 주의: 슬롯을 클릭해도 선택이 그 슬롯으로 잡힌다(확인창이 지켜준다) */
+async function trimToSelection() {
+  if (selStartMs.value === null || selEndMs.value === null) return
+  await doTrim(selStartMs.value, selEndMs.value)
+}
+
+/** 앞부분은 전부 유지하고 선택 **끝 지점**에서 뒤를 버린다 — "여기까지만 쓸래" 용 */
+async function trimKeepHead() {
+  if (selEndMs.value === null) return
+  await doTrim(0, selEndMs.value)
+}
+
+/**
+ * [from, to)만 남긴다: ① 잘린 WAV 다운로드(보관용) ② 작업 곡을 잘린 버전으로 교체 + 재분석
+ * ③ 탭 채보도 같은 구간으로 잘라 시간 이동 — 직접 찍는 두 난이도 모두 저장 키를 승계한다.
+ * 원본 파일명 키의 탭 저장은 지우지 않으므로, 원본 파일을 다시 열면 언제든 복구된다.
+ */
+async function doTrim(from: number, to: number) {
+  const buf = audioBuffer.value
+  if (!buf) return
+  if (tapping.value || previewing.value || running.value) return
+  if (to - from < 3000) {
+    errorMsg.value = '구간이 너무 짧아요 — 3초 이상 잡아주세요'
+    return
+  }
+  const ok = window.confirm(
+    `${(from / 1000).toFixed(1)}s ~ ${(to / 1000).toFixed(1)}s 만 남기고 나머지를 버릴까요?\n` +
+      `(잘린 WAV가 저장되고, 탭도 같이 잘립니다. 원본 파일을 다시 열면 이전 탭으로 돌아갈 수 있어요)`,
+  )
+  if (!ok) return
+
+  const sr = buf.sampleRate
+  const s0 = Math.max(0, Math.floor((from / 1000) * sr))
+  const s1 = Math.min(buf.length, Math.ceil((to / 1000) * sr))
+  const tmp = new AudioContext()
+  const cut = tmp.createBuffer(buf.numberOfChannels, s1 - s0, sr)
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    cut.copyToChannel(buf.getChannelData(c).slice(s0, s1), c)
+  }
+  void tmp.close()
+
+  const blob = wavBlob(buf, from, to)
+  const oldName = fileName.value
+  const newName = `${base()}-cut.wav`
+  downloadBlob(newName, blob) // 보관용 — 다음에 이 파일로 이어서 작업하면 된다
+
+  // 탭 이동: [from, to) 안만 남기고 시간을 −from. 경계에 걸린 홀드는 끝을 자른다
+  const shift = (list: TapEvent[]): TapEvent[] =>
+    list
+      .filter((e) => e.t >= from && e.t < to)
+      .map((e) => ({ t: Math.round(e.t - from), d: Math.round(Math.min(e.d, to - e.t)) }))
+  for (const diff of ['MANUAL', 'EXTREME'] as const) {
+    if (!oldName) break
+    try {
+      const raw = localStorage.getItem(`${TAPS_STORE}${oldName}:${diff}`)
+      if (!raw) continue
+      const j = JSON.parse(raw) as { l?: unknown; r?: unknown; taps?: unknown }
+      const l = shift(parseTapList(j.l ?? j.taps))
+      const r = shift(parseTapList(j.r))
+      if (l.length + r.length > 0) {
+        localStorage.setItem(`${TAPS_STORE}${newName}:${diff}`, JSON.stringify({ l, r }))
+      }
+    } catch {
+      // 깨진 저장분은 승계하지 않는다
+    }
+  }
+
+  // 작업 상태 교체 — 이후 분석·슬롯·탭이 전부 잘린 곡 기준이 된다
+  if (fileUrl.value) URL.revokeObjectURL(fileUrl.value)
+  fileUrl.value = URL.createObjectURL(blob)
+  fileName.value = newName
+  audioBuffer.value = cut
+  analysis.value = null
+  selStartMs.value = null
+  selEndMs.value = null
+  selectedTap.value = null
+  slotIdx.value = 0
+  loadTapsFromStore()
+  await analyze()
+}
+
+function base(): string {
+  return (fileName.value ?? '곡').replace(/\.[^.]+$/, '')
+}
+
+function exportCatch() {
+  const chart = buildCatch()
+  if (chart) download(`${base()}-catch-${difficulty.value}.json`, JSON.stringify(chart, null, 2))
+}
+
+function exportRing() {
+  if (!analysis.value) return
+  const draft = generateSongRingChart(analysis.value, difficulty.value, seed.value, {
+    ...options(),
+    audio: fileName.value ? `audio/${fileName.value}` : null,
+  })
+  download(`${base()}-ring-${difficulty.value}.json`, JSON.stringify(draft, null, 2))
+}
+
+function exportAccents() {
+  if (!analysis.value) return
+  download(
+    `${base()}-songAccents.ts.txt`,
+    formatSongAccentsSnippet(analysis.value, fileName.value ?? '곡'),
+    'text/plain',
+  )
+}
+
+// ═══════════════════ 파형(전체)·확대 뷰 ═══════════════════
+
+const selStartMs = ref<number | null>(null)
+const selEndMs = ref<number | null>(null)
+let dragStartMs: number | null = null
+let dragged = false
+let zoomDragging = false
+
+function canvasMs(e: MouseEvent): number {
+  const canvas = waveCanvas.value
+  if (!canvas) return 0
+  const rect = canvas.getBoundingClientRect()
+  const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
+  return ratio * songLengthMs()
+}
+
+function onWaveDown(e: MouseEvent) {
+  if (!audioBuffer.value) return
+  dragStartMs = canvasMs(e)
+  dragged = false
+}
+
+function onWaveMove(e: MouseEvent) {
+  if (dragStartMs === null) return
+  const ms = canvasMs(e)
+  if (dragged || Math.abs(ms - dragStartMs) > 80) {
+    dragged = true
+    selStartMs.value = Math.round(Math.min(dragStartMs, ms))
+    selEndMs.value = Math.round(Math.max(dragStartMs, ms))
+    drawWave()
+  }
+}
+
+function onWaveUp(e: MouseEvent) {
+  if (dragStartMs === null) return
+  if (!dragged) {
+    // 클릭 = 그 지점이 속한 슬롯 선택 (직접 찍는 난이도)
+    const ms = canvasMs(e)
+    if (isTapped.value) {
+      const i = slots.value.findIndex((s) => ms >= s.from && ms < s.to)
+      if (i >= 0) selectSlot(i)
+    }
+  }
+  dragStartMs = null
+  drawWave()
+}
+
+function onWaveLeave() {
+  dragStartMs = null
+}
+
+function drawWave() {
+  const canvas = waveCanvas.value
+  const buffer = audioBuffer.value
+  if (!canvas || !buffer) return
+  const dpr = window.devicePixelRatio || 1
+  const w = canvas.clientWidth
+  const h = canvas.clientHeight
+  canvas.width = w * dpr
+  canvas.height = h * dpr
+  const ctx = canvas.getContext('2d')!
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, w, h)
+
+  const durationMs = songLengthMs()
+  const msToX = (ms: number) => (ms / durationMs) * w
+
+  // 파형
+  const data = buffer.getChannelData(0)
+  const mid = h * 0.55
+  const amp = h * 0.4
+  ctx.fillStyle = 'rgba(90, 130, 180, 0.5)'
+  const samplesPerPx = data.length / w
+  for (let x = 0; x < w; x++) {
+    let min = 0
+    let max = 0
+    const s0 = Math.floor(x * samplesPerPx)
+    const s1 = Math.min(data.length, Math.floor((x + 1) * samplesPerPx))
+    const stride = Math.max(1, Math.floor((s1 - s0) / 24))
+    for (let s = s0; s < s1; s += stride) {
+      const v = data[s]!
+      if (v < min) min = v
+      if (v > max) max = v
+    }
+    ctx.fillRect(x, mid + min * amp, 1, Math.max(1, (max - min) * amp))
+  }
+
+  const a = analysis.value
+  if (a) {
+    // 온셋 (세기 = 막대 높이)
+    for (const o of a.onsets) {
+      const x = msToX(o.timeMs)
+      const bar = Math.min(1, o.strength / 2) * (h * 0.4)
+      ctx.fillStyle = o.bands.low > 0.45 ? 'rgba(255,150,60,0.7)' : 'rgba(120,220,160,0.7)'
+      ctx.fillRect(x - 1, h - bar, 2, bar)
+    }
+  }
+
+  // 슬롯 경계 + 완료 표시 (직접 찍는 난이도)
+  if (isTapped.value) {
+    slots.value.forEach((s, i) => {
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)'
+      ctx.beginPath()
+      const x = Math.round(msToX(s.from)) + 0.5
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x, h)
+      ctx.stroke()
+      if (slotDone(i)) {
+        ctx.fillStyle = 'rgba(120,220,160,0.15)'
+        ctx.fillRect(msToX(s.from), 0, msToX(s.to) - msToX(s.from), h)
+      }
+    })
+  }
+
+  // 탭 마커 (보정 후)
+  if (backbone.value) {
+    for (const o of backbone.value.onsets) {
+      const x = msToX(o.timeMs)
+      ctx.fillStyle = 'rgba(110,190,255,0.95)'
+      ctx.fillRect(x - 1, 8, 2, h * 0.3)
+      if (o.holdMs) {
+        ctx.fillStyle = 'rgba(110,190,255,0.45)'
+        ctx.fillRect(x, 12, Math.max(3, msToX(o.timeMs + o.holdMs) - x), 5)
+      }
+    }
+  }
+
+  // 선택 구간(현재 슬롯)
+  if (selStartMs.value !== null && selEndMs.value !== null) {
+    const x0 = msToX(selStartMs.value)
+    const x1 = msToX(selEndMs.value)
+    ctx.fillStyle = 'rgba(255, 207, 125, 0.12)'
+    ctx.fillRect(x0, 0, x1 - x0, h)
+    ctx.strokeStyle = 'rgba(255, 207, 125, 0.85)'
+    ctx.lineWidth = 1.5
+    for (const x of [x0, x1]) {
+      ctx.beginPath()
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x, h)
+      ctx.stroke()
+    }
+  }
+
+  // 확대 뷰도 같이 — 캔버스가 이 프레임에 막 생겼을 수 있어 다음 프레임에 그린다
+  requestAnimationFrame(() => drawZoom())
+}
+
+// ── 확대 편집 뷰 — "키보드로 찍고, 마우스로 세부 조정"의 마우스 절반 ──
+
+function zoomRect(): { from: number; to: number } | null {
+  if (selStartMs.value === null || selEndMs.value === null) return null
+  return { from: selStartMs.value, to: selEndMs.value }
+}
+
+function zoomMsOf(e: MouseEvent): number | null {
+  const r = zoomRect()
+  const c = zoomCanvas.value
+  if (!r || !c) return null
+  const rect = c.getBoundingClientRect()
+  const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
+  return r.from + ratio * (r.to - r.from)
+}
+
+function drawZoom() {
+  const c = zoomCanvas.value
+  const buffer = audioBuffer.value
+  const r = zoomRect()
+  if (!c || !buffer || !r) return
+  const dpr = window.devicePixelRatio || 1
+  const w = c.clientWidth
+  const h = c.clientHeight
+  c.width = w * dpr
+  c.height = h * dpr
+  const ctx = c.getContext('2d')!
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, w, h)
+  const span = Math.max(1, r.to - r.from)
+  const msToX = (ms: number) => ((ms - r.from) / span) * w
+
+  // 파형
+  const data = buffer.getChannelData(0)
+  const sr = buffer.sampleRate
+  const mid = h * 0.5
+  const amp = h * 0.42
+  ctx.fillStyle = 'rgba(90, 130, 180, 0.45)'
+  for (let x = 0; x < w; x++) {
+    const t0 = r.from + (x / w) * span
+    const t1 = r.from + ((x + 1) / w) * span
+    const s0 = Math.max(0, Math.floor((t0 / 1000) * sr))
+    const s1 = Math.min(data.length, Math.floor((t1 / 1000) * sr))
+    let min = 0
+    let max = 0
+    const stride = Math.max(1, Math.floor((s1 - s0) / 32))
+    for (let s = s0; s < s1; s += stride) {
+      const v = data[s]!
+      if (v < min) min = v
+      if (v > max) max = v
+    }
+    ctx.fillRect(x, mid + min * amp, 1, Math.max(1, (max - min) * amp))
+  }
+
+  const a = analysis.value
+  if (a) {
+    // 격자 — 박은 진하게, 16분 칸은 연하게
+    const stepMs = a.beatMs / 4
+    for (let k = Math.floor((r.from - a.gridOriginMs) / stepMs); ; k++) {
+      const t = a.gridOriginMs + k * stepMs
+      if (t > r.to) break
+      if (t < r.from) continue
+      const beatIdx = k / 4
+      const onBeat = Math.abs(beatIdx - Math.round(beatIdx)) < 1e-6
+      ctx.strokeStyle = onBeat ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.1)'
+      ctx.beginPath()
+      const x = Math.round(msToX(t)) + 0.5
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x, h)
+      ctx.stroke()
+    }
+    // 검출 온셋 — 하단 짧은 틱(참고용)
+    for (const o of a.onsets) {
+      if (o.timeMs < r.from || o.timeMs > r.to) continue
+      ctx.fillStyle = o.bands.low > 0.45 ? 'rgba(255,150,60,0.8)' : 'rgba(120,220,160,0.8)'
+      ctx.fillRect(msToX(o.timeMs) - 1, h - 18, 2, 14)
+    }
+  }
+
+  // 탭 마커 — 왼손 주황(위쪽 절반), 오른손 하늘(아래쪽 절반)으로 겹침 없이 보인다
+  const lat = latencyNow()
+  for (const track of ['L', 'R'] as const) {
+    const arr = trackArr(track).value
+    const color = track === 'L' ? 'rgba(255,150,80,0.95)' : 'rgba(110,190,255,0.95)'
+    const yTop = track === 'L' ? 6 : h * 0.5
+    const yLen = h * 0.5 - 22
+    for (let i = 0; i < arr.length; i++) {
+      const ev = arr[i]!
+      const t = ev.t - lat
+      if (t < r.from - 200 || t > r.to + 200) continue
+      const x = msToX(t)
+      if (ev.d >= HOLD_MIN_MS) {
+        ctx.fillStyle = color.replace('0.95', '0.35')
+        ctx.fillRect(x, yTop + 4, Math.max(3, msToX(t + ev.d) - x), 12)
+      }
+      ctx.fillStyle = color
+      ctx.fillRect(x - 2, yTop, 4, yLen)
+      if (selectedTap.value?.track === track && selectedTap.value.index === i) {
+        ctx.strokeStyle = '#fff'
+        ctx.lineWidth = 2
+        ctx.strokeRect(x - 5, yTop - 2, 10, yLen + 4)
+      }
+    }
+  }
+
+  // 재생 헤드
+  const pos = tapping.value ? tapPosMs.value : previewing.value ? previewPosMs.value : null
+  if (pos !== null && pos >= r.from && pos <= r.to) {
+    ctx.strokeStyle = '#ff5370'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    const x = msToX(pos)
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, h)
+    ctx.stroke()
+  }
+}
+
+function onZoomDown(e: MouseEvent) {
+  const ms = zoomMsOf(e)
+  const r = zoomRect()
+  const c = zoomCanvas.value
+  if (ms === null || !r || !c) return
+  const tolMs = Math.max(8, (12 / c.clientWidth) * (r.to - r.from))
+  selectTapNear(ms, tolMs)
+  if (selectedTap.value !== null) zoomDragging = true
+  drawZoom()
+}
+
+function onZoomMove(e: MouseEvent) {
+  if (!zoomDragging) return
+  const ms = zoomMsOf(e)
+  if (ms === null) return
+  editSelected((ev) => ({ ...ev, t: Math.max(0, Math.round(ms + latencyNow())) }))
+  drawZoom()
+}
+
+function onZoomUp() {
+  zoomDragging = false
+}
+
+/** 더블클릭 = 탭 추가 — 위쪽 절반 = 왼손, 아래쪽 절반 = 오른손 (마커 표시와 같은 규칙) */
+function onZoomDbl(e: MouseEvent) {
+  const ms = zoomMsOf(e)
+  const c = zoomCanvas.value
+  if (ms === null || !isTapped.value || !c) return
+  const rect = c.getBoundingClientRect()
+  const track: TapTrack = e.clientY - rect.top < rect.height / 2 ? 'L' : 'R'
+  const arrRef = trackArr(track)
+  arrRef.value = [...arrRef.value, { t: Math.round(ms + latencyNow()), d: 0 }]
+  selectedTap.value = { track, index: arrRef.value.length - 1 }
+  drawZoom()
+}
+
+watch([analysis, audioBuffer, backbone], drawWave)
+window.addEventListener('resize', drawWave)
+onBeforeUnmount(() => {
+  stopTapping()
+  stopPreview()
+  window.removeEventListener('resize', drawWave)
+  if (fileUrl.value) URL.revokeObjectURL(fileUrl.value)
+})
+</script>
+
+<template>
+  <main class="lab">
+    <header class="bar">
+      <h1>채보 랩 <small>곡 분석 → 자동/수제 채보</small></h1>
+      <label class="file">
+        곡 파일
+        <input type="file" accept="audio/*" @change="onFile" />
+      </label>
+      <button type="button" class="primary" :disabled="!audioBuffer || analyzing" @click="analyze">
+        {{ analyzing ? `분석 중 ${Math.round(progress * 100)}%` : '♪ 분석' }}
+      </button>
+      <template v-if="analysis">
+        <span class="dim">BPM {{ analysis.bpm }} · 신뢰도 {{ analysis.confidence }}</span>
+      </template>
+    </header>
+
+    <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
+
+    <section v-if="analysis" class="controls main-row">
+      <label>
+        난이도
+        <select v-model="difficulty" :disabled="running || tapping">
+          <option v-for="d in DIFFICULTIES" :key="d" :value="d">{{ d }} (자동)</option>
+          <option value="MANUAL">MANUAL (직접)</option>
+          <option value="EXTREME">EXTREME (직접)</option>
+        </select>
+      </label>
+      <label>
+        시드
+        <input v-model="seed" size="10" :disabled="running" />
+      </label>
+      <button type="button" :disabled="running" @click="randomSeed">🎲</button>
+      <label>
+        모드
+        <select v-model="playMode" :disabled="running">
+          <option value="catch">캐치</option>
+          <option value="ring">링</option>
+        </select>
+      </label>
+      <button v-if="!running" type="button" class="primary" @click="play">▶ 플레이</button>
+      <button v-else type="button" @click="stop">중단</button>
+      <span class="divider"></span>
+      <button type="button" @click="exportCatch">캐치 JSON</button>
+      <button type="button" @click="exportRing">링 JSON(에디터)</button>
+      <button
+        type="button"
+        title="곡 메타(격자 원점·시작 시각) + 캐치/링 게임 채보 한 벌 — 게임 자산으로 넣는 용도"
+        @click="exportGameBundle"
+      >
+        게임 번들
+      </button>
+      <button type="button" @click="exportAccents">songAccents</button>
+      <button
+        type="button"
+        :disabled="selStartMs === null || tapping || running || previewing"
+        title="파형에서 드래그한 구간만 남긴다 — 잘린 WAV 다운로드 + 작업 곡 교체 + 탭도 같이 잘려 이동"
+        @click="trimToSelection"
+      >
+        ✂ 구간만 남기기
+      </button>
+      <button
+        type="button"
+        :disabled="selEndMs === null || tapping || running || previewing"
+        title="앞부분은 전부 유지하고, 드래그 선택의 끝 지점에서 뒤를 버린다 — 곡이 너무 길 때"
+        @click="trimKeepHead"
+      >
+        ✂ 여기까지 남기기
+      </button>
+      <button
+        type="button"
+        :disabled="!audioBuffer || tapping || running"
+        title="지금 로드된 곡을 WAV로 저장 — 잘린 곡 파일을 잃어버렸을 때 여기서 다시 받는다"
+        @click="exportSongWav"
+      >
+        곡 저장(WAV)
+      </button>
+      <span v-if="lastResult" class="result">{{ lastResult }}</span>
+    </section>
+
+    <section v-if="audioBuffer" class="wave-wrap">
+      <canvas
+        ref="waveCanvas"
+        class="wave"
+        @mousedown="onWaveDown"
+        @mousemove="onWaveMove"
+        @mouseup="onWaveUp"
+        @mouseleave="onWaveLeave"
+      ></canvas>
+      <p class="legend">
+        <span class="dot kick"></span>킥 온셋 <span class="dot mel"></span>온셋 ·
+        <span class="dot tap"></span>내 탭 · 초록 배경 = 찍은 슬롯 · 클릭 = 슬롯 선택 · 드래그 = 구간 지정
+      </p>
+    </section>
+
+    <!-- ── 슬롯 채보 워크플로 (MANUAL / EXTREME) ── -->
+    <template v-if="analysis && isTapped">
+      <section class="controls tapbox">
+        <b>{{ difficulty }} 슬롯 채보</b>
+        <span class="dim">
+          {{ doneCount }}/{{ slots.length }} 슬롯 · 왼손(ASDF) {{ tapsL.length }} · 오른손(JKL;) {{ tapsR.length }}
+        </span>
+        <span v-if="backbone && correction !== 'none'" class="dim">
+          · 지연 보정 {{ backbone.latencyMs }}ms · 온셋 일치 {{ Math.round(backbone.matchedRatio * 100) }}%
+        </span>
+        <label>
+          보정
+          <select v-model="correction" :disabled="tapping">
+            <option value="none">없음 — 친 그대로</option>
+            <option value="latency">지연만 제거</option>
+            <option value="snap30">지연 + 온셋 스냅 ±30ms</option>
+            <option value="snap70">지연 + 온셋 스냅 ±70ms</option>
+          </select>
+        </label>
+        <button v-if="!previewing" type="button" :disabled="tapping || !totalTaps" @click="previewAll(true)">
+          ♪ 전체 미리듣기
+        </button>
+        <button v-else type="button" @click="stopPreview">■ 정지</button>
+        <button type="button" :disabled="!totalTaps" @click="exportTaps">탭 저장</button>
+        <label>
+          <button type="button" @click="tapFile?.click()">탭 불러오기</button>
+          <input ref="tapFile" type="file" accept=".json" style="display: none" @change="importTaps" />
+        </label>
+        <button type="button" :disabled="!totalTaps" @click="clearTaps">전체 지우기</button>
+        <label>
+          가져오기
+          <select v-model="copySrcDiff" :disabled="tapping">
+            <option value="MANUAL">MANUAL</option>
+            <option value="EXTREME">EXTREME</option>
+          </select>
+          <select v-model="copyFilter" :disabled="tapping">
+            <option value="all">전체</option>
+            <option value="L">왼손만</option>
+            <option value="R">오른손만</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          :disabled="tapping"
+          title="다른 난이도의 저장된 탭으로 현재 난이도를 덮어쓴다 (예: EXTREME 왼손만 → MANUAL)"
+          @click="copyFromDifficulty"
+        >
+          복사해 오기
+        </button>
+        <label class="dim">
+          전체 이동
+          <button type="button" :disabled="tapping || !totalTaps" @click="shiftAllTaps(-100)">−100</button>
+          <button type="button" :disabled="tapping || !totalTaps" @click="shiftAllTaps(-10)">−10</button>
+          <button type="button" :disabled="tapping || !totalTaps" @click="shiftAllTaps(10)">+10</button>
+          <button type="button" :disabled="tapping || !totalTaps" @click="shiftAllTaps(100)">+100</button>
+        </label>
+      </section>
+
+      <section class="slots">
+        <button
+          v-for="(s, i) in slots"
+          :key="i"
+          type="button"
+          class="chip"
+          :class="{ done: slotDone(i), active: i === slotIdx }"
+          :disabled="tapping"
+          @click="selectSlot(i)"
+        >
+          {{ i + 1 }}
+        </button>
+      </section>
+
+      <section v-if="currentSlot" class="controls">
+        <b class="slot-label">
+          슬롯 {{ slotIdx + 1 }} — {{ (currentSlot.from / 1000).toFixed(1) }}~{{ (currentSlot.to / 1000).toFixed(1) }}s
+        </b>
+        <button v-if="!previewing" type="button" :disabled="tapping" @click="listenSlot(false)">
+          ▶ 듣기 (앞뒤 포함)
+        </button>
+        <button v-if="!previewing" type="button" :disabled="tapping || !slotDone(slotIdx)" @click="listenSlot(true)">
+          ♪ 미리듣기
+        </button>
+        <button v-if="previewing" type="button" @click="stopPreview">■ 정지</button>
+        <button v-if="!tapping" type="button" class="primary" :disabled="running" @click="startSlotRecord('replace')">
+          ● {{ slotDone(slotIdx) ? '재녹음(교체)' : '녹음' }} — 왼손 ASDF·오른손 JKL; · 누르면 홀드 · ⌫ 무르기
+        </button>
+        <button
+          v-if="!tapping && slotDone(slotIdx)"
+          type="button"
+          :disabled="running"
+          title="기존 탭을 비프로 들으며 위에 겹쳐 친다 — 왼손 먼저, 오른손 나중 같은 이중 녹음용"
+          @click="startSlotRecord('overdub')"
+        >
+          ● 겹녹음
+        </button>
+        <button
+          v-if="!tapping && slotDone(slotIdx)"
+          type="button"
+          :disabled="running"
+          title="이 슬롯의 왼손 트랙만 지우고 다시 — 오른손은 비프로 들리고 보존된다"
+          @click="startSlotRecord('L')"
+        >
+          ● 왼손만
+        </button>
+        <button
+          v-if="!tapping && slotDone(slotIdx)"
+          type="button"
+          :disabled="running"
+          title="이 슬롯의 오른손 트랙만 지우고 다시 — 왼손은 비프로 들리고 보존된다"
+          @click="startSlotRecord('R')"
+        >
+          ● 오른손만
+        </button>
+        <button v-else-if="tapping" type="button" @click="stopTapping">
+          ■ 정지 {{ (tapPosMs / 1000).toFixed(1) }}s
+        </button>
+        <button
+          type="button"
+          :disabled="tapping || running || !slotDone(slotIdx)"
+          @click="playSlot"
+        >
+          ▶ 슬롯 플레이
+        </button>
+        <button
+          type="button"
+          :disabled="tapping || slotIdx >= slots.length - 1"
+          @click="selectSlot(slotIdx + 1)"
+        >
+          다음 슬롯 →
+        </button>
+      </section>
+
+      <div v-if="selectedTap !== null && selectedTapMs !== null && selectedTapEvent" class="controls tapedit">
+        <b>탭 미세수정</b>
+        <span class="dim">
+          {{ selectedTap.track === 'L' ? '왼손' : '오른손' }} ·
+          {{ (selectedTapMs / 1000).toFixed(3) }}s ·
+          {{ selectedTapEvent.d >= 250 ? `홀드 ${selectedTapEvent.d}ms` : '탭' }}
+        </span>
+        <button type="button" @click="nudgeTap(-20)">−20ms</button>
+        <button type="button" @click="nudgeTap(-5)">−5ms</button>
+        <button type="button" @click="nudgeTap(5)">+5ms</button>
+        <button type="button" @click="nudgeTap(20)">+20ms</button>
+        <button type="button" @click="toggleHold">{{ selectedTapEvent.d >= 250 ? '탭으로' : '홀드로' }}</button>
+        <template v-if="selectedTapEvent.d >= 250">
+          <button type="button" @click="adjustHold(-100)">홀드 −100</button>
+          <button type="button" @click="adjustHold(100)">홀드 +100</button>
+        </template>
+        <button type="button" @click="deleteTap">삭제</button>
+        <button type="button" @click="selectedTap = null">선택 해제</button>
+      </div>
+    </template>
+
+    <section v-if="audioBuffer && selStartMs !== null && selEndMs !== null" class="wave-wrap">
+      <canvas
+        ref="zoomCanvas"
+        class="zoom"
+        @mousedown="onZoomDown"
+        @mousemove="onZoomMove"
+        @mouseup="onZoomUp"
+        @mouseleave="onZoomUp"
+        @dblclick="onZoomDbl"
+      ></canvas>
+      <p class="legend">
+        <b>확대</b> — <span class="dot kick"></span>왼손(위) <span class="dot tap"></span>오른손(아래) ·
+        마커 드래그 = 이동 · 더블클릭 = 탭 추가(위쪽 절반 = 왼손, 아래쪽 = 오른손) · 클릭 = 선택 · 격자 = 16분음표
+      </p>
+    </section>
+
+    <section class="board-wrap">
+      <CatchRhythmStage
+        v-if="running && playChart && playSong && analysis"
+        :key="runKey"
+        :seed="seed"
+        :difficulty="stageDifficulty"
+        :duration-ms="playDurationMs"
+        :mode="playMode"
+        :chart="playChart"
+        :song="playSong"
+        @finished="onFinished"
+        @error="(m: string) => (errorMsg = m)"
+      >
+        <template #result-actions>
+          <button type="button" class="primary" @click="play">다시</button>
+        </template>
+      </CatchRhythmStage>
+      <div v-else class="idle">
+        <p v-if="!audioBuffer">곡 파일을 올리면 시작해요 (파일은 서버로 전송되지 않아요)</p>
+        <p v-else-if="!analysis">♪ 분석을 누르면 BPM·온셋을 찾아요</p>
+        <p v-else-if="isTapped">
+          슬롯을 골라 ▶ 듣기 → ● 녹음 → ♪ 미리듣기 순서로 채워가세요. 다 채우면 ▶ 플레이!
+        </p>
+        <p v-else>▶ 플레이 또는 JSON 내보내기로 이어가세요</p>
+      </div>
+    </section>
+  </main>
+</template>
+
+<style scoped>
+.lab {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  background: #10141c;
+  color: #dfe7ef;
+  font-family: var(--font-pixel, system-ui);
+}
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  background: #171d28;
+  border-bottom: 1px solid #232c3a;
+}
+h1 {
+  font-size: 1rem;
+  margin-right: auto;
+}
+h1 small {
+  color: #8b97a6;
+  font-weight: 400;
+}
+label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: #aab6c4;
+}
+select,
+input {
+  padding: 0.25rem 0.4rem;
+  border: 1px solid #2c3648;
+  border-radius: 6px;
+  background: #0e1219;
+  color: inherit;
+  font: inherit;
+}
+button {
+  padding: 0.35rem 0.8rem;
+  border: 1px solid #2c3648;
+  border-radius: 6px;
+  background: #1a2230;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button.primary {
+  background: #e07a4f;
+  border-color: #e07a4f;
+  color: #fff;
+}
+.error {
+  padding: 0.5rem 1rem;
+  background: #3a1f1c;
+  color: #ff9c86;
+}
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 1rem;
+}
+.main-row .divider {
+  width: 1px;
+  height: 1.4rem;
+  background: #2c3648;
+}
+.wave-wrap {
+  padding: 0.3rem 1rem 0;
+}
+.wave {
+  width: 100%;
+  height: 110px;
+  display: block;
+  background: #0b0f16;
+  border: 1px solid #232c3a;
+  border-radius: 8px;
+  cursor: crosshair;
+}
+.zoom {
+  width: 100%;
+  height: 190px;
+  display: block;
+  background: #0b0f16;
+  border: 1px solid #3a4658;
+  border-radius: 8px;
+  cursor: crosshair;
+}
+.legend {
+  font-size: 0.75rem;
+  color: #8b97a6;
+  margin: 0.25rem 0 0;
+}
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin: 0 0.25rem 0 0.6rem;
+}
+.dot.kick {
+  background: rgb(255, 150, 60);
+}
+.dot.mel {
+  background: rgb(120, 220, 160);
+}
+.dot.tap {
+  background: rgb(110, 190, 255);
+}
+.tapbox {
+  border: 1px dashed #2c3648;
+  border-radius: 8px;
+  margin: 0.4rem 1rem 0;
+}
+.tapbox b,
+.slot-label {
+  color: #ffcf7d;
+  font-size: 0.85rem;
+}
+.tapedit {
+  border: 1px solid #2c3648;
+  border-radius: 8px;
+  margin: 0 1rem;
+  background: #131a26;
+}
+.tapedit b {
+  color: #9fd8ff;
+  font-size: 0.85rem;
+}
+.slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.3rem 1rem;
+}
+.chip {
+  min-width: 2.2rem;
+  padding: 0.25rem 0.4rem;
+  text-align: center;
+}
+.chip.done {
+  border-color: #3fa87e;
+  color: #9fd8b4;
+}
+.chip.active {
+  background: #e07a4f;
+  border-color: #e07a4f;
+  color: #fff;
+}
+.dim {
+  color: #8b97a6;
+  font-size: 0.85rem;
+}
+.result {
+  color: #9fd8b4;
+  font-size: 0.85rem;
+}
+.board-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.idle {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6d7a89;
+  text-align: center;
+  padding: 1rem;
+}
+</style>
