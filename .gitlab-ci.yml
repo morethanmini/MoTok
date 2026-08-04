@@ -52,6 +52,10 @@ deploy-backend:
       add MAIL_USERNAME "$MAIL_USERNAME"
       add MAIL_PASSWORD "$MAIL_PASSWORD"
       add MAIL_FROM "$MAIL_FROM"
+      # 종합 /actuator/health 에 SMTP 접속 확인을 포함할지(기본 false). 켜면 메일 서버가 막혀
+      # 있을 때 종합 health 가 503 이 되고 호출마다 5초씩 매달린다 — DB·Redis 상태를 가린다.
+      # 컨테이너 healthcheck 는 liveness 를 보므로 어느 쪽이든 재시작에는 영향이 없다.
+      add MAIL_HEALTH_ENABLED "$MAIL_HEALTH_ENABLED"
       # 비밀번호 재설정 메일 링크 — 운영에선 반드시 실제 도메인으로! (기본값이 localhost 라 안 넣으면 메일 링크가 깨짐)
       add PW_RESET_LINK_BASE "$PW_RESET_LINK_BASE"
       # 소셜 로그인 쓸 때만 (안 쓰면 비워둬도 됨)
