@@ -71,6 +71,30 @@ public class RhythmSessionService {
     private static final int MAX_COMBO = 5_000;
     private static final int MAX_NOTES = 5_000;
 
+    /**
+     * 곡 지정 라운드(-168)의 <b>채보별</b> 이론 최대 점수 — 전 노트 Perfect일 때의 값이다.
+     *
+     * <p>{@link #MAX_SCORE}는 60초 랜덤 채보 기준으로 잡힌 값이라 곡 지정 라운드에는 맞지 않는다.
+     * 어려움(풀)은 127초를 돌지만 노트가 233개뿐이라 만점이 41,200이고, 상한 91,200은 만점의
+     * 2.2배다 — 그 틈만큼 위조 여지가 열린다. 상품이 걸린 이벤트 보드(S15P11A706-186)에서는
+     * 불가능한 점수가 1위로 박히는 사고가 되므로 채보별로 조인다.</p>
+     *
+     * <p>값은 프론트 채보(`public/assets/charts/&lt;id&gt;/bundle.json`)에서 계산한 것이다 —
+     * 노트 수 N, Perfect 100점, 콤보 10마다 배율 +0.1(최대 2.0). <b>채보를 고치면 이 값도 같이
+     * 고쳐야 한다.</b> 목록에 없는 곡은 MAX_SCORE로 폴백한다(막지 않고 넘어간다 — 새 채보가
+     * 올라왔을 때 정상 점수를 0으로 잘라 버리는 쪽이 더 나쁘다).</p>
+     */
+    private static final Map<String, Integer> SONG_MAX_SCORE = Map.of(
+            "ssafy-fighting-manual", 41_200,        // 233노트 · 127.2s
+            "ssafy-fighting-manual-verse1", 25_000, // 152노트 · 79.9s
+            "ssafy-fighting-extreme", 63_400        // 344노트 · 80.4s
+    );
+
+    /** 이 라운드에 허용할 점수 상한. 곡 지정 라운드면 그 채보의 만점, 아니면 랜덤 채보 상한. */
+    private static int maxScoreOf(String songId) {
+        return songId == null ? MAX_SCORE : SONG_MAX_SCORE.getOrDefault(songId, MAX_SCORE);
+    }
+
     private static final Set<String> DIFFICULTIES = Set.of("EASY", "NORMAL", "HARD");
     private static final String DEFAULT_DIFFICULTY = "NORMAL";
     /** 캐치 = 기본 모드, 링 = 마이마이 */
@@ -140,7 +164,7 @@ public class RhythmSessionService {
         long endAt = startAt + durationMillis;
 
         sessionRepository.saveSession(roomId, new RhythmSession(
-                sessionId, seed, difficulty, mode, startAt, endAt, RhythmSession.STATUS_PLAYING));
+                sessionId, seed, difficulty, mode, song, startAt, endAt, RhythmSession.STATUS_PLAYING));
         liveRoomService.changeStatus(roomId, "PLAYING");
 
         broadcast(roomId, RhythmEventResponse.start(sessionId, seed, difficulty, mode, song, now, startAt, endAt));
@@ -153,7 +177,7 @@ public class RhythmSessionService {
     public void progress(String roomId, RhythmRequests.Progress request, AuthPrincipal sender) {
         requireMembership(roomId, sender);
         RhythmSession session = requireActiveSession(roomId);
-        int score = clamp(request == null ? null : request.score(), MAX_SCORE);
+        int score = clamp(request == null ? null : request.score(), maxScoreOf(session.songId()));
         int combo = clamp(request == null ? null : request.combo(), MAX_COMBO);
         broadcast(roomId, RhythmEventResponse.progress(
                 session.sessionId(), sender.userId(), sender.displayName(), score, combo));
@@ -167,7 +191,7 @@ public class RhythmSessionService {
         RhythmPlayerScore playerScore = new RhythmPlayerScore(
                 sender.userId(),
                 sender.displayName(),
-                clamp(request == null ? null : request.score(), MAX_SCORE),
+                clamp(request == null ? null : request.score(), maxScoreOf(session.songId())),
                 clamp(request == null ? null : request.maxCombo(), MAX_COMBO),
                 clamp(request == null ? null : request.perfect(), MAX_NOTES),
                 clamp(request == null ? null : request.good(), MAX_NOTES),
@@ -239,8 +263,9 @@ public class RhythmSessionService {
 
         // 리더보드 적재·랭킹 ZSET·솔로/멀티 판정은 기존 정산 리스너에 위임한다(호출만, 수정 없음).
         // 리스너는 pointsEarned를 재계산하지 않고 그대로 싣는다 → 리듬 전용 포인트가 유지된다.
-        eventPublisher.publishEvent(
-                new GameSettledEvent(sessionId, RhythmGameSeeder.GAME_ID, toSettlement(results)));
+        // 곡 지정 라운드면 songId를 실어 보낸다 — 곡별 이벤트 보드(-186)가 이걸로 갈린다.
+        eventPublisher.publishEvent(new GameSettledEvent(
+                sessionId, RhythmGameSeeder.GAME_ID, session.songId(), toSettlement(results)));
         log.info("rhythm session ended: room={} session={} players={} submitted={}",
                 roomId, sessionId, members.size(), scores.size());
     }
