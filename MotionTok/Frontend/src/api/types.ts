@@ -387,17 +387,36 @@ export interface GameDetail {
 }
 /** 리더보드 구분 — 솔로 세션(참가 1명) 기록과 멀티 세션 기록을 나눠 조회한다 */
 export type LeaderboardMode = 'SOLO' | 'MULTI'
+/**
+ * 집계 기간. `ALLTIME`은 단일 판 최고 점수(역대 기록), `WEEKLY`는 그 주에 얻은 점수의 합.
+ *
+ * 둘은 짝이다 — 전체기간은 "같은 점수면 먼저 달성한 사람이 위"라서 점수 상한이 있는 게임의
+ * 상위권이 사실상 굳는다(명예의 전당). 매주 초기화되는 주간이 그래서 필요하다.
+ */
+export type LeaderboardPeriod = 'ALLTIME' | 'WEEKLY'
 export interface LeaderboardEntry {
   rank: number
   userId: number
   nickname: string
-  bestScore: number
+  /**
+   * ALLTIME이면 최고 점수, WEEKLY면 그 주 <b>합계</b>.
+   * 기간에 따라 뜻이 달라져서 `bestScore`가 아니라 `score`다.
+   */
+  score: number
   playCount: number
   /** 프로필 사진 URL. null이면 기본 아바타를 그린다. */
   avatarUrl?: string | null
+  /**
+   * 이 점수를 찍은 시각 — 서버가 동점을 가르는 기준이다(먼저 달성한 사람이 위).
+   * 순위에 공동 등수가 없으므로, 같은 점수인 두 줄의 순서를 설명하는 유일한 근거다.
+   */
+  achievedAt?: string | null
 }
 export interface LeaderboardResponse {
   gameId: number
+  period: LeaderboardPeriod
+  /** WEEKLY일 때 실제로 집계한 주의 월요일(KST). 요청한 week를 서버가 스냅한 결과. ALLTIME이면 null */
+  weekStart?: string | null
   entries: LeaderboardEntry[]
   myRank?: LeaderboardEntry
 }

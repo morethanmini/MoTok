@@ -96,7 +96,8 @@ async function loadRecords() {
                   gameName: game.name,
                   mode,
                   playCount: mine.playCount,
-                  bestScore: mine.bestScore,
+                  // 전적 표는 역대 최고점을 보여준다 — leaderboard 기본 기간이 ALLTIME이라 그대로 쓴다
+                  bestScore: mine.score,
                   rankNo: mine.rank,
                 }
               : null
