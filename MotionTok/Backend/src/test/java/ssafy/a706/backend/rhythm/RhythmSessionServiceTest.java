@@ -400,6 +400,31 @@ class RhythmSessionServiceTest {
         assertThat(lastEvent().type()).isEqualTo("PLAYER_FINISHED");
     }
 
+    /** 제출까지 해놓고 정산 전에 방에서 빠진 참가자(-187) — 결과·포인트에 포함돼야 한다. */
+    @Test
+    void 제출_후_방에서_빠진_참가자도_정산에_포함된다() {
+        when(sessionRepository.tryAcquireEndGuard(ROOM_ID, "S1")).thenReturn(true);
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(playingSession()));
+        // 정산 시점 방에는 호스트만 남았다 — 게스트는 제출 후 재실 유예를 넘겨 퇴장됨
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue(host.userId(), "호스트", false, 0L)));
+        when(sessionRepository.findScores(ROOM_ID)).thenReturn(Map.of(
+                host.userId(),
+                new RhythmPlayerScore(host.userId(), "호스트", 3_000, 10, 20, 10, 5, 2L),
+                guest.userId(),
+                new RhythmPlayerScore(guest.userId(), "게스트", 8_000, 30, 60, 10, 5, 1L)));
+
+        service.endRound(ROOM_ID, "S1");
+
+        RhythmEventResponse event = lastEvent();
+        assertThat(event.type()).isEqualTo("RHYTHM_END");
+        assertThat(event.results()).hasSize(2);
+        // 떠난 게스트가 점수로는 1등 — 명단에서 증발하지 않고 완주로 남는다
+        assertThat(event.results().get(0).userId()).isEqualTo(guest.userId());
+        assertThat(event.results().get(0).finished()).isTrue();
+        assertThat(event.results().get(0).score()).isEqualTo(8_000);
+    }
+
     @Test
     void 포인트는_실력과_순위를_비슷한_무게로_준다() {
         // HARD 전퍼펙트(~19,000) 8인 1등 — 실력 48 대 순위 42
