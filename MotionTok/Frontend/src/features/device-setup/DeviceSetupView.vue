@@ -7,6 +7,7 @@ import { roomsApi, type InventoryItem } from '@/api'
 import { useCamera } from '@/composables/useCamera'
 import { useMicLevel } from '@/composables/useMicLevel'
 import { EQUIP_LIMIT, useDecoration } from '@/composables/useDecoration'
+import { useFaceAnchor } from '@/composables/useFaceAnchor'
 import { useMediaPermissionStore } from '@/stores/mediaPermission'
 import { useSessionStore } from '@/stores/session'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
@@ -113,6 +114,12 @@ function onVideoMeta() {
   frameW.value = el.videoWidth
   frameH.value = el.videoHeight
 }
+
+// 가면은 저장된 좌표가 아니라 얼굴을 따라간다 — 영상이 보이고 가면을 장착했을 때만 돌린다.
+const face = useFaceAnchor(
+  () => videoEl.value,
+  () => showVideo.value && decor.hasFaceItem.value,
+)
 
 /** 꾸미기 영역의 짧은 안내(저장 완료·서버 거절 사유). 잠깐 보여 주고 지운다. */
 const decorMessage = ref('')
@@ -268,6 +275,7 @@ async function cancel() {
             :frame-aspect="previewAspect"
             :frame-pixels="framePixels"
             :selected-id="selectedId"
+            :face="face.anchor.value"
             @move="decor.move"
             @scale="decor.setScale"
             @remove="removeSticker"
