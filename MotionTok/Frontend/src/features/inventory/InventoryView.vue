@@ -8,6 +8,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { type InventoryItem, type ItemCategory } from '@/api'
 import { useCamera } from '@/composables/useCamera'
 import { EQUIP_LIMIT, useDecoration } from '@/composables/useDecoration'
+import { useFaceAnchor } from '@/composables/useFaceAnchor'
 import AppPage from '@/components/common/AppPage.vue'
 import PixelCard from '@/components/common/PixelCard.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
@@ -27,7 +28,7 @@ const CATEGORY_LABEL: Record<ItemCategory, string> = { MASK: '가면', EFFECT: '
 // ── 데이터 ────────────────────────────────────────────────
 // 보유 목록·배치·장착 토글은 공용 컴포저블이 맡고, 이 화면은 그 위에 편집(끌기·크기·저장)을 얹는다.
 const {
-  inventory, placements, sprites, equippedCount,
+  inventory, placements, sprites, equippedCount, hasFaceItem,
   loading, saving, dirty, error,
   load, setEquipped, canEquip, move, setScale, save,
   cameraEffect, setIntensity,
@@ -92,6 +93,13 @@ async function startCamera() {
 }
 onBeforeUnmount(() => camera.stop())
 
+// 가면(FACE 앵커)은 저장된 좌표가 아니라 얼굴을 따라간다.
+// 가면을 장착했고 카메라가 켜져 있을 때만 검출기를 돌린다 — 그 외에는 GPU를 물지 않는다.
+const face = useFaceAnchor(
+  () => videoEl.value,
+  () => camera.isOn.value && hasFaceItem.value,
+)
+
 // ── 편집 ────────────────────────────────────────────────
 // 크기·삭제는 미리보기의 선택 상자 핸들로 한다(별도 슬라이더 없음).
 const selectedId = ref<number | null>(null)
@@ -116,6 +124,9 @@ async function toggle(item: InventoryItem) {
   if (next) selectedId.value = item.itemId
   else if (selectedId.value === item.itemId) selectedId.value = null
 }
+
+const nameOf = (itemId: number) =>
+  inventory.value.find((i) => i.itemId === itemId)?.name ?? String(itemId)
 
 async function saveDecoration() {
   flash((await save()) ? '화면 꾸미기를 저장했어요' : (error.value ?? '저장하지 못했어요'))
@@ -149,8 +160,9 @@ async function saveDecoration() {
             <span>CAMERA PREVIEW</span>
             <b :class="{ ready: camera.isOn.value }">{{ camera.isOn.value ? '카메라 연결됨' : '카메라 OFF' }}</b>
           </div>
-          <!-- 상대에게 보이는 방향 그대로 보여 준다(좌우 반전 없음) — 반전된 화면에서 자리를 잡으면
-               저장된 좌표와 상대가 보는 위치가 뒤집힌다. -->
+          <!-- 게임룸 셀프 뷰와 같은 거울(scaleX(-1)) 방향 — 상대 타일(ParticipantTile)도 발행자
+               기준 거울로 뒤집어 보여 주므로, 여기서 거울로 자리를 잡아야 모든 화면과 일치한다.
+               스티커 좌표는 StickerOverlay가 mirrored로 되돌려 저장값 기준을 유지한다. -->
           <div class="cam" :style="{ aspectRatio: String(aspect) }">
             <video
               v-show="camera.isOn.value"
@@ -173,8 +185,10 @@ async function saveDecoration() {
             <StickerOverlay
               :sprites="sprites"
               editable
+              mirrored
               :selected-id="selectedId"
               :frame-pixels="framePixels"
+              :face="face.anchor.value"
               @move="move"
               @scale="setScale"
               @remove="removeSticker"
@@ -183,15 +197,20 @@ async function saveDecoration() {
           </div>
 
           <div class="equipped">
-            <button
-              v-for="p in placements"
-              :key="p.itemId"
-              class="badge"
-              :class="{ on: selectedId === p.itemId }"
-              @click="selectedId = p.itemId"
-            >
-              {{ inventory.find((i) => i.itemId === p.itemId)?.name ?? p.itemId }}
-            </button>
+            <template v-for="p in placements" :key="p.itemId">
+              <!-- 가면은 얼굴이 자리를 정하므로 고를 게 없다 — 버튼이 아니라 표시만 한다 -->
+              <span v-if="p.anchor === 'FACE'" class="badge tracked">
+                {{ nameOf(p.itemId) }} · 얼굴
+              </span>
+              <button
+                v-else
+                class="badge"
+                :class="{ on: selectedId === p.itemId }"
+                @click="selectedId = p.itemId"
+              >
+                {{ nameOf(p.itemId) }}
+              </button>
+            </template>
             <span v-if="placements.length === 0" class="empty">장착된 아이템이 없어요</span>
           </div>
 
@@ -255,7 +274,7 @@ async function saveDecoration() {
 .cam { position: relative; overflow: hidden; border: var(--border); border-radius: var(--radius-md); background: linear-gradient(135deg, #dff3ee, #fff0c4); }
 /* 박스 비율은 onVideoMeta가 영상에 맞춰 두지만, 비율이 확정되기 전(또는 카메라가 요청과 다른
    해상도를 준 순간)에는 어긋난다 — 그때 얼굴이 잘리지 않게 contain으로 두고 남는 자리는 회색 여백. */
-.cam video { width: 100%; height: 100%; object-fit: contain; background: var(--c-letterbox); display: block; }
+.cam video { width: 100%; height: 100%; object-fit: contain; background: var(--c-letterbox); display: block; transform: scaleX(-1); }
 .cam-placeholder { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 8px; }
 .cam-placeholder img { width: 55%; opacity: 0.5; }
 .hint { margin: 10px 0 0; font-size: 9px; color: var(--c-muted); line-height: 1.6; }
@@ -266,6 +285,8 @@ async function saveDecoration() {
 .equipped { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 12px; }
 .badge { font-size: 9px; padding: 5px 8px; border: 2px solid var(--c-ink); border-radius: 999px; background: var(--c-mint-soft); }
 .badge.on { background: var(--c-yellow); font-weight: 700; }
+/* 얼굴 추적 배지는 누를 수 없다는 게 보여야 한다 */
+.badge.tracked { background: var(--c-peach); color: var(--c-muted); }
 .empty { font-size: 10px; color: var(--c-muted); }
 
 .cat-group + .cat-group { margin-top: 20px; }

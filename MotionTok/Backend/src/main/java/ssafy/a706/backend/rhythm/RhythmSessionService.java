@@ -123,21 +123,30 @@ public class RhythmSessionService {
             throw RhythmException.gameClosed();
         }
 
-        String difficulty = resolveDifficulty(request == null ? null : request.difficulty());
+        // 곡 지정 라운드(-168): 채보 랩에서 만든 번들 채보를 전원이 로드한다.
+        // 서버는 songId를 검증·중계하고 라운드 길이만 곡 길이로 잡는다 — 채보 자체는
+        // 정적 자산이라 시드 없이도 전원이 동일하다.
+        String song = sanitizeSong(request == null ? null : request.song());
+        String difficulty = song != null
+                ? resolveSongDifficulty(request.difficulty())
+                : resolveDifficulty(request == null ? null : request.difficulty());
         String mode = resolveMode(request == null ? null : request.mode());
         long seed = ThreadLocalRandom.current().nextLong();
         String sessionId = UUID.randomUUID().toString();
         long startAt = now + RhythmGameSeeder.COUNTDOWN_SEC * 1000L;
-        long endAt = startAt + RhythmGameSeeder.ROUND_DURATION_SEC * 1000L;
+        long durationMillis = song != null
+                ? clampDurationSec(request.durationSec()) * 1000L
+                : RhythmGameSeeder.ROUND_DURATION_SEC * 1000L;
+        long endAt = startAt + durationMillis;
 
         sessionRepository.saveSession(roomId, new RhythmSession(
                 sessionId, seed, difficulty, mode, startAt, endAt, RhythmSession.STATUS_PLAYING));
         liveRoomService.changeStatus(roomId, "PLAYING");
 
-        broadcast(roomId, RhythmEventResponse.start(sessionId, seed, difficulty, mode, now, startAt, endAt));
+        broadcast(roomId, RhythmEventResponse.start(sessionId, seed, difficulty, mode, song, now, startAt, endAt));
         scheduleEnd(roomId, sessionId, endAt + END_GRACE_MILLIS);
-        log.info("rhythm session started: room={} session={} mode={} difficulty={} seed={}",
-                roomId, sessionId, mode, difficulty, seed);
+        log.info("rhythm session started: room={} session={} mode={} difficulty={} song={} seed={}",
+                roomId, sessionId, mode, difficulty, song, seed);
     }
 
     /** 라운드 중 실시간 점수 중계 — 저장 없이 클램프 후 재방송. */
@@ -323,6 +332,27 @@ public class RhythmSessionService {
     /** 알 수 없는 난이도는 거부하지 않고 NORMAL로 폴백한다(형제 필드 constellationKey와 같은 관례). */
     private String resolveDifficulty(String requested) {
         return requested != null && DIFFICULTIES.contains(requested) ? requested : DEFAULT_DIFFICULTY;
+    }
+
+    /** 곡 지정 라운드는 수제 난이도(MANUAL/EXTREME)까지 허용한다(-168). */
+    private String resolveSongDifficulty(String requested) {
+        boolean tapped = "MANUAL".equals(requested) || "EXTREME".equals(requested);
+        return tapped || (requested != null && DIFFICULTIES.contains(requested))
+                ? requested
+                : DEFAULT_DIFFICULTY;
+    }
+
+    /** 곡 지정 라운드의 songId — 클라이언트 자산 경로 조각이 되므로 소문자·숫자·하이픈만. */
+    private static String sanitizeSong(String requested) {
+        return requested != null && requested.matches("[a-z0-9-]{1,64}") ? requested : null;
+    }
+
+    /** 곡 지정 라운드 길이(초) — 위조 방지 클램프(30초~7분). 없으면 기본 라운드 길이. */
+    private static long clampDurationSec(Integer requested) {
+        if (requested == null) {
+            return RhythmGameSeeder.ROUND_DURATION_SEC;
+        }
+        return Math.max(30, Math.min(420, requested));
     }
 
     private String resolveMode(String requested) {

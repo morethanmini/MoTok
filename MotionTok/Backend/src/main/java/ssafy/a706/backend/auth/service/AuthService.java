@@ -169,29 +169,39 @@ public class AuthService {
         OauthUserInfo info = oauthClientResolver.resolve(provider)
                 .fetch(req.authorizationCode(), req.redirectUri());
 
-        Long userId = oauthLinkService.findLinkedUserId(provider, info.providerUid())
-                .orElseGet(() -> createLinkedUserId(provider, info));
+        OauthLinkService.LinkResult link = oauthLinkService.findLinkedUserId(provider, info.providerUid())
+                // 재로그인은 "이번에 처음 연동"이 아니다 — 안내(linkedExistingAccount)는 최초 연동 1회만.
+                .map(userId -> new OauthLinkService.LinkResult(userId, false))
+                .orElseGet(() -> createLinkedUser(provider, info));
 
-        User user = userRepository.findById(userId)
+        User user = userRepository.findById(link.userId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.SOCIAL_LOGIN_FAILED));
         if (!user.isActive()) {
             throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
         }
         ensureNotBlocked(user.getId());
         // 소셜은 rememberMe를 물어볼 화면이 없다 — provider를 거쳐 돌아온 사용자를 매번 다시 로그인시키지 않도록 영구 쿠키로 둔다.
-        return issueTokens(user, true, presentedRefreshToken);
+        IssuedTokens tokens = issueTokens(user, true, presentedRefreshToken);
+        if (!link.linkedToExisting()) {
+            return tokens;
+        }
+        // 같은 인증 이메일의 기존 계정에 방금 연동됐다 — 클라이언트가 "기존 계정으로 로그인했어요"를 안내하도록 표시한다.
+        return new IssuedTokens(tokens.body().withLinkedExistingAccount(),
+                tokens.refreshToken(), tokens.refreshTtl(), tokens.persistent());
     }
 
     /**
      * 최초 소셜 로그인 — 새 계정을 만들어 연동한다.
      * 동시 최초 로그인으로 복합 UNIQUE(provider, provider_uid)에 걸리면 createAndLink 트랜잭션이 통째로 롤백되므로,
      * 새 트랜잭션인 findLinkedUserId로 먼저 커밋된 연동을 조회해 복구한다(재시도 없이 정상 발급).
+     * 복구 경로는 linkedToExisting=false — 안내는 경합에서 이긴 요청이 이미 한 번 내보냈다.
      */
-    private Long createLinkedUserId(OauthProvider provider, OauthUserInfo info) {
+    private OauthLinkService.LinkResult createLinkedUser(OauthProvider provider, OauthUserInfo info) {
         try {
             return oauthLinkService.createAndLink(provider, info);
         } catch (DataIntegrityViolationException race) {
             return oauthLinkService.findLinkedUserId(provider, info.providerUid())
+                    .map(userId -> new OauthLinkService.LinkResult(userId, false))
                     .orElseThrow(() -> new BusinessException(ErrorCode.SOCIAL_LOGIN_FAILED));
         }
     }

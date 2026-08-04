@@ -12,6 +12,7 @@ import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 import CameraEffectLayer from '@/features/decor/CameraEffectLayer.vue'
 import { hasGlowLayer, videoFilter, type CameraEffect } from '@/features/decor/cameraEffect'
 import type { StickerSprite } from '@/features/decor/sticker'
+import type { FaceAnchor } from '@/features/decor/faceAnchor'
 
 const props = withDefaults(
   defineProps<{
@@ -51,6 +52,12 @@ const props = withDefaults(
      * 송출 영상에는 굽지 않는다 — 그래야 모션 인식이 원본 프레임을 그대로 읽는다.
      */
     effect?: CameraEffect | null
+    /**
+     * 이 참가자가 지금 알려 오고 있는 얼굴 위치(useDecorSync). 가면은 저장 좌표가 없어
+     * 이 값으로만 그린다 — null 이면 그 사람 가면은 그리지 않는다(가면을 벗었거나, 얼굴을
+     * 놓쳤거나, 게임 중이라 추적을 끈 상태).
+     */
+    face?: FaceAnchor | null
   }>(),
   {
     view: null,
@@ -66,6 +73,7 @@ const props = withDefaults(
     preferCam: false,
     sprites: () => [],
     effect: null,
+    face: null,
   },
 )
 const emit = defineEmits<{ kick: []; friend: []; delegate: []; volume: [value: number] }>()
@@ -195,6 +203,7 @@ function onVolumeInput(e: Event) {
         :mirrored="mirror"
         fit="contain"
         :frame-aspect="videoAspect"
+        :face="face"
       />
 
       <!-- 가림막 — 영상 위, 라벨·왕관 아래(DOM 순서로 쌓임) -->
