@@ -44,11 +44,16 @@ const difficulty = ref<Difficulty>('NORMAL')
 const mode = ref<GameMode>('catch')
 /** 곡 선택(-168): 기존 랜덤(시드) 채보 vs SSAFY 응원가(수제 번들) */
 const songPick = ref<'random' | 'ssafy'>('random')
-/** 응원가 전용 난이도 — 어려움(MANUAL 채보) / 익스트림 */
-const songDifficulty = ref<'manual' | 'extreme'>('manual')
+/** 응원가 전용 난이도 — 어려움 풀/하프(MANUAL 채보) / 익스트림(하프) */
+const songDifficulty = ref<'manual' | 'manual-half' | 'extreme'>('manual')
+const SONG_BUNDLE: Record<typeof songDifficulty.value, string> = {
+  manual: 'ssafy-fighting-manual',
+  'manual-half': 'ssafy-fighting-manual-verse1',
+  extreme: 'ssafy-fighting-extreme',
+}
 /** 시작·로드에 쓰는 번들 id. null = 랜덤 채보 */
 const selectedSong = computed(() =>
-  songPick.value === 'ssafy' ? `ssafy-fighting-${songDifficulty.value}` : null,
+  songPick.value === 'ssafy' ? SONG_BUNDLE[songDifficulty.value] : null,
 )
 /** 이번 라운드에 쓸 번들 — 곡 라운드는 이게 로드돼야 스테이지를 연다 */
 const activeBundle = shallowRef<LoadedBundle | null>(null)
@@ -374,7 +379,7 @@ watch(
           {{ DIFFICULTY_LABEL[d] }}
         </button>
       </div>
-      <!-- 응원가 전용 난이도 — 어려움(수제 MANUAL) / 익스트림 -->
+      <!-- 응원가 전용 난이도 — 어려움 풀/하프(수제 MANUAL) / 익스트림(하프) -->
       <div v-else class="levels row-diff">
         <button
           type="button"
@@ -383,7 +388,16 @@ watch(
           :disabled="isMultiplayer && !isHost"
           @click="songDifficulty = 'manual'"
         >
-          어려움
+          어려움(풀)
+        </button>
+        <button
+          type="button"
+          class="px level difficulty-level difficulty-hard"
+          :class="{ on: songDifficulty === 'manual-half' }"
+          :disabled="isMultiplayer && !isHost"
+          @click="songDifficulty = 'manual-half'"
+        >
+          어려움(하프)
         </button>
         <button
           type="button"
@@ -392,7 +406,7 @@ watch(
           :disabled="isMultiplayer && !isHost"
           @click="songDifficulty = 'extreme'"
         >
-          익스트림
+          익스트림(하프)
         </button>
       </div>
 
