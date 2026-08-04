@@ -84,12 +84,31 @@ const availableModes = computed(() =>
  * 기본값을 역대로 둔 이유는 하나뿐이다 — 주간 집계를 이번 주부터 시작해서, 주간을 기본으로 하면
  * 첫 방문자가 빈 표를 본다. 기록이 쌓이면 이 한 줄만 'WEEKLY'로 바꾸면 된다.
  */
+/**
+ * SSAFY 응원가 이벤트 보드(S15P11A706-186) — <b>한시적</b>이다.
+ *
+ * 캐치캐치리듬의 특정 채보(어려움 풀) 하나만 따로 세운 최고점 랭킹. 만점이 41,200이라
+ * 만점자가 여럿이면 먼저 찍은 사람이 위로 온다(서버 tie-break가 그대로 적용된다).
+ *
+ * 이벤트가 끝나면 <b>이 상수와 아래 EVENT 탭 한 줄만 지우면</b> 화면에서 사라진다.
+ * 서버 쪽도 chart_leaderboard 테이블을 버리는 것으로 끝난다.
+ */
+const EVENT_BOARD = {
+  gameId: 2,
+  chartId: 'ssafy-fighting-manual',
+  label: 'SSAFY 응원가',
+} as const
+
 const PERIODS = [
-  { value: 'ALLTIME', label: '역대 기록', hint: '단일 판 최고 점수' },
-  { value: 'WEEKLY', label: '주간 랭킹', hint: '이번 주 점수 합계' },
+  { value: 'ALLTIME', label: '전체 랭킹' },
+  { value: 'WEEKLY', label: '주간 랭킹' },
+  { value: 'CHART', label: EVENT_BOARD.label },
 ] as const
 const period = ref<LeaderboardPeriod>('ALLTIME')
 const isWeekly = computed(() => period.value === 'WEEKLY')
+const isChart = computed(() => period.value === 'CHART')
+/** 응원가 탭은 캐치캐치리듬에서만 — 다른 게임엔 그 채보 자체가 없다. */
+const hasEventBoard = computed(() => selected.value === EVENT_BOARD.gameId)
 
 /**
  * 협동 게임(그림으로 말해요)에는 <b>역대 최고점 순위표가 없다</b> — 주간 탭만 보인다.
@@ -104,7 +123,10 @@ const isWeekly = computed(() => period.value === 'WEEKLY')
  */
 const isCoopGame = computed(() => games.value.find((g) => g.id === selected.value)?.mode === 'COOP')
 const availablePeriods = computed(() =>
-  PERIODS.filter((item) => item.value === 'WEEKLY' || !isCoopGame.value),
+  PERIODS.filter((item) => {
+    if (item.value === 'CHART') return hasEventBoard.value
+    return item.value === 'WEEKLY' || !isCoopGame.value
+  }),
 )
 const gameMenuOpen = ref(false)
 const FETCH_LIMIT = 100
@@ -223,7 +245,8 @@ async function searchPlayer(crossGame = true) {
     focusHit(hit, moveNote)
     return
   }
-  if (!crossGame) {
+  // 응원가 보드는 캐치캐치리듬 하나뿐이라 옮겨 갈 곳이 없다 — 훑지 않고 바로 못 찾음으로 답한다
+  if (!crossGame || isChart.value) {
     searchMiss.value = query
     return
   }
@@ -249,16 +272,23 @@ async function searchPlayer(crossGame = true) {
 async function loadBoard() {
   error.value = null
   try {
-    board.value = await gamesApi.leaderboard(selected.value, mode.value, FETCH_LIMIT, period.value)
+    board.value = await gamesApi.leaderboard(
+      selected.value,
+      mode.value,
+      FETCH_LIMIT,
+      period.value,
+      undefined,
+      isChart.value ? EVENT_BOARD.chartId : undefined,
+    )
     boardIsFallback.value = false
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '랭킹을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'
-    // 주간에는 예시를 띄우지 않는다 — "이번 주 아직 아무도 안 함"이 정상 상태라, 여기에 가짜 기록을
-    // 그려 두면 사용자가 그걸 이번 주 실제 순위로 읽는다. 역대는 텅 빈 표가 더 어색해 폴백을 남긴다.
-    board.value = isWeekly.value
-      ? { gameId: selected.value, period: 'WEEKLY', entries: [] }
-      : { ...MOCK_BOARD, gameId: selected.value }
-    boardIsFallback.value = !isWeekly.value
+    // 주간·이벤트에는 예시를 띄우지 않는다 — 아직 아무도 안 한 게 정상 상태라, 여기에 가짜 기록을
+    // 그려 두면 사용자가 그걸 실제 순위로 읽는다. 역대는 텅 빈 표가 더 어색해 폴백을 남긴다.
+    board.value = period.value === 'ALLTIME'
+      ? { ...MOCK_BOARD, gameId: selected.value }
+      : { gameId: selected.value, period: period.value, entries: [] }
+    boardIsFallback.value = period.value === 'ALLTIME'
   }
   page.value = 1
   // 게임·모드·기간을 바꿔도 찾던 사람을 계속 따라간다 — 같은 이름을 다시 칠 이유가 없다
@@ -267,6 +297,12 @@ async function loadBoard() {
 }
 onMounted(loadBoard)
 watch([selected, mode, period], loadBoard)
+
+/** 순위표 제목 — 지금 보고 있는 탭이 뭔지 표에도 적어 준다(탭만 보고 헷갈리지 않게). */
+const boardTitle = computed(() => {
+  if (isChart.value) return `${EVENT_BOARD.label} 순위`
+  return `${selectedGame.value} ${isWeekly.value ? '주간 순위' : '전체 순위'}`
+})
 
 /** 주간 탭이 보고 있는 주 — 서버가 스냅해 준 weekStart 기준 7일. */
 const weekLabel = computed(() => {
@@ -292,6 +328,9 @@ function achievedTitle(entry: LeaderboardEntry) {
     : `${when} 달성 — 같은 점수면 먼저 달성한 사람이 위입니다`
 }
 
+/** 모드 토글은 응원가 보드에서 숨긴다 — 그 보드는 솔로·멀티를 합쳐서 세므로 눌러도 안 바뀐다. */
+const showModeSwitch = computed(() => !isChart.value)
+
 const totalPages = computed(() => Math.max(1, Math.ceil(board.value.entries.length / PAGE_SIZE)))
 const pagedEntries = computed(() => board.value.entries.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE))
 const podiumEntries = computed(() =>
@@ -316,6 +355,8 @@ function selectGame(gameId: number) {
   if (!soloPlayable(gameId)) mode.value = 'MULTI'
   // 역대 탭이 없는 협동 게임도 마찬가지 — 사라진 탭의 순위표를 계속 보고 있으면 안 된다
   if (games.value.find((g) => g.id === gameId)?.mode === 'COOP') period.value = 'WEEKLY'
+  // 응원가 보드는 캐치캐치리듬에만 있다 — 다른 게임으로 옮기면 그 탭도 사라지므로 되돌린다
+  if (period.value === 'CHART' && gameId !== EVENT_BOARD.gameId) period.value = 'ALLTIME'
   gameMenuOpen.value = false
 }
 </script>
@@ -382,7 +423,7 @@ function selectGame(gameId: number) {
             </button>
           </div>
         </div>
-        <div class="mode-switch" aria-label="랭킹 모드 선택">
+        <div v-if="showModeSwitch" class="mode-switch" aria-label="랭킹 모드 선택">
           <button v-for="item in availableModes" :key="item.value" :class="{ active: mode === item.value }" @click="mode = item.value">
             {{ item.label }}
           </button>
@@ -391,7 +432,9 @@ function selectGame(gameId: number) {
 
       <div class="podium-wrap">
         <div class="podium-title">
-          <span>TOP PLAYERS</span><b>{{ isWeekly ? '이번 주의 챔피언' : '역대 챔피언' }}</b>
+          <span>TOP PLAYERS</span>
+          <b v-if="isChart">{{ EVENT_BOARD.label }} 챔피언</b>
+          <b v-else>{{ isWeekly ? '이번 주의 챔피언' : '역대 챔피언' }}</b>
         </div>
         <div class="podium">
           <button v-for="entry in podiumEntries" :key="entry.userId" class="podium-player" :class="`place-${entry.rank}`" @click="openProfile(entry)">
@@ -407,7 +450,7 @@ function selectGame(gameId: number) {
 
       <div class="leaderboard-grid">
         <section class="scoreboard">
-          <header class="board-head"><div><span>LEADERBOARD</span><h2>{{ selectedGame }} {{ isWeekly ? '주간 순위' : '전체 순위' }}</h2></div><small>프로필을 눌러 확인해 보세요</small></header>
+          <header class="board-head"><div><span>LEADERBOARD</span><h2>{{ boardTitle }}</h2></div><small>프로필을 눌러 확인해 보세요</small></header>
           <div class="period-tabs" role="tablist" aria-label="랭킹 집계 기간">
             <button
               v-for="item in availablePeriods"
@@ -418,9 +461,10 @@ function selectGame(gameId: number) {
               :class="{ active: period === item.value }"
               @click="period = item.value"
             >
-              <b>{{ item.label }}</b><small>{{ item.hint }}</small>
+              <b>{{ item.label }}</b>
             </button>
             <span v-if="isWeekly && weekLabel" class="week-range">{{ weekLabel }}</span>
+            <span v-else-if="isChart" class="week-range">만점 41,200</span>
           </div>
           <div class="score-labels"><span>RANK</span><span>PLAYER</span><span>{{ isWeekly ? 'TOTAL' : 'SCORE' }}</span><span>PLAY</span></div>
           <button v-for="entry in pagedEntries" :key="entry.userId" class="score-row" :class="{ mine: board.myRank?.userId === entry.userId, elite: entry.rank <= 3, found: searchHit?.userId === entry.userId }" :title="achievedTitle(entry)" @click="openProfile(entry)">
@@ -430,7 +474,9 @@ function selectGame(gameId: number) {
             <small>{{ entry.playCount }}회</small>
           </button>
           <p v-if="!board.entries.length" class="empty">
-            {{ isWeekly ? '이번 주엔 아직 기록이 없어요. 첫 판의 주인공이 되어 보세요!' : '첫 기록의 주인공이 되어 보세요!' }}
+            <template v-if="isChart">아직 아무도 도전하지 않았어요. 첫 만점의 주인공이 되어 보세요!</template>
+            <template v-else-if="isWeekly">이번 주엔 아직 기록이 없어요. 첫 판의 주인공이 되어 보세요!</template>
+            <template v-else>첫 기록의 주인공이 되어 보세요!</template>
           </p>
           <div v-if="totalPages > 1" class="pager"><button :disabled="page === 1" @click="page--">‹</button><span>{{ page }} / {{ totalPages }}</span><button :disabled="page === totalPages" @click="page++">›</button></div>
           <p v-if="error" class="error-message">{{ error }}</p>
@@ -443,7 +489,8 @@ function selectGame(gameId: number) {
           <div class="personal-meta"><span>플레이 <b>{{ board.myRank?.playCount ?? 0 }}회</b></span><span>{{ mode === 'MULTI' ? '멀티 모드' : '솔로 모드' }}</span></div>
           <div class="tip">
             <i>✦</i>
-            <p v-if="isWeekly">주간은 매주 0에서 시작해요.<br />지금부터 쌓아도 따라잡을 수 있어요.</p>
+            <p v-if="isChart">만점은 41,200점!<br />동점이면 먼저 찍은 사람이 위예요.</p>
+            <p v-else-if="isWeekly">주간은 매주 0에서 시작해요.<br />지금부터 쌓아도 따라잡을 수 있어요.</p>
             <p v-else>더 높은 곳을 향해!<br />한 판 더 도전해 보세요.</p>
           </div>
         </aside>
@@ -475,11 +522,10 @@ function selectGame(gameId: number) {
 .leaderboard-grid { display: grid; grid-template-columns: minmax(0, 1fr) 225px; gap: 18px; margin-top: 18px; }.scoreboard, .personal-card { border: 2px solid #cbbbc8; border-radius: 14px; background: #fffdf8; box-shadow: 4px 4px 0 #dfd0d8; }.scoreboard { overflow: hidden; }.board-head { display: flex; align-items: end; justify-content: space-between; padding: 18px 20px 13px; border-bottom: 2px dashed #e1d3df; }
 /* 기간 탭 — 활성 탭만 카드 위로 떠 보이게(아래 테두리를 끊어 표 본문과 이어 붙인다) */
 .period-tabs { display: flex; align-items: center; gap: 8px; padding: 12px 20px 0; border-bottom: 2px solid #e1d3df; }
-.period-tabs button { display: flex; flex-direction: column; gap: 2px; padding: 8px 15px 9px; border: 2px solid #dccfdd; border-bottom: 0; border-radius: 9px 9px 0 0; background: #f6eff5; color: #97819c; text-align: left; transition: var(--t-fast); translate: 0 2px; }
+.period-tabs button { padding: 10px 18px 11px; border: 2px solid #dccfdd; border-bottom: 0; border-radius: 9px 9px 0 0; background: #f6eff5; color: #97819c; transition: var(--t-fast); translate: 0 2px; }
 .period-tabs button:hover { background: #f1e6f2; color: #7b6280; }
 .period-tabs button.active { border-color: #bda7c6; background: #fffdf8; box-shadow: inset 0 3px #b492c4; color: #56405d; translate: 0 2px; }
-.period-tabs button b { font-size: 12px; }
-.period-tabs button small { font-size: 8px; letter-spacing: .2px; opacity: .82; }
+.period-tabs button b { font-size: 12px; white-space: nowrap; }
 .period-tabs .week-range { margin-left: auto; padding-bottom: 8px; color: #97819c; font-size: 10px; }.board-head span { color: #9a6f8c; }.board-head h2 { margin: 6px 0 0; font-size: 16px; }.board-head small { color: #a38d9d; font-size: 9px; }.score-labels, .score-row { display: grid; grid-template-columns: 64px minmax(130px, 1fr) 112px 60px; align-items: center; column-gap: 8px; }.score-labels { padding: 10px 20px 7px; color: #a5909b; font-size: 8px; }.score-row { width: 100%; min-height: 59px; padding: 7px 20px; border: 0; border-top: 1px solid #efe6ec; background: transparent; text-align: left; transition: var(--t-fast); }.score-row:hover { background: #f8eef8; transform: translateX(2px); }.score-row.mine { background: #fff4cc; box-shadow: inset 4px 0 0 #f1b933; }
 /* 찾은 줄은 내 줄(노랑)과 구분되게 — 내가 나를 검색해도 어느 쪽이 검색 결과인지 알 수 있다 */
 .score-row.found { background: #f2e4f8; box-shadow: inset 4px 0 0 #9b7ca8; }.row-rank { color: #8b7385; font-size: 12px; }.elite .row-rank { color: #b87838; }.player { display: flex; align-items: center; gap: 8px; min-width: 0; }.player :deep(.user-avatar) { width: 34px; height: 34px; flex: none; border: 2px solid #765f72; border-radius: 50%; background: #f3e3ee; }.player b { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }.player i { padding: 3px 4px; border-radius: 3px; background: #e67a75; color: #fff; font-size: 7px; font-style: normal; }.score-row > strong { color: #60466d; font-size: 12px; }.score-row > small { color: #9c8792; font-size: 9px; }.empty { display: grid; min-height: 158px; margin: 0; place-items: center; padding: 32px 20px 24px; color: #9c8792; text-align: center; font-size: 11px; }.pager { display: flex; justify-content: center; gap: 10px; padding: 14px; border-top: 1px solid #efe6ec; font-size: 10px; }.pager button { width: 25px; border: 2px solid #806b80; border-radius: 5px; background: #fff; }.pager button:disabled { opacity: .35; cursor: default; }.error-message { margin: 0; padding: 0 14px 14px; color: #a85b65; font-size: 9px; }
@@ -487,6 +533,6 @@ function selectGame(gameId: number) {
 @keyframes champion-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-11px); } }
 @media (prefers-reduced-motion: reduce) { .champion-cat { animation: none; } }
 @media (max-width: 760px) { .rank-stage { min-height: 300px; }.stage-copy { padding: 28px 25px; }.stage-copy p { max-width: 70%; }.trophy-scene { right: -54px; width: 220px; opacity: .78; }.champion-cat { right: -26px; bottom: -13px; width: 220px; }.my-rank-flag { position: absolute; right: 17px; bottom: 14px; width: 105px; height: 78px; margin: 0; }.my-rank-flag strong { font-size: 28px; }.ranking-controls { align-items: stretch; flex-direction: column; gap: 10px; }.game-picker { width: 100%; }.mode-switch { align-self: flex-end; }.podium-wrap { padding-right: 10px; padding-left: 10px; }.podium { gap: 4px; }.podium-player { min-width: 82px; }.leaderboard-grid { grid-template-columns: 1fr; }.personal-card { display: none; }.score-labels, .score-row { grid-template-columns: 44px minmax(100px, 1fr) 78px; }.score-labels span:last-child, .score-row > small { display: none; }.score-labels, .score-row { padding-right: 13px; padding-left: 13px; }.board-head { padding-right: 13px; padding-left: 13px; }.board-head small { display: none; }
-/* 좁은 화면에선 탭 설명을 접는다 — 두 줄짜리 탭 두 개가 헤더 폭을 다 먹는다 */
-.period-tabs { padding-right: 13px; padding-left: 13px; }.period-tabs button small { display: none; }.period-tabs .week-range { font-size: 9px; } }
+/* 좁은 화면에선 탭 셋이 헤더 폭을 다 먹으므로 여백을 줄인다 */
+.period-tabs { gap: 5px; padding-right: 13px; padding-left: 13px; }.period-tabs button { padding: 9px 11px 10px; }.period-tabs button b { font-size: 11px; }.period-tabs .week-range { font-size: 9px; } }
 </style>

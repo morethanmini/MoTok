@@ -395,7 +395,7 @@ export type LeaderboardMode = 'SOLO' | 'MULTI'
  * 둘은 짝이다 — 전체기간은 "같은 점수면 먼저 달성한 사람이 위"라서 점수 상한이 있는 게임의
  * 상위권이 사실상 굳는다(명예의 전당). 매주 초기화되는 주간이 그래서 필요하다.
  */
-export type LeaderboardPeriod = 'ALLTIME' | 'WEEKLY'
+export type LeaderboardPeriod = 'ALLTIME' | 'WEEKLY' | 'CHART'
 export interface LeaderboardEntry {
   rank: number
   userId: number
