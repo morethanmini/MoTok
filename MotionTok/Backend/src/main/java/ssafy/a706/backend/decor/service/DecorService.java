@@ -135,8 +135,9 @@ public class DecorService {
             // 앵커는 클라이언트 말을 듣지 않고 분류에서 정한다(anchorOf 주석 참고).
             DecorAnchor anchor = anchorOf(categoryOf.get(p.itemId()));
             sanitized.put(p.itemId(), switch (anchor) {
-                case FRAME -> new DecorConfigPayload.Placement(
-                        p.itemId(), DecorAnchor.FRAME, 0, 0, 0, clamp(p.intensity(), 0, 1));
+                // 효과·배경은 붙는 자리가 없고 세기만 갖는다 — 저장 형태가 같아 함께 다룬다.
+                case FRAME, BACKGROUND -> new DecorConfigPayload.Placement(
+                        p.itemId(), anchor, 0, 0, 0, clamp(p.intensity(), 0, 1));
                 // 가면의 좌표·크기는 클라이언트가 얼굴에서 매 프레임 다시 잡는다 — 저장하지 않는다.
                 case FACE -> new DecorConfigPayload.Placement(
                         p.itemId(), DecorAnchor.FACE, 0, 0, 0, 0);
@@ -180,6 +181,8 @@ public class DecorService {
         return switch (category) {
             case EFFECT -> new DecorConfigPayload.Placement(
                     itemId, DecorAnchor.FRAME, 0, 0, 0, DEFAULT_INTENSITY);
+            case BACKGROUND -> new DecorConfigPayload.Placement(
+                    itemId, DecorAnchor.BACKGROUND, 0, 0, 0, DEFAULT_INTENSITY);
             case MASK -> new DecorConfigPayload.Placement(
                     itemId, DecorAnchor.FACE, 0, 0, 0, 0);
             default -> new DecorConfigPayload.Placement(
@@ -196,6 +199,7 @@ public class DecorService {
     private static DecorAnchor anchorOf(ItemCategory category) {
         return switch (category) {
             case EFFECT -> DecorAnchor.FRAME;
+            case BACKGROUND -> DecorAnchor.BACKGROUND;
             case MASK -> DecorAnchor.FACE;
             default -> DecorAnchor.FIXED;
         };
