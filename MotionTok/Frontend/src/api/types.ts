@@ -160,17 +160,23 @@ export interface GameRecord {
  * x·y는 영상 기준 정규화 좌표(0~1, 스티커 중심), scale은 영상 짧은 변 대비 비율이다.
  * 픽셀이 아니라 비율인 이유 — 편집 화면과 게임 타일의 크기가 달라서 픽셀로 저장하면 위치가 어긋난다.
  */
-export type DecorAnchor = 'FIXED' | 'FRAME' | 'FACE' | 'HAND'
+export type DecorAnchor = 'FIXED' | 'FRAME' | 'BACKGROUND' | 'FACE' | 'HAND'
 export interface DecorPlacement {
   itemId: number
-  /** FIXED(스티커)·FRAME(프레임 전체 효과)만 구현 — FACE·HAND(가면 추적)는 추적기가 붙을 때 사용 */
+  /**
+   * FIXED(스티커)·FRAME(프레임 전체 효과)·BACKGROUND(사람 뒤 배경)·FACE(가면) 구현 —
+   * HAND는 추적기가 붙을 때 사용.
+   *
+   * FRAME과 BACKGROUND는 저장 형태가 같지만(좌표 없음 + intensity) 앵커를 나눠 둔다 —
+   * 분류 한도가 각각 1이라 동시에 장착되고, 그때 어느 배치를 어느 레이어로 그릴지 갈라야 한다.
+   */
   anchor: DecorAnchor
   x: number
   y: number
   scale: number
   /**
-   * FRAME 앵커의 세기(0~1). 효과는 크기가 없어 scale 대신 이 값으로 조절한다.
-   * 서버가 분류(EFFECT)에서 앵커를 정하므로 스티커에는 오지 않는다.
+   * FRAME·BACKGROUND 앵커의 세기(0~1). 둘 다 크기가 없어 scale 대신 이 값으로 조절한다.
+   * 서버가 분류(EFFECT·BACKGROUND)에서 앵커를 정하므로 스티커에는 오지 않는다.
    */
   intensity?: number
 }

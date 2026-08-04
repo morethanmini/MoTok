@@ -137,15 +137,21 @@ function effectFor(slot: Slot) {
   return slot.view ? decorSync.effectOf(slot.view.identity) : null
 }
 
+/** 그 참가자 영상에 걸 배경(어두운 배경) — 효과와 함께 걸릴 수 있어 따로 본다. */
+function backgroundFor(slot: Slot) {
+  return slot.view ? decorSync.backgroundOf(slot.view.identity) : null
+}
+
 /**
- * 그 참가자의 얼굴 앵커 — 그 사람 가면을 얹을 자리. 앵커가 끊기면 null 이고,
- * 그러면 spritesFor 도 가면을 빼므로 게임 중(상대가 추적을 끈 동안)에는 자연히 사라진다.
+ * 그 참가자의 얼굴 앵커 — 그 사람 가면을 얹을 자리이자 어두운 배경이 구멍을 뚫을 자리.
+ * 앵커가 끊기면 null 이고, 그러면 spritesFor 도 가면을 빼므로 게임 중(상대가 추적을 끈 동안)에는
+ * 가면도 조명도 자연히 사라진다.
  */
 function faceFor(slot: Slot) {
   return slot.view ? decorSync.faceOf(slot.view.identity) : null
 }
 
-/** 내 캠에 거는 뽀샤시의 영상 쪽 절반(빛 레이어는 CameraEffectLayer가 맡는다). */
+/** 내 캠에 거는 효과의 영상 쪽 절반(겹치는 레이어는 CameraEffectLayer가 맡는다). */
 const selfCameraFilterStyle = computed(() => {
   const fx = decor.cameraEffect.value
   return fx ? { filter: videoFilter(fx.kind, fx.intensity) } : undefined
@@ -705,22 +711,23 @@ const activeGame = ref<GameEntry | null>(null)
 const activeSession = ref<ActiveGameSession | null>(null)
 
 /**
- * 가면(FACE 앵커)은 저장 좌표가 아니라 내 얼굴을 따라간다.
+ * 얼굴을 따라가는 앵커 하나 — 가면(FACE 앵커)과 어두운 배경 효과가 함께 쓴다.
  *
  * 검출은 <b>내 영상에서만</b> 한다 — 검출기 인스턴스가 영상 하나만 다룰 수 있고(타임스탬프
  * 단조 증가) 8명분을 각자 돌리는 비용도 감당할 수 없다. 그래서 남에게 보이게 하려면 잡은
- * 앵커를 데이터 채널로 흘려보낸다(아래 useDecorSync 의 세 번째 인자).
+ * 앵커를 데이터 채널로 흘려보낸다(아래 useDecorSync 의 세 번째 인자). 가면과 조명이 같은
+ * 앵커를 쓰므로, 둘을 함께 장착해도 검출기는 하나만 돈다.
  *
  * <b>게임 중에는 돌리지 않는다.</b> 셀프 타일은 게임 중에도 카메라지만, 손·자세 추론이 도는
  * 동안 얼굴 검출까지 매 프레임 얹으면 저사양에서 fps 를 깎는다 — 꾸미기가 게임을 느리게
- * 만드는 건 맞바꿀 거래가 아니다. 대신 게임 중에는 가면이 <b>내 화면에서도 남의 화면에서도</b>
- * 보이지 않는다(앵커가 끊기면 받는 쪽도 그리지 않는다).
+ * 만드는 건 맞바꿀 거래가 아니다. 대신 게임 중에는 가면과 어두운 배경이 <b>내 화면에서도 남의
+ * 화면에서도</b> 보이지 않는다(앵커가 끊기면 받는 쪽도 그리지 않는다).
  *
  * ⚠ 이 선언은 activeGame 뒤에 있어야 한다 — useFaceAnchor 가 즉시 한 번 읽는다.
  */
 const selfFace = useFaceAnchor(
   () => selfVideoEl.value,
-  () => selfCamOn.value && decor.hasFaceItem.value && !activeGame.value,
+  () => selfCamOn.value && decor.needsFaceTracking.value && !activeGame.value,
 )
 
 /**
@@ -732,6 +739,7 @@ const decorSync = useDecorSync(
   () => ({
     sprites: decor.sprites.value,
     effect: decor.cameraEffect.value,
+    background: decor.cameraBackground.value,
     faceSprite: decor.faceSprite.value,
   }),
   () => selfFace.anchor.value,
@@ -2081,6 +2089,7 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             :effect="effectFor(slot)"
+            :background="backgroundFor(slot)"
             :face="faceFor(slot)"
             play-audio
             mirror
@@ -2115,7 +2124,20 @@ const startHint = computed(() =>
           <CameraEffectLayer
             v-if="selfCamOn && decor.cameraEffect.value && hasGlowLayer(decor.cameraEffect.value.kind)"
             class="self-fx-layer"
+            :kind="decor.cameraEffect.value.kind"
             :intensity="decor.cameraEffect.value.intensity"
+          />
+          <!-- 내 배경 — 효과 위에 온다(아래면 뽀샤시가 어두워진 배경을 다시 밝힌다).
+               구멍은 아래 StickerOverlay와 같은 기하를 써야 가면과 같은 자리가 된다. -->
+          <CameraEffectLayer
+            v-if="selfCamOn && decor.cameraBackground.value"
+            class="self-fx-layer"
+            :kind="decor.cameraBackground.value.kind"
+            :intensity="decor.cameraBackground.value.intensity"
+            :face="selfFace.anchor.value"
+            mirrored
+            fit="contain"
+            :frame-aspect="selfVideoAspect"
           />
           <!-- 상대 타일(ParticipantTile)과 같은 오버레이 — self-video는 좌우 반전이라 mirrored,
                fit은 <video>의 object-fit과 같아야 영상 안 같은 자리에 얹힌다. -->
@@ -2311,6 +2333,7 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             :effect="effectFor(slot)"
+            :background="backgroundFor(slot)"
             :face="faceFor(slot)"
             play-audio
             mirror
@@ -2335,6 +2358,7 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             :effect="effectFor(slot)"
+            :background="backgroundFor(slot)"
             :face="faceFor(slot)"
             play-audio
             mirror
