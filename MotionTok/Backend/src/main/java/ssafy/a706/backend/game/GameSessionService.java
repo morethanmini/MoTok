@@ -232,8 +232,10 @@ public class GameSessionService {
         boolean activeExists = sessionRepository.findSession(roomId)
                 .map(s -> s.isPlaying(now, END_GRACE_MILLIS))
                 .orElse(false);
+        // 리듬은 정산 대기(재접속 유예, -187)까지 활성으로 본다 — 자기(1.5s) 유예로 보면
+        // 그 대기 창에 공용 게임이 겹쳐 시작될 수 있다. 판정은 리듬 도메인에 있다.
         boolean rhythmActive = rhythmSessionRepository.findSession(roomId)
-                .map(s -> s.isPlaying(now, END_GRACE_MILLIS))
+                .map(s -> s.isActiveOrSettling(now))
                 .orElse(false);
         if (activeExists || rhythmActive || pendingStarts.containsKey(roomId)) {
             throw new BusinessException(ErrorCode.GAME_SESSION_ALREADY_ACTIVE);
