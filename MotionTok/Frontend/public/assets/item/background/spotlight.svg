@@ -1,0 +1,38 @@
+<!--
+  어두운 배경 효과 아이템의 상점·인벤토리 썸네일.
+
+  soft_glow.svg와 같은 규칙 — 이 그림은 영상 위에 얹히지 않는다. 효과는 CSS로 걸리고
+  (어두운 레이어 + 얼굴 자리에 뚫은 둥근 구멍), 이 파일은 목록에서 무엇인지 알아보게 하는
+  아이콘일 뿐이다. 그래서 픽셀아트 PNG가 아니라 SVG다.
+
+  어두운 배경 + 밝은 원 안의 얼굴로 "배경은 어둡고 얼굴만 떠 있다"는 요점만 전한다.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="어두운 배경 효과">
+  <defs>
+    <!-- 구멍 — 가운데는 완전히 밝고 테두리에서 부드럽게 닫힌다(실제 마스크와 같은 결) -->
+    <radialGradient id="spot-hole" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff3e2" />
+      <stop offset="62%" stop-color="#fff3e2" />
+      <stop offset="100%" stop-color="#fff3e2" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <!-- 어두워진 배경 -->
+  <rect width="64" height="64" rx="6" fill="#2b2333" />
+
+  <!-- 밝은 원 — 얼굴이 놓이는 자리 -->
+  <circle cx="32" cy="33" r="21" fill="url(#spot-hole)" />
+
+  <!-- 얼굴 — 밝은 원 안에만 있다는 게 이 효과의 요점이다 -->
+  <g fill="none" stroke="#8a6a4f" stroke-width="2.4" stroke-linecap="round">
+    <circle cx="32" cy="32" r="13" fill="#fff8ee" />
+    <path d="M26.5 30h.01M37.5 30h.01" stroke-width="3.4" />
+    <path d="M28 38c2.6 2 5.4 2 8 0" />
+  </g>
+
+  <!-- 위에서 내려오는 빛줄기 둘 — 조명이라는 것을 한눈에 -->
+  <g stroke="#ffcf5f" stroke-width="2" stroke-linecap="round" opacity="0.75">
+    <path d="M18 9l-4 7" />
+    <path d="M46 9l4 7" />
+  </g>
+</svg>

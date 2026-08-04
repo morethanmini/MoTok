@@ -13,7 +13,7 @@ import {
 } from '@/features/decor/decorSync'
 import { useDecorSync, type DecorTransport } from '@/composables/useDecorSync'
 import type { StickerSprite } from '@/features/decor/sticker'
-import type { CameraEffect } from '@/features/decor/cameraEffect'
+import type { CameraBackground, CameraEffect } from '@/features/decor/cameraEffect'
 import type { FaceAnchor } from '@/features/decor/faceAnchor'
 
 const sprite = (over: Partial<StickerSprite> = {}): StickerSprite => ({
@@ -26,12 +26,13 @@ const sprite = (over: Partial<StickerSprite> = {}): StickerSprite => ({
   ...over,
 })
 
-/** 스티커만 있는 상태 — 효과·가면까지 보는 테스트만 그 자리를 채운다. */
+/** 스티커만 있는 상태 — 효과·배경·가면까지 보는 테스트만 그 자리를 채운다. */
 const state = (
   sprites: StickerSprite[],
   effect: CameraEffect | null = null,
   faceSprite: StickerSprite | null = null,
-): DecorState => ({ sprites, effect, faceSprite })
+  background: CameraBackground | null = null,
+): DecorState => ({ sprites, effect, background, faceSprite })
 
 const mask = (over: Partial<StickerSprite> = {}): StickerSprite => ({
   itemId: 5,
@@ -122,6 +123,50 @@ describe('decorSync 메시지', () => {
     const got = parseDecorMessage(legacy)
     expect(got?.sprites).toHaveLength(1)
     expect(got?.effect).toBeNull()
+    expect(got?.background).toBeNull()
+  })
+
+  it('배경도 함께 실어 보낸다', () => {
+    const bg: CameraBackground = { itemId: 12, kind: 'SPOTLIGHT', intensity: 0.6 }
+    const got = parseDecorMessage(encodeDecorMessage(state([sprite()], null, null, bg)))
+    expect(got?.background).toEqual(bg)
+  })
+
+  /*
+   * 효과와 배경은 분류가 다른 칸이라 <b>동시에</b> 걸릴 수 있다. 한 필드로 합쳐 보내면
+   * 둘 중 하나가 조용히 사라지는데, 그건 안 보이는 쪽이 무엇인지 알아채기 어렵다.
+   */
+  it('효과와 배경을 함께 걸어도 둘 다 전해진다', () => {
+    const fx: CameraEffect = { itemId: 9, kind: 'SOFT_GLOW', intensity: 0.4 }
+    const bg: CameraBackground = { itemId: 12, kind: 'SPOTLIGHT', intensity: 0.6 }
+    const got = parseDecorMessage(encodeDecorMessage(state([], fx, null, bg)))
+    expect(got?.effect).toEqual(fx)
+    expect(got?.background).toEqual(bg)
+  })
+
+  /*
+   * 종류 목록을 섞으면 배경이 효과 자리에 들어와 videoFilter로 흘러간다(어두운 배경이
+   * 프레임 전체에 균일하게 걸려 얼굴까지 어두워진다). 서로를 모르는지 못박는다.
+   */
+  it('효과 자리에 온 배경 종류는 버린다 — 그 반대도 마찬가지', () => {
+    const asEffect = JSON.stringify({
+      v: 1,
+      sprites: [],
+      effect: { itemId: 9, kind: 'SPOTLIGHT', intensity: 0.5 },
+    })
+    expect(parseDecorMessage(asEffect)?.effect).toBeNull()
+
+    const asBackground = JSON.stringify({
+      v: 1,
+      sprites: [],
+      background: { itemId: 9, kind: 'SOFT_GLOW', intensity: 0.5 },
+    })
+    expect(parseDecorMessage(asBackground)?.background).toBeNull()
+  })
+
+  it('배경 세기도 0~1로 다듬는다', () => {
+    const over = state([], null, null, { itemId: 12, kind: 'SPOTLIGHT' as const, intensity: 9 })
+    expect(parseDecorMessage(encodeDecorMessage(over))?.background?.intensity).toBe(1)
   })
 
   it('망가진 효과는 버리고 스티커는 살린다', () => {
