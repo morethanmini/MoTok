@@ -1,6 +1,7 @@
 package ssafy.a706.backend.game;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,9 +18,11 @@ import ssafy.a706.backend.game.dto.GameDetailResponse;
 import ssafy.a706.backend.game.dto.GameSummaryResponse;
 import ssafy.a706.backend.game.dto.LeaderboardResponse;
 import ssafy.a706.backend.game.model.LeaderboardMode;
+import ssafy.a706.backend.game.model.LeaderboardPeriod;
 import ssafy.a706.backend.global.exception.BusinessException;
 import ssafy.a706.backend.global.exception.ErrorCode;
 
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -67,12 +70,20 @@ public class GameRestController {
         gameSessionService.judgeDrawing(request.roomId(), request.image(), principal);
     }
 
-    /** GET /games/{gameId}/leaderboard — 게임·모드(솔로/멀티)별 랭킹 + 내 순위. */
+    /**
+     * GET /games/{gameId}/leaderboard — 게임·모드(솔로/멀티)·기간(전체/주간)별 랭킹 + 내 순위.
+     *
+     * <p>{@code period}는 기본 ALLTIME이라 기존 호출은 그대로 동작한다. {@code week}는 보고 싶은
+     * 주의 아무 날짜나 주면 되고(서버가 그 주 월요일로 스냅한다), 생략하면 이번 주다.</p>
+     */
     @GetMapping("/{gameId}/leaderboard")
     public LeaderboardResponse leaderboard(@PathVariable long gameId,
                                            @RequestParam(defaultValue = "MULTI") LeaderboardMode mode,
+                                           @RequestParam(defaultValue = "ALLTIME") LeaderboardPeriod period,
+                                           @RequestParam(required = false)
+                                           @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate week,
                                            @RequestParam(defaultValue = "20") int limit,
                                            @AuthenticationPrincipal AuthPrincipal principal) {
-        return gameQueryService.leaderboard(gameId, mode, limit, principal);
+        return gameQueryService.leaderboard(gameId, mode, period, week, limit, principal);
     }
 }

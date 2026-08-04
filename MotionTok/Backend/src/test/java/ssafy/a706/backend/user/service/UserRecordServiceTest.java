@@ -1,6 +1,5 @@
 package ssafy.a706.backend.user.service;
 
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -10,7 +9,6 @@ import org.springframework.test.util.ReflectionTestUtils;
 import ssafy.a706.backend.game.entity.Game;
 import ssafy.a706.backend.game.entity.Leaderboard;
 import ssafy.a706.backend.game.model.LeaderboardMode;
-import ssafy.a706.backend.game.repository.GameRankRedisRepository;
 import ssafy.a706.backend.game.repository.GameRepository;
 import ssafy.a706.backend.game.repository.LeaderboardRepository;
 import ssafy.a706.backend.global.exception.BusinessException;
@@ -21,7 +19,6 @@ import ssafy.a706.backend.user.repository.UserRepository;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,12 +27,17 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
  * 회원 전적 조회(-97·-141) 단위 테스트.
- * 시나리오: 404 / 빈 전적 / 게임·모드 정렬과 순위 / 카탈로그 이탈 게임 제외 / ZSET 부분 유실 자가 복구.
+ * 시나리오: 404 / 빈 전적 / 게임·모드 정렬과 순위 / 카탈로그 이탈 게임 제외.
+ *
+ * <p>순위는 리더보드 화면(-96)과 <b>같은 countAhead</b>를 쓴다 — 화면마다 산식이 다르면 같은
+ * 사람의 순위가 화면마다 달라진다. 예전의 ZSET 유실·부분 유실 자가 복구 시나리오는 순위 권위가
+ * DB로 옮겨지면서 복구할 캐시 자체가 없어져 사라졌다.</p>
  */
 @ExtendWith(MockitoExtension.class)
 class UserRecordServiceTest {
@@ -45,7 +47,6 @@ class UserRecordServiceTest {
     @Mock UserRepository userRepository;
     @Mock LeaderboardRepository leaderboardRepository;
     @Mock GameRepository gameRepository;
-    @Mock GameRankRedisRepository rankRepository;
 
     @InjectMocks UserRecordService service;
 
@@ -90,7 +91,7 @@ class UserRecordServiceTest {
     }
 
     @Test
-    void 게임순으로_묶고_같은_게임은_멀티를_먼저_순위는_ZREVRANK_1기반() {
+    void 게임순으로_묶고_같은_게임은_멀티를_먼저_순위는_앞선_사람_수_플러스_1() {
         givenActiveUser();
         List<Leaderboard> rows = new ArrayList<>(List.of(
                 row(10L, LeaderboardMode.MULTI, 500, 2),
@@ -99,8 +100,8 @@ class UserRecordServiceTest {
         when(leaderboardRepository.findAllByUserId(USER_ID)).thenReturn(rows);
         when(gameRepository.findAllById(anyList()))
                 .thenReturn(List.of(game(1L, "핑거 스타"), game(10L, "그림으로 말해요")));
-        when(rankRepository.size(anyLong(), any())).thenReturn(5L); // warm-up 불필요
-        when(rankRepository.reverseRankOf(anyLong(), any(), eq(USER_ID))).thenReturn(Optional.of(2L));
+        when(leaderboardRepository.countAhead(anyLong(), any(), anyLong(), any(), eq(USER_ID)))
+                .thenReturn(2L);
 
         List<GameRecordResponse> records = service.records(USER_ID);
 
@@ -111,7 +112,7 @@ class UserRecordServiceTest {
                     assertThat(record.gameName()).isEqualTo("핑거 스타");
                     assertThat(record.bestScore()).isEqualTo(900);
                     assertThat(record.playCount()).isEqualTo(5);
-                    assertThat(record.rankNo()).isEqualTo(3); // 0-기반 2 → 1-기반 3
+                    assertThat(record.rankNo()).isEqualTo(3); // 앞선 2명 → 3위
                 });
     }
 
@@ -128,12 +129,39 @@ class UserRecordServiceTest {
         when(leaderboardRepository.findAllByUserId(USER_ID)).thenReturn(rows);
         when(gameRepository.findAllById(anyList())).thenReturn(List.of(
                 Game.builder().id(10L).name("그림으로 말해요").minPlayers(3).maxPlayers(8).build()));
-        when(rankRepository.size(10L, LeaderboardMode.MULTI)).thenReturn(5L);
-        when(rankRepository.reverseRankOf(10L, LeaderboardMode.MULTI, USER_ID)).thenReturn(Optional.of(0L));
+        when(leaderboardRepository.countAhead(
+                eq(10L), eq(LeaderboardMode.MULTI), anyLong(), any(), eq(USER_ID))).thenReturn(0L);
 
         List<GameRecordResponse> records = service.records(USER_ID);
 
         assertThat(records).extracting(GameRecordResponse::mode).containsExactly("MULTI");
+        assertThat(records.get(0).rankNo()).isEqualTo(1);
+    }
+
+    /**
+     * 협동 게임은 전적에 남되 순위는 매기지 않는다(0 = 순위 없음).
+     *
+     * <p>전원이 같은 점수를 받아 역대 순위표 자체가 없는데({@code Game.hasLeaderboard}) 여기서만
+     * 숫자를 매기면, 랭킹 화면은 "순위 없음"인데 전적엔 "3위"가 떠서 같은 앱이 두 말을 한다.
+     * 판수·최고점은 사실이므로 행 자체는 남긴다.</p>
+     */
+    @Test
+    void 협동_게임은_전적에_남되_순위는_비운다() {
+        givenActiveUser();
+        when(leaderboardRepository.findAllByUserId(USER_ID))
+                .thenReturn(new ArrayList<>(List.of(row(10L, LeaderboardMode.MULTI, 100, 26))));
+        when(gameRepository.findAllById(anyList())).thenReturn(List.of(
+                Game.builder().id(10L).name("그림으로 말해요").mode("COOP")
+                        .minPlayers(3).maxPlayers(8).build()));
+
+        List<GameRecordResponse> records = service.records(USER_ID);
+
+        assertThat(records).hasSize(1);
+        assertThat(records.get(0).bestScore()).isEqualTo(100);
+        assertThat(records.get(0).playCount()).isEqualTo(26);
+        assertThat(records.get(0).rankNo()).isZero();
+        // 순위를 안 매기니 세러 가지도 않는다
+        verify(leaderboardRepository, never()).countAhead(anyLong(), any(), anyLong(), any(), anyLong());
     }
 
     @Test
@@ -144,39 +172,5 @@ class UserRecordServiceTest {
         when(gameRepository.findAllById(anyList())).thenReturn(List.of()); // 카탈로그에 없음
 
         assertThat(service.records(USER_ID)).isEmpty();
-    }
-
-    @Test
-    void ZSET이_비어_있으면_leaderboards로_warm_up_후_순위를_읽는다() {
-        givenActiveUser();
-        Leaderboard mine = row(1L, LeaderboardMode.MULTI, 900, 1);
-        when(leaderboardRepository.findAllByUserId(USER_ID)).thenReturn(new ArrayList<>(List.of(mine)));
-        when(gameRepository.findAllById(anyList())).thenReturn(List.of(game(1L, "핑거 스타")));
-        when(rankRepository.size(1L, LeaderboardMode.MULTI)).thenReturn(0L);
-        when(leaderboardRepository.findAllByGameIdAndMode(1L, LeaderboardMode.MULTI))
-                .thenReturn(List.of(mine));
-        when(rankRepository.reverseRankOf(1L, LeaderboardMode.MULTI, USER_ID)).thenReturn(Optional.of(0L));
-
-        List<GameRecordResponse> records = service.records(USER_ID);
-
-        verify(rankRepository).updateRanks(1L, LeaderboardMode.MULTI, Map.of(USER_ID, 900));
-        assertThat(records.get(0).rankNo()).isEqualTo(1);
-    }
-
-    @Test
-    void ZSET에_내_기록만_빠져_있으면_재적재해_자가_복구한다() {
-        givenActiveUser();
-        Leaderboard mine = row(1L, LeaderboardMode.MULTI, 900, 1);
-        when(leaderboardRepository.findAllByUserId(USER_ID)).thenReturn(new ArrayList<>(List.of(mine)));
-        when(gameRepository.findAllById(anyList())).thenReturn(List.of(game(1L, "핑거 스타")));
-        when(rankRepository.size(1L, LeaderboardMode.MULTI)).thenReturn(3L); // 비어 있지 않음
-        when(rankRepository.reverseRankOf(1L, LeaderboardMode.MULTI, USER_ID))
-                .thenReturn(Optional.empty())   // 부분 유실 — 나만 없음
-                .thenReturn(Optional.of(1L));   // 재적재 후
-
-        List<GameRecordResponse> records = service.records(USER_ID);
-
-        verify(rankRepository).updateRanks(1L, LeaderboardMode.MULTI, Map.of(USER_ID, 900));
-        assertThat(records.get(0).rankNo()).isEqualTo(2);
     }
 }
