@@ -507,8 +507,13 @@ useScrollLockWhen(() => showPointConfirm.value || showClearConfirm.value)
           이름
           <input v-model="name" maxlength="20" placeholder="예: 반짝 별" />
         </label>
+        <label class="field">
+          분류
+          <div class="select-display">스티커</div>
+        </label>
         <!-- 분류 select 임시 제거 — category를 'STICKER'로 고정(위 ref 기본값 그대로 사용).
-             다른 분류를 다시 열 때를 위해 원래 UI는 지우지 않고 남겨둔다.
+             위 읽기전용 표시가 그 자리를 대신한다. 다른 분류를 다시 열 때를 위해
+             원래 select UI는 지우지 않고 남겨둔다.
         <label class="field">
           분류
           <select v-model="category">
@@ -739,6 +744,7 @@ useScrollLockWhen(() => showPointConfirm.value || showClearConfirm.value)
 .clear-confirm-actions { display: flex; justify-content: center; gap: 9px; }.clear-confirm-actions :deep(.px-btn) { min-width: 94px; border-color: #9a6b4f; border-radius: 6px; box-shadow: 2px 2px 0 #bd916e; }.clear-confirm-actions :deep(.px-btn:first-child) { background: #f7e1ad; color: #51382c; }.clear-confirm-actions :deep(.px-btn:last-child) { background: #d98265; color: #fffaf0; }
 .field { margin-bottom: 18px; color: #5e4031; font-size: 11px; }
 .field input, .field select { height: 50px; margin-top: 8px; border: 2px solid #b98763; border-radius: 7px; background: #fffef9; font-size: 13px; }
+.select-display { display: flex; align-items: center; width: 100%; height: 50px; margin-top: 8px; padding: 0 12px; border: 2px solid #b98763; border-radius: 7px; background: #fffef9; color: #5e4031; font-size: 13px; cursor: default; user-select: none; }
 .hint { padding: 10px; border-radius: 7px; background: #f5ead6; color: #806d5c; font-size: 10px; }
 .settings-card :deep(.v-primary) { border: 3px solid #925c47; border-radius: 7px; box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), inset -2px -3px 0 rgba(120,58,47,.2), 4px 4px 0 #a66b50; }
 .settings-card :deep(.px-btn:hover:not(:disabled)) { transform: translate(-2px, -2px); box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), inset -2px -3px 0 rgba(120,58,47,.2), 4px 4px 0 #a66b50; }
