@@ -30,8 +30,9 @@ public class GameSettlementListener {
             // 결과 목록 = 종료 시점 세션 참가 전원(게스트 포함) — 1명 이하면 솔로 세션 기록(-96 확장)
             LeaderboardMode mode = LeaderboardMode.ofPlayerCount(event.results().size());
             int members = settlementService.settleToDb(
-                    event.sessionId(), event.gameId(), mode, event.results());
-            log.info("game settled: game={} mode={} members={}", event.gameId(), mode, members);
+                    event.sessionId(), event.gameId(), event.chartId(), mode, event.results());
+            log.info("game settled: game={} mode={} chart={} members={}",
+                    event.gameId(), mode, event.chartId(), members);
         } catch (Exception e) {
             // write-behind — 정산 실패를 실시간 경로로 전파하지 않는다. (후속: 재시도 큐 검토)
             log.error("game settlement failed: game={}", event.gameId(), e);

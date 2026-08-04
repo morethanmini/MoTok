@@ -97,7 +97,7 @@ class RhythmSessionServiceTest {
 
     private RhythmSession playingSession() {
         long now = System.currentTimeMillis();
-        return new RhythmSession("S1", 42L, "HARD", "catch", now - 1000, now + 60_000,
+        return new RhythmSession("S1", 42L, "HARD", "catch", null, now - 1000, now + 60_000,
                 RhythmSession.STATUS_PLAYING);
     }
 
