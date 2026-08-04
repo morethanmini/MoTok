@@ -43,6 +43,11 @@ public class RhythmSessionRepository {
         fields.put("seed", Long.toString(session.seed()));
         fields.put("difficulty", session.difficulty());
         fields.put("mode", session.mode());
+        // 랜덤 채보 라운드는 songId가 없다 — Redis 해시는 null을 못 담으므로 필드를 아예 빼고,
+        // 읽을 때 없으면 null로 되돌린다.
+        if (session.songId() != null) {
+            fields.put("songId", session.songId());
+        }
         fields.put("startAt", Long.toString(session.startAt()));
         fields.put("endAt", Long.toString(session.endAt()));
         fields.put("status", session.status());
@@ -67,6 +72,7 @@ public class RhythmSessionRepository {
                 num(f, "seed", 0L),
                 str(f, "difficulty") == null ? "NORMAL" : str(f, "difficulty"),
                 str(f, "mode") == null ? "catch" : str(f, "mode"),
+                str(f, "songId"),
                 num(f, "startAt", 0L),
                 num(f, "endAt", 0L),
                 str(f, "status") == null ? RhythmSession.STATUS_ENDED : str(f, "status")));

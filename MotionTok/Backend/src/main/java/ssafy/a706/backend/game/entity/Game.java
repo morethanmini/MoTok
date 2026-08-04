@@ -9,6 +9,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import ssafy.a706.backend.game.model.LeaderboardMode;
+import ssafy.a706.backend.game.model.LeaderboardPeriod;
 
 /**
  * 게임 카탈로그(ERD GAME). 팀장 as-built의 하드코딩(PLAYABLE_GAME_IDS·라운드 시간)을
@@ -104,14 +105,35 @@ public class Game {
         this.active = active;
     }
 
+    /** 협동 게임 — 전원이 같은 점수를 받는다(그림으로 말해요). */
+    public boolean isCoop() {
+        return "COOP".equals(mode);
+    }
+
     /**
-     * 이 모드의 순위표를 가지는 게임인가 — 혼자 시작할 수 없는 게임(minPlayers ≥ 2)에 솔로 기록은 없다.
+     * 이 모드·기간의 순위표를 가지는 게임인가. 없는 조합은 읽기 경로에서 빈 순위표로 막는다.
      *
-     * <p>정산이 참가 인원으로 모드를 정하므로({@link LeaderboardMode#ofPlayerCount}) 이런 행은 더는
-     * 쌓이지 않는다. 그런데 개발 중 최소 인원을 잠깐 풀고 테스트한 기록이 남아 있어, 규칙 안내는
-     * "3명부터"라면서 솔로 순위가 보이는 앞뒤 안 맞는 화면이 된다. 그래서 <b>읽기 경로에서</b>
-     * 걸러낸다 — 지우는 대신 막는 쪽이라, 최소 인원이 다시 바뀌어도 규칙이 따라온다.</p>
+     * <p><b>혼자 시작할 수 없는 게임(minPlayers ≥ 2)에 솔로 기록은 없다.</b> 정산이 참가 인원으로
+     * 모드를 정하므로({@link LeaderboardMode#ofPlayerCount}) 이런 행은 더는 쌓이지 않는다. 그런데
+     * 개발 중 최소 인원을 잠깐 풀고 테스트한 기록이 남아 있어, 규칙 안내는 "3명부터"라면서 솔로
+     * 순위가 보이는 앞뒤 안 맞는 화면이 된다. 지우는 대신 막는 쪽이라 최소 인원이 다시 바뀌어도
+     * 규칙이 따라온다.</p>
+     *
+     * <p><b>협동 게임에 역대 최고점 순위는 없다.</b> 협동은 전원이 같은 점수를 받으므로
+     * (GameSessionService.coopResults) 개인의 최고점이 곧 "그날 팀이 낸 결과"다. 게다가 그림으로
+     * 말해요의 점수는 AI 추측 순위에 따른 {100, 80, 60, 40, 20, 0} <b>여섯 값뿐</b>이라
+     * (DrawJudge.scoreForRank), 사람이 조금만 늘어도 전부 100점에 몰리고 1위는 "100점을 제일 먼저
+     * 겪은 사람"으로 영구히 굳는다 — 순위표라고 부를 수 없는 표가 된다.</p>
+     *
+     * <p>반면 <b>주간 누적은 협동에서도 성립한다.</b> 합계는 판마다 쌓여 값이 흩어지고 매주
+     * 초기화되므로 "이번 주에 많이·잘 맞춘 사람"이라는 답이 나온다. 그래서 기간 전체가 아니라
+     * ALLTIME만 막는다.</p>
      */
+    public boolean hasLeaderboard(LeaderboardMode mode, LeaderboardPeriod period) {
+        return hasLeaderboard(mode) && (period != LeaderboardPeriod.ALLTIME || !isCoop());
+    }
+
+    /** 모드 규칙만 — 기간과 무관하게 이 모드의 기록을 노출할 게임인가(전적 화면 등). */
     public boolean hasLeaderboard(LeaderboardMode mode) {
         return mode != LeaderboardMode.SOLO || minPlayers <= 1;
     }
