@@ -251,14 +251,23 @@ export function useLiveKitRoom() {
   // 수신 측은 타일마다 게임 화면 ↔ 카메라를 골라 보고(ParticipantTile 토글), 표시되지 않는 쪽은
   // adaptiveStream(수신)·dynacast(송신)가 자동으로 쉬게 하므로 부하는 실제로 보는 만큼만 든다.
   let gameScreenTrack: LocalVideoTrack | null = null
+  /** 지금 발행 중인 트랙이 잡고 있는 캔버스 — 게임 교체로 캔버스가 갈리면 재발행 판정에 쓴다. */
+  let gameScreenCanvas: HTMLCanvasElement | null = null
   let gameScreenPublishing: Promise<boolean> | null = null
 
-  /** 게임 캔버스 송출 시작(이미 송출 중이면 no-op). 미연결·캡처 실패면 false. */
+  /** 게임 캔버스 송출 시작(같은 캔버스면 no-op, 다른 캔버스면 교체 발행). 미연결·캡처 실패면 false. */
   async function publishGameScreen(canvas: HTMLCanvasElement): Promise<boolean> {
-    if (gameScreenTrack) return true
-    // 발행 협상이 끝나기 전에 다시 불리면(호출측 watch 재발화) 진행 중인 발행을 같이 기다린다.
+    // 발행 협상이 끝나기 전에 다시 불리면(호출측 watch 재발화) 진행 중인 발행부터 끝낸다.
     // 없으면 화면공유 트랙이 두 개 발행되고, 종료 시 하나만 내려가 상대에게 멈춘 화면이 남는다.
-    if (gameScreenPublishing) return gameScreenPublishing
+    if (gameScreenPublishing) await gameScreenPublishing
+    if (gameScreenTrack) {
+      if (gameScreenCanvas === canvas) return true
+      // 캔버스가 갈렸다 — 결과 화면에 앉은 채 다음 게임을 받으면 이전 게임 컴포넌트가 아직
+      // 마운트된 상태에서 호출측 watch가 먼저 발화해 그 캔버스를 발행한다. 여기서 no-op하면
+      // 새 게임 캔버스로 다시 불려도 교체되지 않아, 상대 타일에는 더 이상 그려지지 않는
+      // 죽은 캔버스의 마지막 프레임만 남는다("게임 화면이 안 보인다" 실기 재현의 원인).
+      await unpublishGameScreen()
+    }
     const r = room
     if (!r) return false
     gameScreenPublishing = (async () => {
@@ -270,6 +279,7 @@ export function useLiveKitRoom() {
           name: 'game-screen',
         })
         gameScreenTrack = pub.videoTrack ?? null
+        gameScreenCanvas = gameScreenTrack ? canvas : null
         return !!gameScreenTrack
       } catch {
         track.stop()
@@ -294,6 +304,7 @@ export function useLiveKitRoom() {
   async function unpublishGameScreen() {
     const track = gameScreenTrack
     gameScreenTrack = null
+    gameScreenCanvas = null
     if (track) {
       try {
         await room?.localParticipant.unpublishTrack(track, true)

@@ -753,7 +753,11 @@ const decorSync = useDecorSync(
  */
 const lastPlayed = ref<GameEntry | null>(null)
 watch(activeGame, (g) => {
-  if (g) lastPlayed.value = g
+  if (!g) return
+  lastPlayed.value = g
+  // 게임이 시작되면 꾸미기 인벤토리를 접는다 — 열린 채 두면 게임 화면 위에 떠 있다
+  // (버튼 자체는 템플릿에서 게임 중 숨김).
+  showDecorInventory.value = false
 })
 /**
  * START를 보낸 뒤 GAME_START를 기다리는 시간. 넘기면 "전달되지 않았다"고 알린다.
@@ -2205,7 +2209,10 @@ const startHint = computed(() =>
               {{ decor.saving.value ? '저장 중…' : decor.dirty.value ? '꾸미기 저장 *' : '꾸미기 저장' }}
             </button>
           </section>
+          <!-- 게임 중에는 숨긴다 — 기능을 막는 게 아니라 버튼만 접었다가 판이 끝나면 되살린다.
+               게임이 시작되면 열려 있던 인벤토리도 함께 접는다(아래 activeGame watch). -->
           <button
+            v-if="!activeGame"
             type="button"
             class="game-decor-shortcut"
             :class="{ active: showDecorInventory }"
