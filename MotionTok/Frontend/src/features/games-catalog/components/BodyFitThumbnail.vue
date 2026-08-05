@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * '몸 끼워 맞추기' 카드 전용 썸네일 — RhythmThumbnail.vue/DrawingThumbnail.vue와 동일한
+ * '그대로 멈춰라' 카드 전용 썸네일 — RhythmThumbnail.vue/DrawingThumbnail.vue와 동일한
  * 레이어드 구조. background(민트색 무대 + POSE MATCH 간판 + 실루엣 보드) 위에
  * effect(반짝임, 전면 레이어) → monkey(무대 바닥 위 원숭이) 순으로 얹는다.
  * 평소엔 전부 정지, hover 중에만 둘이 서로 다른 주기/딜레이로 움직인다.
