@@ -940,6 +940,21 @@ const scoreboardRows = computed(() => {
   return rows
 })
 
+/**
+ * 이전 판의 잔재(결과 스코어보드·리듬 정산 플래그 등)를 지운다 — 새 판이 시작되는 모든
+ * 경로(GAME_START·리듬 자동 입장·closeGame)가 이걸 거쳐야 한다. "대기실로"를 누르지 않고
+ * 결과 화면에 앉아 있던 참가자에게는 시작 신호가 곧 복귀다: 여기 남은 gameResults/rhythmEnded는
+ * 위 송출 watch를 막아, 그 사람의 게임 화면이 다른 참가자 타일에 영영 안 보인다
+ * (4인 실기 재현 — 결과 화면에 앉아 있던 사람만 다음 판 내내 캠으로 보였다).
+ */
+function resetRoundState() {
+  gameResults.value = null
+  liveScores.value = {}
+  poseChallenge.value = null
+  rhythmEnded.value = false
+  drawFeed.value = []
+}
+
 watch(roomChat.gameEvents, (all, prev) => {
   for (const e of all.slice(prev?.length ?? 0)) {
     applyGameEvent(e)
@@ -993,10 +1008,7 @@ function applyGameEvent(e: GameEvent) {
     clearStartAck()
     const entry = gameEntries.value.find((g) => g.gameId === e.gameId)
     if (!entry) return
-    gameResults.value = null
-    liveScores.value = {}
-    poseChallenge.value = null
-    drawFeed.value = []
+    resetRoundState()
     activeSession.value = {
       sessionId: e.sessionId,
       constellationKey: e.constellationKey ?? '',
@@ -1071,6 +1083,11 @@ function applyGameEvent(e: GameEvent) {
 // 방장이 리듬 라운드를 시작하면 방 전원이 자동 입장한다.
 // (비방장은 게임 화면을 열 이유가 없어 스스로 구독하지 못한다 — 그래서 여기서 듣는다)
 useRhythmAutoJoin(roomChat, roomCode, () => {
+  // 이전 판 결과 화면에 앉은 채 리듬이 시작된 사람의 잔재를 먼저 지운다(resetRoundState 주석).
+  // activeSession도 비운다 — 리듬은 공용 세션을 안 쓰는데 남겨 두면 LIVE SCORE 박스가
+  // 리듬 화면 위에 뜨고, 지난 세션의 늦은 프레임이 sessionId 필터를 통과한다.
+  resetRoundState()
+  activeSession.value = null
   const entry = gameEntries.value.find((g) => g.id === 'rhythm')
   // 리듬은 공용 세션이 없어 sessionId 대신 고정 키 — 준비 게이트(-161)는 동일하게 거친다
   if (entry) mountWhenReady(entry, 'rhythm-auto-join')
@@ -1601,11 +1618,7 @@ function closeGame() {
   sessionEntry.value = null
   activeGame.value = null
   activeSession.value = null
-  gameResults.value = null
-  liveScores.value = {}
-  poseChallenge.value = null
-  rhythmEnded.value = false
-  drawFeed.value = []
+  resetRoundState()
   // 낙관적으로 얹은 획득 포인트를 서버 값으로 정정한다(비동기 지급이 끝났을 시점).
   void session.refreshProfile()
 }
