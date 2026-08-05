@@ -283,6 +283,9 @@ async function saveDecoration() {
 </template>
 
 <style scoped>
+/* 문서 스크롤은 살리고 스크롤바만 숨긴다 — 상점·랭킹과 같은 방식. */
+:global(html:has(.inventory-page)), :global(body:has(.inventory-page)) { scrollbar-width: none; }
+:global(html:has(.inventory-page)::-webkit-scrollbar), :global(body:has(.inventory-page)::-webkit-scrollbar) { display: none; }
 .grid { display: grid; grid-template-columns: 340px 1fr; gap: 18px; }
 @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
 
