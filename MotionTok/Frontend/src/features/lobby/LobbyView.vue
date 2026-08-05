@@ -919,7 +919,9 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
     linear-gradient(90deg, rgba(204, 169, 115, .08) 1px, transparent 1px);
   background-size: 16px 16px;
 }
-.shell::before { height: 5px; background: #bd6d45; opacity: 1; }
+/* 갈색 바는 AppHeader의 border-bottom(8px)이 그린다 — 여기서 겹쳐 깔면 13px이 된다.
+   규칙을 지우면 위쪽 .shell::before의 13px 무지개 띠가 되살아나므로 끄기만 한다. */
+.shell::before { display: none; }
 .layout { max-width: 1640px; width: 100%; box-sizing: border-box; margin: 0 auto; gap: 26px; padding: 32px 46px 26px; }
 .content { padding: 0; margin: 0; }
 .lobby-hero {
