@@ -32,7 +32,7 @@ const GAME_TONE = ['sky', 'mint', 'peach', 'lilac', 'butter']
  * 목데이터 전용 항목이 있지만 백엔드엔 존재하지 않는 이름이라 대응하지 않는다(id=3 확인 결과 반영).
  */
 const RHYTHM_GAME_ID = 2
-/** 핑거 스타 — 전용 썸네일(FingerStarThumbnail)을 쓴다. 백엔드 시더 기준 id=1. */
+/** 별따라 손따라 — 전용 썸네일(FingerStarThumbnail)을 쓴다. 백엔드 시더 기준 id=1. */
 const FINGER_STAR_GAME_ID = 1
 /**
  * 그림으로 말해요 — 이 게임 카드만 레이어형 썸네일(DrawingThumbnail)을 쓴다.
@@ -40,7 +40,7 @@ const FINGER_STAR_GAME_ID = 1
  */
 const DRAWING_GAME_ID = 10
 /**
- * 몸 끼워 맞추기 — 이 게임 카드만 레이어형 썸네일(BodyFitThumbnail)을 쓴다.
+ * 그대로 멈춰라 — 이 게임 카드만 레이어형 썸네일(BodyFitThumbnail)을 쓴다.
  * 실제 백엔드 시더(GameCatalogSeeder.seedBodyFit) 기준 id=4 — game-room/data.ts의
  * GAME_CATALOG(gameId:4, "BODY FIT")과도 대조해 일치 확인함(2026-07-30).
  * ⚠️ MOCK_GAMES의 "자세 매치"(id=5)를 이 게임과 같은 것으로 보고 5를 쓰면 안 된다 —

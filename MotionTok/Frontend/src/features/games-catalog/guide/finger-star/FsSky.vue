@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 핑거 스타 안내 그림의 공통 무대 — 밤하늘 배경 + 잔별.
+ * 별따라 손따라 안내 그림의 공통 무대 — 밤하늘 배경 + 잔별.
  * 그림 내용은 slot으로 받아 이 svg 안에 그대로 들어간다(SVG 자식이므로 HTML 태그는 넣지 말 것).
  */
 import { SKY_TOP, SKY_BOTTOM, SPECKS, VIEW_H, VIEW_W } from './art'

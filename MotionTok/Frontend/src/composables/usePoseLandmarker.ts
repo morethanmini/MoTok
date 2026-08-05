@@ -1,5 +1,5 @@
 /**
- * MediaPipe Pose Landmarker 컴포저블 (게임④ 몸 끼워 맞추기, S15P11A706-136).
+ * MediaPipe Pose Landmarker 컴포저블 (게임④ 그대로 멈춰라, S15P11A706-136).
  *
  * useHandLandmarker(S15P11A706-34)와 같은 패턴: wasm·모델은 public/mediapipe/ 셀프호스팅,
  * 모델 인스턴스는 모듈 레벨 싱글턴. 전신 33개 랜드마크를 비디오 프레임마다 넘긴다.

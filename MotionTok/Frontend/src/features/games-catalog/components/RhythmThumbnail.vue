@@ -9,7 +9,7 @@
  * - music1/2/3.png(각 1536x1024) solid 콘텐츠도 각각 실측 후, 화면상 서로 겹치지 않고
  *   .detail-button 영역(대략 x 66.7~95.8%, y 79.2~94.2%)도 침범하지 않도록 배치했다.
  * background.png는 알파 채널이 없는(RGB) 이미지라 애초에 투명 여백이 존재할 수 없다 —
- * 핑거스타 때의 교훈대로 확대 없이 100%로 둔다(확대는 cover의 크롭 폭만 늘린다).
+ * 별따라 손따라 때의 교훈대로 확대 없이 100%로 둔다(확대는 cover의 크롭 폭만 늘린다).
  */
 import background from '@/assets/games/rhythm-thumbnail/background.webp'
 import cat from '@/assets/games/rhythm-thumbnail/newcat.webp'
@@ -104,10 +104,10 @@ import music3 from '@/assets/games/rhythm-thumbnail/music3.webp'
 }
 
 /*
- * hover 애니메이션. 캐치캐치리듬/핑거스타와 같은 감지 구조(부모 .game-card의 hover/focus를
+ * hover 애니메이션. 캐치캐치리듬/별따라 손따라와 같은 감지 구조(부모 .game-card의 hover/focus를
  * 자식 레이어가 받음)를 그대로 재사용한다.
  *
- * ⚠️ 핑거스타 작업 때 :global(.game-card:hover) .layer-bear 처럼 선택자 "일부"만 :global()로
+ * ⚠️ 별따라 손따라 작업 때 :global(.game-card:hover) .layer-bear 처럼 선택자 "일부"만 :global()로
  * 감쌌다가 빌드 시 .layer-bear 부분이 통째로 사라지는 버그를 겪었다(컴파일된 CSS로 직접 확인).
  * 여기서는 그 교훈대로 선택자 전체(.game-card:hover .rhythm-cat 전부)를 :global()로 감싼다.
  *

@@ -48,7 +48,7 @@ import java.util.concurrent.ThreadLocalRandom;
  * 페이로드가 크고(노트 수백 개) 생성기가 이미 클라이언트에 있기 때문이다.</p>
  *
  * <p><b>신뢰 모델</b>: 판정·점수 계산은 클라이언트가 하고 서버는 범위 클램프 + 참가자당
- * 최초 1회 제출만 수리한다(핑거 스타와 동일).</p>
+ * 최초 1회 제출만 수리한다(별따라 손따라와 동일).</p>
  *
  * <p>정산은 {@link GameSettledEvent}로 기존 리스너에 위임한다 — 리더보드 적재·랭킹 ZSET·
  * 솔로/멀티 판정이 그대로 재사용된다. 호출만 하고 그쪽 코드는 고치지 않는다.</p>
@@ -139,7 +139,7 @@ public class RhythmSessionService {
         if (activeExists) {
             throw RhythmException.alreadyActive();
         }
-        // 공용 게임 세션(핑거스타 등)이 진행/준비 중이면 리듬을 겹쳐 시작할 수 없다(-164).
+        // 공용 게임 세션(별따라 손따라 등)이 진행/준비 중이면 리듬을 겹쳐 시작할 수 없다(-164).
         // 저장소가 따로라 여기서 교차 확인하지 않으면 게임 위에 게임을 얹을 수 있었다
         // (반대 방향은 GameSessionService.start가 확인한다).
         if (gameSessionService.isSessionActiveOrPreparing(roomId)) {

@@ -15,12 +15,12 @@ public record GamePlayerScore(
         Map<String, Integer> stats,
         long finishedAt
 ) {
-    /** 게임①(핑거 스타) 레거시 표기 — GAME_END results의 starsHit 필드를 채운다. */
+    /** 게임①(별따라 손따라) 레거시 표기 — GAME_END results의 starsHit 필드를 채운다. */
     public int starsHit() {
         return stats.getOrDefault("starsHit", 0);
     }
 
-    /** 게임①(핑거 스타) 60초 매치 완성 개수 — 1순위 순위 기준. 다른 게임은 0. */
+    /** 게임①(별따라 손따라) 60초 매치 완성 개수 — 1순위 순위 기준. 다른 게임은 0. */
     public int completedCount() {
         return stats.getOrDefault("completedCount", 0);
     }

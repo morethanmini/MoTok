@@ -66,7 +66,7 @@ public class GameSessionService {
 
     private static final String GAME_TOPIC = "/topic/rooms/%s/game";
 
-    /** 게임①(핑거 스타) — 과제(challenge)가 60초 매치 공유 시드인 게임. */
+    /** 게임①(별따라 손따라) — 과제(challenge)가 60초 매치 공유 시드인 게임. */
     private static final long FINGER_STAR_GAME_ID = 1L;
     /** 게임① 부가 지표 stats 키 (-137 일반화 후 레거시 표기 유지용). */
     private static final String STAT_STARS_HIT = "starsHit";
@@ -97,7 +97,7 @@ public class GameSessionService {
     /** 게임⑤ 마리 수 상한 — 90초를 최단 사이클(멸치)로 나눈 이론상 최대치의 여유값. */
     private static final int MAX_CAUGHT = 30;
 
-    /** 게임④(몸 끼워 맞추기, S15P11A706-86) — 출제 페이즈가 있는 게임. */
+    /** 게임④(그대로 멈춰라, S15P11A706-86) — 출제 페이즈가 있는 게임. */
     private static final long BODY_FIT_GAME_ID = 4L;
     /** 게임④ 출제 페이즈 길이 — FE config·기획 §3과 동기화. */
     private static final long BODY_FIT_SETTING_MILLIS = 5_000;
