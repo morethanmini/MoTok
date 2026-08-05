@@ -10,6 +10,7 @@ import java.util.List;
  *   <tr><td>RHYTHM_START</td><td>sessionId·seed·difficulty·serverNow·startAt·endAt</td></tr>
  *   <tr><td>PROGRESS</td><td>sessionId·userId·nickname·score·combo (비영속 중계)</td></tr>
  *   <tr><td>PLAYER_FINISHED</td><td>sessionId·userId·nickname·score·maxCombo</td></tr>
+ *   <tr><td>RHYTHM_WAITING</td><td>sessionId·waitingNicknames·waitUntil (정산 대기, -187)</td></tr>
  *   <tr><td>RHYTHM_END</td><td>sessionId·results</td></tr>
  *   <tr><td>RHYTHM_ABORTED</td><td>sessionId (방장 강제종료 — 정산 없음)</td></tr>
  * </table>
@@ -32,36 +33,48 @@ public record RhythmEventResponse(
         Integer score,
         Integer combo,
         Integer maxCombo,
-        List<RhythmResultEntry> results
+        List<RhythmResultEntry> results,
+        List<String> waitingNicknames,
+        Long waitUntil
 ) {
 
     public static RhythmEventResponse start(String sessionId, long seed, String difficulty,
                                             String mode, String song,
                                             long serverNow, long startAt, long endAt) {
         return new RhythmEventResponse("RHYTHM_START", sessionId, Long.toString(seed), difficulty,
-                mode, song, serverNow, startAt, endAt, null, null, null, null, null, null);
+                mode, song, serverNow, startAt, endAt, null, null, null, null, null, null, null, null);
     }
 
     public static RhythmEventResponse progress(String sessionId, String userId, String nickname,
                                                int score, int combo) {
         return new RhythmEventResponse("PROGRESS", sessionId, null, null, null, null,
-                null, null, null, userId, nickname, score, combo, null, null);
+                null, null, null, userId, nickname, score, combo, null, null, null, null);
     }
 
     public static RhythmEventResponse playerFinished(String sessionId, String userId, String nickname,
                                                      int score, int maxCombo) {
         return new RhythmEventResponse("PLAYER_FINISHED", sessionId, null, null, null, null,
-                null, null, null, userId, nickname, score, null, maxCombo, null);
+                null, null, null, userId, nickname, score, null, maxCombo, null, null, null);
+    }
+
+    /**
+     * 정산 대기(-187) — 미제출 참가자의 재접속을 기다리는 중임을 알린다.
+     * waitUntil(서버 시각)까지 안 오면 0점 미완주로 정산된다. 재확인마다 최신 명단으로 다시 나간다.
+     */
+    public static RhythmEventResponse waiting(String sessionId, List<String> waitingNicknames,
+                                              long waitUntil) {
+        return new RhythmEventResponse("RHYTHM_WAITING", sessionId, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, waitingNicknames, waitUntil);
     }
 
     public static RhythmEventResponse end(String sessionId, List<RhythmResultEntry> results) {
         return new RhythmEventResponse("RHYTHM_END", sessionId, null, null, null, null,
-                null, null, null, null, null, null, null, null, results);
+                null, null, null, null, null, null, null, null, results, null, null);
     }
 
     /** 방장 강제종료(-164). RHYTHM_END와 달리 정산이 없어 results가 비어 있다. */
     public static RhythmEventResponse aborted(String sessionId) {
         return new RhythmEventResponse("RHYTHM_ABORTED", sessionId, null, null, null, null,
-                null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null);
     }
 }

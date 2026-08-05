@@ -7,6 +7,7 @@
  *   await lk.connect(...); sync.broadcast()
  *   sync.spritesOf(identity)   // 그 참가자 타일에 얹을 스프라이트(가면 포함)
  *   sync.effectOf(identity)    // 그 참가자 영상에 걸 프레임 효과
+ *   sync.backgroundOf(identity)// 그 참가자 영상에 걸 배경(효과와 함께 걸릴 수 있다)
  *   sync.faceOf(identity)      // 그 참가자 얼굴 앵커(가면을 얹을 자리)
  *
  * <b>두 종류의 메시지를 나눠 보낸다.</b> 상태(스티커·효과·어떤 가면)는 바뀔 때 한 번, 신뢰
@@ -26,7 +27,7 @@ import {
   type DecorState,
 } from '@/features/decor/decorSync'
 import { preloadSprites, type StickerSprite } from '@/features/decor/sticker'
-import type { CameraEffect } from '@/features/decor/cameraEffect'
+import type { CameraBackground, CameraEffect } from '@/features/decor/cameraEffect'
 import type { FaceAnchor } from '@/features/decor/faceAnchor'
 
 /** useLiveKitRoom에서 이 컴포저블이 쓰는 부분만 뽑은 형태. */
@@ -159,10 +160,19 @@ export function useDecorSync(
     return remote.value[identity]?.effect ?? null
   }
 
-  /** 그 참가자 얼굴 앵커 — 가면을 얹을 자리. 낡거나 없으면 null. */
+  /** 그 참가자 영상에 걸 배경 — 없거나 아직 못 받았으면 null. 효과와 함께 걸릴 수 있다. */
+  function backgroundOf(identity: string): CameraBackground | null {
+    return remote.value[identity]?.background ?? null
+  }
+
+  /**
+   * 그 참가자 얼굴 앵커 — 가면을 얹을 자리이자 어두운 배경이 구멍을 뚫을 자리. 낡거나 없으면 null.
+   *
+   * 가면 여부로 걸러내지 않는다 — 가면 없이 어두운 배경만 쓰는 사람도 이 앵커가 있어야 그려진다.
+   */
   function faceOf(identity: string): FaceAnchor | null {
     return faces.value[identity]?.anchor ?? null
   }
 
-  return { remote, spritesOf, effectOf, faceOf, broadcast }
+  return { remote, spritesOf, effectOf, backgroundOf, faceOf, broadcast }
 }

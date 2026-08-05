@@ -3,7 +3,13 @@
  * 남의 브라우저가 보낸 값이라 개수·좌표·주소를 모두 다듬어서 받는다.
  */
 import { clamp01, clampScale, type StickerSprite } from './sticker'
-import { clampIntensity, type CameraEffect, type EffectKind } from './cameraEffect'
+import {
+  clampIntensity,
+  type BackgroundKind,
+  type CameraBackground,
+  type CameraEffect,
+  type EffectKind,
+} from './cameraEffect'
 import type { FaceAnchor } from './faceAnchor'
 
 export const DECOR_TOPIC = 'decor'
@@ -72,11 +78,16 @@ function sanitize(raw: unknown): StickerSprite | null {
   }
 }
 
-/** 참가자가 알려 오는 꾸미기 상태 — 그림으로 얹는 스티커와 프레임 전체 효과. */
+/** 참가자가 알려 오는 꾸미기 상태 — 그림으로 얹는 스티커, 프레임 효과, 배경. */
 export interface DecorState {
   sprites: StickerSprite[]
   /** 걸려 있는 프레임 효과(뽀샤시). 없으면 null — "껐다"도 알려야 한다. */
   effect: CameraEffect | null
+  /**
+   * 걸려 있는 배경(어두운 배경). 없으면 null.
+   * 효과와 <b>따로</b> 싣는다 — 분류 한도가 각각 1이라 둘이 함께 걸릴 수 있다.
+   */
+  background: CameraBackground | null
   /**
    * 쓰고 있는 가면. <b>어떤 그림인지만</b> 담는다 — 자리·크기는 앵커 토픽으로 따로 온다.
    * 없으면 null(안 썼거나 벗었다).
@@ -117,6 +128,14 @@ export function encodeDecorMessage(state: DecorState): string {
           intensity: state.effect.intensity,
         }
       : null,
+    // 배경도 `effect`와 같은 이유로 모르면 무시되는 새 필드다(옛 클라이언트는 배경만 못 본다).
+    background: state.background
+      ? {
+          itemId: state.background.itemId,
+          kind: state.background.kind,
+          intensity: state.background.intensity,
+        }
+      : null,
     // 그림만 — 좌표는 DECOR_FACE_TOPIC 으로 매 프레임 따로 온다.
     face: state.faceSprite
       ? { itemId: state.faceSprite.itemId, imageUrl: state.faceSprite.imageUrl }
@@ -125,19 +144,32 @@ export function encodeDecorMessage(state: DecorState): string {
 }
 
 /** 우리가 그릴 줄 아는 종류인지. 남의 브라우저가 보낸 문자열이라 그대로 믿지 않는다. */
-const KNOWN_KINDS: EffectKind[] = ['SOFT_GLOW', 'GRAYSCALE']
+const KNOWN_EFFECT_KINDS: EffectKind[] = ['SOFT_GLOW', 'GRAYSCALE']
+const KNOWN_BACKGROUND_KINDS: BackgroundKind[] = ['SPOTLIGHT']
 
-/** 남이 보낸 효과 — 종류와 세기를 다듬는다. 모르는 종류면 통째로 버린다(엉뚱하게 그리지 않는다). */
-function sanitizeEffect(raw: unknown): CameraEffect | null {
+/**
+ * 남이 보낸 효과·배경 — 종류와 세기를 다듬는다.
+ * 모르는 종류면 통째로 버린다(엉뚱하게 그리지 않는다).
+ *
+ * 효과와 배경이 담는 것이 같아(itemId·kind·intensity) 한 함수로 받고, <b>어느 목록에서
+ * 종류를 찾을지만</b> 다르게 준다 — 목록을 섞으면 배경 종류가 효과 자리에 들어와 그려진다.
+ */
+function sanitizeLayer<K extends string>(raw: unknown, known: readonly K[]) {
   if (!raw || typeof raw !== 'object') return null
   const e = raw as Record<string, unknown>
   const itemId = Number(e.itemId)
   const intensity = Number(e.intensity)
   if (!Number.isFinite(itemId) || !Number.isFinite(intensity)) return null
-  const kind = KNOWN_KINDS.find((k) => k === e.kind)
+  const kind = known.find((k) => k === e.kind)
   if (!kind) return null
   return { itemId, kind, intensity: clampIntensity(intensity) }
 }
+
+const sanitizeEffect = (raw: unknown): CameraEffect | null =>
+  sanitizeLayer(raw, KNOWN_EFFECT_KINDS)
+
+const sanitizeBackground = (raw: unknown): CameraBackground | null =>
+  sanitizeLayer(raw, KNOWN_BACKGROUND_KINDS)
 
 /**
  * 남이 쓴 가면 — 그림 주소만 받는다. 자리·크기는 앵커가 정하므로 0으로 둔다.
@@ -162,10 +194,11 @@ export function parseDecorMessage(raw: string): DecorState | null {
     return null
   }
   if (!body || typeof body !== 'object') return null
-  const { v, sprites, effect, face } = body as {
+  const { v, sprites, effect, background, face } = body as {
     v?: unknown
     sprites?: unknown
     effect?: unknown
+    background?: unknown
     face?: unknown
   }
   if (v !== PROTOCOL_VERSION || !Array.isArray(sprites)) return null
@@ -174,8 +207,9 @@ export function parseDecorMessage(raw: string): DecorState | null {
       const sprite = sanitize(s)
       return sprite ? [sprite] : []
     }),
-    // 효과·가면을 모르는 옛 클라이언트의 메시지에는 이 필드가 없다 — 없으면 없는 것이다.
+    // 효과·배경·가면을 모르는 옛 클라이언트의 메시지에는 이 필드가 없다 — 없으면 없는 것이다.
     effect: sanitizeEffect(effect),
+    background: sanitizeBackground(background),
     faceSprite: sanitizeFace(face),
   }
 }
