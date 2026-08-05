@@ -5,7 +5,7 @@ import ssafy.a706.backend.game.PointCalculator;
 /**
  * 캐치캐치리듬 전용 포인트 계산.
  *
- * <p>공용 {@code PointCalculator}를 쓰지 않는 이유: 그쪽은 점수가 0~100인 게임(핑거 스타)을
+ * <p>공용 {@code PointCalculator}를 쓰지 않는 이유: 그쪽은 점수가 0~100인 게임(별따라 손따라)을
  * 전제로 {@code scoreBonus = score/10} 을 쓴다. 리듬 점수는 원점수(만 단위)라 그대로 넣으면
  * 순위 보상이 무의미해질 만큼 보너스가 커진다. 포인트 공식은 -83 소유이므로 건드리지 않고
  * 이 게임 몫만 여기서 계산한다.</p>

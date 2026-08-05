@@ -75,7 +75,7 @@ class GameQueryServiceTest {
     }
 
     private void givenGameExists() {
-        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game(GAME_ID, "핑거 스타", 1)));
+        when(gameRepository.findById(GAME_ID)).thenReturn(Optional.of(game(GAME_ID, "별따라 손따라", 1)));
     }
 
     private LeaderboardResponse allTime(int limit, AuthPrincipal principal) {
@@ -311,7 +311,7 @@ class GameQueryServiceTest {
     @Test
     void 목록은_닫힌_게임도_담고_playable로_구분한다() {
         Game open = Game.builder()
-                .id(1L).name("핑거 스타").mode("VERSUS").minPlayers(1).maxPlayers(8)
+                .id(1L).name("별따라 손따라").mode("VERSUS").minPlayers(1).maxPlayers(8)
                 .roundDurationSec(30).countdownSec(3).active(true).build();
         Game closed = Game.builder()
                 .id(2L).name("점검 중 게임").minPlayers(1).maxPlayers(8)
@@ -320,7 +320,7 @@ class GameQueryServiceTest {
 
         List<GameSummaryResponse> all = service.list(null);
         assertThat(all).hasSize(2);
-        assertThat(all.get(0).name()).isEqualTo("핑거 스타");
+        assertThat(all.get(0).name()).isEqualTo("별따라 손따라");
         assertThat(all.get(0).playable()).isTrue();
         assertThat(all.get(0).active()).isTrue();
         // 닫힌 게임은 인원과 무관하게 시작할 수 없다 — active와 playable이 함께 false여야

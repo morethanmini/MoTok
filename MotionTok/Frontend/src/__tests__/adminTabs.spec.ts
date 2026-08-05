@@ -28,7 +28,7 @@ const {
 
 const GAMES = [
   {
-    id: 1, name: '핑거 스타', mode: 'VERSUS', category: 'MOTION',
+    id: 1, name: '별따라 손따라', mode: 'VERSUS', category: 'MOTION',
     minPlayers: 1, maxPlayers: 8, roundDurationSec: 30,
     supportsBot: true, soloCapable: true, active: true,
   },
@@ -294,12 +294,12 @@ describe('게임 관리 탭', () => {
     await scope('싱글 플레이').trigger('click')
     await flushPromises()
     expect(wrapper.findAll('tbody tr')).toHaveLength(1)
-    expect(wrapper.text()).toContain('핑거 스타')
+    expect(wrapper.text()).toContain('별따라 손따라')
     expect(wrapper.text()).not.toContain('그림으로 말해요')
 
     await scope('멀티 플레이').trigger('click')
     await flushPromises()
-    // 핑거 스타는 min 1 / max 8이라 양쪽에 뜬다 — 한쪽으로 몰면 닫으려는 관리자가 못 찾는다.
+    // 별따라 손따라는 min 1 / max 8이라 양쪽에 뜬다 — 한쪽으로 몰면 닫으려는 관리자가 못 찾는다.
     expect(wrapper.findAll('tbody tr')).toHaveLength(2)
   })
 

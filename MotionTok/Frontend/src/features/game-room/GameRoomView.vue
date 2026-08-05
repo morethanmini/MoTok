@@ -861,7 +861,7 @@ watch(hostAway, (away) => {
 
 /**
  * 자체 사운드를 가진 게임은 로비 BGM을 내린다 — 안 내리면 테마와 게임 음악이 겹쳐 들린다.
- * 게임④(shape, -138)로 시작했고, 핑거 스타(finger)·그림 릴레이(draw)가 인게임 루프를 받으면서
+ * 게임④(shape, -138)로 시작했고, 별따라 손따라(finger)·그림 릴레이(draw)가 인게임 루프를 받으면서
  * 함께 들어왔다. 캐치캐치리듬(rhythm)도 인게임 곡을 갖게 되어 합류 — 판정음까지 내는 게임이라
  * 테마가 남아 있으면 셋이 겹친다. 낚시(fish)도 인게임 루프를 받아 합류했다.
  *
@@ -1272,7 +1272,7 @@ const closedGameIds = computed(
  * GAME_START를 구독 전에 방송해 유실된다(토픽은 재생하지 않는다) — 서버에는 세션이 생기는데
  * 화면엔 아무것도 안 뜬다. detailLoaded 전에는 방장 여부를 몰라 launch()가 '게임 제안'으로 새고,
  * 전역 소켓 미연결이면 서버 세션 없이 로컬 폴백으로 열려 멈춘 것처럼 보이고
- * (핑거 스타는 session=null이면 'ready' 화면에서 대기한다), 캡처가 붙기 전이면
+ * (별따라 손따라는 session=null이면 'ready' 화면에서 대기한다), 캡처가 붙기 전이면
  * launch()가 '카메라를 켜고 시작해 주세요'로 되돌린다.</p>
  *
  * <p>joined는 입장 시퀀스의 <b>맨 마지막</b>에 참이 된다(onMounted의 roomChat.connect).
@@ -1481,7 +1481,7 @@ function onGameProgress(starsLit: number, holdProgress: number, completedCount =
   }
 }
 
-/** 핑거 스타 60초 매치 집계 — score 자리에 총점, completedCount가 1순위 승부 기준 */
+/** 별따라 손따라 60초 매치 집계 — score 자리에 총점, completedCount가 1순위 승부 기준 */
 function onGameFinished(r: { completedCount: number; totalScore: number; avgScore: number }) {
   if (activeSession.value) {
     // 서버가 최초 1회만 수리하고 PLAYER_FINISHED → (전원 완주 시) GAME_END를 배포한다.
@@ -1973,7 +1973,7 @@ const startLabel = computed(() => 'GAME START')
  * 이때 열리는 게임은 로컬 솔로 폴백뿐이고 제안 발신은 useRoomChat이 미연결 시 무시한다.
  */
 /**
- * 스코어보드 위치 — 게임마다 화면이 달라 기본 자리가 무언가를 가린다(핑거 스타는 종료 ✕,
+ * 스코어보드 위치 — 게임마다 화면이 달라 기본 자리가 무언가를 가린다(별따라 손따라는 종료 ✕,
  * 바디핏·낚시는 각자의 HUD). 게임별로 자리를 잡아 주는 대신 직접 옮기게 하고 그 자리를 기억한다.
  */
 const {
@@ -2234,7 +2234,7 @@ const startHint = computed(() =>
             @progress="onGameProgress"
             @finished="onGameFinished"
           />
-          <!-- 게임④ 몸 끼워 맞추기(S15P11A706-9) — 출제 포즈(POSE_SET)는 challenge로 내려준다 -->
+          <!-- 게임④ 그대로 멈춰라(S15P11A706-9) — 출제 포즈(POSE_SET)는 challenge로 내려준다 -->
           <BodyFitGame
             v-else-if="activeGame?.id === 'shape'"
             ref="gameComp"
@@ -2944,7 +2944,7 @@ const startHint = computed(() =>
 .gs-empty { font-size: 7px; color: #a99f86; }
 .gs-badge { font-size: 7px; font-weight: 800; padding: 2px 6px; border: 1px solid; border-radius: 6px; white-space: nowrap; }
 
-/* 핑거 스타 — 게임 상단 바(top 40px, 높이 약 46px) 아래로 내린다.
+/* 별따라 손따라 — 게임 상단 바(top 40px, 높이 약 46px) 아래로 내린다.
    z-index:5라 그냥 두면 상단 바 오른쪽 끝의 게임 종료 ✕를 덮는다 */
 .game-scoreboard.fs { top: 92px; }
 
