@@ -57,7 +57,7 @@ const back = () => router.push({ name: RouteName.Auth, query: { mode: 'login' } 
 </script>
 
 <template>
-  <main class="page">
+  <main class="page px-paper-bg">
     <section class="card">
       <div class="head">
         <BrandLogo size="sm" subtitle="새 비밀번호를 설정해요" title="MoToK" />
@@ -121,9 +121,7 @@ const back = () => router.push({ name: RouteName.Auth, query: { mode: 'login' } 
   height: 100%;
   display: grid;
   place-items: center;
-  background: var(--c-cream);
-  background-image: radial-gradient(circle at 1px 1px, rgba(56, 38, 61, 0.1) 1px, transparent 1.5px);
-  background-size: 18px 18px;
+  /* 벽지는 공통 유틸(px-paper-bg)이 그린다 */
 }
 .card {
   position: relative;

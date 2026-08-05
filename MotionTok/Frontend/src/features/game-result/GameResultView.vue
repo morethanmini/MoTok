@@ -43,7 +43,7 @@ function backToRoom() {
 </script>
 
 <template>
-  <main class="page">
+  <main class="page px-paper-bg">
     <img class="confetti trophy" src="/assets/intro/trophy.png" alt="트로피" />
     <img class="confetti console" src="/assets/intro/console.png" alt="" />
     <i class="star s1">★</i><i class="star s2">✦</i><i class="star s3">★</i>
@@ -83,12 +83,7 @@ function backToRoom() {
   place-items: center;
   position: relative;
   overflow: hidden;
-  background-color: #fff4d7;
-  background-image:
-    linear-gradient(32deg, transparent 0 47%, rgba(72,200,164,.14) 47% 53%, transparent 53%),
-    linear-gradient(145deg, transparent 0 47%, rgba(239,104,114,.12) 47% 53%, transparent 53%),
-    radial-gradient(rgba(56, 38, 61, 0.1) 1px, transparent 1px);
-  background-size: 100% 100%, 100% 100%, 18px 18px;
+  /* 벽지는 공통 유틸(px-paper-bg)이 그린다 */
 }
 .card {
   width: min(830px, 90vw);
