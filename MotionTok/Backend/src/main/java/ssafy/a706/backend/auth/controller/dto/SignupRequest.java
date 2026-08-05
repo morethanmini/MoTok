@@ -4,6 +4,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import ssafy.a706.backend.auth.validation.Password;
+import ssafy.a706.backend.global.validation.NicknameFormat;
 import ssafy.a706.backend.global.validation.NoProfanity;
 
 /**
@@ -13,7 +14,7 @@ import ssafy.a706.backend.global.validation.NoProfanity;
 public record SignupRequest(
         @NotBlank @Email String email,
         @Password String password,
-        @NotBlank @Size(min = 2, max = 16) @NoProfanity String nickname,
+        @NotBlank @Size(min = 2, max = 16) @NicknameFormat @NoProfanity String nickname,
         @NotBlank String verificationToken
 ) {
 }
