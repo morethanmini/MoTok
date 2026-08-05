@@ -57,6 +57,14 @@ export type RhythmEvent =
       score: number
       maxCombo: number
     }
+  /** 정산 대기(-187) — 잠깐 끊긴 미제출 참가자의 재접속을 기다리는 중. 재확인마다 최신 명단이 온다 */
+  | {
+      type: 'RHYTHM_WAITING'
+      sessionId: string
+      waitingNicknames: string[]
+      /** 대기 상한(서버 시각) — 이 시각까지 미제출이면 0점 미완주로 정산된다 */
+      waitUntil: number
+    }
   | {
       type: 'RHYTHM_END'
       sessionId: string

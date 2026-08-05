@@ -16,6 +16,7 @@ import {
   spriteWidth,
   type StickerSprite,
 } from './sticker'
+import { frameRect } from './frameBox'
 import type { FaceAnchor } from './faceAnchor'
 
 const props = withDefaults(
@@ -86,26 +87,8 @@ onMounted(() => {
 })
 onBeforeUnmount(() => observer?.disconnect())
 
-/**
- * 영상 프레임이 실제로 놓이는 사각형. contain이면 박스 안에 들어가고(여백 생김),
- * cover면 박스 밖으로 넘친다(잘림) — 둘 다 중앙 정렬이라 계산은 분기 방향만 다르다.
- * frameAspect가 없으면 박스가 곧 프레임이다.
- */
-const frame = computed(() => {
-  const bw = boxW.value
-  const bh = boxH.value
-  const aspect = props.frameAspect
-  if (!aspect || !bw || !bh) return { x: 0, y: 0, w: bw, h: bh }
-
-  const boxIsWider = bw / bh > aspect
-  const fitToHeight = props.fit === 'contain' ? boxIsWider : !boxIsWider
-  if (fitToHeight) {
-    const w = bh * aspect
-    return { x: (bw - w) / 2, y: 0, w, h: bh }
-  }
-  const h = bw / aspect
-  return { x: 0, y: (bh - h) / 2, w: bw, h }
-})
+/** 영상 프레임이 실제로 놓이는 사각형 — 효과 레이어와 같은 기하를 쓴다(frameBox.ts). */
+const frame = computed(() => frameRect(boxW.value, boxH.value, props.frameAspect, props.fit))
 
 /** 이미지 로드 완료를 알리는 신호 — 원본 크기가 확정돼야 상한(원본보다 크게 안 그림)을 걸 수 있다. */
 const loadedTick = ref(0)
