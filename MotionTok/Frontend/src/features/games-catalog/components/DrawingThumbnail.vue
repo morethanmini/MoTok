@@ -115,7 +115,7 @@ import crayon from '@/assets/games/drawing-thumbnail/crayon.webp'
  * hover 애니메이션. RhythmThumbnail.vue와 동일한 감지 구조(부모 .game-card의
  * hover/focus를 자식 레이어가 받음)를 그대로 재사용한다.
  *
- * ⚠️ 핑거스타 작업 때 선택자 "일부"만 :global()로 감쌌다가 빌드 시 그 부분이 통째로
+ * ⚠️ 별따라 손따라 작업 때 선택자 "일부"만 :global()로 감쌌다가 빌드 시 그 부분이 통째로
  * 사라지는 버그를 겪었다(RhythmThumbnail.vue 주석에도 동일 기록). 여기서도 선택자
  * 전체(.game-card:hover .drawing-xxx 전부)를 :global()로 감싼다.
  *

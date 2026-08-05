@@ -88,16 +88,16 @@ class GameSessionServiceTest {
                 .thenReturn(Optional.of(Map.of("hostUserId", "1")));
     }
 
-    /** 카탈로그에서 게임1(핑거 스타, 60초 매치·카운트다운 3s)을 조회하도록 스텁. */
+    /** 카탈로그에서 게임1(별따라 손따라, 60초 매치·카운트다운 3s)을 조회하도록 스텁. */
     private void givenGame1() {
         when(gameRepository.findById(1L)).thenReturn(Optional.of(Game.builder()
-                .id(1L).name("핑거 스타").roundDurationSec(60).countdownSec(3).active(true).build()));
+                .id(1L).name("별따라 손따라").roundDurationSec(60).countdownSec(3).active(true).build()));
     }
 
-    /** 카탈로그에서 게임4(몸 끼워 맞추기)를 조회하도록 스텁 — 라운드 길이는 모드별로 서버가 따로 정한다. */
+    /** 카탈로그에서 게임4(그대로 멈춰라)를 조회하도록 스텁 — 라운드 길이는 모드별로 서버가 따로 정한다. */
     private void givenGame4() {
         when(gameRepository.findById(4L)).thenReturn(Optional.of(Game.builder()
-                .id(4L).name("몸 끼워 맞추기").roundDurationSec(15).countdownSec(3).active(true).build()));
+                .id(4L).name("그대로 멈춰라").roundDurationSec(15).countdownSec(3).active(true).build()));
     }
 
     @Test
@@ -119,7 +119,7 @@ class GameSessionServiceTest {
     void 관리자가_닫은_게임은_GAME_CLOSED로_거부한다() {
         givenRoomWithHost();
         when(gameRepository.findById(1L)).thenReturn(Optional.of(Game.builder()
-                .id(1L).name("핑거 스타").roundDurationSec(60).countdownSec(3).active(false).build()));
+                .id(1L).name("별따라 손따라").roundDurationSec(60).countdownSec(3).active(false).build()));
 
         assertThatThrownBy(() -> service.start(ROOM_ID, new GameStartRequest(1L, null, null, null, null), host))
                 .isInstanceOf(BusinessException.class)
@@ -174,7 +174,7 @@ class GameSessionServiceTest {
         when(gameTaskScheduler.schedule(endTaskCaptor.capture(), any(Instant.class)))
                 .thenReturn(mock(ScheduledFuture.class));
         when(gameRepository.findById(4L)).thenReturn(Optional.of(Game.builder()
-                .id(4L).name("몸 끼워 맞추기").roundDurationSec(15).countdownSec(3).active(true).build()));
+                .id(4L).name("그대로 멈춰라").roundDurationSec(15).countdownSec(3).active(true).build()));
         // 게임④(-9): 출제자 미참여 룰이라 2인 미만이면 시작이 거부된다 — 방장+참가자 스텁
         when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
                 new LiveRoomMemberValue("1", "방장", false, 0),
@@ -200,7 +200,7 @@ class GameSessionServiceTest {
         givenRoomWithHost();
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.empty());
         when(gameRepository.findById(4L)).thenReturn(Optional.of(Game.builder()
-                .id(4L).name("몸 끼워 맞추기").roundDurationSec(15).countdownSec(3).active(true).build()));
+                .id(4L).name("그대로 멈춰라").roundDurationSec(15).countdownSec(3).active(true).build()));
         when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
                 new LiveRoomMemberValue("1", "방장", false, 0)));
 

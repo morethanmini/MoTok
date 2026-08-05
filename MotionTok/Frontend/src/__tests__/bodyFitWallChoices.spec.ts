@@ -9,7 +9,7 @@ import { mount } from '@vue/test-utils'
 import GameSetupModal from '@/features/game-room/components/GameSetupModal.vue'
 import type { GameEntry } from '@/features/game-room/data'
 
-const game = { id: 'shape', name: '몸 끼워 맞추기', emoji: '🧩', thumb: '#000' } as GameEntry
+const game = { id: 'shape', name: '그대로 멈춰라', emoji: '🧩', thumb: '#000' } as GameEntry
 
 // 이 창은 인게임 베드를 직접 깐다 — jsdom에는 재생 구현이 없어 play()가 undefined를 준다
 beforeAll(() => {

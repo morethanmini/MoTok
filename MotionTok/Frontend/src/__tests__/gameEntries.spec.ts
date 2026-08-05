@@ -21,9 +21,9 @@ const game = (over: Partial<Game> & Pick<Game, 'id' | 'name'>): Game => ({
 describe('toGameEntries', () => {
   it('구현이 있는 게임은 슬러그를 얻는다 — 이 값으로 게임 컴포넌트가 갈린다', () => {
     const entries = toGameEntries([
-      game({ id: 1, name: '핑거 스타' }),
+      game({ id: 1, name: '별따라 손따라' }),
       game({ id: 2, name: '캐치캐치리듬' }),
-      game({ id: 4, name: '몸 끼워 맞추기' }),
+      game({ id: 4, name: '그대로 멈춰라' }),
       game({ id: 10, name: '그림으로 말해요', minPlayers: 3 }),
       game({ id: 11, name: '모션 낚시' }),
     ])
@@ -48,7 +48,7 @@ describe('toGameEntries', () => {
 
   it('구현이 없는 서버 게임은 남기되 슬러그가 없다 — 어떤 게임 컴포넌트에도 걸리지 않는다', () => {
     const entries = toGameEntries([
-      game({ id: 1, name: '핑거 스타' }),
+      game({ id: 1, name: '별따라 손따라' }),
       game({ id: 7, name: '새로 붙은 게임' }),
     ])
 
@@ -67,8 +67,8 @@ describe('toGameEntries', () => {
   it('서버가 준 순서를 바꾸지 않는다 — 프론트가 다시 정렬하면 화면끼리 순서가 갈린다', () => {
     const entries = toGameEntries([
       game({ id: 11, name: '모션 낚시' }),
-      game({ id: 1, name: '핑거 스타' }),
-      game({ id: 4, name: '몸 끼워 맞추기' }),
+      game({ id: 1, name: '별따라 손따라' }),
+      game({ id: 4, name: '그대로 멈춰라' }),
     ])
 
     expect(entries.map((e) => e.gameId)).toEqual([11, 1, 4])

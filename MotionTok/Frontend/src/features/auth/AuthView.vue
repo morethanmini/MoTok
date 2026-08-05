@@ -9,6 +9,7 @@ import { ApiError } from '@/api/client'
 import { authApi as recoveryApi } from '@/api'
 import { warmUpMotionModels } from '@/composables/motionModels'
 import { containsProfanity } from '@/utils/profanity'
+import { nicknameError } from '@/utils/nickname'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import PixelCat from './components/PixelCat.vue'
@@ -173,11 +174,13 @@ const checkingNickname = ref(false)
 
 async function checkNickname() {
   const value = nickname.value.trim()
-  // 서버 가입 규칙(2~16자)과 동일하게 미리 거른다 — 통과시켜 놓고 가입에서 실패하면 안 된다.
-  if (value.length < 2 || value.length > 16) {
+  // 서버 가입 규칙(2~16자 + 한글·영문·숫자)과 동일하게 미리 거른다 —
+  // 통과시켜 놓고 가입에서 실패하면 안 된다.
+  const ruleError = nicknameError(value)
+  if (ruleError) {
     nicknameChecked.value = true
     nicknameAvailable.value = false
-    nicknameMsg.value = '닉네임은 2~16자여야 해요.'
+    nicknameMsg.value = ruleError
     return
   }
   // 서버(중복확인·가입 @NoProfanity)와 같은 검사를 미리 태운다 — 왕복 없이 즉시 안내
@@ -235,6 +238,9 @@ const canSubmitSignup = computed(
     verificationToken.value !== '' &&
     nicknameChecked.value &&
     nicknameAvailable.value &&
+    // 중복확인 뒤에 닉네임을 고쳐도 확인 상태가 초기화되지 않는다 — 규칙은 지금 값으로 다시 본다.
+    // (없으면 "가능"을 받아 두고 공백을 끼워 넣어 제출할 수 있고, 서버 400으로만 막힌다.)
+    nicknameError(nickname.value) === null &&
     passwordValid.value &&
     passwordsMatch.value,
 )

@@ -688,7 +688,7 @@ useScrollLockWhen(() => showPointConfirm.value || showClearConfirm.value)
 .hint { font-size: 9px; color: var(--c-muted); margin: 0 0 14px; line-height: 1.6; }
 
 /* AI creator: a workshop board that matches the lobby and shop wood framing. */
-.ai-create-page { background: #fff8e9; }
+/* 벽지는 공통 유틸(px-*-bg)이 그린다 — background 축약형으로 덮으면 도트까지 지워진다 */
 .ai-create-page :deep(.app-page) { padding-top: 28px; padding-bottom: 48px; }
 .ai-create-page :deep(.hero), .ai-create-page :deep(.body) { max-width: 980px; }
 .ai-hero {

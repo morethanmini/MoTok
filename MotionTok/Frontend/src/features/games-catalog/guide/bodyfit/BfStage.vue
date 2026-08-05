@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 몸 끼워 맞추기 안내 그림의 공통 무대 — 어두운 돌 바닥과 배경. */
+/** 그대로 멈춰라 안내 그림의 공통 무대 — 어두운 돌 바닥과 배경. */
 import { BG, FLOOR, VIEW_H, VIEW_W } from './art'
 
 const uid = `bf-bg-${Math.random().toString(36).slice(2, 8)}`

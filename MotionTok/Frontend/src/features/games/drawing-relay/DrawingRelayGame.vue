@@ -329,7 +329,7 @@ watch(
 
 // ── 타이머(인터벌) + 렌더(RAF) 루프 — 카메라 프레임과 독립.
 // 단계 전환을 RAF에 태우면 탭이 가려질 때 RAF가 멈춰 게임이 정지하므로,
-// 전환은 인터벌로 구동하고 RAF는 화면 갱신만 맡는다(핑거 스타 멀티 타이머와 같은 구조).
+// 전환은 인터벌로 구동하고 RAF는 화면 갱신만 맡는다(별따라 손따라 멀티 타이머와 같은 구조).
 let rafId = 0
 let phaseTicker = 0
 const bgm = new GameBgm('/assets/sfx/draw-relay/ingame-loop.mp3')

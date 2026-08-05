@@ -13,6 +13,7 @@ import { usersApi, authApi, ApiError, forceRefreshAccessToken } from '@/api'
 import { reconnectGlobalStomp } from '@/composables/useGlobalStomp'
 import { useSessionStore } from '@/stores/session'
 import { containsProfanity } from '@/utils/profanity'
+import { nicknameError } from '@/utils/nickname'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 
@@ -27,11 +28,8 @@ const available = ref(false)
 const message = ref('')
 const error = ref('')
 
-// 서버 규칙과 동일: 2~16자
-const lengthOk = computed(() => {
-  const value = nickname.value.trim()
-  return value.length >= 2 && value.length <= 16
-})
+// 서버 규칙과 동일: 2~16자 + 한글·영문·숫자
+const ruleError = computed(() => nicknameError(nickname.value))
 
 function onInput() {
   checked.value = false
@@ -40,10 +38,10 @@ function onInput() {
 
 async function check() {
   const value = nickname.value.trim()
-  if (!lengthOk.value) {
+  if (ruleError.value) {
     checked.value = true
     available.value = false
-    message.value = '닉네임은 2~16자여야 해요.'
+    message.value = ruleError.value
     return
   }
   // 서버(중복확인·수정 @NoProfanity)와 같은 검사를 미리 태운다 — 왕복 없이 즉시 안내
@@ -109,7 +107,7 @@ async function cancel() {
 </script>
 
 <template>
-  <main class="page">
+  <main class="page px-paper-bg">
     <section class="card">
       <div class="head">
         <BrandLogo size="sm" subtitle="모톡에서 쓸 닉네임을 정해주세요" title="MoToK" />
@@ -152,9 +150,7 @@ async function cancel() {
   height: 100%;
   display: grid;
   place-items: center;
-  background-color: #fff1df;
-  background-image: radial-gradient(rgba(56, 38, 61, 0.1) 1px, transparent 1.5px);
-  background-size: 18px 18px;
+  /* 벽지는 공통 유틸(px-paper-bg)이 그린다 */
 }
 .card {
   width: min(430px, 90vw);

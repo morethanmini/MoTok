@@ -1346,7 +1346,7 @@ const short = (s: string, max = 12) => (s.length > max ? `${s.slice(0, max)}…`
   color: var(--admin-ink);
 }
 .admin-page :deep(.app-page) { padding-top: 32px; }
-.admin-page :deep(.app-shell) { background: #fffaf0; }
+/* 벽지는 공통 유틸(px-*-bg)이 그린다 — background 축약형으로 덮으면 도트까지 지워진다 */
 
 .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 8px 18px; }
 .tabs button { min-width: 112px; height: 42px; padding: 0 15px; border: 2px solid #b78d5d; border-radius: 7px; background: #fff7e5; box-shadow: 2px 2px 0 #e2d0b5; color: #69513e; font-size: 12px; font-weight: 700; }

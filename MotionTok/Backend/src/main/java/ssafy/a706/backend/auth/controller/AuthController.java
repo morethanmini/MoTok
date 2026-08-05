@@ -3,6 +3,7 @@ package ssafy.a706.backend.auth.controller;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -18,6 +19,7 @@ import ssafy.a706.backend.auth.password.PasswordResetService;
 import ssafy.a706.backend.auth.principal.AuthPrincipal;
 import ssafy.a706.backend.auth.principal.MemberPrincipal;
 import ssafy.a706.backend.auth.ratelimit.GuestStartLimiter;
+import ssafy.a706.backend.global.validation.NicknameFormat;
 import ssafy.a706.backend.user.controller.dto.UserProfileResponse;
 
 /**
@@ -45,9 +47,14 @@ public class AuthController {
         return authService.checkEmail(email);
     }
 
-    /** GET /auth/availability/nickname — 닉네임 중복 확인 */
+    /**
+     * GET /auth/availability/nickname — 닉네임 중복 확인.
+     * 가입과 <b>같은</b> 길이·문자 규칙을 건다 — 여기서 "쓸 수 있다"고 답한 닉네임을
+     * 가입에서 거절하면 사용자는 어디가 틀렸는지 모른 채 같은 값을 다시 넣는다.
+     */
     @GetMapping("/availability/nickname")
-    public AvailabilityResponse availabilityNickname(@RequestParam @NotBlank String nickname) {
+    public AvailabilityResponse availabilityNickname(
+            @RequestParam @NotBlank @Size(min = 2, max = 16) @NicknameFormat String nickname) {
         return authService.checkNickname(nickname);
     }
 

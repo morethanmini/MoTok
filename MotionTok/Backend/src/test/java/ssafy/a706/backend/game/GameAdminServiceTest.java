@@ -45,7 +45,7 @@ class GameAdminServiceTest {
     @Test
     void 닫아_둔_게임까지_전부_돌려준다() {
         when(gameRepository.findAll(any(org.springframework.data.domain.Sort.class))).thenReturn(List.of(
-                game(1L, "핑거 스타", "VERSUS", 1, 8, true),
+                game(1L, "별따라 손따라", "VERSUS", 1, 8, true),
                 game(10L, "그림으로 말해요", "COOP", 3, 8, false)));
 
         List<AdminGameResponse> games = service.list();
@@ -62,7 +62,7 @@ class GameAdminServiceTest {
     @Test
     void soloCapable은_최소_인원으로_판정한다() {
         when(gameRepository.findAll(any(org.springframework.data.domain.Sort.class))).thenReturn(List.of(
-                game(1L, "핑거 스타", "VERSUS", 1, 8, true),   // 대결 모드지만 혼자도 된다
+                game(1L, "별따라 손따라", "VERSUS", 1, 8, true),   // 대결 모드지만 혼자도 된다
                 game(10L, "그림으로 말해요", "COOP", 3, 8, true)));
 
         List<AdminGameResponse> games = service.list();
@@ -73,7 +73,7 @@ class GameAdminServiceTest {
 
     @Test
     void 토글하면_엔티티_상태가_바뀌고_갱신된_항목을_돌려준다() {
-        Game target = game(1L, "핑거 스타", "VERSUS", 1, 8, true);
+        Game target = game(1L, "별따라 손따라", "VERSUS", 1, 8, true);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(target));
 
         AdminGameResponse closed = service.changeActive(ADMIN_ID, 1L, false);
@@ -85,7 +85,7 @@ class GameAdminServiceTest {
     /** 같은 값으로 다시 눌러도 실패가 아니다 — 결과 상태가 요청과 같으므로 관리자가 대응할 게 없다. */
     @Test
     void 같은_값으로_다시_눌러도_성공한다() {
-        Game target = game(1L, "핑거 스타", "VERSUS", 1, 8, false);
+        Game target = game(1L, "별따라 손따라", "VERSUS", 1, 8, false);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(target));
 
         assertThat(service.changeActive(ADMIN_ID, 1L, false).active()).isFalse();

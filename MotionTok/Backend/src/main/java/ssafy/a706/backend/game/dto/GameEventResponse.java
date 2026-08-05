@@ -9,7 +9,7 @@ import java.util.List;
  * <ul>
  *   <li>GAME_START — 방장 시작 수리. startAt(카운트다운 종료·라운드 시작)·endAt은 epoch millis.
  *       클라이언트는 serverNow와 자기 시계 차이로 오프셋을 보정한다(서버 권위 타이머).
- *       challenge는 게임별 과제 payload(-137) — constellationKey는 게임①(핑거 스타)
+ *       challenge는 게임별 과제 payload(-137) — constellationKey는 게임①(별따라 손따라)
  *       하위호환 필드로, 게임①일 때만 challenge와 같은 값이 실린다.
  *       그림으로 말해요(게임 10)는 topicWord·turnOrder·turnDurationSec·handoverSec가 함께 실린다.</li>
  *   <li>POSE_SET — 게임④ 출제자 포즈 수리(-86). challenge(랜드마크 JSON)·userId(출제자) 유효.

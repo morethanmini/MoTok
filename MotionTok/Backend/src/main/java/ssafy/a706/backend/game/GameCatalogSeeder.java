@@ -10,15 +10,23 @@ import ssafy.a706.backend.game.repository.GameRepository;
 
 /**
  * 게임 카탈로그 시드. 부팅 시 기본 게임이 없으면 넣는다(멱등).
- * 현재는 핑거 스타(id=1) 하나 — as-built 하드코딩 값(라운드 30s·카운트다운 3s)을 그대로 옮긴 것.
+ * 현재는 별따라 손따라(id=1) 하나 — as-built 하드코딩 값(라운드 30s·카운트다운 3s)을 그대로 옮긴 것.
  * 게임 2~6이 붙을 때 여기에 행을 추가하거나 관리자 등록으로 확장한다.
+ *
+ * <p>표시 이름은 상수로 모아 두고 {@code renameIfNeeded}가 기존 행에도 반영한다 —
+ * 이름을 바꿀 때 이미 시딩된 DB가 뒤처지지 않게 한다.</p>
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class GameCatalogSeeder implements ApplicationRunner {
 
-    /** 핑거 스타 60초 매치 총 시간(초) — FE FingerStarGame MATCH_SECONDS와 동기화 필수. */
+    /** 게임① 표시 이름. 식별자(FINGER_STAR·finger-star)는 옛 이름을 그대로 쓴다 — 이름만 바꿨다. */
+    private static final String FINGER_STAR_NAME = "별따라 손따라";
+    /** 게임④ 표시 이름. 식별자(BODY_FIT·body-fit)는 옛 이름을 그대로 쓴다. */
+    private static final String BODY_FIT_NAME = "그대로 멈춰라";
+
+    /** 별따라 손따라 60초 매치 총 시간(초) — FE FingerStarGame MATCH_SECONDS와 동기화 필수. */
     private static final int FINGER_STAR_TOTAL_SEC = 60;
     private static final String FINGER_STAR_RULES =
             "60초 동안 화면에 나타나는 별자리를 최대한 많이 완성하는 게임이에요. "
@@ -69,7 +77,7 @@ public class GameCatalogSeeder implements ApplicationRunner {
         if (existing == null) {
             gameRepository.save(Game.builder()
                     .id(1L)
-                    .name("핑거 스타")
+                    .name(FINGER_STAR_NAME)
                     .mode("VERSUS")
                     .minPlayers(1)
                     .maxPlayers(8)
@@ -81,13 +89,16 @@ public class GameCatalogSeeder implements ApplicationRunner {
                     .rules(FINGER_STAR_RULES)
                     .controls(FINGER_STAR_CONTROLS)
                     .build());
-            log.info("game catalog seeded: id=1 핑거 스타");
-        } else if (existing.getRoundDurationSec() != FINGER_STAR_TOTAL_SEC || existing.getRules() == null) {
-            // 총 시간이 바뀐 뒤(라운드 30s·90s) 또는 상세 안내(-75) 전에 시드된 행 — 규칙을 백필한다(멱등).
-            existing.updateSessionRules(FINGER_STAR_TOTAL_SEC, existing.getMinPlayers());
-            existing.updateGuide(FINGER_STAR_RULES, FINGER_STAR_CONTROLS);
-            gameRepository.save(existing);
-            log.info("game catalog backfilled: id=1 roundDurationSec={} rules/controls", FINGER_STAR_TOTAL_SEC);
+            log.info("game catalog seeded: id=1 {}", FINGER_STAR_NAME);
+        } else {
+            if (existing.getRoundDurationSec() != FINGER_STAR_TOTAL_SEC || existing.getRules() == null) {
+                // 총 시간이 바뀐 뒤(라운드 30s·90s) 또는 상세 안내(-75) 전에 시드된 행 — 규칙을 백필한다(멱등).
+                existing.updateSessionRules(FINGER_STAR_TOTAL_SEC, existing.getMinPlayers());
+                existing.updateGuide(FINGER_STAR_RULES, FINGER_STAR_CONTROLS);
+                gameRepository.save(existing);
+                log.info("game catalog backfilled: id=1 roundDurationSec={} rules/controls", FINGER_STAR_TOTAL_SEC);
+            }
+            renameIfNeeded(existing, FINGER_STAR_NAME);
         }
 
         // 그림으로 말해요(명세 v0.2.20) — roundDurationSec은 총 그리기 시간,
@@ -119,14 +130,16 @@ public class GameCatalogSeeder implements ApplicationRunner {
         }
     }
 
-    /** 게임④ 몸 끼워 맞추기(S15P11A706-9) 시드 — 라운드 길이는 난이도별로 서버가 계산하므로 기준값만 둔다. */
+    /** 게임④ 그대로 멈춰라(S15P11A706-9) 시드 — 라운드 길이는 난이도별로 서버가 계산하므로 기준값만 둔다. */
     private void seedBodyFit() {
-        if (gameRepository.findById(4L).isPresent()) {
+        Game existing = gameRepository.findById(4L).orElse(null);
+        if (existing != null) {
+            renameIfNeeded(existing, BODY_FIT_NAME);
             return;
         }
         gameRepository.save(Game.builder()
                 .id(4L)
-                .name("몸 끼워 맞추기")
+                .name(BODY_FIT_NAME)
                 .mode("VERSUS")
                 .minPlayers(1)
                 .maxPlayers(8)
@@ -138,7 +151,24 @@ public class GameCatalogSeeder implements ApplicationRunner {
                 .rules(BODY_FIT_RULES)
                 .controls(BODY_FIT_CONTROLS)
                 .build());
-        log.info("game catalog seeded: id=4 몸 끼워 맞추기");
+        log.info("game catalog seeded: id=4 {}", BODY_FIT_NAME);
+    }
+
+    /**
+     * 표시 이름이 다르면 맞춘다(멱등).
+     *
+     * <p>시더는 없는 행만 만들므로 이름을 바꿔도 이미 시딩된 DB는 옛 이름이 남는다 —
+     * 개발·배포 환경마다 다른 이름이 보이고, 손으로 UPDATE 하는 수밖에 없어진다.
+     * 관리자가 이름을 고치는 기능은 없으므로 시더가 원천을 강제해도 덮을 것이 없다.</p>
+     */
+    private void renameIfNeeded(Game game, String name) {
+        if (name.equals(game.getName())) {
+            return;
+        }
+        String before = game.getName();
+        game.rename(name);
+        gameRepository.save(game);
+        log.info("game catalog renamed: id={} {} -> {}", game.getId(), before, name);
     }
 
     /** 게임⑤ 모션 낚시(S15P11A706-49) 시드 — 90초 단판, 점수 = 낚은 물고기 점수 합계. */

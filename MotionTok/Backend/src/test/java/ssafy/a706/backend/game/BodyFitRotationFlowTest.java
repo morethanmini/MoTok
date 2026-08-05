@@ -82,7 +82,7 @@ class BodyFitRotationFlowTest {
                 .thenReturn(Optional.of(Map.of("hostUserId", "1")));
         when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(members);
         when(gameRepository.findById(4L)).thenReturn(Optional.of(Game.builder()
-                .id(4L).name("몸 끼워 맞추기").roundDurationSec(30).countdownSec(3).active(true).build()));
+                .id(4L).name("그대로 멈춰라").roundDurationSec(30).countdownSec(3).active(true).build()));
         when(taskScheduler.schedule(any(Runnable.class), any(Instant.class)))
                 .thenAnswer(inv -> {
                     scheduled.add(inv.getArgument(0, Runnable.class));

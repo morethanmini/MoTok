@@ -306,7 +306,7 @@ export function useRoomChat() {
 
   /**
    * 라운드 최종 결과 발신 — 참가자당 1회만 수리된다(재전송은 서버가 무시).
-   * 핑거 스타(게임①)는 score=매치 총점, completedCount=완성 개수(1순위 승부 기준).
+   * 별따라 손따라(게임①)는 score=매치 총점, completedCount=완성 개수(1순위 승부 기준).
    */
   function sendGameFinish(score: number, starsHit: number, completedCount = 0) {
     if (!currentRoomId) return
