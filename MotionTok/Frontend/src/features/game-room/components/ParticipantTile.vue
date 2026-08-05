@@ -10,8 +10,14 @@ import type { ParticipantView } from '@/composables/useLiveKitRoom'
 import { attachSpeakerGain, detachSpeakerGain } from '@/composables/useSpeakerGain'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
 import CameraEffectLayer from '@/features/decor/CameraEffectLayer.vue'
-import { hasGlowLayer, videoFilter, type CameraEffect } from '@/features/decor/cameraEffect'
+import {
+  hasGlowLayer,
+  videoFilter,
+  type CameraBackground,
+  type CameraEffect,
+} from '@/features/decor/cameraEffect'
 import type { StickerSprite } from '@/features/decor/sticker'
+import type { FaceAnchor } from '@/features/decor/faceAnchor'
 
 const props = withDefaults(
   defineProps<{
@@ -51,6 +57,17 @@ const props = withDefaults(
      * 송출 영상에는 굽지 않는다 — 그래야 모션 인식이 원본 프레임을 그대로 읽는다.
      */
     effect?: CameraEffect | null
+    /**
+     * 이 참가자가 걸어 둔 배경(어두운 배경). 효과와 <b>따로</b> 받는다 — 분류 한도가 각각
+     * 1이라 뽀샤시와 어두운 배경이 함께 걸려 있을 수 있다.
+     */
+    background?: CameraBackground | null
+    /**
+     * 이 참가자가 지금 알려 오고 있는 얼굴 위치(useDecorSync). 가면과 어두운 배경은 저장
+     * 좌표가 없어 이 값으로만 그린다 — null 이면 그 사람 가면·배경은 그리지 않는다(벗었거나,
+     * 얼굴을 놓쳤거나, 게임 중이라 추적을 끈 상태).
+     */
+    face?: FaceAnchor | null
   }>(),
   {
     view: null,
@@ -66,6 +83,8 @@ const props = withDefaults(
     preferCam: false,
     sprites: () => [],
     effect: null,
+    background: null,
+    face: null,
   },
 )
 const emit = defineEmits<{ kick: []; friend: []; delegate: []; volume: [value: number] }>()
@@ -184,7 +203,22 @@ function onVolumeInput(e: Event) {
            영상 보정(filter)과 이 빛 레이어는 한 짝이라 조건이 같아야 한다. -->
       <CameraEffectLayer
         v-if="showingVideo && !showingGame && effect && hasGlowLayer(effect.kind)"
+        :kind="effect.kind"
         :intensity="effect.intensity"
+      />
+
+      <!-- 배경은 효과 <b>위</b>에 온다 — 아래에 두면 뽀샤시가 어두워진 배경을 다시 밝혀
+           (screen 합성) 어둡게 한 것이 반쯤 되돌아간다. 구멍을 얼굴에 맞춰야 해서 스티커와
+           같은 기하(mirror·비율·fit)를 받는다 — 앵커는 이 참가자가 데이터 채널로 보낸 것이라
+           여기서 검출기를 돌리지 않는다. -->
+      <CameraEffectLayer
+        v-if="showingVideo && !showingGame && background"
+        :kind="background.kind"
+        :intensity="background.intensity"
+        :face="face"
+        :mirrored="mirror"
+        fit="contain"
+        :frame-aspect="videoAspect"
       />
 
       <!-- 스티커 좌표는 카메라 프레임 기준이라 게임 화면 트랙에는 얹지 않는다.
@@ -195,6 +229,7 @@ function onVolumeInput(e: Event) {
         :mirrored="mirror"
         fit="contain"
         :frame-aspect="videoAspect"
+        :face="face"
       />
 
       <!-- 가림막 — 영상 위, 라벨·왕관 아래(DOM 순서로 쌓임) -->

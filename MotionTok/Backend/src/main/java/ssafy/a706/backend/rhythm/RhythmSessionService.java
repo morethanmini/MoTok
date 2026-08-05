@@ -27,6 +27,7 @@ import ssafy.a706.backend.signal.RoomMembershipReader;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -59,8 +60,11 @@ public class RhythmSessionService {
 
     private static final String TOPIC = "/topic/rooms/%s/rhythm";
 
-    /** endAt 경과 후 정산까지의 유예 — 마지막 순간 finish 프레임의 전송 지연 흡수. */
-    private static final long END_GRACE_MILLIS = 1_500;
+    /** endAt 경과 후 정산 확인까지의 유예 — 상수 값과 사연은 {@link RhythmSession}으로 옮겼다(-187). */
+    private static final long END_GRACE_MILLIS = RhythmSession.END_GRACE_MILLIS;
+
+    /** 정산 대기(-187) 중 재확인 간격 — 미제출자의 방 이탈(재실 reap)을 이 주기로 알아챈다. */
+    private static final long SETTLE_RECHECK_MILLIS = 2_500;
 
     /**
      * 점수 상한(치팅 방어) — 모든 슬롯이 동시 노트인 극단 가정.
@@ -70,6 +74,30 @@ public class RhythmSessionService {
     private static final int MAX_SCORE = 91_200;
     private static final int MAX_COMBO = 5_000;
     private static final int MAX_NOTES = 5_000;
+
+    /**
+     * 곡 지정 라운드(-168)의 <b>채보별</b> 이론 최대 점수 — 전 노트 Perfect일 때의 값이다.
+     *
+     * <p>{@link #MAX_SCORE}는 60초 랜덤 채보 기준으로 잡힌 값이라 곡 지정 라운드에는 맞지 않는다.
+     * 어려움(풀)은 127초를 돌지만 노트가 233개뿐이라 만점이 41,200이고, 상한 91,200은 만점의
+     * 2.2배다 — 그 틈만큼 위조 여지가 열린다. 상품이 걸린 이벤트 보드(S15P11A706-186)에서는
+     * 불가능한 점수가 1위로 박히는 사고가 되므로 채보별로 조인다.</p>
+     *
+     * <p>값은 프론트 채보(`public/assets/charts/&lt;id&gt;/bundle.json`)에서 계산한 것이다 —
+     * 노트 수 N, Perfect 100점, 콤보 10마다 배율 +0.1(최대 2.0). <b>채보를 고치면 이 값도 같이
+     * 고쳐야 한다.</b> 목록에 없는 곡은 MAX_SCORE로 폴백한다(막지 않고 넘어간다 — 새 채보가
+     * 올라왔을 때 정상 점수를 0으로 잘라 버리는 쪽이 더 나쁘다).</p>
+     */
+    private static final Map<String, Integer> SONG_MAX_SCORE = Map.of(
+            "ssafy-fighting-manual", 41_200,        // 233노트 · 127.2s
+            "ssafy-fighting-manual-verse1", 25_000, // 152노트 · 79.9s
+            "ssafy-fighting-extreme", 63_400        // 344노트 · 80.4s
+    );
+
+    /** 이 라운드에 허용할 점수 상한. 곡 지정 라운드면 그 채보의 만점, 아니면 랜덤 채보 상한. */
+    private static int maxScoreOf(String songId) {
+        return songId == null ? MAX_SCORE : SONG_MAX_SCORE.getOrDefault(songId, MAX_SCORE);
+    }
 
     private static final Set<String> DIFFICULTIES = Set.of("EASY", "NORMAL", "HARD");
     private static final String DEFAULT_DIFFICULTY = "NORMAL";
@@ -103,8 +131,10 @@ public class RhythmSessionService {
         }
 
         long now = System.currentTimeMillis();
+        // 정산 대기(-187) 중에도 활성으로 본다 — 이 사이 새 라운드를 받으면 saveSession이
+        // 이전 라운드 점수를 지워 버려, 기다리던 정산이 빈손으로 끝난다.
         boolean activeExists = sessionRepository.findSession(roomId)
-                .map(s -> s.isPlaying(now, END_GRACE_MILLIS))
+                .map(s -> s.isActiveOrSettling(now))
                 .orElse(false);
         if (activeExists) {
             throw RhythmException.alreadyActive();
@@ -123,28 +153,38 @@ public class RhythmSessionService {
             throw RhythmException.gameClosed();
         }
 
-        String difficulty = resolveDifficulty(request == null ? null : request.difficulty());
+        // 곡 지정 라운드(-168): 채보 랩에서 만든 번들 채보를 전원이 로드한다.
+        // 서버는 songId를 검증·중계하고 라운드 길이만 곡 길이로 잡는다 — 채보 자체는
+        // 정적 자산이라 시드 없이도 전원이 동일하다.
+        String song = sanitizeSong(request == null ? null : request.song());
+        String difficulty = song != null
+                ? resolveSongDifficulty(request.difficulty())
+                : resolveDifficulty(request == null ? null : request.difficulty());
         String mode = resolveMode(request == null ? null : request.mode());
         long seed = ThreadLocalRandom.current().nextLong();
         String sessionId = UUID.randomUUID().toString();
         long startAt = now + RhythmGameSeeder.COUNTDOWN_SEC * 1000L;
-        long endAt = startAt + RhythmGameSeeder.ROUND_DURATION_SEC * 1000L;
+        long durationMillis = song != null
+                ? clampDurationSec(request.durationSec()) * 1000L
+                : RhythmGameSeeder.ROUND_DURATION_SEC * 1000L;
+        long endAt = startAt + durationMillis;
 
         sessionRepository.saveSession(roomId, new RhythmSession(
-                sessionId, seed, difficulty, mode, startAt, endAt, RhythmSession.STATUS_PLAYING));
+                sessionId, seed, difficulty, mode, song, startAt, endAt, RhythmSession.STATUS_PLAYING));
         liveRoomService.changeStatus(roomId, "PLAYING");
 
-        broadcast(roomId, RhythmEventResponse.start(sessionId, seed, difficulty, mode, now, startAt, endAt));
-        scheduleEnd(roomId, sessionId, endAt + END_GRACE_MILLIS);
-        log.info("rhythm session started: room={} session={} mode={} difficulty={} seed={}",
-                roomId, sessionId, mode, difficulty, seed);
+        broadcast(roomId, RhythmEventResponse.start(sessionId, seed, difficulty, mode, song, now, startAt, endAt));
+        scheduleSettleCheck(roomId, sessionId, endAt + END_GRACE_MILLIS,
+                endAt + END_GRACE_MILLIS + RhythmSession.SETTLE_WAIT_MILLIS);
+        log.info("rhythm session started: room={} session={} mode={} difficulty={} song={} seed={}",
+                roomId, sessionId, mode, difficulty, song, seed);
     }
 
     /** 라운드 중 실시간 점수 중계 — 저장 없이 클램프 후 재방송. */
     public void progress(String roomId, RhythmRequests.Progress request, AuthPrincipal sender) {
         requireMembership(roomId, sender);
         RhythmSession session = requireActiveSession(roomId);
-        int score = clamp(request == null ? null : request.score(), MAX_SCORE);
+        int score = clamp(request == null ? null : request.score(), maxScoreOf(session.songId()));
         int combo = clamp(request == null ? null : request.combo(), MAX_COMBO);
         broadcast(roomId, RhythmEventResponse.progress(
                 session.sessionId(), sender.userId(), sender.displayName(), score, combo));
@@ -158,7 +198,7 @@ public class RhythmSessionService {
         RhythmPlayerScore playerScore = new RhythmPlayerScore(
                 sender.userId(),
                 sender.displayName(),
-                clamp(request == null ? null : request.score(), MAX_SCORE),
+                clamp(request == null ? null : request.score(), maxScoreOf(session.songId())),
                 clamp(request == null ? null : request.maxCombo(), MAX_COMBO),
                 clamp(request == null ? null : request.perfect(), MAX_NOTES),
                 clamp(request == null ? null : request.good(), MAX_NOTES),
@@ -193,7 +233,8 @@ public class RhythmSessionService {
             throw RhythmException.notHost();
         }
         RhythmSession session = sessionRepository.findSession(roomId).orElse(null);
-        if (session == null || !session.isPlaying(System.currentTimeMillis(), END_GRACE_MILLIS)) {
+        // 정산 대기(-187) 중에도 강제종료가 통해야 방장이 대기를 끊을 수 있다.
+        if (session == null || !session.isActiveOrSettling(System.currentTimeMillis())) {
             return; // 이미 정산됐거나 세션 없음 — 멱등(시작 화면에서 눌러도 안전)
         }
         // 정산 타이머·전원 완주 조기 정산과 경합해도 가드를 선점한 한쪽만 실행된다.
@@ -230,23 +271,38 @@ public class RhythmSessionService {
 
         // 리더보드 적재·랭킹 ZSET·솔로/멀티 판정은 기존 정산 리스너에 위임한다(호출만, 수정 없음).
         // 리스너는 pointsEarned를 재계산하지 않고 그대로 싣는다 → 리듬 전용 포인트가 유지된다.
-        eventPublisher.publishEvent(
-                new GameSettledEvent(sessionId, RhythmGameSeeder.GAME_ID, toSettlement(results)));
+        // 곡 지정 라운드면 songId를 실어 보낸다 — 곡별 이벤트 보드(-186)가 이걸로 갈린다.
+        eventPublisher.publishEvent(new GameSettledEvent(
+                sessionId, RhythmGameSeeder.GAME_ID, session.songId(), toSettlement(results)));
         log.info("rhythm session ended: room={} session={} players={} submitted={}",
                 roomId, sessionId, members.size(), scores.size());
     }
 
-    /** 점수 내림차순(동점은 먼저 제출한 쪽 우선). 방에 남은 전원 포함 — 미제출자는 0점. */
+    /**
+     * 점수 내림차순(동점은 먼저 제출한 쪽 우선). 명단은 방에 남은 전원 ∪ 점수 제출자(-187) —
+     * 잔류 미제출자는 0점 미완주로 포함한다.
+     *
+     * <p>제출자 합집합인 이유: 정산 대기 창이 생기면서 "제출까지 해놓고 그 사이 재실 유예를
+     * 넘겨 방에서 퇴장된" 참가자가 생길 수 있다. 정산 시점 멤버만 보면 그 사람의 라운드가
+     * 결과·포인트에서 통째로 증발한다 — 게임을 다 하고 나간 것이니 정산에 참여해야 한다.</p>
+     */
     private List<RhythmResultEntry> rank(List<LiveRoomMemberValue> members,
                                          Map<String, RhythmPlayerScore> scores) {
         record Row(String userId, String nickname, RhythmPlayerScore score, long finishedAt) {}
         List<Row> rows = new ArrayList<>();
+        Set<String> listed = new HashSet<>();
         for (LiveRoomMemberValue m : members) {
+            listed.add(m.userId());
             RhythmPlayerScore s = scores.get(m.userId());
             rows.add(s != null
                     ? new Row(m.userId(), s.nickname(), s, s.finishedAt())
                     : new Row(m.userId(), m.displayName(), null, Long.MAX_VALUE));
         }
+        scores.forEach((userId, s) -> {
+            if (!listed.contains(userId)) {
+                rows.add(new Row(userId, s.nickname(), s, s.finishedAt()));
+            }
+        });
         rows.sort(Comparator.comparingInt((Row r) -> r.score() == null ? 0 : r.score().score())
                 .reversed()
                 .thenComparingLong(Row::finishedAt));
@@ -280,11 +336,49 @@ public class RhythmSessionService {
         return out;
     }
 
-    private void scheduleEnd(String roomId, String sessionId, long atMillis) {
+    /**
+     * 정산 시각 도달 — 전원 제출이면 즉시 정산, 미제출자가 있으면 재접속 유예(-187) 동안 기다린다.
+     *
+     * <p>프로젝트 내 선례는 시작측 준비 게이트다(GameSessionService: GAME_PREPARE →
+     * GAME_READY_PROGRESS 진행 브로드캐스트 → 15초 타임아웃 후 준비된 인원만으로 시작).
+     * 같은 모양을 정산측에 둔다: 대기 진입을 브로드캐스트하고, 재확인을 돌리다,
+     * 상한(hardDeadline)에서 미제출자를 0점 미완주로 접는다 — 무한 대기는 없다.</p>
+     *
+     * <p>기다리는 대상은 "라운드 막판에 잠깐 끊긴 참가자"다. FE가 finish를 재전송하므로
+     * 재접속만 되면 유예 안에 제출이 도착하고, 유예(10s)를 넘겨 끊긴 참가자는 재실
+     * 추적기가 방에서 내보내므로 다음 재확인에서 대기가 저절로 풀린다.</p>
+     */
+    void settleOrWait(String roomId, String sessionId, long hardDeadline) {
+        RhythmSession session = sessionRepository.findSession(roomId).orElse(null);
+        if (session == null || !session.sessionId().equals(sessionId)
+                || !RhythmSession.STATUS_PLAYING.equals(session.status())) {
+            return; // 이미 정산·강제종료됐거나 새 세션으로 대체된 stale 예약
+        }
+        Map<String, RhythmPlayerScore> scores = sessionRepository.findScores(roomId);
+        List<String> waitingNames = new ArrayList<>();
+        for (LiveRoomMemberValue m : liveRoomRepository.findMembers(roomId)) {
+            if (!scores.containsKey(m.userId())) {
+                waitingNames.add(m.displayName());
+            }
+        }
+        long now = System.currentTimeMillis();
+        if (waitingNames.isEmpty() || now >= hardDeadline) {
+            endRound(roomId, sessionId);
+            return;
+        }
+        // 재확인마다 최신 명단을 다시 싣는다 — FE가 누구를 기다리는지 그대로 보여 준다.
+        broadcast(roomId, RhythmEventResponse.waiting(sessionId, waitingNames, hardDeadline));
+        scheduleSettleCheck(roomId, sessionId,
+                Math.min(now + SETTLE_RECHECK_MILLIS, hardDeadline), hardDeadline);
+        log.info("rhythm settlement waiting: room={} session={} missing={}",
+                roomId, sessionId, waitingNames.size());
+    }
+
+    private void scheduleSettleCheck(String roomId, String sessionId, long atMillis, long hardDeadline) {
         cancelScheduledEnd(roomId);
         ScheduledFuture<?> future = rhythmTaskScheduler.schedule(() -> {
             try {
-                endRound(roomId, sessionId);
+                settleOrWait(roomId, sessionId, hardDeadline);
             } catch (Exception e) {
                 log.error("rhythm settlement failed: room={} session={}", roomId, sessionId, e);
             }
@@ -306,8 +400,10 @@ public class RhythmSessionService {
     }
 
     private RhythmSession requireActiveSession(String roomId) {
+        // 정산 대기(-187)까지 수리 창이다 — 창만 열어 두고 제출을 거절하면 기다린 의미가 없다.
+        // 정산되면 status가 ENDED로 바뀌어 그 뒤 제출은 여전히 거절된다.
         return sessionRepository.findSession(roomId)
-                .filter(s -> s.isPlaying(System.currentTimeMillis(), END_GRACE_MILLIS))
+                .filter(s -> s.isActiveOrSettling(System.currentTimeMillis()))
                 .orElseThrow(RhythmException::sessionNotFound);
     }
 
@@ -323,6 +419,27 @@ public class RhythmSessionService {
     /** 알 수 없는 난이도는 거부하지 않고 NORMAL로 폴백한다(형제 필드 constellationKey와 같은 관례). */
     private String resolveDifficulty(String requested) {
         return requested != null && DIFFICULTIES.contains(requested) ? requested : DEFAULT_DIFFICULTY;
+    }
+
+    /** 곡 지정 라운드는 수제 난이도(MANUAL/EXTREME)까지 허용한다(-168). */
+    private String resolveSongDifficulty(String requested) {
+        boolean tapped = "MANUAL".equals(requested) || "EXTREME".equals(requested);
+        return tapped || (requested != null && DIFFICULTIES.contains(requested))
+                ? requested
+                : DEFAULT_DIFFICULTY;
+    }
+
+    /** 곡 지정 라운드의 songId — 클라이언트 자산 경로 조각이 되므로 소문자·숫자·하이픈만. */
+    private static String sanitizeSong(String requested) {
+        return requested != null && requested.matches("[a-z0-9-]{1,64}") ? requested : null;
+    }
+
+    /** 곡 지정 라운드 길이(초) — 위조 방지 클램프(30초~7분). 없으면 기본 라운드 길이. */
+    private static long clampDurationSec(Integer requested) {
+        if (requested == null) {
+            return RhythmGameSeeder.ROUND_DURATION_SEC;
+        }
+        return Math.max(30, Math.min(420, requested));
     }
 
     private String resolveMode(String requested) {

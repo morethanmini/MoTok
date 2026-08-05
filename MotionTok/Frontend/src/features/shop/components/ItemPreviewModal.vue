@@ -13,6 +13,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Item } from '@/api'
 import { useCamera } from '@/composables/useCamera'
+import { useFaceAnchor } from '@/composables/useFaceAnchor'
 import PixelModal from '@/components/common/PixelModal.vue'
 import PixelButton from '@/components/common/PixelButton.vue'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
@@ -21,8 +22,10 @@ import EffectIntensitySlider from '@/features/decor/EffectIntensitySlider.vue'
 import {
   DEFAULT_INTENSITY,
   EFFECT_LABEL,
+  backgroundKindOf,
   effectKindOf,
   hasGlowLayer,
+  needsFaceAnchor,
   videoFilter,
 } from '@/features/decor/cameraEffect'
 import {
@@ -90,19 +93,47 @@ function fitScaleToLimit() {
 const effectKind = computed(() =>
   props.item.category === 'EFFECT' ? effectKindOf(props.item.imageUrl) : null,
 )
+/** 이 아이템이 배경이라면 그 종류. 효과와 나눠 두는 이유는 cameraEffect의 BackgroundKind 주석. */
+const backgroundKind = computed(() =>
+  props.item.category === 'BACKGROUND' ? backgroundKindOf(props.item.imageUrl) : null,
+)
 const isSticker = computed(() => props.item.category === 'STICKER' && !!props.item.imageUrl)
+/** 가면은 좌표를 조절하지 않는다 — 얼굴이 자리와 크기를 정한다. */
+const isMask = computed(() => props.item.category === 'MASK' && !!props.item.imageUrl)
+
+/** 얼굴을 찾아야 미리보기가 성립하는 아이템 — 가면과 어두운 배경. */
+const needsFace = computed(
+  () => isMask.value || (backgroundKind.value ? needsFaceAnchor(backgroundKind.value) : false),
+)
+
+/** 세기 슬라이더가 붙는 아이템 — 효과든 배경이든 세기를 갖는다. 한 창에 하나만 뜬다. */
+const adjustableKind = computed(() => effectKind.value ?? backgroundKind.value)
+
+// 사기 전에도 얼굴에 얹어 봐야 한다 — 어떻게 씌워지는지가 이 아이템의 전부다.
+const face = useFaceAnchor(
+  () => videoEl.value,
+  () => camera.isOn.value && needsFace.value,
+)
 
 // ── 이 창에서만 사는 조절값 ──────────────────────────────
 const intensity = ref(DEFAULT_INTENSITY)
 // DEFAULT_PLACEMENT은 as const라 그대로 쓰면 리터럴 타입으로 굳는다 — 조절할 값이므로 넓혀 둔다.
 const placement = ref<{ x: number; y: number; scale: number }>({ ...DEFAULT_PLACEMENT })
 
-/** 스티커 한 장짜리 목록 — StickerOverlay가 배열을 받으므로 맞춰 준다. */
-const sprites = computed(() =>
-  isSticker.value
-    ? [{ itemId: props.item.id, anchor: 'FIXED' as const, ...placement.value, imageUrl: props.item.imageUrl! }]
-    : [],
-)
+/**
+ * 한 장짜리 목록 — StickerOverlay가 배열을 받으므로 맞춰 준다.
+ * 가면은 FACE로 넣어 좌표를 오버레이가 얼굴에서 잡게 한다(placement는 쓰이지 않는다).
+ */
+const sprites = computed(() => {
+  const imageUrl = props.item.imageUrl
+  if (!imageUrl) return []
+  if (isMask.value) {
+    return [{ itemId: props.item.id, anchor: 'FACE' as const, x: 0, y: 0, scale: 0, imageUrl }]
+  }
+  return isSticker.value
+    ? [{ itemId: props.item.id, anchor: 'FIXED' as const, ...placement.value, imageUrl }]
+    : []
+})
 
 const filterStyle = computed(() =>
   effectKind.value ? { filter: videoFilter(effectKind.value, intensity.value) } : undefined,
@@ -115,8 +146,10 @@ function onScale(_itemId: number, scale: number) {
   placement.value = { ...placement.value, scale: clampScale(scale) }
 }
 
-/** 그려서 보여 줄 수 있는 아이템인지 — 가면·배경은 아직 렌더러가 없다. */
-const previewable = computed(() => isSticker.value || !!effectKind.value)
+/** 그려서 보여 줄 수 있는 아이템인지 — 렌더러가 없는 분류는 미리보기를 열지 않는다. */
+const previewable = computed(
+  () => isSticker.value || isMask.value || !!effectKind.value || !!backgroundKind.value,
+)
 </script>
 
 <template>
@@ -142,7 +175,17 @@ const previewable = computed(() => isSticker.value || !!effectKind.value)
         />
         <CameraEffectLayer
           v-if="camera.isOn.value && effectKind && hasGlowLayer(effectKind)"
+          :kind="effectKind"
           :intensity="intensity"
+        />
+        <CameraEffectLayer
+          v-if="camera.isOn.value && backgroundKind"
+          :kind="backgroundKind"
+          :intensity="intensity"
+          :face="face.anchor.value"
+          mirrored
+          fit="cover"
+          :frame-aspect="aspect"
         />
         <StickerOverlay
           v-if="camera.isOn.value && sprites.length"
@@ -154,9 +197,15 @@ const previewable = computed(() => isSticker.value || !!effectKind.value)
           :frame-pixels="framePixels"
           :selected-id="item.id"
           :removable="false"
+          :face="face.anchor.value"
           @move="onMove"
           @scale="onScale"
         />
+
+        <!-- 가면·어두운 배경은 얼굴을 찾아야 보인다 — 아무것도 안 뜨면 아이템이 고장 난 줄 안다 -->
+        <p v-if="camera.isOn.value && needsFace && !face.anchor.value" class="stage-hint">
+          얼굴이 보이게 화면 가운데로 와 주세요
+        </p>
 
         <div v-if="!camera.isOn.value" class="stage-empty">
           <p v-if="camera.error.value">{{ camera.error.value }}</p>
@@ -164,12 +213,12 @@ const previewable = computed(() => isSticker.value || !!effectKind.value)
         </div>
       </div>
 
-      <!-- 조절: 효과는 세기, 스티커는 화면에서 끌어 옮기고 핸들로 크기를 바꾼다 -->
+      <!-- 조절: 효과·배경은 세기, 스티커는 화면에서 끌어 옮기고 핸들로 크기를 바꾼다 -->
       <EffectIntensitySlider
-        v-if="effectKind"
+        v-if="adjustableKind"
         class="preview-slider"
         :intensity="intensity"
-        :label="`${EFFECT_LABEL[effectKind]} 세기`"
+        :label="`${EFFECT_LABEL[adjustableKind]} 세기`"
         @change="intensity = $event"
       />
       <p v-else-if="isSticker" class="hint">끌어서 옮기고, 모서리 손잡이로 크기를 바꿔 보세요.</p>
@@ -216,6 +265,21 @@ header p { margin: 0; color: #897460; font-size: 11px; }
   text-align: center;
 }
 .stage-empty p { margin: 0; }
+
+/* 얼굴을 찾는 동안 아래쪽에 띄운다 — 가운데는 정작 봐야 할 얼굴 자리다 */
+.stage-hint {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  margin: 0;
+  padding: 6px;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 55%);
+  color: #e9dcc8;
+  font-size: 10px;
+  text-align: center;
+}
 
 .preview-slider { padding: 0 2px; }
 .hint { margin: 0; color: #897460; font-size: 10px; text-align: center; }

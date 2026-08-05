@@ -23,11 +23,13 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ShopItemSeeder implements ApplicationRunner {
 
-    /** 시드 1건. 카테고리별로 행을 추가해 나간다(스티커 4종 · 효과 1종). */
+    /** 시드 1건. 카테고리별로 행을 추가해 나간다(스티커 4종 · 효과 2종 · 가면 1종). */
     private record SeedItem(String name, ItemCategory category, int pricePoint, String imageUrl) {}
 
     private static final String STICKER_PATH = "/assets/item/sticker/";
     private static final String EFFECT_PATH = "/assets/item/effect/";
+    private static final String BACKGROUND_PATH = "/assets/item/background/";
+    private static final String MASK_PATH = "/assets/item/mask/";
 
     private static final List<SeedItem> SEED_ITEMS = List.of(
             new SeedItem("하트 스티커", ItemCategory.STICKER, 150, STICKER_PATH + "heart_1.png"),
@@ -42,7 +44,23 @@ public class ShopItemSeeder implements ApplicationRunner {
              * 효과 장착 한도는 1개라 둘을 동시에 걸 수는 없다.
              */
             new SeedItem("뽀샤시 효과", ItemCategory.EFFECT, 300, EFFECT_PATH + "soft_glow.svg"),
-            new SeedItem("흑백 효과", ItemCategory.EFFECT, 150, EFFECT_PATH + "grayscale.svg"));
+            new SeedItem("흑백 효과", ItemCategory.EFFECT, 150, EFFECT_PATH + "grayscale.svg"),
+            /*
+             * 배경은 효과와 <b>다른 칸</b>이다(EQUIP_LIMIT 각각 1) — 뽀샤시를 걸어 둔 채로 배경을
+             * 함께 장착할 수 있고, 그래서 앵커도 DecorAnchor.BACKGROUND 로 갈라 둔다.
+             *
+             * 어두운 배경은 배경을 어둡게 덮고 얼굴만 밝게 남긴다. 그리려면 얼굴 위치가 필요해서
+             * 프론트가 가면과 같은 검출기를 켠다(cameraEffect.needsFaceAnchor) — 서버가 알아야 할
+             * 것은 없다: 붙는 자리가 없고 세기를 갖는다는 점이 효과와 같다.
+             */
+            new SeedItem("어두운 배경", ItemCategory.BACKGROUND, 350, BACKGROUND_PATH + "spotlight.svg"),
+            /*
+             * 가면은 얼굴을 따라간다(DecorAnchor.FACE) — 그림 자체가 눈 위치 규약을 지켜야 한다.
+             * 두 눈의 중앙이 캔버스 정중앙이고, 두 눈 간격이 가로 폭의 MASK_EYE_GAP_RATIO 여야 한다.
+             * 가면을 추가·교체할 때는 프론트의 scripts/fit-mask-item.mjs 를 돌린다 — 그림에서 눈을
+             * 찾아 여백으로 맞춰 주고, 비율이 코드와 다르면 넣어야 할 값을 알려 주며 실패한다.
+             */
+            new SeedItem("몽이 가면", ItemCategory.MASK, 400, MASK_PATH + "mong_mask.png"));
 
     private final ItemRepository itemRepository;
 

@@ -96,7 +96,8 @@ async function loadRecords() {
                   gameName: game.name,
                   mode,
                   playCount: mine.playCount,
-                  bestScore: mine.bestScore,
+                  // 전적 표는 역대 최고점을 보여준다 — leaderboard 기본 기간이 ALLTIME이라 그대로 쓴다
+                  bestScore: mine.score,
                   rankNo: mine.rank,
                 }
               : null
@@ -460,6 +461,9 @@ async function removeAvatar() {
 </template>
 
 <style scoped>
+/* 문서 스크롤은 살리고 스크롤바만 숨긴다 — 상점·랭킹과 같은 방식. */
+:global(html:has(.mypage)), :global(body:has(.mypage)) { scrollbar-width: none; }
+:global(html:has(.mypage)::-webkit-scrollbar), :global(body:has(.mypage)::-webkit-scrollbar) { display: none; }
 /* align-items 기본값(stretch)을 그대로 둬서 같은 행의 카드가 서로 높이를 맞춘다 */
 .grid { display: grid; grid-template-columns: 340px 1fr; gap: 18px; }
 @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
