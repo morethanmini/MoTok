@@ -51,7 +51,7 @@ const game = (id: number, name: string, minPlayers = 1, mode: GameMode = 'VERSUS
 // 그림으로 말해요는 minPlayers 3(혼자서는 시작 불가) + COOP(전원 동점이라 역대 순위표가 없다)
 // 캐치캐치리듬(id 2)만 SSAFY 응원가 이벤트 보드를 갖는다
 const GAMES = [
-  game(1, '핑거 스타'),
+  game(1, '별따라 손따라'),
   game(2, '캐치캐치리듬'),
   game(3, '리듬 터치'),
   game(11, '모션 낚시'),
@@ -71,7 +71,7 @@ const entry = (rank: number, nickname: string): LeaderboardEntry => ({
   rank, nickname, userId: 1000 + rank, score: 1000 - rank * 10, playCount: 3,
 })
 
-/** 기본 순위표(핑거 스타·멀티) 11명 — PAGE_SIZE(10)를 넘겨 마지막 사람이 2페이지로 밀린다. */
+/** 기본 순위표(별따라 손따라·멀티) 11명 — PAGE_SIZE(10)를 넘겨 마지막 사람이 2페이지로 밀린다. */
 const HOME: LeaderboardEntry[] = [
   entry(1, '유저1'),
   entry(2, 'Alex'), // 대소문자만 다른 짝 — 정확 일치 검증용
@@ -243,7 +243,7 @@ describe('랭킹 닉네임 검색', () => {
 
   it('지금 순위표에 없으면 그 사람 최고 순위 게임으로 옮긴다', async () => {
     const wrapper = await mountView()
-    expect(shownGame(wrapper)).toBe('핑거 스타')
+    expect(shownGame(wrapper)).toBe('별따라 손따라')
 
     // 리듬 터치 7위 · 모션 낚시 3위 — 높은 쪽으로 간다
     await search(wrapper, '떠돌이')
@@ -261,7 +261,7 @@ describe('랭킹 닉네임 검색', () => {
     await search(wrapper, '솔로전용')
 
     expect(wrapper.find('.mode-switch button.active').text()).toBe('혼자 플레이')
-    expect(shownGame(wrapper)).toBe('핑거 스타')
+    expect(shownGame(wrapper)).toBe('별따라 손따라')
     expect(foundRow(wrapper)).toBe('솔로전용')
     expect(moved(wrapper)).toContain('혼자 플레이')
   })
@@ -272,7 +272,7 @@ describe('랭킹 닉네임 검색', () => {
 
     expect(foundRow(wrapper)).toBeNull()
     expect(result(wrapper)).toContain('어느 순위표에도 없어요')
-    expect(shownGame(wrapper)).toBe('핑거 스타') // 고른 게임을 건드리지 않는다
+    expect(shownGame(wrapper)).toBe('별따라 손따라') // 고른 게임을 건드리지 않는다
   })
 
   it('내가 직접 게임을 바꿀 때는 옮기지 않는다 — 고른 게임이 검색에 덮이면 안 된다', async () => {
@@ -290,7 +290,7 @@ describe('랭킹 닉네임 검색', () => {
 
   it('직접 고른 게임에 그 사람이 없으면 옮기지 않고 못 찾았다고 한다', async () => {
     const wrapper = await mountView()
-    await search(wrapper, '유저3') // 핑거 스타에만 있다
+    await search(wrapper, '유저3') // 별따라 손따라에만 있다
 
     await pickGame(wrapper, '리듬 터치')
 
@@ -425,7 +425,7 @@ describe('멀티 전용 게임의 랭킹 모드', () => {
     await search(wrapper, '테스트잔재')
 
     expect(result(wrapper)).toContain('없어요')
-    expect(shownGame(wrapper)).toBe('핑거 스타')
+    expect(shownGame(wrapper)).toBe('별따라 손따라')
     // 인자 개수까지 맞아야 한다 — 개수가 어긋나면 .not 단언이 언제나 통과해 검증이 사라진다
     expect(leaderboard.mock.calls.some(([id, m]) => id === 10 && m === 'SOLO')).toBe(false)
   })
@@ -471,7 +471,7 @@ describe('랭킹 기간 탭', () => {
     await flushPromises()
     leaderboard.mockClear()
 
-    // 역대에는 있지만(핑거 스타 2위) 주간 어디에도 없는 사람
+    // 역대에는 있지만(별따라 손따라 2위) 주간 어디에도 없는 사람
     await search(wrapper, 'Alex')
 
     expect(result(wrapper)).toContain('없어요')
@@ -502,7 +502,7 @@ describe('랭킹 기간 탭', () => {
     await pickGame(wrapper, '그림으로 말해요')
     expect(tabs(wrapper)).toHaveLength(1)
 
-    await pickGame(wrapper, '핑거 스타')
+    await pickGame(wrapper, '별따라 손따라')
 
     expect(tabs(wrapper)).toHaveLength(2)
     // 협동 게임 때문에 주간으로 내려간 상태는 유지된다 — 되돌리면 사용자가 안 누른 탭이 또 바뀐다
@@ -571,7 +571,7 @@ describe('랭킹 기간 탭', () => {
     await flushPromises()
     expect(activeTab(wrapper)).toContain('SSAFY 응원가')
 
-    await pickGame(wrapper, '핑거 스타')
+    await pickGame(wrapper, '별따라 손따라')
 
     expect(tabs(wrapper)).toHaveLength(2)
     expect(activeTab(wrapper)).toBe('전체 랭킹')

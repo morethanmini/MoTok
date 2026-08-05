@@ -341,7 +341,9 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 }
 
 /* Header remains shared, with the lobby's cream-and-gold game navigation language. */
-.top { min-height: 78px; background: rgba(255, 250, 240, .97); border-bottom-color: #bd6d45; }
+/* 갈색 구분 바는 헤더가 직접 그린다 — 페이지마다 띠를 따로 깔면 sticky 헤더만 남고 띠는 밀려 올라간다.
+   height:78px + 전역 border-box라 굵기를 키워도 헤더 높이는 그대로다(안쪽으로 먹는다). */
+.top { min-height: 78px; background: rgba(255, 250, 240, .97); border-bottom-color: #bd6d45; border-bottom-width: 8px; }
 .nav button { color: #443127; border: 2px solid transparent; border-radius: 9px; font-size: 15px; }
 .coin { border-color: #d4b17a; border-radius: 9px; box-shadow: 2px 2px 0 #ead8b9; }
 @media (min-width: 851px) and (max-width: 1120px) {

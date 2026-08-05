@@ -101,7 +101,7 @@ const DIFFICULTY_LABEL: Record<Difficulty, string> = {
 }
 
 const stage = ref<{ canvas?: HTMLCanvasElement } | null>(null)
-// 게임룸이 이 캔버스를 화면공유 트랙으로 발행한다 — 핑거 스타와 같은 계약
+// 게임룸이 이 캔버스를 화면공유 트랙으로 발행한다 — 별따라 손따라와 같은 계약
 defineExpose({ canvas: computed(() => stage.value?.canvas ?? null) })
 
 /** 라운드 중 상대 점수 — 나를 빼고 점수 내림차순 */

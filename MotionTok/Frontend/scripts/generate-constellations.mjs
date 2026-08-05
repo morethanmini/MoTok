@@ -1,5 +1,5 @@
 /**
- * 핑거 스타 별자리 데이터 생성·검증 스크립트.
+ * 별따라 손따라 별자리 데이터 생성·검증 스크립트.
  *
  * 사용: node scripts/generate-constellations.mjs
  * 출력: 별자리별 검증 리포트 + constellations.ts에 붙여넣을 항목 코드.

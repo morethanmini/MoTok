@@ -289,9 +289,7 @@ async function removeFriend(f: Friend) {
   --lobby-blue: #4f86d9;
   min-height: 100vh;
   color: var(--lobby-text);
-  background-color: #fffaf0;
-  background-image: radial-gradient(rgba(204, 169, 115, .24) 1px, transparent 1.5px);
-  background-size: 16px 16px;
+  /* 벽지는 공통 유틸(px-*-bg, assets/styles/pixel.css)이 그린다 — 여기서 덮어쓰지 않는다 */
 }
 .friends-page :deep(.app-page) { padding-top: 14px; padding-bottom: 26px; }
 .friends-page :deep(.hero) { margin-bottom: 16px; }

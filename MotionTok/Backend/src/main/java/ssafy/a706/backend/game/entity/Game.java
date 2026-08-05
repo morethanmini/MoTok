@@ -15,7 +15,7 @@ import ssafy.a706.backend.game.model.LeaderboardPeriod;
  * 게임 카탈로그(ERD GAME). 팀장 as-built의 하드코딩(PLAYABLE_GAME_IDS·라운드 시간)을
  * 데이터로 옮긴 것 — 게임 2~6은 이 테이블에 행을 추가하면 세션 서버가 그대로 수용한다(S15P11A706-115 일반화).
  *
- * <p>id는 고정 카탈로그 키라 자동생성하지 않는다(1=핑거 스타). round_duration_sec/countdown_sec은
+ * <p>id는 고정 카탈로그 키라 자동생성하지 않는다(1=별따라 손따라). round_duration_sec/countdown_sec은
  * 게임별 라운드 길이를 서버 권위로 확정하는 값(클라이언트 타이머는 표시용).</p>
  */
 @Entity
@@ -92,6 +92,17 @@ public class Game {
     public void updateGuide(String rules, String controls) {
         this.rules = rules;
         this.controls = controls;
+    }
+
+    /**
+     * 표시 이름 변경 — 시더 백필용.
+     *
+     * <p>이름은 서버 카탈로그가 원천이고(-177) 화면·랭킹·관리자 목록이 모두 이 값을 읽는다.
+     * 시더는 없는 행만 만들므로, 이름을 바꿀 때 이 백필이 없으면 이미 시딩된 DB는
+     * <b>옛 이름이 그대로 남는다</b>(개발·배포 환경마다 다른 이름이 보인다).</p>
+     */
+    public void rename(String name) {
+        this.name = name;
     }
 
     /**

@@ -570,9 +570,10 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
           </h2>
           <p>{{ roomResult }}</p>
           <div class="room-pager room-pager-inline">
-            <button class="pager-btn" :disabled="!hasPrev" @click="prevPage">← 이전</button>
+            <!-- 기호만 남기므로 스크린리더용 이름은 aria-label로 남긴다 -->
+            <button class="pager-btn" :disabled="!hasPrev" aria-label="이전 페이지" @click="prevPage">&lt;</button>
             <span class="pager-page">{{ page }}</span>
-            <button class="pager-btn" :disabled="!hasNext" @click="nextPage">다음 →</button>
+            <button class="pager-btn" :disabled="!hasNext" aria-label="다음 페이지" @click="nextPage">&gt;</button>
           </div>
           <label class="room-search">
             ⌕ <input v-model="query" placeholder="방 제목 검색" />
@@ -809,7 +810,6 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
 .section-head p { margin: 0 0 0 9px; font-size: 13px; color: var(--c-muted); }
 .create-room-btn { height: 38px; padding: 0 16px; font-size: 14px; border-radius: 11px 11px 8px 11px; margin-left: 10px; }
 .room-search {
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -919,7 +919,9 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
     linear-gradient(90deg, rgba(204, 169, 115, .08) 1px, transparent 1px);
   background-size: 16px 16px;
 }
-.shell::before { height: 5px; background: #bd6d45; opacity: 1; }
+/* 갈색 바는 AppHeader의 border-bottom(8px)이 그린다 — 여기서 겹쳐 깔면 13px이 된다.
+   규칙을 지우면 위쪽 .shell::before의 13px 무지개 띠가 되살아나므로 끄기만 한다. */
+.shell::before { display: none; }
 .layout { max-width: 1640px; width: 100%; box-sizing: border-box; margin: 0 auto; gap: 26px; padding: 32px 46px 26px; }
 .content { padding: 0; margin: 0; }
 .lobby-hero {
@@ -1184,17 +1186,25 @@ const roomResult = computed(() => `${filteredRooms.value.length}개의 방`)
   background: transparent;
   color: #75624f;
   font-size: 17px;
-  transform: translateY(60px);
 }
+/* 빈 상태는 목록 영역 한가운데에 둔다.
+   좌우: .room-list가 2열 그리드라 그냥 두면 1열 안에서만 가운데가 된다 → 두 열을 걸치게 한다.
+   상하: 그리드가 내용 높이(260px)까지만 자라 스크롤 영역 위쪽에 붙으므로, 빈 상태일 때만
+   목록을 영역 높이만큼 늘려 flex의 justify-content:center가 실제로 가운데를 잡게 한다. */
+.empty { grid-column: 1 / -1; }
+.room-list:has(.empty) { min-height: 100%; }
 .empty::before { content: none; }
 .empty-sign { width: 106px; height: auto; margin-bottom: 4px; }
 .empty p { margin: 0; line-height: 1.25; }
 .empty span { color: #8b7965; font-size: 14px; }
 .room-pager { margin: 18px 0 0; }
-.room-pager-inline { margin: 0 12px 0 10px; gap: 7px; }
+/* 페이저를 검색창 왼쪽에 붙인다 — 오른쪽 그룹을 미는 margin-left:auto가 .room-search가 아니라
+   여기에 있어야 `< 1 >`이 검색창 바로 왼쪽에 온다. */
+.room-pager-inline { margin: 0 12px 0 auto; gap: 7px; }
 .room-pager-inline .pager-btn { padding: 5px 8px; font-size: 10px; }
 .room-pager-inline .pager-page { min-width: 13px; font-size: 11px; }
-.pager-btn { border-color: var(--lobby-border); box-shadow: 2px 2px 0 #e2d0b5; color: #735f4c; }
+/* 기호만 보이게 — 박스(테두리·배경·그림자)는 없앤다. padding은 남겨 클릭 영역을 유지한다. */
+.pager-btn { border: 0; background: transparent; box-shadow: none; color: #735f4c; }
 .side { gap: 20px; }
 .side-card { border: 3px solid var(--lobby-border); border-radius: 16px; box-shadow: 4px 4px 0 #dfcdb0; background: var(--lobby-surface); }
 .side-title { margin: -17px -17px 14px; padding: 12px 15px; border-bottom: 2px solid #ead9bd; background: #d7e7ad; color: #403124; font-size: 16px; }
