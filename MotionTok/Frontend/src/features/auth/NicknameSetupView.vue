@@ -109,7 +109,7 @@ async function cancel() {
 </script>
 
 <template>
-  <main class="page">
+  <main class="page px-paper-bg">
     <section class="card">
       <div class="head">
         <BrandLogo size="sm" subtitle="모톡에서 쓸 닉네임을 정해주세요" title="MoToK" />
@@ -152,9 +152,7 @@ async function cancel() {
   height: 100%;
   display: grid;
   place-items: center;
-  background-color: #fff1df;
-  background-image: radial-gradient(rgba(56, 38, 61, 0.1) 1px, transparent 1.5px);
-  background-size: 18px 18px;
+  /* 벽지는 공통 유틸(px-paper-bg)이 그린다 */
 }
 .card {
   width: min(430px, 90vw);

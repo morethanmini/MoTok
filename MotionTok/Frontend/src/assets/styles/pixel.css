@@ -21,26 +21,18 @@
 }
 
 /* ── 페이지 배경 유틸 ────────────────────────── */
-/* 도트 격자 배경 (Auth/Device/Result 등 단순 화면 공통) */
-.px-dot-bg {
-  background-color: var(--c-cream);
-  background-image: radial-gradient(rgba(56, 38, 61, 0.1) 1px, transparent 1px);
-  background-size: 18px 18px;
-}
-/* 종이 + 도트 (Lobby/Room 셸 배경) */
-.px-paper-bg {
+/*
+ * 도트 벽지는 한 벌뿐이다. 예전에는 유틸 3종이 간격(16/18px)·농도(.09/.1)·배경색
+ * (--c-paper / --c-cream / #fff8e9)이 제각각이라 페이지를 옮길 때마다 벽지가 바뀌어 보였다.
+ * 세 이름을 남겨 둔 건 호출부를 건드리지 않기 위해서고, 값은 로비 기준 하나로 통일한다.
+ * 벽지를 바꿔야 하면 여기 한 곳만 고친다 — 페이지에서 덮어쓰지 말 것.
+ */
+.px-dot-bg,
+.px-paper-bg,
+.px-party-bg {
   background-color: var(--c-paper);
   background-image: radial-gradient(rgba(56, 38, 61, 0.1) 1px, transparent 1px);
   background-size: 16px 16px;
-}
-
-.px-party-bg {
-  background-color: #fff8e9;
-  background-image:
-    linear-gradient(25deg, transparent 0 47%, rgba(120, 206, 177, 0.12) 47% 53%, transparent 53%),
-    linear-gradient(155deg, transparent 0 47%, rgba(239, 104, 114, 0.1) 47% 53%, transparent 53%),
-    radial-gradient(rgba(56, 38, 61, 0.09) 1px, transparent 1px);
-  background-size: 100% 100%, 100% 100%, 18px 18px;
 }
 
 .px-kicker {

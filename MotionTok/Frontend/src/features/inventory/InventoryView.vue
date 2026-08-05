@@ -345,7 +345,7 @@ async function saveDecoration() {
 .empty-inv { text-align: center; color: var(--c-muted); font-size: 11px; padding: 20px; }
 
 /* Lobby-inspired workshop board */
-.inventory-page { background: #fff8e9; }
+/* 벽지는 공통 유틸(px-*-bg)이 그린다 — background 축약형으로 덮으면 도트까지 지워진다 */
 .inventory-page :deep(.app-page) { padding-top: 34px; }
 .inventory-page :deep(.body) { max-width: 980px; }
 .inventory-titlebar { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 0 auto 18px; padding: 0 6px; }
