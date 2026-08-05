@@ -505,8 +505,8 @@ function selectGame(gameId: number) {
 <style scoped>
 :global(html:has(.ranking-page)), :global(body:has(.ranking-page)) { scrollbar-width: none; }
 :global(html:has(.ranking-page)::-webkit-scrollbar), :global(body:has(.ranking-page)::-webkit-scrollbar) { display: none; }
-/* 배경 도트·좌우 여백·상하 여백은 로비(.shell.px-paper-bg + .layout)를 기준값으로 맞춘다 */
-.ranking-page { background-color: var(--c-paper); background-image: radial-gradient(rgba(56, 38, 61, .1) 1px, transparent 1px); background-size: 16px 16px; }.ranking-page :deep(.app-page) { padding: 32px 0 26px; }.ranking-page :deep(.hero), .ranking-page :deep(.body) { padding-right: 46px; padding-left: 46px; }.ranking-page :deep(.page-sticker) { display: none; }
+/* 좌우·상하 여백은 로비(.layout)를 기준값으로 맞춘다. 벽지는 공통 유틸(px-*-bg)이 그린다 */
+.ranking-page :deep(.app-page) { padding: 32px 0 26px; }.ranking-page :deep(.hero), .ranking-page :deep(.body) { padding-right: 46px; padding-left: 46px; }.ranking-page :deep(.page-sticker) { display: none; }
 .rank-stage { position: relative; display: flex; min-height: 262px; overflow: hidden; border: 0; border-radius: 18px; background: url('/assets/ranking-space-bg.png') center / cover; box-shadow: none; color: #493b54; }
 .rank-stage::before { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(242,235,249,.82) 0%, rgba(237,226,245,.57) 47%, rgba(228,214,239,.16) 100%); }
 .stage-copy { position: relative; z-index: 2; padding: 38px 46px; }.stage-kicker { color: #a8704f; font-size: 10px; letter-spacing: 1px; }.podium-title span, .board-head span, .personal-kicker { display: block; color: #95759c; font-size: 10px; letter-spacing: 1.4px; }.stage-copy h1 { margin: 11px 0 9px; font-family: var(--font-pixel); font-size: clamp(30px, 3vw, 43px); font-weight: 400; letter-spacing: -.8px; }.stage-copy h1 em { color: #866795; font-style: normal; text-shadow: 2px 2px 0 #fff8fa; }.stage-copy p { margin: 0; color: #685446; font-size: 14px; }

@@ -372,7 +372,8 @@ onMounted(() => {
 
 <style scoped>
 .stack { display: grid; gap: 16px; }
-.settings-page { background: #fff8e9; }.settings-page :deep(.app-page) { padding-top: 34px; }.settings-titlebar { margin: 0 auto 18px; padding: 0 6px; }.settings-titlebar p { margin: 0 0 8px; color: #a8704f; font-size: 9px; letter-spacing: 1px; }.settings-titlebar h1 { margin: 0; color: #4b3429; font-family: var(--font-pixel); font-size: 22px; font-weight: 400; }.settings-titlebar span { display: block; margin-top: 9px; color: #856957; font-size: 10px; }.stack :deep(.card) { border: 3px solid #9a6b4f; border-radius: 13px; background: #fffaf0; box-shadow: 5px 5px 0 #d5b28c; }.stack :deep(.card-head) { padding-bottom: 11px; border-bottom: 2px solid #ead5b8; }.stack :deep(.card-head h2) { color: #4b3429; font-size: 17px; }
+/* 벽지는 공통 유틸(px-*-bg)이 그린다 — background 축약형으로 덮으면 도트까지 지워진다 */
+.settings-page :deep(.app-page) { padding-top: 34px; }.settings-titlebar { margin: 0 auto 18px; padding: 0 6px; }.settings-titlebar p { margin: 0 0 8px; color: #a8704f; font-size: 9px; letter-spacing: 1px; }.settings-titlebar h1 { margin: 0; color: #4b3429; font-family: var(--font-pixel); font-size: 22px; font-weight: 400; }.settings-titlebar span { display: block; margin-top: 9px; color: #856957; font-size: 10px; }.stack :deep(.card) { border: 3px solid #9a6b4f; border-radius: 13px; background: #fffaf0; box-shadow: 5px 5px 0 #d5b28c; }.stack :deep(.card-head) { padding-bottom: 11px; border-bottom: 2px solid #ead5b8; }.stack :deep(.card-head h2) { color: #4b3429; font-size: 17px; }
 .field { display: block; margin-bottom: 14px; font-size: 9px; font-weight: 700; }
 .sound-row {
   display: grid;
