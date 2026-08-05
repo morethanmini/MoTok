@@ -11,6 +11,7 @@ import type { DrawOp, GameEvent, GameResultEntry, LiveRoomDetail, Visibility } f
 import type { ActiveGameSession } from '@/features/games/session'
 import { preferredAudioDeviceId, useCamera } from '@/composables/useCamera'
 import { EQUIP_LIMIT, useDecoration } from '@/composables/useDecoration'
+import { useFaceAnchor } from '@/composables/useFaceAnchor'
 import { motionModelsReady, warmUpMotionModels } from '@/composables/motionModels'
 import { useDecorSync } from '@/composables/useDecorSync'
 import StickerOverlay from '@/features/decor/StickerOverlay.vue'
@@ -22,6 +23,7 @@ import { useRoomChat } from '@/composables/useRoomChat'
 import { onStompConnected } from '@/composables/useGlobalStomp'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
 import { useBgm } from '@/composables/useBgm'
+import { useSpeakerGain } from '@/composables/useSpeakerGain'
 import { useToast } from '@/composables/useToast'
 import { containsProfanity } from '@/utils/profanity'
 import { toGameEntries, type GameEntry } from './data'
@@ -94,10 +96,8 @@ const CAMERA_CONSTRAINTS = { video: { width: 640, height: 400 }, audio: false } 
 // 캔버스 합성으로 발행하던 예전 방식은 다른 오리진(S3)에 있는 AI 아이템 이미지를 읽지 못해
 // (버킷 CORS 없음) 내 화면에만 보였다.
 const decor = useDecoration()
-const decorSync = useDecorSync(lk, () => ({
-  sprites: decor.sprites.value,
-  effect: decor.cameraEffect.value,
-}))
+// decorSync·selfFace 는 activeGame(게임 세션 블록) 뒤에 만든다 — 얼굴 추적을 게임 중에 끄므로
+// 그 ref 가 먼저 있어야 한다. 여기서 만들면 초기화 전에 읽어 TDZ 로 죽는다.
 const showDecorInventory = ref(false)
 const decorBusyItemId = ref<number | null>(null)
 const selectedDecorId = ref<number | null>(null)
@@ -137,7 +137,21 @@ function effectFor(slot: Slot) {
   return slot.view ? decorSync.effectOf(slot.view.identity) : null
 }
 
-/** 내 캠에 거는 뽀샤시의 영상 쪽 절반(빛 레이어는 CameraEffectLayer가 맡는다). */
+/** 그 참가자 영상에 걸 배경(어두운 배경) — 효과와 함께 걸릴 수 있어 따로 본다. */
+function backgroundFor(slot: Slot) {
+  return slot.view ? decorSync.backgroundOf(slot.view.identity) : null
+}
+
+/**
+ * 그 참가자의 얼굴 앵커 — 그 사람 가면을 얹을 자리이자 어두운 배경이 구멍을 뚫을 자리.
+ * 앵커가 끊기면 null 이고, 그러면 spritesFor 도 가면을 빼므로 게임 중(상대가 추적을 끈 동안)에는
+ * 가면도 조명도 자연히 사라진다.
+ */
+function faceFor(slot: Slot) {
+  return slot.view ? decorSync.faceOf(slot.view.identity) : null
+}
+
+/** 내 캠에 거는 효과의 영상 쪽 절반(겹치는 레이어는 CameraEffectLayer가 맡는다). */
 const selfCameraFilterStyle = computed(() => {
   const fx = decor.cameraEffect.value
   return fx ? { filter: videoFilter(fx.kind, fx.intensity) } : undefined
@@ -338,9 +352,12 @@ watch(
   { immediate: true },
 )
 
-// ── 데모 상태 ────────────────────────────────
-const speakerOn = ref(true)
-const screenOn = ref(false)
+// ── 상대 소리 ────────────────────────────────
+// 하단 스피커 버튼 = 상대 소리 전체 음소거. 예전에는 여기 있던 ref가 버튼 색만 바꾸고
+// 아무 데도 연결되지 않아 눌러도 사람들 말소리가 그대로 났다(데모 잔재).
+// 참가자별 개인 볼륨과 설정 화면의 '상대 소리'는 그대로 두고 곱해진다 — 해제하면 원래대로.
+const { speakerMuted, setSpeakerMuted } = useSpeakerGain()
+
 const picker = ref(false)
 /** 게임을 고른 뒤 모드·난이도를 정하는 설정 창의 대상 게임(-9). null이면 닫힘 */
 const setupGame = ref<GameEntry | null>(null)
@@ -692,6 +709,41 @@ const suggestCooldown = ref(false)
 // STOMP 미연결(백엔드 미연동 데모)일 때는 로컬 솔로 플레이로 폴백.
 const activeGame = ref<GameEntry | null>(null)
 const activeSession = ref<ActiveGameSession | null>(null)
+
+/**
+ * 얼굴을 따라가는 앵커 하나 — 가면(FACE 앵커)과 어두운 배경 효과가 함께 쓴다.
+ *
+ * 검출은 <b>내 영상에서만</b> 한다 — 검출기 인스턴스가 영상 하나만 다룰 수 있고(타임스탬프
+ * 단조 증가) 8명분을 각자 돌리는 비용도 감당할 수 없다. 그래서 남에게 보이게 하려면 잡은
+ * 앵커를 데이터 채널로 흘려보낸다(아래 useDecorSync 의 세 번째 인자). 가면과 조명이 같은
+ * 앵커를 쓰므로, 둘을 함께 장착해도 검출기는 하나만 돈다.
+ *
+ * <b>게임 중에는 돌리지 않는다.</b> 셀프 타일은 게임 중에도 카메라지만, 손·자세 추론이 도는
+ * 동안 얼굴 검출까지 매 프레임 얹으면 저사양에서 fps 를 깎는다 — 꾸미기가 게임을 느리게
+ * 만드는 건 맞바꿀 거래가 아니다. 대신 게임 중에는 가면과 어두운 배경이 <b>내 화면에서도 남의
+ * 화면에서도</b> 보이지 않는다(앵커가 끊기면 받는 쪽도 그리지 않는다).
+ *
+ * ⚠ 이 선언은 activeGame 뒤에 있어야 한다 — useFaceAnchor 가 즉시 한 번 읽는다.
+ */
+const selfFace = useFaceAnchor(
+  () => selfVideoEl.value,
+  () => selfCamOn.value && decor.needsFaceTracking.value && !activeGame.value,
+)
+
+/**
+ * 내 꾸미기를 방에 알린다. 스티커·효과·<b>어떤 가면</b>은 바뀔 때 한 번(신뢰 전송),
+ * 얼굴 앵커는 매 프레임(유실 허용) — 나누는 이유는 decorSync.ts 의 토픽 주석에 있다.
+ */
+const decorSync = useDecorSync(
+  lk,
+  () => ({
+    sprites: decor.sprites.value,
+    effect: decor.cameraEffect.value,
+    background: decor.cameraBackground.value,
+    faceSprite: decor.faceSprite.value,
+  }),
+  () => selfFace.anchor.value,
+)
 /**
  * 이 방에서 하던 게임 — 1인 플레이 방의 "다시하기"가 다시 부를 대상.
  *
@@ -817,14 +869,29 @@ watch(hostAway, (away) => {
  * 실행하므로, 위에 두면 const TDZ에 걸려 setup 전체가 죽는다(빌드는 통과한다: TS는 화살표
  * 함수 안의 선언 전 참조를 잡지 않는다).
  */
-const AUDIO_OWNING_GAMES = ['shape', 'finger', 'draw', 'rhythm', 'fish']
+const AUDIO_OWNING_GAMES = ['shape', 'finger', 'draw', 'fish']
+/**
+ * 리듬은 위 목록과 달리 **라운드가 실제로 도는 동안만** 오디오를 소유한다(-168).
+ * 다른 게임은 카드를 열면 곧장 자체 음악이 나오지만, 리듬은 곡·난이도를 고르는
+ * 시작 화면이 무음이라 카드만 열어도 테마를 내리면 정적이 흐른다(실사용 제보).
+ */
+const rhythmPlaying = ref(false)
 watch(
   // 설정 창(-9)도 인게임 베드를 직접 깔기 때문에 같이 내린다 — 소유 판정을 여기 한 곳에 모아두면
   // 창을 닫고 게임으로 넘어가는 사이에 테마가 잠깐 살아나는 일이 없다.
   () =>
     AUDIO_OWNING_GAMES.includes(activeGame.value?.id ?? '') ||
-    AUDIO_OWNING_GAMES.includes(setupGame.value?.id ?? ''),
+    AUDIO_OWNING_GAMES.includes(setupGame.value?.id ?? '') ||
+    ((activeGame.value?.id === 'rhythm' || setupGame.value?.id === 'rhythm') &&
+      rhythmPlaying.value),
   (ownsAudio) => (ownsAudio ? bgm.suspendForGame() : bgm.resumeAfterGame()),
+)
+// 리듬 화면을 떠나면(강제 종료 포함) 소유 상태를 접는다 — 다음에 열 때 테마가 살아 있게
+watch(
+  () => activeGame.value?.id,
+  (id) => {
+    if (id !== 'rhythm') rhythmPlaying.value = false
+  },
 )
 
 // ── 게임 화면 송출 — 게임 중에는 카메라와 함께 게임 캔버스를 화면공유 트랙으로 발행한다.
@@ -1488,7 +1555,9 @@ function requestCloseGame() {
     guestWrapUp.value = true
     return
   }
-  if (gameResults.value) {
+  // 리듬은 전용 채널이라 gameResults를 안 채운다 — 정산 신호는 rhythmEnded가 같은 역할.
+  // 이걸 안 보면 정산이 끝난 결과 화면의 "대기실로"에도 종료 확인이 끼어든다(-187).
+  if (gameResults.value || (activeGame.value?.id === 'rhythm' && rhythmEnded.value)) {
     closeGame()
     return
   }
@@ -1599,6 +1668,7 @@ function applyEarnedPoints(results: GameResultEntry[]) {
  */
 function onRhythmEnded(pointsEarned: number) {
   rhythmEnded.value = true
+  rhythmPlaying.value = false // 정산 화면부터는 테마 복귀
   if (pointsEarned > 0) session.addPoints(pointsEarned)
 }
 
@@ -2034,6 +2104,8 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             :effect="effectFor(slot)"
+            :background="backgroundFor(slot)"
+            :face="faceFor(slot)"
             play-audio
             mirror
             compact
@@ -2067,7 +2139,20 @@ const startHint = computed(() =>
           <CameraEffectLayer
             v-if="selfCamOn && decor.cameraEffect.value && hasGlowLayer(decor.cameraEffect.value.kind)"
             class="self-fx-layer"
+            :kind="decor.cameraEffect.value.kind"
             :intensity="decor.cameraEffect.value.intensity"
+          />
+          <!-- 내 배경 — 효과 위에 온다(아래면 뽀샤시가 어두워진 배경을 다시 밝힌다).
+               구멍은 아래 StickerOverlay와 같은 기하를 써야 가면과 같은 자리가 된다. -->
+          <CameraEffectLayer
+            v-if="selfCamOn && decor.cameraBackground.value"
+            class="self-fx-layer"
+            :kind="decor.cameraBackground.value.kind"
+            :intensity="decor.cameraBackground.value.intensity"
+            :face="selfFace.anchor.value"
+            mirrored
+            fit="contain"
+            :frame-aspect="selfVideoAspect"
           />
           <!-- 상대 타일(ParticipantTile)과 같은 오버레이 — self-video는 좌우 반전이라 mirrored,
                fit은 <video>의 object-fit과 같아야 영상 안 같은 자리에 얹힌다. -->
@@ -2081,6 +2166,7 @@ const startHint = computed(() =>
             :frame-aspect="selfVideoAspect"
             :frame-pixels="selfFramePixels"
             :selected-id="selectedDecorId"
+            :face="selfFace.anchor.value"
             @move="decor.move"
             @scale="decor.setScale"
             @remove="removeDecorSticker"
@@ -2207,7 +2293,7 @@ const startHint = computed(() =>
             :my-user-id="myParticipantId"
             :room-chat="roomChat"
             @close="requestCloseGame"
-            @started="rhythmEnded = false"
+            @started="((rhythmEnded = false), (rhythmPlaying = true))"
             @ended="onRhythmEnded"
           />
           <!-- 비방장 중간 이탈 후 복귀(-164) — 라운드가 살아 있는 동안만 노출 -->
@@ -2262,6 +2348,8 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             :effect="effectFor(slot)"
+            :background="backgroundFor(slot)"
+            :face="faceFor(slot)"
             play-audio
             mirror
             compact
@@ -2285,6 +2373,8 @@ const startHint = computed(() =>
             :volume="volumeFor(slot)"
             :sprites="spritesFor(slot)"
             :effect="effectFor(slot)"
+            :background="backgroundFor(slot)"
+            :face="faceFor(slot)"
             play-audio
             mirror
             :can-kick="amRoomHost && !!slot.view"
@@ -2353,8 +2443,15 @@ const startHint = computed(() =>
     <!-- 하단 바 -->
     <footer class="room-footer">
       <div class="controls">
-        <button class="ctrl" :class="{ on: speakerOn, off: !speakerOn }" title="스피커" @click="speakerOn = !speakerOn">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 9a3.5 3.5 0 010 6" /></svg>
+        <button
+          class="ctrl"
+          :class="{ on: !speakerMuted, off: speakerMuted }"
+          :title="speakerMuted ? '상대 소리 켜기' : '상대 소리 음소거'"
+          :aria-pressed="speakerMuted"
+          @click="setSpeakerMuted(!speakerMuted)"
+        >
+          <!-- 음소거면 음파 대신 X — 색만 바꾸면 "껐다"가 아니라 "빨간 스피커"로 읽힌다 -->
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path v-if="speakerMuted" d="M16 9l6 6M22 9l-6 6" /><path v-else d="M15.5 9a3.5 3.5 0 010 6" /></svg>
         </button>
         <button class="ctrl" :class="{ on: selfMicOn, off: !selfMicOn }" title="마이크" @click="toggleMic">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><rect x="9" y="3" width="6" height="11" /><path d="M5 11a7 7 0 0014 0M12 18v3" /></svg>

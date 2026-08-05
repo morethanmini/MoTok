@@ -97,7 +97,7 @@ class RhythmSessionServiceTest {
 
     private RhythmSession playingSession() {
         long now = System.currentTimeMillis();
-        return new RhythmSession("S1", 42L, "HARD", "catch", now - 1000, now + 60_000,
+        return new RhythmSession("S1", 42L, "HARD", "catch", null, now - 1000, now + 60_000,
                 RhythmSession.STATUS_PLAYING);
     }
 
@@ -116,7 +116,7 @@ class RhythmSessionServiceTest {
         when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
         when(membershipReader.isMember(eq(ROOM_ID), anyString())).thenReturn(true);
 
-        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch"), guest))
+        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch", null, null), guest))
                 .isInstanceOf(RhythmException.class)
                 .hasFieldOrPropertyWithValue("code", "RHYTHM_NOT_HOST");
         verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
@@ -129,7 +129,7 @@ class RhythmSessionServiceTest {
         when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
         when(membershipReader.isMember(eq(ROOM_ID), anyString())).thenReturn(false);
 
-        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch"), host))
+        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch", null, null), host))
                 .isInstanceOf(RhythmException.class)
                 .hasFieldOrPropertyWithValue("code", "RHYTHM_NOT_IN_ROOM");
     }
@@ -139,7 +139,7 @@ class RhythmSessionServiceTest {
         givenRoomWithHost();
         givenNoActiveSession();
 
-        service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch"), host);
+        service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch", null, null), host);
 
         RhythmEventResponse event = lastEvent();
         assertThat(event.type()).isEqualTo("RHYTHM_START");
@@ -163,7 +163,7 @@ class RhythmSessionServiceTest {
         givenRoomWithHost();
         givenNoActiveSession();
 
-        service.start(ROOM_ID, new RhythmRequests.Start("IMPOSSIBLE", "catch"), host);
+        service.start(ROOM_ID, new RhythmRequests.Start("IMPOSSIBLE", "catch", null, null), host);
 
         assertThat(lastEvent().difficulty()).isEqualTo("NORMAL");
     }
@@ -176,7 +176,7 @@ class RhythmSessionServiceTest {
         when(membershipReader.isMember(eq(ROOM_ID), anyString())).thenReturn(true);
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(playingSession()));
 
-        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("EASY", "catch"), host))
+        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("EASY", "catch", null, null), host))
                 .isInstanceOf(RhythmException.class)
                 .hasFieldOrPropertyWithValue("code", "RHYTHM_ALREADY_ACTIVE");
     }
@@ -191,7 +191,7 @@ class RhythmSessionServiceTest {
         when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.empty());
         givenGameOpen(false);
 
-        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch"), host))
+        assertThatThrownBy(() -> service.start(ROOM_ID, new RhythmRequests.Start("HARD", "catch", null, null), host))
                 .isInstanceOf(RhythmException.class)
                 .hasFieldOrPropertyWithValue("code", "RHYTHM_GAME_CLOSED");
         verify(sessionRepository, never()).saveSession(anyString(), any(RhythmSession.class));
@@ -302,6 +302,127 @@ class RhythmSessionServiceTest {
 
         verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
         verify(eventPublisher, never()).publishEvent(any(GameSettledEvent.class));
+    }
+
+    // ── 정산 대기(재접속 유예, -187) ──────────────────────
+
+    @Test
+    void 전원_제출이면_대기_없이_즉시_정산한다() {
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(playingSession()));
+        when(sessionRepository.tryAcquireEndGuard(ROOM_ID, "S1")).thenReturn(true);
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue(host.userId(), "호스트", false, 0L)));
+        when(sessionRepository.findScores(ROOM_ID)).thenReturn(Map.of(
+                host.userId(),
+                new RhythmPlayerScore(host.userId(), "호스트", 8_000, 30, 60, 10, 5, 1L)));
+
+        service.settleOrWait(ROOM_ID, "S1", System.currentTimeMillis() + 10_000);
+
+        assertThat(lastEvent().type()).isEqualTo("RHYTHM_END");
+        verify(sessionRepository).markEnded(ROOM_ID);
+    }
+
+    @Test
+    void 미제출자가_있으면_정산_대신_대기를_알리고_재확인을_예약한다() {
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(playingSession()));
+        when(rhythmTaskScheduler.schedule(any(Runnable.class), any(java.time.Instant.class)))
+                .thenReturn(mock(ScheduledFuture.class));
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue(host.userId(), "호스트", false, 0L),
+                new LiveRoomMemberValue(guest.userId(), "게스트", false, 0L)));
+        // 호스트만 제출 — 게스트는 잠깐 끊겨 미제출
+        when(sessionRepository.findScores(ROOM_ID)).thenReturn(Map.of(
+                host.userId(),
+                new RhythmPlayerScore(host.userId(), "호스트", 8_000, 30, 60, 10, 5, 1L)));
+        long hardDeadline = System.currentTimeMillis() + 10_000;
+
+        service.settleOrWait(ROOM_ID, "S1", hardDeadline);
+
+        RhythmEventResponse event = lastEvent();
+        assertThat(event.type()).isEqualTo("RHYTHM_WAITING");
+        assertThat(event.waitingNicknames()).containsExactly("게스트");
+        assertThat(event.waitUntil()).isEqualTo(hardDeadline);
+        verify(rhythmTaskScheduler).schedule(any(Runnable.class), any(java.time.Instant.class));
+        verify(sessionRepository, never()).markEnded(ROOM_ID);
+        verify(eventPublisher, never()).publishEvent(any(GameSettledEvent.class));
+    }
+
+    @Test
+    void 대기_상한에_도달하면_미제출자를_남긴_채_정산한다() {
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(playingSession()));
+        when(sessionRepository.tryAcquireEndGuard(ROOM_ID, "S1")).thenReturn(true);
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue(host.userId(), "호스트", false, 0L),
+                new LiveRoomMemberValue(guest.userId(), "게스트", false, 0L)));
+        when(sessionRepository.findScores(ROOM_ID)).thenReturn(Map.of(
+                host.userId(),
+                new RhythmPlayerScore(host.userId(), "호스트", 8_000, 30, 60, 10, 5, 1L)));
+
+        // 상한이 이미 지났다 — 더 기다리지 않고 0점 미완주 정산으로 접어야 한다
+        service.settleOrWait(ROOM_ID, "S1", System.currentTimeMillis() - 1);
+
+        RhythmEventResponse event = lastEvent();
+        assertThat(event.type()).isEqualTo("RHYTHM_END");
+        assertThat(event.results()).hasSize(2);
+        assertThat(event.results().get(1).finished()).isFalse();
+    }
+
+    @Test
+    void 이미_정산된_세션이면_대기_확인은_아무것도_하지_않는다() {
+        long now = System.currentTimeMillis();
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(new RhythmSession(
+                "S1", 42L, "HARD", "catch", null, now - 61_000, now - 1_000,
+                RhythmSession.STATUS_ENDED)));
+
+        service.settleOrWait(ROOM_ID, "S1", now + 10_000);
+
+        verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
+        verify(sessionRepository, never()).markEnded(ROOM_ID);
+    }
+
+    /** 잠깐 끊겼다 돌아온 참가자의 늦은 제출 — 대기 창 안이면 수리된다. */
+    @Test
+    void 정산_대기_창에서는_늦은_제출도_수리된다() {
+        when(membershipReader.existsRoom(ROOM_ID)).thenReturn(true);
+        when(membershipReader.isMember(eq(ROOM_ID), anyString())).thenReturn(true);
+        long now = System.currentTimeMillis();
+        // endAt이 5초 전 — 기존 유예(1.5s)로는 거절, 대기 창(1.5s+10s)으로는 수리
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(new RhythmSession(
+                "S1", 42L, "HARD", "catch", null, now - 65_000, now - 5_000,
+                RhythmSession.STATUS_PLAYING)));
+        when(sessionRepository.saveScoreIfAbsent(eq(ROOM_ID), any())).thenReturn(true);
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue(host.userId(), "호스트", false, 0L),
+                new LiveRoomMemberValue(guest.userId(), "게스트", false, 0L)));
+
+        service.finish(ROOM_ID, new RhythmRequests.Finish(500, 20, 10, 5, 2), guest);
+
+        assertThat(lastEvent().type()).isEqualTo("PLAYER_FINISHED");
+    }
+
+    /** 제출까지 해놓고 정산 전에 방에서 빠진 참가자(-187) — 결과·포인트에 포함돼야 한다. */
+    @Test
+    void 제출_후_방에서_빠진_참가자도_정산에_포함된다() {
+        when(sessionRepository.tryAcquireEndGuard(ROOM_ID, "S1")).thenReturn(true);
+        when(sessionRepository.findSession(ROOM_ID)).thenReturn(Optional.of(playingSession()));
+        // 정산 시점 방에는 호스트만 남았다 — 게스트는 제출 후 재실 유예를 넘겨 퇴장됨
+        when(liveRoomRepository.findMembers(ROOM_ID)).thenReturn(List.of(
+                new LiveRoomMemberValue(host.userId(), "호스트", false, 0L)));
+        when(sessionRepository.findScores(ROOM_ID)).thenReturn(Map.of(
+                host.userId(),
+                new RhythmPlayerScore(host.userId(), "호스트", 3_000, 10, 20, 10, 5, 2L),
+                guest.userId(),
+                new RhythmPlayerScore(guest.userId(), "게스트", 8_000, 30, 60, 10, 5, 1L)));
+
+        service.endRound(ROOM_ID, "S1");
+
+        RhythmEventResponse event = lastEvent();
+        assertThat(event.type()).isEqualTo("RHYTHM_END");
+        assertThat(event.results()).hasSize(2);
+        // 떠난 게스트가 점수로는 1등 — 명단에서 증발하지 않고 완주로 남는다
+        assertThat(event.results().get(0).userId()).isEqualTo(guest.userId());
+        assertThat(event.results().get(0).finished()).isTrue();
+        assertThat(event.results().get(0).score()).isEqualTo(8_000);
     }
 
     @Test

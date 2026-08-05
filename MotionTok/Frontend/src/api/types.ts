@@ -160,17 +160,23 @@ export interface GameRecord {
  * x·y는 영상 기준 정규화 좌표(0~1, 스티커 중심), scale은 영상 짧은 변 대비 비율이다.
  * 픽셀이 아니라 비율인 이유 — 편집 화면과 게임 타일의 크기가 달라서 픽셀로 저장하면 위치가 어긋난다.
  */
-export type DecorAnchor = 'FIXED' | 'FRAME' | 'FACE' | 'HAND'
+export type DecorAnchor = 'FIXED' | 'FRAME' | 'BACKGROUND' | 'FACE' | 'HAND'
 export interface DecorPlacement {
   itemId: number
-  /** FIXED(스티커)·FRAME(프레임 전체 효과)만 구현 — FACE·HAND(가면 추적)는 추적기가 붙을 때 사용 */
+  /**
+   * FIXED(스티커)·FRAME(프레임 전체 효과)·BACKGROUND(사람 뒤 배경)·FACE(가면) 구현 —
+   * HAND는 추적기가 붙을 때 사용.
+   *
+   * FRAME과 BACKGROUND는 저장 형태가 같지만(좌표 없음 + intensity) 앵커를 나눠 둔다 —
+   * 분류 한도가 각각 1이라 동시에 장착되고, 그때 어느 배치를 어느 레이어로 그릴지 갈라야 한다.
+   */
   anchor: DecorAnchor
   x: number
   y: number
   scale: number
   /**
-   * FRAME 앵커의 세기(0~1). 효과는 크기가 없어 scale 대신 이 값으로 조절한다.
-   * 서버가 분류(EFFECT)에서 앵커를 정하므로 스티커에는 오지 않는다.
+   * FRAME·BACKGROUND 앵커의 세기(0~1). 둘 다 크기가 없어 scale 대신 이 값으로 조절한다.
+   * 서버가 분류(EFFECT·BACKGROUND)에서 앵커를 정하므로 스티커에는 오지 않는다.
    */
   intensity?: number
 }
@@ -389,17 +395,36 @@ export interface GameDetail {
 }
 /** 리더보드 구분 — 솔로 세션(참가 1명) 기록과 멀티 세션 기록을 나눠 조회한다 */
 export type LeaderboardMode = 'SOLO' | 'MULTI'
+/**
+ * 집계 기간. `ALLTIME`은 단일 판 최고 점수(역대 기록), `WEEKLY`는 그 주에 얻은 점수의 합.
+ *
+ * 둘은 짝이다 — 전체기간은 "같은 점수면 먼저 달성한 사람이 위"라서 점수 상한이 있는 게임의
+ * 상위권이 사실상 굳는다(명예의 전당). 매주 초기화되는 주간이 그래서 필요하다.
+ */
+export type LeaderboardPeriod = 'ALLTIME' | 'WEEKLY' | 'CHART'
 export interface LeaderboardEntry {
   rank: number
   userId: number
   nickname: string
-  bestScore: number
+  /**
+   * ALLTIME이면 최고 점수, WEEKLY면 그 주 <b>합계</b>.
+   * 기간에 따라 뜻이 달라져서 `bestScore`가 아니라 `score`다.
+   */
+  score: number
   playCount: number
   /** 프로필 사진 URL. null이면 기본 아바타를 그린다. */
   avatarUrl?: string | null
+  /**
+   * 이 점수를 찍은 시각 — 서버가 동점을 가르는 기준이다(먼저 달성한 사람이 위).
+   * 순위에 공동 등수가 없으므로, 같은 점수인 두 줄의 순서를 설명하는 유일한 근거다.
+   */
+  achievedAt?: string | null
 }
 export interface LeaderboardResponse {
   gameId: number
+  period: LeaderboardPeriod
+  /** WEEKLY일 때 실제로 집계한 주의 월요일(KST). 요청한 week를 서버가 스냅한 결과. ALLTIME이면 null */
+  weekStart?: string | null
   entries: LeaderboardEntry[]
   myRank?: LeaderboardEntry
 }

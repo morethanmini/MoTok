@@ -7,6 +7,7 @@ import { roomsApi, type InventoryItem } from '@/api'
 import { useCamera } from '@/composables/useCamera'
 import { useMicLevel } from '@/composables/useMicLevel'
 import { EQUIP_LIMIT, useDecoration } from '@/composables/useDecoration'
+import { useFaceAnchor } from '@/composables/useFaceAnchor'
 import { useMediaPermissionStore } from '@/stores/mediaPermission'
 import { useSessionStore } from '@/stores/session'
 import { useRoomUnloadLeave } from '@/composables/useRoomUnloadLeave'
@@ -113,6 +114,13 @@ function onVideoMeta() {
   frameW.value = el.videoWidth
   frameH.value = el.videoHeight
 }
+
+// 가면과 어두운 배경은 저장된 좌표가 아니라 얼굴을 따라간다 —
+// 영상이 보이고 그런 아이템을 장착했을 때만 돌린다(그 외에는 GPU를 물지 않는다).
+const face = useFaceAnchor(
+  () => videoEl.value,
+  () => showVideo.value && decor.needsFaceTracking.value,
+)
 
 /** 꾸미기 영역의 짧은 안내(저장 완료·서버 거절 사유). 잠깐 보여 주고 지운다. */
 const decorMessage = ref('')
@@ -251,10 +259,21 @@ async function cancel() {
             :style="camFilterStyle"
             @loadedmetadata="onVideoMeta"
           />
-          <!-- 입장 전에도 뽀샤시가 걸린 모습을 그대로 보여 준다 — 여기서 세기를 정하고 들어간다 -->
+          <!-- 입장 전에도 효과가 걸린 모습을 그대로 보여 준다 — 여기서 세기를 정하고 들어간다 -->
           <CameraEffectLayer
             v-if="showVideo && decor.cameraEffect.value && hasGlowLayer(decor.cameraEffect.value.kind)"
+            :kind="decor.cameraEffect.value.kind"
             :intensity="decor.cameraEffect.value.intensity"
+          />
+          <!-- 배경은 효과 위에. 기하는 아래 StickerOverlay와 같은 값이어야 구멍이 가면과 같은 자리에 온다. -->
+          <CameraEffectLayer
+            v-if="showVideo && decor.cameraBackground.value"
+            :kind="decor.cameraBackground.value.kind"
+            :intensity="decor.cameraBackground.value.intensity"
+            :face="face.anchor.value"
+            mirrored
+            fit="cover"
+            :frame-aspect="previewAspect"
           />
           <!-- 장착 스티커 미리보기 겸 편집. 프리뷰는 좌우 반전(scaleX(-1))이라 mirrored,
                object-fit:cover라 넘치는 영역까지 같은 기하로 맞춘다. 끌어서 자리를 정한다. -->
@@ -268,6 +287,7 @@ async function cancel() {
             :frame-aspect="previewAspect"
             :frame-pixels="framePixels"
             :selected-id="selectedId"
+            :face="face.anchor.value"
             @move="decor.move"
             @scale="decor.setScale"
             @remove="removeSticker"
@@ -279,6 +299,14 @@ async function cancel() {
             :intensity="decor.cameraEffect.value.intensity"
             :label="`${EFFECT_LABEL[decor.cameraEffect.value.kind]} 세기`"
             @change="decor.setIntensity(decor.cameraEffect.value!.itemId, $event)"
+          />
+          <!-- 배경도 세기를 갖는다 — 효과와 함께 걸릴 수 있어 슬라이더가 둘 다 뜬다 -->
+          <EffectIntensitySlider
+            v-if="showVideo && decor.cameraBackground.value"
+            class="fx-row"
+            :intensity="decor.cameraBackground.value.intensity"
+            :label="`${EFFECT_LABEL[decor.cameraBackground.value.kind]} 세기`"
+            @change="decor.setIntensity(decor.cameraBackground.value!.itemId, $event)"
           />
           <div v-if="!isOn" class="camera-empty">
             <div class="camera-icon" aria-hidden="true" />

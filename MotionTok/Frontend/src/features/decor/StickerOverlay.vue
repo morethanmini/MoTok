@@ -16,6 +16,8 @@ import {
   spriteWidth,
   type StickerSprite,
 } from './sticker'
+import { frameRect } from './frameBox'
+import type { FaceAnchor } from './faceAnchor'
 
 const props = withDefaults(
   defineProps<{
@@ -42,6 +44,12 @@ const props = withDefaults(
      * 송출 프레임 기준이라 필요하다. 없으면 상한 없이 0~1로만 자른다.
      */
     framePixels?: { w: number; h: number } | null
+    /**
+     * 지금 추적 중인 얼굴(useFaceAnchor). 앵커가 FACE인 스프라이트(가면)는 저장된 좌표가 아니라
+     * 이 값으로 매 프레임 자리를 잡는다. null이면 그 스프라이트를 아예 그리지 않는다 —
+     * 얼굴을 못 찾았는데 아무 데나 얹으면 그게 더 고장 나 보인다.
+     */
+    face?: FaceAnchor | null
   }>(),
   {
     mirrored: false,
@@ -51,6 +59,7 @@ const props = withDefaults(
     frameAspect: null,
     fit: 'contain',
     framePixels: null,
+    face: null,
   },
 )
 
@@ -78,44 +87,52 @@ onMounted(() => {
 })
 onBeforeUnmount(() => observer?.disconnect())
 
-/**
- * 영상 프레임이 실제로 놓이는 사각형. contain이면 박스 안에 들어가고(여백 생김),
- * cover면 박스 밖으로 넘친다(잘림) — 둘 다 중앙 정렬이라 계산은 분기 방향만 다르다.
- * frameAspect가 없으면 박스가 곧 프레임이다.
- */
-const frame = computed(() => {
-  const bw = boxW.value
-  const bh = boxH.value
-  const aspect = props.frameAspect
-  if (!aspect || !bw || !bh) return { x: 0, y: 0, w: bw, h: bh }
-
-  const boxIsWider = bw / bh > aspect
-  const fitToHeight = props.fit === 'contain' ? boxIsWider : !boxIsWider
-  if (fitToHeight) {
-    const w = bh * aspect
-    return { x: (bw - w) / 2, y: 0, w, h: bh }
-  }
-  const h = bw / aspect
-  return { x: 0, y: (bh - h) / 2, w: bw, h }
-})
+/** 영상 프레임이 실제로 놓이는 사각형 — 효과 레이어와 같은 기하를 쓴다(frameBox.ts). */
+const frame = computed(() => frameRect(boxW.value, boxH.value, props.frameAspect, props.fit))
 
 /** 이미지 로드 완료를 알리는 신호 — 원본 크기가 확정돼야 상한(원본보다 크게 안 그림)을 걸 수 있다. */
 const loadedTick = ref(0)
 
-/** 화면에 그려질 스티커 상자(중심 좌표·크기, px). 스티커와 선택 테두리가 같은 값을 쓴다. */
+/** 이 스프라이트를 얼굴 추적으로 얹어야 하는지 — 맞으면 지금 추적된 얼굴을 돌려준다. */
+function trackedFace(sprite: StickerSprite): FaceAnchor | null {
+  return sprite.anchor === 'FACE' ? props.face : null
+}
+
+/** 얼굴을 아직 못 찾은 가면은 건너뛴다(저장 좌표에 얹지 않는다). */
+const drawn = computed(() => props.sprites.filter((s) => s.anchor !== 'FACE' || !!props.face))
+
+/**
+ * 화면에 그려질 스티커 상자(중심 좌표·크기·기울기, px). 스티커와 선택 테두리가 같은 값을 쓴다.
+ *
+ * 얼굴 앵커는 저장된 x·y·scale을 쓰지 않고 매 프레임 얼굴에서 다시 계산한다. 원본 크기 상한
+ * (spriteWidth)도 걸지 않는다 — 얼굴보다 작게 그리면 눈 구멍이 어긋나므로, 여기서는 선명함보다
+ * <b>정렬</b>이 우선이다.
+ */
 function rectOf(sprite: StickerSprite) {
   const f = frame.value
   void loadedTick.value
-  const w = spriteWidth(f.w, f.h, sprite.scale, getLoadedImage(sprite.imageUrl)?.naturalWidth)
   const img = getLoadedImage(sprite.imageUrl)
+  const face = trackedFace(sprite)
+  const place = face ?? sprite
+  const w = face
+    ? Math.min(f.w, f.h) * Math.max(face.scale, 0)
+    : spriteWidth(f.w, f.h, sprite.scale, img?.naturalWidth)
   const h = img ? w * (img.naturalHeight / img.naturalWidth) : w
-  const nx = props.mirrored ? 1 - clamp01(sprite.x) : clamp01(sprite.x)
-  return { cx: f.x + nx * f.w, cy: f.y + clamp01(sprite.y) * f.h, w, h }
+  const nx = props.mirrored ? 1 - clamp01(place.x) : clamp01(place.x)
+  // 좌우 반전된 영상 위에서는 기울기도 뒤집힌다 — 안 뒤집으면 고개를 기울일 때 반대로 돈다.
+  const rotation = face ? (props.mirrored ? -face.rotation : face.rotation) : 0
+  return { cx: f.x + nx * f.w, cy: f.y + clamp01(place.y) * f.h, w, h, rotation }
 }
 
+/** left·top이 중심이라 절반만큼 되돌린 뒤 기울인다(순서를 바꾸면 회전 중심이 어긋난다). */
 function styleOf(sprite: StickerSprite) {
   const r = rectOf(sprite)
-  return { width: `${r.w}px`, left: `${r.cx}px`, top: `${r.cy}px` }
+  return {
+    width: `${r.w}px`,
+    left: `${r.cx}px`,
+    top: `${r.cy}px`,
+    transform: `translate(-50%, -50%) rotate(${r.rotation}rad)`,
+  }
 }
 
 /** 선택 테두리 — 스티커보다 살짝 크게 둘러 핸들이 그림을 덜 가리게 한다. */
@@ -124,8 +141,12 @@ function frameStyleOf(sprite: StickerSprite) {
   return { width: `${r.w}px`, height: `${r.h}px`, left: `${r.cx}px`, top: `${r.cy}px` }
 }
 
+/**
+ * 편집 대상 — 얼굴 앵커(가면)는 제외한다. 자리와 크기를 얼굴이 정하므로 끌어 옮길 것도,
+ * 크기를 조절할 것도 없다(빼려면 인벤토리에서 장착을 해제한다).
+ */
 const selectedSprite = computed(
-  () => props.sprites.find((s) => s.itemId === props.selectedId) ?? null,
+  () => drawn.value.find((s) => s.itemId === props.selectedId && !trackedFace(s)) ?? null,
 )
 
 /** 포인터 위치 → 정규화 좌표(반전 화면이면 x를 되돌려 저장값 기준으로 바꾼다). */
@@ -142,7 +163,7 @@ function toNormalized(e: PointerEvent) {
 let dragging: number | null = null
 
 function onPointerDown(e: PointerEvent, sprite: StickerSprite) {
-  if (!props.editable) return
+  if (!props.editable || trackedFace(sprite)) return
   emit('select', sprite.itemId)
   dragging = sprite.itemId
   ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
@@ -213,9 +234,10 @@ function onResizeUp(e: PointerEvent) {
 <template>
   <div ref="box" class="overlay" :class="{ editable }">
     <img
-      v-for="sprite in sprites"
+      v-for="sprite in drawn"
       :key="sprite.itemId"
       class="sticker"
+      :class="{ tracked: !!trackedFace(sprite) }"
       :src="sprite.imageUrl"
       :style="styleOf(sprite)"
       alt=""
@@ -269,7 +291,10 @@ function onResizeUp(e: PointerEvent) {
 .overlay.editable .sticker { pointer-events: auto; cursor: grab; }
 .overlay.editable .sticker:active { cursor: grabbing; }
 /* left·top은 스티커 중심이라 절반만큼 되돌린다 */
-.sticker { position: absolute; transform: translate(-50%, -50%); user-select: none; }
+/* 중심 보정·회전은 styleOf가 인라인 transform으로 한다(여기서 겹쳐 쓰면 인라인이 덮어써 버린다) */
+.sticker { position: absolute; user-select: none; }
+/* 가면은 얼굴이 자리를 정하므로 끌 수 없다 — 밑에 있는 스티커를 가로막지도 않게 한다 */
+.overlay.editable .sticker.tracked { pointer-events: none; }
 
 .select-box {
   position: absolute;

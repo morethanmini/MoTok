@@ -49,17 +49,11 @@ function onCharged(amount: number) {
   showCharge.value = false // 닫히면 구매 확인 모달이 갱신된 잔액으로 다시 표시됨
 }
 
-const MOCK_ITEMS: Item[] = [
-  { id: 1, name: '별 가면', category: 'MASK', itemType: 'SHOP', pricePoint: 300, imageUrl: '', owned: false },
-  { id: 2, name: '무지개 효과', category: 'EFFECT', itemType: 'SHOP', pricePoint: 500, imageUrl: '', owned: true },
-  { id: 3, name: '하트 스티커', category: 'STICKER', itemType: 'SHOP', pricePoint: 150, imageUrl: '/assets/item/sticker/heart_1.png', owned: false },
-  { id: 4, name: '우주 배경', category: 'BACKGROUND', itemType: 'SHOP', pricePoint: 800, imageUrl: '', owned: false },
-  { id: 5, name: '고양이 가면', category: 'MASK', itemType: 'SHOP', pricePoint: 320, imageUrl: '', owned: false },
-  { id: 6, name: '반짝임 효과', category: 'EFFECT', itemType: 'SHOP', pricePoint: 450, imageUrl: '', owned: false },
-  { id: 7, name: '음표 스티커', category: 'STICKER', itemType: 'SHOP', pricePoint: 200, imageUrl: '/assets/item/sticker/note_1.png', owned: false },
-  { id: 8, name: '별 스티커', category: 'STICKER', itemType: 'SHOP', pricePoint: 250, imageUrl: '/assets/item/sticker/star_1.png', owned: false },
-  { id: 9, name: '고양이 풍선 스티커', category: 'STICKER', itemType: 'SHOP', pricePoint: 1500, imageUrl: '/assets/item/sticker/cat_balloon.gif', owned: false },
-]
+/**
+ * 응답 전에 세울 자리표시자 개수. 실제 카드와 같은 자리를 차지하는 게 목적이라
+ * 시드 개수(7)에 가깝게 둔다 — 예시 아이템을 그리던 자리를 이게 대신한다.
+ */
+const SKELETON_CARDS = 6
 
 const CATEGORIES: { key: ItemCategory | 'ALL'; label: string; emoji: string }[] = [
   { key: 'ALL', label: '전체', emoji: '🛍' },
@@ -79,9 +73,20 @@ const artOf: Record<ItemCategory, string> = {
 const thumbOf = (item: Item) => item.imageUrl || artOf[item.category]
 
 const active = ref<ItemCategory | 'ALL'>('ALL')
-// loadError면 화면에 보이는 건 서버 목록이 아니라 MOCK_ITEMS다 — 이 상태에선 구매를 막는다.
-// (DB에 없는 아이템이라 구매하면 어차피 404다)
-const { data: items, error: loadError, reload: reloadItems } = useAsyncData(() => shopApi.listItems(), MOCK_ITEMS)
+/*
+ * 폴백으로 예시 아이템을 그리지 않는다(빈 배열로 시작).
+ *
+ * 예전에는 MOCK_ITEMS 9개를 먼저 그리고 서버 목록(7개)으로 갈아치웠다. 개수·순서·썸네일이
+ * 모두 달라 그 순간 그리드가 통째로 재배열됐고, 목록에는 DB에 없는 아이템(별 가면·무지개 효과·
+ * 우주 배경·반짝임 효과)이 섞여 있어 <b>잠깐이지만 살 수 없는 걸 살 수 있게 보여 줬다</b>
+ * (누르면 404). 조회 실패 때 구매를 막는 장치는 있었지만, 성공 <b>직전</b>의 이 구간은 막지 못했다.
+ */
+const {
+  data: items,
+  loading: itemsLoading,
+  error: loadError,
+  reload: reloadItems,
+} = useAsyncData<Item[]>(() => shopApi.listItems(), [])
 
 const filtered = computed(() =>
   active.value === 'ALL' ? items.value : items.value.filter((i) => i.category === active.value),
@@ -105,8 +110,14 @@ const selected = ref<Item | null>(null)
 /** 구매 요청 진행 중 — 연타로 같은 아이템에 POST가 두 번 나가는 걸 막는다. */
 const purchasing = ref(false)
 
+/**
+ * 조회 실패를 이유로 막지 않는다. 예전에는 실패 시 화면에 예시 아이템이 떠 있어서(살 수 없는
+ * 것들이라) 막는 게 맞았지만, 이제 화면에 있는 건 언제나 서버가 준 아이템이다 — 새로 고치기가
+ * 실패해 목록이 오래됐을 뿐이라 구매를 막을 이유가 없다. 그 사이 사라진 아이템이면 서버가
+ * 404(`ITEM_NOT_FOUND`)로 알려 주고 아래에서 목록을 다시 읽는다.
+ */
 function openConfirm(item: Item) {
-  if (item.owned || loadError.value) return
+  if (item.owned) return
   selected.value = item
 }
 
@@ -193,9 +204,9 @@ async function confirmPurchase() {
       </div>
     </section>
 
-    <!-- 목록을 못 불러온 상태 — 아래 카드는 예시(목) 데이터라 구매할 수 없음을 밝힌다. -->
-    <p v-if="loadError" class="load-error">
-      <span>{{ loadError }} · 아래 목록은 예시라 구매할 수 없어요.</span>
+    <!-- 조회 실패 — 예시로 덮지 않고 드러낸다. 덮어 두면 서버가 죽은 걸 아무도 모른다. -->
+    <p v-if="loadError && !items.length" class="load-error">
+      <span>{{ loadError }}</span>
       <PixelButton @click="reloadItems()">다시 시도</PixelButton>
     </p>
 
@@ -215,6 +226,17 @@ async function confirmPurchase() {
           </PixelButton>
         </div>
       </article>
+      <!-- 응답 전 자리표시자 — 실제 카드와 같은 요소·같은 높이라 목록이 도착해도 자리가 안 밀린다 -->
+      <article
+        v-for="n in itemsLoading ? SKELETON_CARDS : 0"
+        :key="`sk-${n}`"
+        class="item skeleton"
+        aria-hidden="true"
+      >
+        <div class="thumb" />
+        <div class="name"><span class="sk-line" /></div>
+        <div class="row"><span class="sk-line short" /></div>
+      </article>
       <article v-for="item in filtered" :key="item.id" class="item">
         <div class="thumb">
           <img :src="thumbOf(item)" alt="" />
@@ -228,7 +250,7 @@ async function confirmPurchase() {
             <PixelButton v-if="!item.owned" class="try-btn" @click="previewItem = item">보기</PixelButton>
             <PixelButton
               :variant="item.owned ? 'secondary' : 'yellow'"
-              :disabled="item.owned || !!loadError"
+              :disabled="item.owned"
               @click="openConfirm(item)"
             >
               {{ item.owned ? '보유중' : '구매' }}
@@ -311,6 +333,15 @@ async function confirmPurchase() {
   color: #7a5540;
 }
 .row :deep(.try-btn:hover) { background: #fffdf7; }
+/* 자리표시자 — 실제 카드의 .thumb/.name/.row 규칙을 그대로 쓰고 내용만 비운다.
+   따로 크기를 적으면 카드 규칙이 바뀔 때 둘이 어긋나 목록 도착 시 자리가 밀린다. */
+.item.skeleton { pointer-events: none; }
+.item.skeleton:hover { transform: none; border-color: #e0cfd7; box-shadow: 3px 3px 0 #eadde1; }
+.sk-line { display: block; height: 12px; width: 70%; border-radius: 4px; background: #ece2e6; animation: sk-pulse 1.1s ease-in-out infinite; }
+.sk-line.short { width: 40%; }
+@keyframes sk-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .sk-line { animation: none; } }
+
 .row :deep(.px-btn:hover:not(:disabled)) {
   transform: translate(-2px, -2px);
   box-shadow: inset 2px 2px 0 rgba(255,255,255,.42), inset -2px -2px 0 rgba(120,58,47,.18), 3px 3px 0 #a66b50;
