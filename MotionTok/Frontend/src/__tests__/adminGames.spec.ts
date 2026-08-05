@@ -11,7 +11,7 @@ import { filterByScope, inScope, scopeBadges } from '@/features/admin/games'
 function game(over: Partial<AdminGame> = {}): AdminGame {
   return {
     id: 1,
-    name: '핑거 스타',
+    name: '별따라 손따라',
     mode: 'VERSUS',
     category: 'MOTION',
     minPlayers: 1,
@@ -31,7 +31,7 @@ describe('싱글/멀티 분류', () => {
   })
 
   it('싱글 기준은 soloCapable — mode가 VERSUS여도 혼자 되면 싱글이다', () => {
-    // 핑거 스타는 대결 모드지만 min 1이라 혼자서도 플레이된다.
+    // 별따라 손따라는 대결 모드지만 min 1이라 혼자서도 플레이된다.
     expect(inScope(game({ mode: 'VERSUS', soloCapable: true }), 'solo')).toBe(true)
     // 그림으로 말해요는 협동 모드이고 3명부터라 싱글 목록에 없다.
     expect(inScope(game({ mode: 'COOP', soloCapable: false, minPlayers: 3 }), 'solo')).toBe(false)

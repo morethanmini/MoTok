@@ -29,7 +29,7 @@ public final class PointCalculator {
      * 순위 보상 + 점수 보너스. 상위 순위·높은 점수일수록 많이 받는다.
      *
      * @param rankNo      1부터의 순위
-     * @param score       게임별 클램프된 점수(예: 핑거 스타 0~100)
+     * @param score       게임별 클램프된 점수(예: 별따라 손따라 0~100)
      * @param playerCount 참가 인원(순위 보상 스케일)
      */
     public static int calc(int rankNo, int score, int playerCount) {

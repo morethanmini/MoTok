@@ -2,7 +2,7 @@ import type { RouteRecordRaw } from 'vue-router'
 import { RouteName } from '@/router/routeNames'
 
 /**
- * 게임④ 몸 끼워 맞추기 개발 도구 라우트 (S15P11A706-136).
+ * 게임④ 그대로 멈춰라 개발 도구 라우트 (S15P11A706-136).
  * 아바타 랩은 개발 전용 — 프로덕션 빌드에서는 빈 배열이라 등록되지 않는다.
  */
 export const bodyFitRoutes: RouteRecordRaw[] = import.meta.env.DEV

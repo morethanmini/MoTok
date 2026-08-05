@@ -15,7 +15,7 @@ interface FloatItem {
 }
 
 const items: FloatItem[] = [
-  { img: 'constellation', label: '핑거 스타', size: 154, x: '7%', duration: '19s', delay: '-2s' },
+  { img: 'constellation', label: '별따라 손따라', size: 154, x: '7%', duration: '19s', delay: '-2s' },
   { img: 'tambourine', label: '리듬 펀치', size: 88, x: '48%', duration: '14s', delay: '-12s', plain: true },
   { img: 'fishing-rod', label: '모션 피싱', size: 142, x: '68%', duration: '21s', delay: '-7s' },
   { img: 'sketchbook', label: '드로잉 릴레이', size: 168, x: '24%', duration: '23s', delay: '-16s' },

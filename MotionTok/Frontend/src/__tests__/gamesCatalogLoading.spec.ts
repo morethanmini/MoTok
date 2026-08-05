@@ -33,9 +33,9 @@ const game = (id: number, name: string, minPlayers = 1): Game => ({
 
 /** 백엔드 시더에 실제로 존재하는 5개(GameCatalogSeeder·RhythmGameSeeder 기준) */
 const SERVER_GAMES = [
-  game(1, '핑거 스타'),
+  game(1, '별따라 손따라'),
   game(2, '캐치캐치리듬'),
-  game(4, '몸 끼워 맞추기'),
+  game(4, '그대로 멈춰라'),
   game(10, '그림으로 말해요', 3),
   game(11, '모션 낚시'),
 ]
@@ -79,7 +79,7 @@ describe('게임 목록 로딩', () => {
     await flushPromises()
 
     expect(w.findAll('.game-card.skeleton')).toHaveLength(0)
-    expect(cardNames(w)).toEqual(['핑거 스타', '캐치캐치리듬', '몸 끼워 맞추기', '그림으로 말해요', '모션 낚시'])
+    expect(cardNames(w)).toEqual(['별따라 손따라', '캐치캐치리듬', '그대로 멈춰라', '그림으로 말해요', '모션 낚시'])
   })
 
   it('서버 목록을 받은 순서 그대로 그린다 — 프론트가 다시 정렬하지 않는다', async () => {
@@ -141,6 +141,6 @@ describe('게임 목록 로딩', () => {
     await flushPromises()
 
     // 그림으로 말해요(3명부터)만 빠진다
-    expect(cardNames(w)).toEqual(['핑거 스타', '캐치캐치리듬', '몸 끼워 맞추기', '모션 낚시'])
+    expect(cardNames(w)).toEqual(['별따라 손따라', '캐치캐치리듬', '그대로 멈춰라', '모션 낚시'])
   })
 })

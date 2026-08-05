@@ -99,7 +99,7 @@ class UserRecordServiceTest {
                 row(1L, LeaderboardMode.MULTI, 900, 5)));
         when(leaderboardRepository.findAllByUserId(USER_ID)).thenReturn(rows);
         when(gameRepository.findAllById(anyList()))
-                .thenReturn(List.of(game(1L, "핑거 스타"), game(10L, "그림으로 말해요")));
+                .thenReturn(List.of(game(1L, "별따라 손따라"), game(10L, "그림으로 말해요")));
         when(leaderboardRepository.countAhead(anyLong(), any(), anyLong(), any(), eq(USER_ID)))
                 .thenReturn(2L);
 
@@ -109,7 +109,7 @@ class UserRecordServiceTest {
         assertThat(records).extracting(GameRecordResponse::mode).containsExactly("MULTI", "SOLO", "MULTI");
         assertThat(records.get(0))
                 .satisfies(record -> {
-                    assertThat(record.gameName()).isEqualTo("핑거 스타");
+                    assertThat(record.gameName()).isEqualTo("별따라 손따라");
                     assertThat(record.bestScore()).isEqualTo(900);
                     assertThat(record.playCount()).isEqualTo(5);
                     assertThat(record.rankNo()).isEqualTo(3); // 앞선 2명 → 3위
