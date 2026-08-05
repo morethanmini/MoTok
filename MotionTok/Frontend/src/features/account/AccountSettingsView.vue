@@ -20,6 +20,7 @@ import { useToast } from '@/composables/useToast'
 import { useBgm } from '@/composables/useBgm'
 import { useSpeakerGain } from '@/composables/useSpeakerGain'
 import { containsProfanity } from '@/utils/profanity'
+import { nicknameError } from '@/utils/nickname'
 
 const router = useRouter()
 const session = useSessionStore()
@@ -79,10 +80,12 @@ function showCenterNotice(msg: string) {
 
 async function checkNickname() {
   const value = nickname.value.trim()
-  if (value.length < 2 || value.length > 16) {
+  // 서버 규칙(2~16자 + 한글·영문·숫자)과 동일하게 미리 거른다.
+  const ruleError = nicknameError(value)
+  if (ruleError) {
     nicknameChecked.value = true
     nicknameAvailable.value = false
-    nicknameMsg.value = '닉네임은 2~16자여야 해요.'
+    nicknameMsg.value = ruleError
     return
   }
   // 서버(중복확인·수정 @NoProfanity)와 같은 검사를 미리 태운다 — 왕복 없이 즉시 안내
