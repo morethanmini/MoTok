@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>모톡 — ERD v0.2</title>
+<title>모톡 — ERD v0.3</title>
 <style>
   :root{
     --ink:#1d1b2e; --sub:#5c5876; --line:#e4e1f0; --bg:#fbfaff;
@@ -64,13 +64,15 @@
 <body>
 <div class="wrap">
 
-  <span class="doc-badge">ERD · v0.2</span>
+  <span class="doc-badge">ERD · v0.3</span>
   <h1>모톡 — 개체-관계도 (RDB 스키마)</h1>
-  <p class="lede">확정된 요구사항 명세서(260716)·지라(S15P11A706-1~122)·아키텍처 결정기록 v0.3을 반영한 MySQL 스키마입니다.
-  결정 D5에 따라 <b>방·진행 중 게임 상태·실시간 랭킹은 Redis</b>(별도 문서)로 가고, 이 문서에는 <b>서버 재시작 후에도 남아야 할 데이터</b>만 있습니다.</p>
+  <p class="lede">확정된 요구사항 명세서(260716)·지라(S15P11A706-1~186)·아키텍처 결정기록 v0.3을 반영한 MySQL 스키마입니다.
+  결정 D5에 따라 <b>방·진행 중 게임 상태는 Redis</b>(별도 문서)로 가고, 이 문서에는 <b>서버 재시작 후에도 남아야 할 데이터</b>만 있습니다.
+  v0.3부터 <b>실제 <code>@Entity</code> 코드를 원천으로 재작성</b>했습니다 — 구현된 테이블과 설계로만 남은 테이블을 나눠 표기합니다. <b>(v0.3)</b></p>
   <div class="meta">
-    <span><b>엔티티</b>20개 · 관계 22개</span>
-    <span><b>기준</b>요구사항 명세서 260716 ID반영 · 지라 최종</span>
+    <span><b>구현 엔티티</b>18개 · 관계 27개 <b>(v0.3)</b></span>
+    <span><b>미구현(설계 잔존)</b>9개 — 다이어그램에 "미구현" 표기로 남김 <b>(v0.3)</b></span>
+    <span><b>갱신</b>2026-08-06 <b>(v0.3)</b></span>
     <span><b>상위 문서</b>아키텍처 결정기록 v0.3 (D4·D5) · Redis 키 설계 v0.1</span>
   </div>
 
@@ -90,6 +92,18 @@
     <tr><td>추가</td><td>콘텐츠 시드 3종 <code>CONSTELLATION</code>/<code>WORD</code>/<code>COOP_PUZZLE</code></td><td>별자리 도안(-37) · 제시어 풀(-45) · 협동 퍼즐(-53)</td></tr>
     <tr><td>확장</td><td><code>USER.role</code>/<code>status</code>, <code>OAUTH_ACCOUNT.provider</code>에 NAVER</td><td>관리자 권한(-104) · 제재/soft delete · 네이버 OAuth(-22)</td></tr>
     <tr><td>확정</td><td><code>GAME.min_players</code>/<code>max_players</code>/<code>supports_bot</code>/<code>is_active</code></td><td>인원수 큐레이션(-28) · 1인 플레이 = min_players 1 · 봇 충족(-58) · 관리자 노출 제어(-106)</td></tr>
+    <tr><th colspan="3" style="background:var(--brand-soft);color:var(--brand-deep);text-align:left">v0.2 → v0.3 변경 (2026-08-06 · 구현 코드 기준 재작성)</th></tr>
+    <tr><td>추가</td><td><code>LEADERBOARD_WEEKLY</code> <b>(v0.3)</b></td><td>주간 누적 랭킹(<code>leaderboard_weekly</code>, 커밋 4d2490c) — 한 주 획득 점수의 <b>합</b>. 상한 있는 게임에서도 매주 1위가 새로 정해진다</td></tr>
+    <tr><td>추가</td><td><code>CHART_LEADERBOARD</code> <b>(v0.3)</b></td><td>캐치캐치리듬 곡별 이벤트 랭킹(<code>chart_leaderboard</code>, 커밋 c5ff6dd · -186) — 이벤트용이라 <code>DROP TABLE</code> 한 줄로 폐기 가능하게 본 랭킹 옆에 따로 쌓는다</td></tr>
+    <tr><td>추가</td><td><code>AI_ITEM_JOB</code> <b>(v0.3)</b></td><td>AI 아이템 생성 <b>비동기 잡 큐</b>(<code>ai_item_job</code>, -102) — GPU 워커를 외부에서 호출할 수 없어 폴링 구조. <code>provider</code>(GPU|FAL) 컬럼으로 비용 정산·장애 추적</td></tr>
+    <tr><td>추가</td><td><code>GAME_REWARD_GRANT</code> <b>(v0.3)</b></td><td>게임 보상 포인트 중복지급 방지 키(<code>game_reward_grant</code>) — 세션 id가 UUID 문자열이라 <code>POINT_HISTORY.ref_id</code>(bigint)에 담을 수 없어 별도 유니크 테이블</td></tr>
+    <tr><td>수정</td><td><code>LEADERBOARD</code>에 <code>mode</code>·<code>best_achieved_at</code>, UK <code>(game_id, user_id, mode)</code> <b>(v0.3)</b></td><td>솔로/멀티 분리(-96 확장) · 동점 tie-break 기준 시각. 옛 UK 제거·백필은 부팅 마이그레이션(<code>LeaderboardSchemaMigration</code>)</td></tr>
+    <tr><td>수정</td><td><code>GAME.description</code> 제거, <code>rules</code>·<code>controls</code>·<code>round_duration_sec</code>·<code>countdown_sec</code> 추가 <b>(v0.3)</b></td><td>코드에 <code>description</code>이 없다. 상세 안내는 규칙/조작법 2개 TEXT 컬럼(-75), 라운드·카운트다운은 서버 권위 타이머(-115)</td></tr>
+    <tr><td>수정</td><td><code>POINT_HISTORY.type</code>에 <code>AI_GENERATE_REFUND</code> <b>(v0.3)</b></td><td>AI 생성 실패(FAILED) 시 차감분 환불 — 항상 양수(<code>AiItemJobService.refundPoints</code>)</td></tr>
+    <tr><td>수정</td><td><code>OAUTH_ACCOUNT.provider</code> = <code>GOOGLE | KAKAO</code> <b>(v0.3)</b></td><td>v0.2가 추가했던 NAVER는 <b>미구현</b> — <code>OauthProvider</code> enum에 없고 <code>UNSUPPORTED_OAUTH_PROVIDER</code>(400)로 거부된다</td></tr>
+    <tr><td>수정</td><td><code>DECOR_SETTING.config</code> <code>json</code> → <code>text</code> <b>(v0.3)</b></td><td>실제 컬럼은 <code>TEXT</code> + Jackson 직렬화(<code>ChatReport.context_json</code>과 동일 관례)</td></tr>
+    <tr><td>수정</td><td><code>USER</code>·<code>FRIENDSHIP</code>·<code>REPORT</code>·<code>USER_REPORT</code>에 <code>updated_at</code> <b>(v0.3)</b></td><td>이 4개만 <code>BaseTimeEntity</code>를 상속한다(<code>created_at</code>+<code>updated_at</code> 자동 감사). 나머지 엔티티는 시각 컬럼을 직접 관리</td></tr>
+    <tr><td>표기</td><td>미구현 9종에 <b>미구현</b> 표기 <b>(v0.3)</b></td><td><code>SONG</code>·<code>CHART</code>(FE 번들 자산) · <code>GAME_SESSION</code>·<code>GAME_SESSION_RESULT</code>(Redis 전용) · <code>LOGIN_HISTORY</code>·<code>ADMIN_AUDIT_LOG</code>·<code>CONSTELLATION</code>·<code>WORD</code>·<code>COOP_PUZZLE</code>(구현 0건). 삭제하지 않고 남긴다 — 설계 의도의 기록이라</td></tr>
   </table>
 
   <div class="secnum">01</div>
@@ -105,6 +119,8 @@ erDiagram
   ITEM ||--o{ USER_ITEM : "보유됨"
   USER ||--o| DECOR_SETTING : "화면 꾸미기 저장"
   USER ||--o{ ITEM : "AI 커스텀 제작"
+  USER ||--o{ AI_ITEM_JOB : "AI 생성 요청"
+  AI_ITEM_JOB ||--o| ITEM : "저장 확정 시 산출"
   USER ||--o{ FRIENDSHIP : "요청"
   USER ||--o{ FRIENDSHIP : "수신"
   USER ||--o{ REPORT : "신고자"
@@ -115,29 +131,36 @@ erDiagram
   USER ||--o{ SANCTION : "처리 관리자"
   USER_REPORT ||--o{ SANCTION : "제재 근거(ref_report_type=USER_REPORT, 선택)"
   REPORT ||--o{ SANCTION : "제재 근거(ref_report_type=CHAT_REPORT, 선택)"
-  GAME ||--o{ GAME_SESSION : "플레이 기록"
-  GAME_SESSION ||--o{ GAME_SESSION_RESULT : "회원별 결과"
-  USER ||--o{ GAME_SESSION_RESULT : "전적"
-  GAME ||--o{ LEADERBOARD : "게임별 랭킹"
+  GAME ||--o{ LEADERBOARD : "게임별 최고점 랭킹"
   USER ||--o{ LEADERBOARD : "기록 보유"
+  GAME ||--o{ LEADERBOARD_WEEKLY : "게임별 주간 누적 랭킹"
+  USER ||--o{ LEADERBOARD_WEEKLY : "주간 기록 보유"
+  GAME ||--o{ CHART_LEADERBOARD : "곡별 이벤트 랭킹"
+  USER ||--o{ CHART_LEADERBOARD : "곡별 기록 보유"
+  GAME ||--o{ GAME_REWARD_GRANT : "보상 지급 기록"
+  USER ||--o{ GAME_REWARD_GRANT : "보상 수령"
   USER ||--o| USER_CONNECT_TIME : "누적 접속시간"
-  SONG ||--o{ CHART : "채보"
-  USER ||--o{ SONG : "커스텀 곡 업로드"
-  USER ||--o{ CHART : "커스텀 채보 제작"
-  USER ||--o{ LOGIN_HISTORY : "로그인 이력"
-  USER ||--o{ ADMIN_AUDIT_LOG : "관리 행위"
+  GAME ||--o{ GAME_SESSION : "플레이 기록 (미구현)"
+  GAME_SESSION ||--o{ GAME_SESSION_RESULT : "회원별 결과 (미구현)"
+  USER ||--o{ GAME_SESSION_RESULT : "전적 (미구현)"
+  SONG ||--o{ CHART : "채보 (미구현)"
+  USER ||--o{ SONG : "커스텀 곡 업로드 (미구현)"
+  USER ||--o{ CHART : "커스텀 채보 제작 (미구현)"
+  USER ||--o{ LOGIN_HISTORY : "로그인 이력 (미구현)"
+  USER ||--o{ ADMIN_AUDIT_LOG : "관리 행위 (미구현)"
 
   USER {
     bigint id PK
-    varchar email UK "소셜 전용 계정은 null 가능"
+    varchar email UK "100자, 소셜 전용 계정은 null 가능"
     varchar password_hash "소셜 전용 시 null"
-    varchar nickname UK
-    varchar avatar_url "프로필 사진 공개 URL · null이면 기본 아바타"
+    varchar nickname UK "32자 - tombstone(deleted_0000...)이 27자라 상한이 16자보다 넉넉하다"
+    varchar avatar_url "512자, 프로필 사진 공개 URL - null이면 기본 아바타"
     varchar role "USER | ADMIN"
     varchar status "ACTIVE | SUSPENDED | BANNED | DELETED"
     int point_balance "기본 0"
     boolean nickname_pending "소셜 최초 로그인 후 닉네임 미확정, 기본 false"
-    datetime created_at
+    datetime created_at "BaseTimeEntity"
+    datetime updated_at "BaseTimeEntity 상속 (v0.3)"
     datetime deleted_at "soft delete 시각, 기본 null"
   }
   WITHDRAWN_ACCOUNT {
@@ -150,8 +173,8 @@ erDiagram
   OAUTH_ACCOUNT {
     bigint id PK
     bigint user_id FK
-    varchar provider "GOOGLE | KAKAO | NAVER"
-    varchar provider_uid "provider와 복합 UK"
+    varchar provider "GOOGLE | KAKAO (v0.3) - NAVER는 미구현(enum에 없음, UNSUPPORTED_OAUTH_PROVIDER 400)"
+    varchar provider_uid "provider와 복합 UK(uk_oauth_provider_uid)"
     datetime linked_at
   }
   ITEM {
@@ -172,16 +195,16 @@ erDiagram
     datetime acquired_at
   }
   DECOR_SETTING {
-    bigint user_id PK "USER 1:1, FK"
-    json config "장착 아이템·배치·가상 배경 선택"
+    bigint user_id PK "USER 1:1 - users.id 값 그대로, FK 제약 없음 (v0.3)"
+    text config "장착 아이템·배치·가상 배경 선택 (v0.3: json이 아니라 TEXT + Jackson 직렬화)"
     datetime updated_at
   }
   POINT_HISTORY {
     bigint id PK
     bigint user_id FK
     int amount "+적립 / -사용"
-    varchar type "GAME_REWARD | SHOP_PURCHASE | AI_GENERATE | GUEST_MIGRATE"
-    bigint ref_id "세션·아이템 등 참조 id, null 가능"
+    varchar type "GAME_REWARD | SHOP_PURCHASE | AI_GENERATE | GUEST_MIGRATE | AI_GENERATE_REFUND (v0.3, 생성 실패 환불 - 항상 양수)"
+    bigint ref_id "아이템·AI jobId 등 참조 id, null 가능. 게임 세션 id는 UUID 문자열이라 여기 못 담는다(GAME_REWARD_GRANT 참조) (v0.3)"
     int balance_after
     datetime created_at
   }
@@ -189,9 +212,10 @@ erDiagram
     bigint id PK
     bigint requester_id FK "addressee와 복합 UK"
     bigint addressee_id FK
-    varchar status "PENDING | ACCEPTED"
-    datetime created_at
-    datetime responded_at
+    varchar status "PENDING | ACCEPTED (거절은 행 삭제)"
+    datetime created_at "BaseTimeEntity"
+    datetime updated_at "BaseTimeEntity 상속 (v0.3)"
+    datetime responded_at "수락 시각, PENDING 동안 null"
   }
   REPORT {
     bigint id PK "구현: chat_reports (-132)"
@@ -237,97 +261,156 @@ erDiagram
     datetime acknowledged_at "WARN을 당사자가 확인한 시각. 그 외 유형은 항상 null"
   }
   GAME {
-    bigint id PK
-    varchar name
-    varchar description
+    bigint id PK "고정 카탈로그 키 - 자동생성 아님(1=별따라 손따라) (v0.3)"
+    varchar name "50자, 서버 카탈로그가 표시 이름의 원천(-177)"
     varchar mode "SOLO | VERSUS | COOP"
     int min_players "1이면 1인 플레이 가능"
     int max_players
+    int round_duration_sec "라운드 길이(초) - 서버 권위 타이머의 endAt 산정 (v0.3)"
+    int countdown_sec "시작 카운트다운(초) (v0.3)"
     boolean supports_bot "봇으로 인원 충족 가능 여부"
-    boolean is_active "관리자 노출 제어"
-    varchar category
+    boolean is_active "관리자 노출 제어 - false면 목록엔 남고 시작만 거부"
+    varchar category "32자"
     varchar thumbnail_url
-  }
-  GAME_SESSION {
-    bigint id PK
-    bigint game_id FK
-    varchar room_key "Redis 방 식별자(추적용 문자열)"
-    varchar status "ENDED | ABORTED"
-    datetime started_at
-    datetime ended_at
-  }
-  GAME_SESSION_RESULT {
-    bigint id PK
-    bigint session_id FK
-    bigint user_id FK "회원만 적재 - NOT NULL"
-    int score
-    int rank_no
-    int points_earned
+    text rules "게임 규칙 설명(-75, GET /games/{gameId}) (v0.3)"
+    text controls "모션 조작 방법(-75) (v0.3)"
   }
   LEADERBOARD {
-    bigint id PK
-    bigint game_id FK "user_id와 복합 UK"
+    bigint id PK "구현: leaderboards - 전체기간 최고점, 정산의 유일한 영속 원천(-117)"
+    bigint game_id FK "user_id·mode와 복합 UK(uk_leaderboard_game_user_mode) (v0.3)"
+    bigint user_id FK "회원만 적재(게스트 제외, D5)"
+    varchar mode "SOLO | MULTI (v0.3, -96 확장) - 종료 시점 참가 인원 1명 이하면 SOLO"
+    int best_score
+    datetime best_achieved_at "지금의 best_score를 처음 찍은 시각 - 동점 tie-break 기준 (v0.3)"
+    int play_count
+    datetime updated_at "매 판 갱신 - 순위 판정에 쓰지 않는다"
+  }
+  LEADERBOARD_WEEKLY {
+    bigint id PK "구현: leaderboard_weekly (v0.3, 커밋 4d2490c) - 한 주 획득 점수의 합"
+    bigint game_id FK "user_id·mode·week_start와 복합 UK(uk_weekly_game_user_mode_week)"
+    bigint user_id FK
+    varchar mode "SOLO | MULTI"
+    date week_start "이 기록이 속한 주의 월요일(KST)"
+    bigint score_sum "이번 주 획득 점수 합 - int면 주 2만 판쯤에서 넘쳐 long"
+    int play_count
+    varchar last_session_id "64자, 마지막으로 합산한 세션 id - 같은 판 이중 합산 가드(합산은 멱등이 아니다)"
+    datetime updated_at "동점 tie-break 기준(누적은 합계를 만든 마지막 판 시각이 곧 달성 시각)"
+  }
+  CHART_LEADERBOARD {
+    bigint id PK "구현: chart_leaderboard (v0.3, 커밋 c5ff6dd · -186) - 캐치캐치리듬 곡별 이벤트 랭킹"
+    bigint game_id FK "chart_id·user_id와 복합 UK(uk_chart_leaderboard_game_chart_user)"
+    varchar chart_id "64자, 번들 채보 id - FE 자산 폴더명(예: ssafy-fighting-manual). SONG/CHART 테이블은 없다"
     bigint user_id FK
     int best_score
-    int play_count
+    datetime best_achieved_at "동점 tie-break 기준"
+    int play_count "확인용 표시값, 순위에 안 쓰임"
     datetime updated_at
+  }
+  GAME_REWARD_GRANT {
+    bigint id PK "구현: game_reward_grant (v0.3) - 이 세션에서 이 사람에게 이미 줬다는 사실만"
+    varchar session_id "64자, Redis 게임 세션 UUID. user_id와 복합 UK"
+    bigint user_id FK "FK 제약 없는 Long 값"
+    bigint game_id FK
+    int points "지급 포인트"
+    datetime created_at
+  }
+  AI_ITEM_JOB {
+    bigint id PK "구현: ai_item_job (v0.3, -102) - AI 아이템 생성 비동기 잡 큐"
+    bigint user_id FK "요청자"
+    varchar name "20자, 유저가 붙일 아이템 이름"
+    varchar category "MASK | EFFECT | STICKER | BACKGROUND"
+    longtext sketch_base64 "입력 스케치 원본(base64), 5MB 상한"
+    varchar status "PENDING | PROCESSING | DONE | FAILED"
+    varchar image_url "512자, 워커가 올린 결과 이미지 - 저장 확정 전 미리보기용이라 job이 직접 보관"
+    bigint item_id "저장 확정으로 생성된 ITEM id. 확정 전·재시도로 버려진 경우 null"
+    varchar error_message "500자"
+    varchar provider "GPU | FAL (v0.3) - 실제로 가져간 쪽. 미착수 PENDING은 null. 비용 정산·장애 추적용"
+    int points_charged "이 job에서 실제 차감한 포인트. 재생성 job은 추가 차감 없어 0"
+    bigint parent_job_id "재생성이면 최초 결제 job id. UNIQUE(uk_ai_item_job_parent)로 결제 1건당 재생성 1회"
+    datetime created_at
+    datetime updated_at
+  }
+  %% 미구현 — 게임 세션은 Redis에만 존재하고 JPA 엔티티가 없다(전적은 leaderboards로 조회). (v0.3)
+  GAME_SESSION {
+    bigint id PK "미구현 (v0.3) - Redis 세션만 존재, JPA 엔티티 없음"
+    bigint game_id FK "미구현"
+    varchar room_key "미구현 - Redis 방 식별자"
+    varchar status "미구현 - ENDED | ABORTED"
+    datetime started_at "미구현"
+    datetime ended_at "미구현"
+  }
+  %% 미구현 — 개별 판 결과는 어디에도 영속되지 않는다. 집계만 leaderboards·leaderboard_weekly에 남는다. (v0.3)
+  GAME_SESSION_RESULT {
+    bigint id PK "미구현 (v0.3) - 개별 판 결과는 영속되지 않음"
+    bigint session_id FK "미구현"
+    bigint user_id FK "미구현"
+    int score "미구현"
+    int rank_no "미구현"
+    int points_earned "미구현"
   }
   USER_CONNECT_TIME {
     bigint user_id PK "users.id 그대로 - FK 제약 없음"
     bigint total_seconds "누적 접속시간(초)"
     datetime updated_at
   }
+  %% 미구현 — 리듬게임 곡·채보는 FE 번들 자산으로 처리됐다. 서버 테이블 없음(랭킹만 chart_leaderboard.chart_id 문자열로 참조). (v0.3)
   SONG {
-    bigint id PK
-    varchar title
-    varchar artist
-    varchar audio_url "S3"
-    int duration_sec
-    varchar source "OFFICIAL | USER"
-    bigint uploader_id FK "USER 업로드 시, 공식 곡은 null"
-    boolean is_active
-    datetime created_at
+    bigint id PK "미구현 (v0.3) - 곡은 FE 번들 자산, 서버 테이블 없음"
+    varchar title "미구현"
+    varchar artist "미구현"
+    varchar audio_url "미구현"
+    int duration_sec "미구현"
+    varchar source "미구현 - OFFICIAL | USER"
+    bigint uploader_id FK "미구현"
+    boolean is_active "미구현"
+    datetime created_at "미구현"
   }
+  %% 미구현 — 채보도 FE 번들 자산(폴더명이 곧 chart_id). 커스텀 채보 에디터(-87·-88)도 구현 0건. (v0.3)
   CHART {
-    bigint id PK
-    bigint song_id FK
-    varchar mode "MAIMAI | BEATSABER"
-    varchar difficulty "EASY | NORMAL | HARD"
-    json pattern_data "노트 패턴"
-    varchar chart_type "OFFICIAL | CUSTOM"
-    bigint creator_id FK "커스텀 제작자, 공식은 null"
-    datetime created_at
+    bigint id PK "미구현 (v0.3) - 채보는 FE 번들 자산, chart_id 문자열이 유일한 식별자"
+    bigint song_id FK "미구현"
+    varchar mode "미구현"
+    varchar difficulty "미구현"
+    json pattern_data "미구현"
+    varchar chart_type "미구현"
+    bigint creator_id FK "미구현"
+    datetime created_at "미구현"
   }
+  %% 미구현 — 별자리 도안 시드(-37). 구현 0건, 도안은 게임 로직·FE 자산에 있다. (v0.3)
   CONSTELLATION {
-    bigint id PK
-    varchar name "오리온 등"
-    json points "목표 별 좌표·연결 정보"
+    bigint id PK "미구현 (v0.3)"
+    varchar name "미구현 - 오리온 등"
+    json points "미구현 - 목표 별 좌표·연결 정보"
   }
+  %% 미구현 — 제시어 풀(-45). 구현 0건. (v0.3)
   WORD {
-    bigint id PK
-    varchar text "그림 릴레이 제시어"
-    varchar category
+    bigint id PK "미구현 (v0.3)"
+    varchar text "미구현 - 그림 릴레이 제시어"
+    varchar category "미구현"
   }
+  %% 미구현 — 협동 퍼즐 시드(-53). 구현 0건. (v0.3)
   COOP_PUZZLE {
-    bigint id PK
-    varchar title
-    json config "역할별 제공 정보·정답 정의"
+    bigint id PK "미구현 (v0.3)"
+    varchar title "미구현"
+    json config "미구현 - 역할별 제공 정보·정답 정의"
   }
+  %% 미구현 — 로그인 이력(-122). 구현 0건. (v0.3)
   LOGIN_HISTORY {
-    bigint id PK
-    bigint user_id FK "실패 기록은 null 가능"
-    varchar method "LOCAL | GOOGLE | KAKAO | NAVER"
-    boolean success
-    datetime created_at
+    bigint id PK "미구현 (v0.3)"
+    bigint user_id FK "미구현"
+    varchar method "미구현 - LOCAL | GOOGLE | KAKAO"
+    boolean success "미구현"
+    datetime created_at "미구현"
   }
+  %% 미구현 — 관리자 감사 로그(-121). 구현 0건. 제재 이력은 sanction_history가 대신한다. (v0.3)
   ADMIN_AUDIT_LOG {
-    bigint id PK
-    bigint admin_id FK
-    varchar action "SANCTION_APPLY | GAME_TOGGLE 등"
-    varchar target_type "USER | GAME"
-    bigint target_id
-    varchar detail
-    datetime created_at
+    bigint id PK "미구현 (v0.3) - 제재 이력은 sanction_history가 대신 담고 있다"
+    bigint admin_id FK "미구현"
+    varchar action "미구현"
+    varchar target_type "미구현"
+    bigint target_id "미구현"
+    varchar detail "미구현"
+    datetime created_at "미구현"
   }
     </pre>
     <p class="hint">다이어그램이 안 보이면 인터넷 연결을 확인하세요(mermaid CDN 로드 필요). 가로로 스크롤됩니다.</p>
@@ -342,16 +425,18 @@ erDiagram
   <h2>도메인별 엔티티 요약 · 요구사항 추적</h2>
   <table>
     <tr><th style="width:160px">도메인</th><th>엔티티</th><th>담당 요구사항(지라)</th></tr>
-    <tr><td>회원·인증</td><td><code>USER</code> <code>OAUTH_ACCOUNT</code> <code>LOGIN_HISTORY</code></td><td>-21 -22 -23 -108 -111 -122 / role은 -104</td></tr>
-    <tr><td>관리자</td><td><code>REPORT</code>(chat_reports) <code>USER_REPORT</code>(user_reports) <code>SANCTION</code>(sanction_history) <code>ADMIN_AUDIT_LOG</code> + <code>GAME.is_active</code> · 정지 상태는 Redis <code>auth:suspended:{userId}</code></td><td>-104 -105 -106 -107 -112 -132 -133</td></tr>
-    <tr><td>포인트·상점·꾸미기</td><td><code>POINT_HISTORY</code> <code>ITEM</code> <code>USER_ITEM</code> <code>DECOR_SETTING</code></td><td>-56 -93 -94 -55 -102 / 가상 배경(-92)은 <code>DECOR_SETTING.config</code>에 선택값 저장</td></tr>
-    <tr><td>소셜</td><td><code>FRIENDSHIP</code></td><td>-57 -98 -100</td></tr>
-    <tr><td>게임 메타·전적·랭킹</td><td><code>GAME</code> <code>GAME_SESSION</code> <code>GAME_SESSION_RESULT</code> <code>LEADERBOARD</code></td><td>-28 -58 -82~84 -89 -96 -97 -114 -116 -117</td></tr>
-    <tr><td>리듬게임 콘텐츠</td><td><code>SONG</code> <code>CHART</code></td><td>-40 -42 -85 -87 -88</td></tr>
-    <tr><td>게임 콘텐츠 시드</td><td><code>CONSTELLATION</code> <code>WORD</code> <code>COOP_PUZZLE</code></td><td>-37 -45 -53 (AI 제시어 -99는 런타임 생성이라 미저장)</td></tr>
+    <tr><td>회원·인증</td><td><code>USER</code> <code>OAUTH_ACCOUNT</code> <code>WITHDRAWN_ACCOUNT</code> <code>USER_CONNECT_TIME</code> · <s><code>LOGIN_HISTORY</code></s> <b>미구현 (v0.3)</b></td><td>-21 -22 -23 -108 -111 -141 -179 / role은 -104 / 로그인 이력(-122)은 구현 0건</td></tr>
+    <tr><td>관리자</td><td><code>REPORT</code>(chat_reports) <code>USER_REPORT</code>(user_reports) <code>SANCTION</code>(sanction_history) + <code>GAME.is_active</code> · 정지 상태는 Redis <code>auth:suspended:{userId}</code> · <s><code>ADMIN_AUDIT_LOG</code></s> <b>미구현 (v0.3)</b></td><td>-104 -105 -106 -107 -112 -132 -133</td></tr>
+    <tr><td>포인트·상점·꾸미기</td><td><code>POINT_HISTORY</code> <code>ITEM</code> <code>USER_ITEM</code> <code>DECOR_SETTING</code> <code>AI_ITEM_JOB</code> <b>(v0.3)</b></td><td>-56 -93 -94 -55 -102 / 가상 배경(-92)은 <code>DECOR_SETTING.config</code>에 선택값 저장</td></tr>
+    <tr><td>소셜</td><td><code>FRIENDSHIP</code></td><td>-57 -98 -100 -141 -149 -179</td></tr>
+    <tr><td>게임 메타·전적·랭킹</td><td><code>GAME</code> <code>LEADERBOARD</code> <code>LEADERBOARD_WEEKLY</code> <b>(v0.3)</b> <code>CHART_LEADERBOARD</code> <b>(v0.3)</b> <code>GAME_REWARD_GRANT</code> <b>(v0.3)</b> · <s><code>GAME_SESSION</code> <code>GAME_SESSION_RESULT</code></s> <b>미구현 — Redis 세션만 존재 (v0.3)</b></td><td>-28 -58 -75 -82~84 -89 -96 -97 -114 -115 -116 -117 -177 -186</td></tr>
+    <tr><td>리듬게임 콘텐츠</td><td><s><code>SONG</code> <code>CHART</code></s> <b>미구현 (v0.3)</b> — 곡·채보는 FE 번들 자산. 서버는 랭킹의 <code>chart_id</code> 문자열로만 참조한다</td><td>-40 -42 -85 -87 -88 -186</td></tr>
+    <tr><td>게임 콘텐츠 시드</td><td><s><code>CONSTELLATION</code> <code>WORD</code> <code>COOP_PUZZLE</code></s> <b>미구현 (v0.3)</b> — 도안·제시어는 게임 로직·FE 자산에 있다</td><td>-37 -45 -53 (AI 제시어 -99는 런타임 생성이라 미저장)</td></tr>
   </table>
+  <div class="warn">⚠ <b>미구현 표기의 의미 (v0.3)</b> — 위 <s>취소선</s> 테이블 9종은 v0.1~v0.2 설계에는 있었으나 <b>현재 코드에 <code>@Entity</code>가 없다</b>.
+  삭제하지 않고 남긴 이유는 "왜 이 데이터가 RDB에 없는가"의 답이 설계 기록에 있어야 하기 때문이다. 실제 엔티티는 18개다.</div>
 
-  <div class="callout"><b>RDB에 없는 것(의도된 부재)</b> — 방/참가자/초대코드/진행 중 세션·점수판/실시간 랭킹 캐시 → <b>Redis</b>(키 설계 v0.1).
+  <div class="callout"><b>RDB에 없는 것(의도된 부재)</b> — 방/참가자/초대코드/진행 중 세션·점수판 → <b>Redis</b>(키 설계 v0.1). <b>(v0.3: 랭킹 캐시는 여기서 빠졌다 — 순위 정렬은 MySQL이 권위이고 Redis ZSET 랭킹 경로는 제거됐다.)</b>
   게스트 프로필·기록 → <b>클라이언트 로컬</b>. Refresh Token·비밀번호 재설정 토큰 → <b>Redis</b>(TTL이 만료 정책 그 자체 —
   키 설계 문서에 <code>auth:refresh:{userId}</code>, <code>auth:pwreset:{token}</code> 추가 권장).</div>
 
@@ -361,21 +446,39 @@ erDiagram
   FK 제약 없는 Long 참조(FRIENDSHIP·LEADERBOARD와 동일 컨벤션). users 컬럼이 아닌 별도 테이블인 이유 — 공유 엔티티(User) 불가침 +
   주기 갱신 핫로우 격리. 집계는 배포 시점부터 시작(과거 소급 없음). 전적 조회(-97·-141)는 예정대로 <b>LEADERBOARD만으로</b> 서빙(추가 테이블 없음).</div>
 
-  <div class="callout"><b>구현 현황(2026-07-24 · -132 채팅 신고)</b> — 설계 <code>REPORT</code>가 <code>chat_reports</code>로 구현됨(대기실 채팅 신고 특화). 설계 대비 확장: ① 신고 대상이 유저가 아니라 <b>채팅 한 건</b>(room_id+chat_id, Redis Stream <code>room:{roomId}:chat</code> — 키맵 참조) ② 방·채팅이 휘발성이라 원문·닉네임·<b>전후 ±10 맥락(context_json, 시간순·대상 포함)</b>을 신고 시점에 통째로 스냅샷 ③ user FK 대신 값 저장(닉 변경·탈퇴 후에도 신고 시점 표시명 보존, 회원 전용 — 게스트는 다인 방 입장 불가) ④ status에 REVIEWING·REJECTED 추가(관리자 처리 -133). 관리자 API: <code>/api/v1/admin/chat-reports</code>(ADMIN role claim 인가). <code>SANCTION</code>(제재)은 여전히 설계 단계.</div>
+  <div class="callout"><b>구현 현황(2026-07-24 · -132 채팅 신고)</b> — 설계 <code>REPORT</code>가 <code>chat_reports</code>로 구현됨(대기실 채팅 신고 특화). 설계 대비 확장: ① 신고 대상이 유저가 아니라 <b>채팅 한 건</b>(room_id+chat_id, Redis Stream <code>room:{roomId}:chat</code> — 키맵 참조) ② 방·채팅이 휘발성이라 원문·닉네임·<b>전후 ±10 맥락(context_json, 시간순·대상 포함)</b>을 신고 시점에 통째로 스냅샷 ③ user FK 대신 값 저장(닉 변경·탈퇴 후에도 신고 시점 표시명 보존, 회원 전용 — 게스트는 다인 방 입장 불가) ④ status에 REVIEWING·REJECTED 추가(관리자 처리 -133). 관리자 API: <code>/api/v1/admin/chat-reports</code>(ADMIN role claim 인가). <b>(v0.3)</b> <code>SANCTION</code>은 <code>sanction_history</code>로 <b>구현 완료</b>됐다 — WARN·SUSPEND·RELEASE·BAN·UNBAN 5종, append-only, 근거 신고는 <code>(ref_report_id, ref_report_type)</code> 쌍. 자세한 설계 판단은 아래 §4.</div>
 
-  <div class="callout"><b>구현 현황(2026-07-24 · -117 게임 정산)</b> — <code>GAME</code>은 <code>games</code>로 구현(카탈로그 + <code>round_duration_sec</code>·<code>countdown_sec</code> 컬럼 추가: 게임별 서버 권위 타이머). <code>LEADERBOARD</code>는 <code>leaderboards</code>로 구현(집계, <code>uk(game_id, user_id)</code>) — 세계순위의 영속 원천. <b>최소 RDB 방침으로 <code>GAME_SESSION</code>·<code>GAME_SESSION_RESULT</code>는 1차 미영속</b>(개별 판 로그는 후속 -122): <code>GAME_END</code>는 Redis 세션에서 정산해 <b>집계만</b> 남긴다. 실시간 세계순위는 Redis <code>rank:{gameId}</code>, 유실 시 <code>leaderboards</code>로 warm-up. 회원만 적재(게스트 제외, D5).</div>
+  <div class="callout"><b>구현 현황(2026-08-06 · -117 정산 / -96 모드 분리 / -186 곡별 랭킹) (v0.3)</b> — <code>GAME</code>은 <code>games</code>로 구현(카탈로그 + <code>round_duration_sec</code>·<code>countdown_sec</code>: 게임별 서버 권위 타이머, + <code>rules</code>·<code>controls</code>: 상세 안내 -75). <b>코드에 <code>description</code> 컬럼은 없다.</b>
+  <code>LEADERBOARD</code>(<code>leaderboards</code>)는 <code>uk(game_id, user_id, <b>mode</b>)</code>로 솔로/멀티를 나눠 집계하고, 동점 tie-break용 <code>best_achieved_at</code>을 따로 든다.
+  <b>랭킹 정렬은 이제 MySQL이 권위다</b> — 예전 Redis <code>rank:{gameId}</code> ZSET + warm-up 경로는 <b>코드에서 제거됐다</b>(동점 tie-break를 점수 하나로 표현할 수 없어서. 현재 <code>opsForZSet</code>은 방 목록 인덱스에만 남아 있다). 순위·내 순위 조회는 <code>LeaderboardRepository</code>의 JPQL이 <code>leaderboards</code>/<code>leaderboard_weekly</code>/<code>chart_leaderboard</code>를 직접 읽는다.
+  랭킹 3종의 분업: <b>ALLTIME</b>=단일 판 최고점(<code>leaderboards</code>) · <b>WEEKLY</b>=한 주 획득 점수의 합(<code>leaderboard_weekly</code>, 매주 초기화라 굳지 않는다) · <b>CHART</b>=곡별 이벤트 랭킹(<code>chart_leaderboard</code>, 통째로 버릴 수 있게 분리).
+  <b><code>GAME_SESSION</code>·<code>GAME_SESSION_RESULT</code>는 끝내 만들지 않았다</b> — 세션은 Redis에만 존재하고 <code>GAME_END</code>가 거기서 정산해 <b>집계만</b> 남긴다. 전적 조회는 <code>leaderboards</code>로 서빙. 회원만 적재(게스트 제외, D5).</div>
+
+  <div class="callout"><b>구현 현황(2026-08-06 · -102 AI 아이템 · 정산 멱등) (v0.3)</b> — <code>AI_ITEM_JOB</code>(<code>ai_item_job</code>) 신설: AI 아이템 생성은 <b>동기 생성이 아니라 비동기 잡 큐</b>다(GPU 워커를 서버가 호출할 수 없어 워커가 폴링해 가져간다). 결제 1건당 최대 2회 생성(최초 + 재생성 1회)이고, 재생성 한도는 <code>parent_job_id</code> UNIQUE로 DB가 최종 방어한다.
+  <code>GAME_REWARD_GRANT</code>(<code>game_reward_grant</code>) 신설: 보상 포인트 중복 지급 방지. 발행 지점이 Redis SETNX로 이미 1회만 돌지만 <b>포인트 중복 지급은 곧 공짜 돈</b>이라 <code>uk(session_id, user_id)</code>로 한 번 더 막는다. <code>POINT_HISTORY</code>에 유니크를 못 건 이유는 세션 식별자가 UUID 문자열인데 <code>ref_id</code>가 bigint라서다.</div>
+
+  <div class="callout"><b>스키마 생성 방식 (v0.3)</b> — 별도 DDL 스크립트나 Flyway/Liquibase가 없다. <code>application.yaml</code>의 <code>jpa.hibernate.ddl-auto: update</code>가 엔티티에서 테이블을 만들고, <b>ddl-auto가 못 하는 변경만 부팅 시 마이그레이션 러너</b>가 처리한다 — <code>LeaderboardSchemaMigration</code>(<code>ApplicationRunner</code>, 전부 멱등):
+  ① 옛 유니크 <code>uk_leaderboard_game_user</code> DROP(ddl-auto는 새 제약을 추가만 하고 옛 제약을 지우지 못해, 남아 있으면 SOLO/MULTI 두 행 적재가 막힌다) ② <code>best_achieved_at</code>을 nullable로 추가 → <code>updated_at</code>으로 백필 → NOT NULL 승격(ddl-auto는 행이 있는 테이블에 NOT NULL 컬럼을 못 넣는다 — MySQL strict 모드에서 ALTER가 실패하는데 ddl-auto는 경고만 남기고 넘어간다).</div>
 
   <div class="secnum">03</div>
   <h2>설계 포인트 — 구현 시 헷갈릴 지점</h2>
   <ol class="points">
-    <li><b>전적 조회(-97)는 <code>LEADERBOARD</code>만으로 충분.</b> 게임별 플레이 횟수·최고 점수·순위가 전부 이 테이블(+Redis ZREVRANK)에서 나온다. <code>GAME_SESSION_RESULT</code>는 개별 판 기록(로그·분쟁 추적·-122)용이며 화면 필수 아님.</li>
-    <li><b>정산 트랜잭션(-117)의 쓰기 순서.</b> <code>GAME_SESSION</code> + <code>GAME_SESSION_RESULT</code>(회원만) + <code>POINT_HISTORY</code>/<code>USER.point_balance</code> + <code>LEADERBOARD</code> upsert를 한 트랜잭션으로. 이후 Redis <code>rank:{gameId}</code> ZADD GT. Redis 유실 시 <code>LEADERBOARD</code>에서 warm-up(비기능 -96).</li>
-    <li><b>게스트 이관의 범위.</b> 클라 로컬 기록을 가입 시 <code>LEADERBOARD</code>(best_score GT·play_count 가산)와 <code>POINT_HISTORY(GUEST_MIGRATE)</code>로만 반영. 세션이 이미 소멸했으므로 <code>GAME_SESSION_RESULT</code>는 만들지 않는다.</li>
+    <li><b>ERD가 <code>FK</code>로 그린 관계 대부분은 실제로는 <b>FK 제약 없는 <code>bigint</code> 컬럼</b>이다. (v0.3)</b> 다이어그램의 <code>FK</code> 표기는 <i>의미상의 참조</i>일 뿐, DB에 외래키 제약이 걸린 곳은 <code>OAUTH_ACCOUNT.user_id</code>(유일하게 <code>@ManyToOne</code>) 하나뿐이다. 나머지(<code>FRIENDSHIP</code>·<code>LEADERBOARD</code>·<code>LEADERBOARD_WEEKLY</code>·<code>CHART_LEADERBOARD</code>·<code>GAME_REWARD_GRANT</code>·<code>AI_ITEM_JOB</code>·<code>POINT_HISTORY</code>·<code>USER_ITEM</code>·<code>DECOR_SETTING</code>·<code>USER_CONNECT_TIME</code>·신고/제재 테이블 전부)는 <code>Long</code> 값만 들고 조회 시 <code>UserRepository</code>로 붙인다. 팀 컨벤션이며 이유는 셋이다 — ① 공유 엔티티 <code>User</code>를 불가침으로 두어 도메인 간 결합을 끊는다 ② 신고·제재는 <b>탈퇴 후에도 남아야</b> 해서 FK가 오히려 방해다(그래서 닉네임을 값으로 스냅샷한다) ③ 직권 제재처럼 참조가 null인 경우가 있어 NOT NULL FK를 세울 수 없다. <b>대가는 참조 무결성을 애플리케이션이 진다는 것</b>이다 — 조회 시 탈퇴·정지 계정을 걸러 내는 책임이 서비스에 있다.</li>
+    <li><b>전적 조회(-97)는 <code>LEADERBOARD</code>만으로 충분.</b> 게임별 플레이 횟수·최고 점수·순위가 전부 이 테이블에서 나온다 <b>(v0.3: Redis ZREVRANK 아님 — 정렬은 MySQL이 권위)</b>. <code>GAME_SESSION_RESULT</code>는 끝내 만들지 않았으므로 개별 판 기록은 어디에도 남지 않는다.</li>
+    <li><b>정산(-117)의 쓰기 순서. (v0.3)</b> Redis 세션에서 결과를 확정한 뒤 <code>GAME_REWARD_GRANT</code>(중복 지급 방어 키) + <code>POINT_HISTORY</code>/<code>USER.point_balance</code> + <code>LEADERBOARD</code> upsert + <code>LEADERBOARD_WEEKLY</code> 합산(+ 리듬이면 <code>CHART_LEADERBOARD</code>)까지. 최고점(GREATEST)은 두 번 반영해도 값이 같아 멱등이지만 <b>주간 합산과 포인트 지급은 멱등이 아니라</b> 각각 <code>last_session_id</code>·<code>uk(session_id, user_id)</code>로 이중 반영을 막는다. Redis ZSET 랭킹·warm-up 단계는 없다(제거됨).</li>
+    <li><b>게스트 이관의 범위.</b> 클라 로컬 기록을 가입 시 <code>LEADERBOARD</code>(best_score GT·play_count 가산)와 <code>POINT_HISTORY(GUEST_MIGRATE)</code>로만 반영.</li>
     <li><b>제재는 상태와 이력을 나눠 갖는다(구현 시 초안에서 바뀐 지점).</b> 초안은 <code>SANCTION</code> 생성 시 <code>USER.status</code>를 SUSPENDED/BANNED로 갱신하고 로그인 시점 lazy 체크로 되돌리는 방식이었다. 구현은 <b>기간 정지를 status에 담지 않는다</b> — 컬럼에 담으면 만료 때 ACTIVE로 되돌릴 주체가 반드시 필요하고(배치든 lazy 체크든), 그게 밀리거나 특정 경로를 안 타면 이미 풀렸어야 할 계정이 계속 막힌다. 그래서 <b>"지금 정지 중인가"는 Redis <code>auth:suspended:{userId}</code> TTL</b>이 갖는다 — 키가 사라지는 순간이 곧 해제라 복구 작업 자체가 없어지고, 남은 기간 조회도 TTL 한 번이다. <code>sanction_history</code>는 TTL이 증발한 뒤에도 남아야 하는 사실(누가 누구를 언제 왜 몇 일)만 담는 append-only 이력이고, 누적 정지 횟수도 여기서 센다. <b>근거 신고는 (id, 유형) 쌍으로 남긴다</b> — <code>user_reports</code>와 <code>chat_reports</code>는 별개 테이블이고 id가 각각 1부터 증가하므로 <code>ref_report_id=7</code>만으로는 어느 쪽 7번인지 알 수 없다. 두 테이블에 각각 FK를 걸지 않는 이유는 직권 제재(둘 다 null)가 있어 어느 쪽으로도 NOT NULL FK를 세울 수 없기 때문이다. <code>USER.status</code>는 <b>스스로 풀리지 않는 상태</b>(BANNED·DELETED) 전용으로 남긴다 — <b>영구 정지(-105)가 정확히 그 경우다.</b> 밴은 만료가 있으면 오히려 버그이므로 TTL을 쓸 수 없고 <code>status=BANNED</code>가 원천이며, Redis <code>auth:banned:{userId}</code>(TTL 없음)는 요청마다 도는 인증 경로용 캐시다. 두 값의 유일한 전이는 관리자의 명시적 해제이고 그때 함께 지우므로 "되돌릴 주체가 필요하다"는 문제가 생기지 않는다. 밴을 걸 때 기간 정지 키를 지우는 것도 같은 이유다 — 남겨 두면 TTL 만료 시 "풀렸다"는 변화가 생기는데 실제로는 여전히 밴이다. 부과 시 Refresh 토큰·프레즌스를 지우고 방에서 빼고 웹소켓까지 끊어야 하는 이유는 Access 토큰이 서명만으로 유효해서(기본 1시간) 그것들 없이는 정지가 즉시 듣지 않기 때문이다. <b>경고(WARN)만 예외로 아무것도 끊지 않는다</b> — 접근을 막지 않는 제재이므로 <b>당사자에게 전달되는 것이 곧 제재의 실행</b>이고, 그래서 이 테이블에 유일한 갱신 컬럼 <code>acknowledged_at</code>이 있다(제재 사실이 아니라 <i>전달 확인</i>이라 append-only 원칙과 충돌하지 않는다). 푸시는 접속 중이 아니면 폐기되므로 확인 시각을 서버가 들고 있어야 못 본 경고를 다음 접속 때 다시 띄울 수 있다.</li>
     <li><b>탈퇴(-111).</b> <code>status=DELETED</code> + <code>deleted_at</code> 기록, 닉네임·이메일은 <code>deleted_1042</code> 식 치환으로 UK 충돌 방지. <code>LEADERBOARD</code>는 조회 시 status 필터로 랭킹 노출 제외. 탈퇴 시 본인 확인 필수(자체 가입=비밀번호 / 소셜 전용=소셜 재인증)이며, <code>OAUTH_ACCOUNT</code>는 삭제한다.</li>
     <li><b>재가입 1주일 제한(-111)에 <code>WITHDRAWN_ACCOUNT</code>가 필요한 이유.</b> 탈퇴하면 <code>USER.email</code>이 tombstone으로 덮여 "이 이메일이 언제 탈퇴했는지"를 알 방법이 사라지고, <code>OAUTH_ACCOUNT</code>도 지워져 소셜 식별자마저 남지 않는다. 그래서 판정용 식별자를 <b>해시로만</b> 따로 남긴다 — 동일성 비교만 하면 되므로 평문이 필요 없고, 탈퇴로 지운 개인정보를 되살려 두지 않는다. USER와 FK로 잇지 않는 이유도 같다(계정이 지워져도 판정은 남아야 함). 쿨다운이 지난 행은 판정에 걸리지 않으므로 배치로 정리 가능.</li>
     <li><b>소셜 닉네임 미수집(-22).</b> provider 닉네임을 <code>USER.nickname</code>에 넣지 않는다(운영 정책 미검증 + 사용자가 고른 이름이 아님). 최초 소셜 로그인은 <code>nickname=pending_*</code>(28자 — 닉네임 상한 16자를 넘겨 선점 불가) + <code>nickname_pending=true</code>로 만들고, <code>PATCH /users/me</code>로 확정할 때 플래그를 해제한다.</li>
-    <li><b>AI 커스텀 아이템(-102).</b> <code>ITEM(item_type=AI_CUSTOM, creator_id=본인)</code> 생성과 동시에 <code>USER_ITEM</code> 지급 + <code>POINT_HISTORY(AI_GENERATE, 음수)</code>. 상점 목록 쿼리는 <code>item_type=SHOP AND is_active</code>만.</li>
+    <li><b>AI 커스텀 아이템(-102)은 동기 생성이 아니라 <u>비동기 잡 큐</u>다. (v0.3)</b> 초안은 "요청 = 생성 = 지급"이었지만, GPU 워커가 사내망 밖에서 호출될 수 없어 <b>서버가 워커를 부르지 못한다</b> — 방향을 뒤집어 워커가 큐를 폴링한다. 흐름:
+      <br>① <code>POST /shop/ai-items</code> — 포인트를 <b>먼저</b> 차감하고(<code>AI_GENERATE</code>, 음수) <code>AI_ITEM_JOB(status=PENDING, points_charged)</code>을 쌓은 뒤 <code>jobId</code>만 즉시 반환한다.
+      <br>② 워커가 <code>GET /api/internal/ai-jobs/next</code>로 가져가며 <code>status=PROCESSING</code> · <code>provider=GPU|FAL</code>이 찍힌다(누가 만들었는지는 비용 정산·장애 추적에 필요하다).
+      <br>③ 완료 시 <code>POST /api/internal/ai-jobs/{jobId}/complete</code> → 이미지가 스토리지에 올라가고 <code>image_url</code>이 job에 붙는다(<code>ITEM</code>이 아니라 <b>job</b>이 든다 — 저장 확정 전에도 프론트가 결과를 미리 봐야 하므로).
+      <br>④ 프론트는 <code>GET /shop/ai-items/{jobId}</code>를 <b>폴링</b>해 상태를 확인한다.
+      <br>⑤ 마음에 들면 <code>POST /shop/ai-items/{jobId}/save</code> — 그때서야 <code>ITEM(item_type=AI_CUSTOM, creator_id=본인)</code>이 생기고 <code>USER_ITEM</code>이 지급되며 job에 <code>item_id</code>가 채워진다.
+      <br>⑥ 실패(<code>POST .../fail</code> → <code>status=FAILED</code>)면 <code>points_charged &gt; 0</code>인 경우에 한해 <b><code>POINT_HISTORY(AI_GENERATE_REFUND, 양수, ref_id=jobId)</code>로 환불</b>한다. 선차감이라 환불 경로가 반드시 필요하다.
+      <br><b>결제 1건당 생성은 최대 2회</b>(최초 + 재생성 1회) — 재생성 job은 <code>parent_job_id</code>로 같은 결제 건임을 밝히고 추가 차감이 없다(<code>points_charged=0</code>). 한도는 프론트 상태가 아니라 <code>uk_ai_item_job_parent</code> UNIQUE가 최종 방어한다(새로고침으로 우회 가능하므로). 상점 목록 쿼리는 여전히 <code>item_type=SHOP AND is_active</code>만.</li>
     <li><b>1인 플레이·봇 판단은 전부 <code>GAME</code> 컬럼으로.</b> 대기실 큐레이션: 현재 인원(봇 포함) ≥ min_players AND ≤ max_players AND is_active. 게스트 1인방은 <code>min_players=1</code>인 게임만 노출. 별도 플래그 불필요.</li>
     <li><b><code>rank_no</code> 네이밍.</b> <code>rank</code>는 MySQL 8 예약어라 컬럼명으로 피했다. DDL 작성 시 유지할 것.</li>
   </ol>
@@ -392,7 +495,7 @@ erDiagram
       <td>게임 중 모션인식과 동시 구동 시 성능 부담 — 대기실 한정 적용 검토</td></tr>
   </table>
 
-  <footer>모톡 ERD v0.2 · 상위 문서: 아키텍처 결정기록 v0.3 (D4·D5) · Redis 키 설계 v0.1 · 다음 조각: DDL 스크립트 / 게임 이벤트 프로토콜(-115)</footer>
+  <footer>모톡 ERD v0.3 (2026-08-06 · 구현 코드 기준 재작성) · 상위 문서: 아키텍처 결정기록 v0.3 (D4·D5) · Redis 키 설계 v0.1 · 스키마 생성은 <code>ddl-auto=update</code> + <code>LeaderboardSchemaMigration</code>(별도 DDL 스크립트 없음)</footer>
 </div>
 
 <script>
