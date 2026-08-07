@@ -44,12 +44,13 @@ const difficulty = ref<Difficulty>('NORMAL')
 const mode = ref<GameMode>('catch')
 /** 곡 선택(-168): 기존 랜덤(시드) 채보 vs SSAFY 응원가(수제 번들) */
 const songPick = ref<'random' | 'ssafy'>('random')
-/** 응원가 전용 난이도 — 어려움 풀/하프(MANUAL 채보) / 익스트림(하프) */
-const songDifficulty = ref<'manual' | 'manual-half' | 'extreme'>('manual')
+/** 응원가 전용 난이도 — 어려움 풀/하프(MANUAL 채보) / 익스트림(하프) / 데모(시연 컷) */
+const songDifficulty = ref<'manual' | 'manual-half' | 'extreme' | 'demo'>('manual')
 const SONG_BUNDLE: Record<typeof songDifficulty.value, string> = {
   manual: 'ssafy-fighting-manual',
   'manual-half': 'ssafy-fighting-manual-verse1',
   extreme: 'ssafy-fighting-extreme',
+  demo: 'ssafy-fighting-demo',
 }
 /** 시작·로드에 쓰는 번들 id. null = 랜덤 채보 */
 const selectedSong = computed(() =>
@@ -418,6 +419,15 @@ watch(
           @click="songDifficulty = 'extreme'"
         >
           익스트림(하프)
+        </button>
+        <button
+          type="button"
+          class="px level difficulty-level difficulty-hard"
+          :class="{ on: songDifficulty === 'demo' }"
+          :disabled="isMultiplayer && !isHost"
+          @click="songDifficulty = 'demo'"
+        >
+          데모
         </button>
       </div>
 
