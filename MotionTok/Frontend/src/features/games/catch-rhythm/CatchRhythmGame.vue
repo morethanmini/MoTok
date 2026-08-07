@@ -453,6 +453,8 @@ watch(
   z-index: 2;
   background: #fff3ea url('/assets/games/catch-rhythm/background-peach-weave.png') center / cover no-repeat;
   font-family: var(--font-pixel);
+  /* 설정 화면(.ready)이 뷰포트가 아니라 이 타일 크기를 기준으로 줄어들도록 — 아래 --u 참고 */
+  container-type: size;
 }
 /* 상시 종료. Stage HUD 가 상단 전폭을 쓰므로 :deep 으로 오른쪽을 비워 자리를 낸다 */
 .close {
@@ -475,15 +477,32 @@ watch(
 .rhythm-game :deep(.hud) {
   right: 3.1rem;
 }
+/**
+ * 설정 화면의 모든 치수는 --u의 배수다.
+ *
+ * 5인 방 셀프 타일은 폭의 42%를 8:5로 잘라 쓰므로 높이가 화면 <b>너비</b>를 따라간다. 반면
+ * 이 화면은 rem·vw 고정값이라 배율 100%(= CSS 픽셀이 가장 적은 상태)에서 세로가 모자라
+ * 시작 버튼까지 잘렸다. 타일 높이(cqh)·폭(cqw)에서 단위를 뽑으면 배율·인원수와 무관하게 들어간다.
+ *
+ * 3.3cqh는 이 화면이 가장 높아지는 상태 — 에러 문구까지 뜬 --u 약 29개 — 를 기준으로 잡았다.
+ * 여유 있는 26개(정상 상태)로 잡으면 정작 "서버에 연결되어 있지 않아요"가 뜬 순간에 시작·나가기가
+ * 밀려난다. 3.2cqw는 가장 넓은 줄(29--u)이 타일 폭을 넘지 않게 하는 상한이고, 1rem이 기존 크기다.
+ */
 .ready {
+  --u: clamp(0.6rem, min(3.3cqh, 3.2cqw), 1rem);
   position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  /* 하한(0.6rem)까지 줄여도 안 들어가는 극단적인 타일에서 잘리는 대신 스크롤한다.
+     safe는 그때 중앙 정렬이 위쪽을 넘겨 제목을 잘라내는 걸 막는다(미지원 브라우저는 앞 줄을 쓴다) */
+  justify-content: safe center;
+  overflow-y: auto;
+  scrollbar-width: none;
   gap: 0.7rem;
-  padding: 1rem;
+  padding: var(--u);
   background:
     radial-gradient(circle at 16% 18%, rgba(255, 255, 255, 0.88) 0 3px, transparent 4px),
     radial-gradient(circle at 83% 78%, rgba(255, 255, 255, 0.78) 0 4px, transparent 5px),
@@ -498,7 +517,7 @@ watch(
   text-shadow: 2px 2px 0 #fff;
 }
 .desc {
-  width: min(100%, 30rem);
+  width: min(100%, calc(30 * var(--u)));
   margin: 0 0 0.35rem;
   color: #8a6556;
   font-size: 0.82rem;
@@ -609,7 +628,7 @@ watch(
 
 /* Compact, calm setup controls: choices are the focus, not their decoration. */
 .ready {
-  gap: 0.8rem;
+  gap: calc(0.8 * var(--u));
   background:
     linear-gradient(rgba(255, 247, 241, 0.78), rgba(255, 233, 221, 0.78)),
     url('/assets/games/catch-rhythm/background-peach-weave.png') center / cover no-repeat;
@@ -625,9 +644,9 @@ watch(
   font-size: 0.72rem;
 }
 .levels {
-  width: min(100%, 29rem);
+  width: min(100%, calc(29 * var(--u)));
   gap: 0;
-  padding: 1.22rem 0.5rem 0.5rem;
+  padding: calc(1.22 * var(--u)) calc(0.5 * var(--u)) calc(0.5 * var(--u));
   border: 1px solid #ead5c8;
   border-radius: 0.55rem;
   background: #fffdfa;
@@ -637,19 +656,19 @@ watch(
   content: none;
   display: none;
 }
-.ready > .levels { padding-top: 0.5rem; }
-.title { font-size: clamp(2rem, 4.5vw, 3rem); }
-.desc { font-size: 0.9rem; }
+.ready > .levels { padding-top: calc(0.5 * var(--u)); }
+.title { font-size: calc(3 * var(--u)); }
+.desc { font-size: calc(0.9 * var(--u)); }
 .level {
-  min-height: 3.05rem;
-  padding: 0.45rem 0.3rem;
+  min-height: calc(3.05 * var(--u));
+  padding: calc(0.45 * var(--u)) calc(0.3 * var(--u));
   border: 0;
   border-right: 1px solid #ecdcd2;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
   color: #8b6e62;
-  font-size: 0.92rem;
+  font-size: calc(0.92 * var(--u));
   transition: background 0.12s ease, color 0.12s ease;
 }
 .level:last-child { border-right: 0; }
@@ -669,20 +688,20 @@ watch(
   color: #fff;
 }
 .actions {
-  width: min(100%, 29rem);
+  width: min(100%, calc(29 * var(--u)));
   flex-direction: row;
-  margin-top: 0.15rem;
-  gap: 0.45rem;
+  margin-top: calc(0.15 * var(--u));
+  gap: calc(0.45 * var(--u));
 }
 .btn {
-  min-width: 7.4rem;
-  padding: 0.75rem 1rem;
+  min-width: calc(7.4 * var(--u));
+  padding: calc(0.75 * var(--u)) var(--u);
   border: 1px solid #ddc8bc;
   border-radius: 0.45rem;
   background: #fffdfa;
   box-shadow: none;
   color: #806155;
-  font-size: 0.95rem;
+  font-size: calc(0.95 * var(--u));
 }
 .actions .btn.primary {
   order: 2;
@@ -706,11 +725,11 @@ watch(
   box-shadow: none;
 }
 .error {
-  font-size: 0.8rem;
+  font-size: calc(0.8 * var(--u));
   color: #b3402a;
 }
 .wait-host {
-  font-size: 0.8rem;
+  font-size: calc(0.8 * var(--u));
   color: #9b8f88;
 }
 .waiting {
