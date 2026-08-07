@@ -22,6 +22,7 @@ export interface BundledSongEntry {
 export const BUNDLED_SONGS: BundledSongEntry[] = [
   { id: 'ssafy-fighting-manual', label: 'SSAFY Fighting · MANUAL' },
   { id: 'ssafy-fighting-manual-verse1', label: 'SSAFY Fighting · MANUAL (1절)' },
+  { id: 'ssafy-fighting-demo', label: 'SSAFY Fighting · MANUAL (시연 컷)' },
   { id: 'ssafy-fighting-extreme', label: 'SSAFY Fighting · EXTREME' },
 ]
 
