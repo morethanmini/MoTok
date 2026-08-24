@@ -54,7 +54,9 @@ public class RhythmGameSeeder implements ApplicationRunner {
                     .roundDurationSec(ROUND_DURATION_SEC)
                     .countdownSec(COUNTDOWN_SEC)
                     .supportsBot(false)
-                    .active(true)
+                    // 곡 음원의 저작권 확인이 끝나지 않아 카탈로그에서 닫아 둔다. 확인되면 true로
+                    // 되돌리거나 관리자 페이지에서 켜면 된다 — 이미 심긴 행은 여기서 건드리지 않는다.
+                    .active(false)
                     .category("RHYTHM")
                     .rules(RULES)
                     .controls(CONTROLS)
